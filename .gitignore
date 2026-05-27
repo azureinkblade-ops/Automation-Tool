@@ -1,0 +1,11 @@
+.env
+.env.local
+/campaigns/
+/social-posts/
+/tiktok-posts/
+/chapters/
+/youtube-videos/
+__pycache__/
+*.pyc
+tools/ffmpeg/
+tools/*.zip

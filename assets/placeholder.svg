@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1536" viewBox="0 0 1024 1536">
+<rect width="1024" height="1536" fill="#172026"/>
+<rect x="72" y="72" width="880" height="1392" rx="22" fill="#f7f9fb"/>
+<text x="512" y="710" font-family="Arial, Helvetica, sans-serif" font-size="54" font-weight="700" fill="#172026" text-anchor="middle">Promo Image</text>
+<foreignObject x="140" y="780" width="744" height="360">
+<div xmlns="http://www.w3.org/1999/xhtml" style="font-family:Arial, Helvetica, sans-serif;font-size:42px;line-height:1.2;text-align:center;color:#24313a;">{{PHRASE}}</div>
+</foreignObject>
+</svg>

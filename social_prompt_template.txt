@@ -1,0 +1,18 @@
+Create reusable social copy for a daily web-novel promo image.
+
+Inputs:
+Novel: {novel}
+Abbreviation: {abbr}
+Day: {day}
+Image filename: {filename}
+
+Return JSON with:
+- instagram: a polished Instagram caption, 1 hook line, 1 short value/teaser line, 1 call to action, and hashtags
+- x: a concise X post under 260 characters with 2-4 hashtags
+- alt_text: accessible image alt text
+
+Style:
+- web novel reader audience
+- energetic but not spammy
+- no fake chapter number unless one is supplied
+- mention the novel name naturally

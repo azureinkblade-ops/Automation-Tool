@@ -1,0 +1,21 @@
+If the automatic FFmpeg download is blocked, put the FFmpeg archive in this folder.
+
+ZIP names that work:
+
+ffmpeg-8.1.1-essentials_build.zip
+
+The generic Gyan download name also works:
+
+ffmpeg-release-essentials.zip
+
+TAR archives also work if they contain a normal FFmpeg folder with bin\ffmpeg.exe:
+
+*.tar
+*.tar.gz
+*.tgz
+*.tar.xz
+*.txz
+
+Then run setup_ffmpeg.py from the Automation tool folder. It will verify the SHA-256 checksum and extract FFmpeg into:
+
+tools\ffmpeg\bin\ffmpeg.exe

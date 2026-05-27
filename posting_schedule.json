@@ -1,0 +1,69 @@
+{
+  "chapterReleaseDays": [
+    "Monday",
+    "Wednesday",
+    "Friday",
+    "Sunday"
+  ],
+  "generalPromoDays": [
+    "Tuesday",
+    "Thursday",
+    "Saturday"
+  ],
+  "royalRoadDelayDays": 14,
+  "generalPromoRotation": [
+    "YouTube",
+    "Royal Road",
+    "TikTok"
+  ],
+  "novels": [
+    {
+      "abbr": "EN",
+      "name": "Eternal Nexus",
+      "nextChapter": 1,
+      "startDate": "2026-05-26",
+      "releaseDays": [
+        "Monday",
+        "Wednesday",
+        "Friday",
+        "Sunday"
+      ]
+    },
+    {
+      "abbr": "HA",
+      "name": "Heavenly Ascension System",
+      "nextChapter": 1,
+      "startDate": "2026-05-26",
+      "releaseDays": [
+        "Monday",
+        "Wednesday",
+        "Friday",
+        "Sunday"
+      ]
+    },
+    {
+      "abbr": "SF",
+      "name": "Soul Forge Era",
+      "nextChapter": 1,
+      "startDate": "2026-05-26",
+      "releaseDays": [
+        "Monday",
+        "Wednesday",
+        "Friday",
+        "Sunday"
+      ]
+    },
+    {
+      "abbr": "HP",
+      "name": "Hundredfold Path",
+      "nextChapter": 1,
+      "startDate": "2026-05-26",
+      "releaseDays": [
+        "Monday",
+        "Wednesday",
+        "Friday",
+        "Sunday"
+      ]
+    }
+  ]
+}
