@@ -1,0 +1,18 @@
+# Release Planner V1 and chapter upload automation dependencies
+pydantic
+pydantic-settings
+python-dateutil
+tenacity
+httpx
+beautifulsoup4
+lxml
+apscheduler
+pytest
+
+# Deferred until the release workflow needs a larger job/data layer:
+# sqlalchemy
+# alembic
+# prefect
+# celery
+# redis
+# rq
