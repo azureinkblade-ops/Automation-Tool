@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-03 08:02:24",
+  "monthlyPatreonRevenue": 0.0,
+  "bufferUpgradeMonthlyBudget": 0.0,
+  "priorityMode": "auto",
+  "platforms": {
+    "tiktok": {
+      "followers": 0,
+      "views30Days": 2100,
+      "avgViewsPerPost": 0,
+      "postsPerDay": 4,
+      "oneMinutePostsPerDay": 10,
+      "profileVisits30Days": 24
+    },
+    "instagram": {
+      "followers": 0,
+      "views30Days": 161,
+      "avgViewsPerPost": 0,
+      "postsPerDay": 4
+    },
+    "youtube": {
+      "subscribers": 1,
+      "publicWatchHours12Months": 32.9,
+      "shortsViews90Days": 0,
+      "publicVideosLast90Days": 0,
+      "fullVideosReady": 0,
+      "views30Days": 303
+    },
+    "x": {
+      "followers": 0,
+      "verifiedFollowers": 0,
+      "organicImpressions90Days": 0,
+      "premiumActive": false,
+      "postsPerDay": 2
+    },
+    "facebook": {
+      "followers": 0,
+      "views30Days": 161,
+      "postsPerDay": 1
+    },
+    "patreon": {
+      "members": 0,
+      "views30Days": 0,
+      "monthlyRevenue": 0
+    },
+    "royalroad": {
+      "followers": 55,
+      "reads": 2,
+      "views30Days": 0
+    }
+  }
+}

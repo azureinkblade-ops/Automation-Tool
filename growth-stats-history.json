@@ -1,0 +1,1055 @@
+{
+  "schemaVersion": 1,
+  "snapshots": [
+    {
+      "collectedAt": "2026-06-21 08:35:29",
+      "updates": {},
+      "evidence": []
+    },
+    {
+      "collectedAt": "2026-06-21 08:36:32",
+      "updates": {
+        "tiktok": {
+          "followers": 1200,
+          "views30Days": 1200,
+          "profileVisits30Days": 10
+        }
+      },
+      "evidence": [
+        {
+          "platform": "tiktok",
+          "fields": {
+            "followers": 1200,
+            "views30Days": 1200,
+            "profileVisits30Days": 10
+          },
+          "url": "https://www.tiktok.com/tiktokstudio/analytics",
+          "gatheredAt": "2026-06-21T15:36:32.387Z"
+        }
+      ]
+    },
+    {
+      "collectedAt": "2026-06-21 08:37:04",
+      "updates": {
+        "tiktok": {
+          "followers": 1200,
+          "views30Days": 1200,
+          "profileVisits30Days": 10
+        },
+        "instagram": {
+          "followers": 0,
+          "views30Days": 49
+        },
+        "facebook": {
+          "followers": 0,
+          "views30Days": 49
+        }
+      },
+      "evidence": [
+        {
+          "platform": "tiktok",
+          "fields": {
+            "followers": 1200,
+            "views30Days": 1200,
+            "profileVisits30Days": 10
+          },
+          "url": "https://www.tiktok.com/tiktokstudio/analytics",
+          "gatheredAt": "2026-06-21T15:36:59.823Z"
+        },
+        {
+          "platform": "instagram",
+          "fields": {
+            "followers": 0,
+            "views30Days": 49
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-21T15:37:02.342Z"
+        },
+        {
+          "platform": "facebook",
+          "fields": {
+            "followers": 0,
+            "views30Days": 49
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-21T15:37:04.853Z"
+        }
+      ]
+    },
+    {
+      "collectedAt": "2026-06-22 08:35:06",
+      "updates": {},
+      "evidence": []
+    },
+    {
+      "collectedAt": "2026-06-22 08:36:01",
+      "updates": {
+        "tiktok": {
+          "followers": 1200,
+          "views30Days": 1200,
+          "profileVisits30Days": 10
+        }
+      },
+      "evidence": [
+        {
+          "platform": "tiktok",
+          "fields": {
+            "followers": 1200,
+            "views30Days": 1200,
+            "profileVisits30Days": 10
+          },
+          "url": "https://www.tiktok.com/tiktokstudio/analytics",
+          "gatheredAt": "2026-06-22T15:36:01.792Z"
+        }
+      ]
+    },
+    {
+      "collectedAt": "2026-06-22 13:50:19",
+      "updates": {},
+      "evidence": []
+    },
+    {
+      "collectedAt": "2026-06-22 13:50:47",
+      "updates": {
+        "tiktok": {
+          "followers": 1200,
+          "views30Days": 1200,
+          "profileVisits30Days": 10
+        }
+      },
+      "evidence": [
+        {
+          "platform": "tiktok",
+          "fields": {
+            "followers": 1200,
+            "views30Days": 1200,
+            "profileVisits30Days": 10
+          },
+          "url": "https://www.tiktok.com/tiktokstudio/analytics",
+          "gatheredAt": "2026-06-22T20:50:47.129Z"
+        }
+      ]
+    },
+    {
+      "collectedAt": "2026-06-23 07:03:54",
+      "updates": {
+        "youtube": {
+          "subscribers": 54,
+          "publicWatchHours12Months": 4.7,
+          "views30Days": 28
+        },
+        "tiktok": {
+          "followers": 1200,
+          "views30Days": 1200,
+          "profileVisits30Days": 10
+        },
+        "instagram": {
+          "followers": 0,
+          "views30Days": 59
+        },
+        "facebook": {
+          "followers": 0,
+          "views30Days": 59
+        },
+        "patreon": {
+          "members": 30
+        },
+        "royalroad": {
+          "followers": 56,
+          "reads": 2
+        }
+      },
+      "evidence": [
+        {
+          "platform": "youtube",
+          "fields": {
+            "subscribers": 54,
+            "publicWatchHours12Months": 4.7,
+            "views30Days": 28
+          },
+          "url": "https://studio.youtube.com/channel/UCBKiJENwFqvVIItR4WbMY6A/analytics/tab-overview/period-default",
+          "gatheredAt": "2026-06-23T14:03:33.844Z"
+        },
+        {
+          "platform": "tiktok",
+          "fields": {
+            "followers": 1200,
+            "views30Days": 1200,
+            "profileVisits30Days": 10
+          },
+          "url": "https://www.tiktok.com/tiktokstudio/analytics",
+          "gatheredAt": "2026-06-23T14:03:37.563Z"
+        },
+        {
+          "platform": "instagram",
+          "fields": {
+            "followers": 0,
+            "views30Days": 59
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-23T14:03:42.811Z"
+        },
+        {
+          "platform": "facebook",
+          "fields": {
+            "followers": 0,
+            "views30Days": 59
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-23T14:03:45.334Z"
+        },
+        {
+          "platform": "patreon",
+          "fields": {
+            "members": 30
+          },
+          "url": "https://www.patreon.com/insights/membership",
+          "gatheredAt": "2026-06-23T14:03:51.394Z"
+        },
+        {
+          "platform": "royalroad",
+          "fields": {
+            "followers": 56,
+            "reads": 2
+          },
+          "url": "https://www.royalroad.com/author-dashboard",
+          "gatheredAt": "2026-06-23T14:03:54.505Z"
+        }
+      ]
+    },
+    {
+      "collectedAt": "2026-06-23 13:20:51",
+      "updates": {
+        "youtube": {
+          "subscribers": 110,
+          "publicWatchHours12Months": 4.7,
+          "views30Days": 28
+        },
+        "tiktok": {
+          "followers": 1200,
+          "views30Days": 1200,
+          "profileVisits30Days": 10
+        },
+        "instagram": {
+          "followers": 0,
+          "views30Days": 59
+        },
+        "facebook": {
+          "followers": 0,
+          "views30Days": 59
+        },
+        "patreon": {
+          "members": 30
+        },
+        "royalroad": {
+          "followers": 56,
+          "reads": 2
+        }
+      },
+      "evidence": [
+        {
+          "platform": "youtube",
+          "fields": {
+            "subscribers": 110,
+            "publicWatchHours12Months": 4.7,
+            "views30Days": 28
+          },
+          "url": "https://studio.youtube.com/channel/UCBKiJENwFqvVIItR4WbMY6A/analytics/tab-overview/period-default",
+          "gatheredAt": "2026-06-23T20:20:30.325Z"
+        },
+        {
+          "platform": "tiktok",
+          "fields": {
+            "followers": 1200,
+            "views30Days": 1200,
+            "profileVisits30Days": 10
+          },
+          "url": "https://www.tiktok.com/tiktokstudio/analytics",
+          "gatheredAt": "2026-06-23T20:20:33.722Z"
+        },
+        {
+          "platform": "instagram",
+          "fields": {
+            "followers": 0,
+            "views30Days": 59
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-23T20:20:39.590Z"
+        },
+        {
+          "platform": "facebook",
+          "fields": {
+            "followers": 0,
+            "views30Days": 59
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-23T20:20:42.105Z"
+        },
+        {
+          "platform": "patreon",
+          "fields": {
+            "members": 30
+          },
+          "url": "https://www.patreon.com/insights/membership",
+          "gatheredAt": "2026-06-23T20:20:48.118Z"
+        },
+        {
+          "platform": "royalroad",
+          "fields": {
+            "followers": 56,
+            "reads": 2
+          },
+          "url": "https://www.royalroad.com/author-dashboard",
+          "gatheredAt": "2026-06-23T20:20:51.256Z"
+        }
+      ]
+    },
+    {
+      "collectedAt": "2026-06-24 08:04:42",
+      "updates": {
+        "youtube": {
+          "subscribers": 134,
+          "publicWatchHours12Months": 12.6,
+          "views30Days": 28
+        },
+        "tiktok": {
+          "followers": 1700,
+          "views30Days": 1700,
+          "profileVisits30Days": 12
+        },
+        "instagram": {
+          "followers": 0,
+          "views30Days": 63
+        },
+        "facebook": {
+          "followers": 0,
+          "views30Days": 63
+        },
+        "patreon": {
+          "members": 30
+        },
+        "royalroad": {
+          "followers": 55,
+          "reads": 2
+        }
+      },
+      "evidence": [
+        {
+          "platform": "youtube",
+          "fields": {
+            "subscribers": 134,
+            "publicWatchHours12Months": 12.6,
+            "views30Days": 28
+          },
+          "url": "https://studio.youtube.com/channel/UCBKiJENwFqvVIItR4WbMY6A/analytics/tab-overview/period-default",
+          "gatheredAt": "2026-06-24T15:04:08.461Z"
+        },
+        {
+          "platform": "tiktok",
+          "fields": {
+            "followers": 1700,
+            "views30Days": 1700,
+            "profileVisits30Days": 12
+          },
+          "url": "https://www.tiktok.com/tiktokstudio/analytics",
+          "gatheredAt": "2026-06-24T15:04:12.773Z"
+        },
+        {
+          "platform": "instagram",
+          "fields": {
+            "followers": 0,
+            "views30Days": 63
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-24T15:04:22.590Z"
+        },
+        {
+          "platform": "facebook",
+          "fields": {
+            "followers": 0,
+            "views30Days": 63
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-24T15:04:25.251Z"
+        },
+        {
+          "platform": "patreon",
+          "fields": {
+            "members": 30
+          },
+          "url": "https://www.patreon.com/insights/membership",
+          "gatheredAt": "2026-06-24T15:04:37.096Z"
+        },
+        {
+          "platform": "royalroad",
+          "fields": {
+            "followers": 55,
+            "reads": 2
+          },
+          "url": "https://www.royalroad.com/author-dashboard",
+          "gatheredAt": "2026-06-24T15:04:40.863Z"
+        }
+      ]
+    },
+    {
+      "collectedAt": "2026-06-26 12:22:57",
+      "updates": {
+        "youtube": {
+          "subscribers": 81,
+          "publicWatchHours12Months": 26.9,
+          "views30Days": 28
+        },
+        "tiktok": {
+          "followers": 1600,
+          "views30Days": 1600,
+          "profileVisits30Days": 15
+        },
+        "instagram": {
+          "followers": 0,
+          "views30Days": 29
+        },
+        "facebook": {
+          "followers": 0,
+          "views30Days": 29
+        },
+        "patreon": {
+          "members": 30
+        },
+        "royalroad": {
+          "followers": 55,
+          "reads": 2
+        }
+      },
+      "evidence": [
+        {
+          "platform": "youtube",
+          "fields": {
+            "subscribers": 81,
+            "publicWatchHours12Months": 26.9,
+            "views30Days": 28
+          },
+          "url": "https://studio.youtube.com/channel/UCBKiJENwFqvVIItR4WbMY6A/analytics/tab-overview/period-default",
+          "gatheredAt": "2026-06-26T19:22:34.828Z"
+        },
+        {
+          "platform": "tiktok",
+          "fields": {
+            "followers": 1600,
+            "views30Days": 1600,
+            "profileVisits30Days": 15
+          },
+          "url": "https://www.tiktok.com/tiktokstudio/analytics",
+          "gatheredAt": "2026-06-26T19:22:38.024Z"
+        },
+        {
+          "platform": "instagram",
+          "fields": {
+            "followers": 0,
+            "views30Days": 29
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-26T19:22:45.181Z"
+        },
+        {
+          "platform": "facebook",
+          "fields": {
+            "followers": 0,
+            "views30Days": 29
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-26T19:22:47.694Z"
+        },
+        {
+          "platform": "patreon",
+          "fields": {
+            "members": 30
+          },
+          "url": "https://www.patreon.com/insights/membership",
+          "gatheredAt": "2026-06-26T19:22:53.755Z"
+        },
+        {
+          "platform": "royalroad",
+          "fields": {
+            "followers": 55,
+            "reads": 2
+          },
+          "url": "https://www.royalroad.com/author-dashboard",
+          "gatheredAt": "2026-06-26T19:22:57.100Z"
+        }
+      ]
+    },
+    {
+      "collectedAt": "2026-06-28 08:34:23",
+      "updates": {
+        "youtube": {
+          "subscribers": 36,
+          "publicWatchHours12Months": 31.6,
+          "views30Days": 28
+        },
+        "tiktok": {
+          "followers": 2000,
+          "views30Days": 2000,
+          "profileVisits30Days": 15
+        },
+        "instagram": {
+          "followers": 0,
+          "views30Days": 114
+        },
+        "facebook": {
+          "followers": 0,
+          "views30Days": 114
+        },
+        "patreon": {
+          "members": 30
+        },
+        "royalroad": {
+          "followers": 55,
+          "reads": 2
+        }
+      },
+      "evidence": [
+        {
+          "platform": "youtube",
+          "fields": {
+            "subscribers": 36,
+            "publicWatchHours12Months": 31.6,
+            "views30Days": 28
+          },
+          "url": "https://studio.youtube.com/channel/UCBKiJENwFqvVIItR4WbMY6A/analytics/tab-overview/period-default",
+          "gatheredAt": "2026-06-28T15:34:01.998Z"
+        },
+        {
+          "platform": "tiktok",
+          "fields": {
+            "followers": 2000,
+            "views30Days": 2000,
+            "profileVisits30Days": 15
+          },
+          "url": "https://www.tiktok.com/tiktokstudio/analytics",
+          "gatheredAt": "2026-06-28T15:34:05.179Z"
+        },
+        {
+          "platform": "instagram",
+          "fields": {
+            "followers": 0,
+            "views30Days": 114
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-28T15:34:11.103Z"
+        },
+        {
+          "platform": "facebook",
+          "fields": {
+            "followers": 0,
+            "views30Days": 114
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-28T15:34:13.622Z"
+        },
+        {
+          "platform": "patreon",
+          "fields": {
+            "members": 30
+          },
+          "url": "https://www.patreon.com/insights/membership",
+          "gatheredAt": "2026-06-28T15:34:20.017Z"
+        },
+        {
+          "platform": "royalroad",
+          "fields": {
+            "followers": 55,
+            "reads": 2
+          },
+          "url": "https://www.royalroad.com/author-dashboard",
+          "gatheredAt": "2026-06-28T15:34:23.546Z"
+        }
+      ]
+    },
+    {
+      "collectedAt": "2026-06-28 08:36:07",
+      "updates": {
+        "youtube": {
+          "subscribers": 36,
+          "publicWatchHours12Months": 31.6,
+          "views30Days": 28
+        },
+        "tiktok": {
+          "views30Days": 2000,
+          "profileVisits30Days": 15
+        },
+        "instagram": {
+          "views30Days": 114
+        },
+        "facebook": {
+          "views30Days": 114
+        },
+        "patreon": {
+          "members": 30
+        },
+        "royalroad": {
+          "followers": 55,
+          "reads": 2
+        }
+      },
+      "evidence": [
+        {
+          "platform": "youtube",
+          "fields": {
+            "subscribers": 36,
+            "publicWatchHours12Months": 31.6,
+            "views30Days": 28
+          },
+          "url": "https://studio.youtube.com/channel/UCBKiJENwFqvVIItR4WbMY6A/analytics/tab-overview/period-default",
+          "gatheredAt": "2026-06-28T15:34:01.998Z"
+        },
+        {
+          "platform": "tiktok",
+          "fields": {
+            "views30Days": 2000,
+            "profileVisits30Days": 15
+          },
+          "url": "https://www.tiktok.com/tiktokstudio/analytics",
+          "gatheredAt": "2026-06-28T15:34:05.179Z"
+        },
+        {
+          "platform": "instagram",
+          "fields": {
+            "views30Days": 114
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-28T15:34:11.103Z"
+        },
+        {
+          "platform": "facebook",
+          "fields": {
+            "views30Days": 114
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-28T15:34:13.622Z"
+        },
+        {
+          "platform": "patreon",
+          "fields": {
+            "members": 30
+          },
+          "url": "https://www.patreon.com/insights/membership",
+          "gatheredAt": "2026-06-28T15:34:20.017Z"
+        },
+        {
+          "platform": "royalroad",
+          "fields": {
+            "followers": 55,
+            "reads": 2
+          },
+          "url": "https://www.royalroad.com/author-dashboard",
+          "gatheredAt": "2026-06-28T15:34:23.546Z"
+        }
+      ]
+    },
+    {
+      "collectedAt": "2026-06-28 08:39:46",
+      "updates": {
+        "youtube": {
+          "subscribers": 36,
+          "publicWatchHours12Months": 31.6,
+          "views30Days": 28
+        },
+        "tiktok": {
+          "views30Days": 2000,
+          "profileVisits30Days": 15
+        },
+        "instagram": {
+          "views30Days": 114
+        },
+        "facebook": {
+          "views30Days": 114
+        },
+        "patreon": {
+          "members": 30
+        },
+        "royalroad": {
+          "followers": 55,
+          "reads": 2
+        }
+      },
+      "evidence": [
+        {
+          "platform": "youtube",
+          "fields": {
+            "subscribers": 36,
+            "publicWatchHours12Months": 31.6,
+            "views30Days": 28
+          },
+          "url": "https://studio.youtube.com/channel/UCBKiJENwFqvVIItR4WbMY6A/analytics/tab-overview/period-default",
+          "gatheredAt": "2026-06-28T15:37:53.185Z"
+        },
+        {
+          "platform": "tiktok",
+          "fields": {
+            "views30Days": 2000,
+            "profileVisits30Days": 15
+          },
+          "url": "https://www.tiktok.com/tiktokstudio/analytics",
+          "gatheredAt": "2026-06-28T15:37:55.711Z"
+        },
+        {
+          "platform": "instagram",
+          "fields": {
+            "views30Days": 114
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-28T15:37:58.229Z"
+        },
+        {
+          "platform": "facebook",
+          "fields": {
+            "views30Days": 114
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-28T15:38:00.736Z"
+        },
+        {
+          "platform": "patreon",
+          "fields": {
+            "members": 30
+          },
+          "url": "https://www.patreon.com/insights/membership",
+          "gatheredAt": "2026-06-28T15:38:06.056Z"
+        },
+        {
+          "platform": "royalroad",
+          "fields": {
+            "followers": 55,
+            "reads": 2
+          },
+          "url": "https://www.royalroad.com/author-dashboard",
+          "gatheredAt": "2026-06-28T15:38:08.570Z"
+        }
+      ]
+    },
+    {
+      "collectedAt": "2026-06-28 08:40:35",
+      "updates": {
+        "youtube": {
+          "subscribers": 36,
+          "publicWatchHours12Months": 31.6,
+          "views30Days": 28
+        },
+        "tiktok": {
+          "views30Days": 2000,
+          "profileVisits30Days": 15
+        },
+        "instagram": {
+          "views30Days": 114
+        },
+        "facebook": {
+          "views30Days": 114
+        },
+        "patreon": {
+          "members": 30
+        },
+        "royalroad": {
+          "followers": 55,
+          "reads": 2
+        }
+      },
+      "evidence": [
+        {
+          "platform": "youtube",
+          "fields": {
+            "subscribers": 36,
+            "publicWatchHours12Months": 31.6,
+            "views30Days": 28
+          },
+          "url": "https://studio.youtube.com/channel/UCBKiJENwFqvVIItR4WbMY6A/analytics/tab-overview/period-default",
+          "gatheredAt": "2026-06-28T15:39:50.326Z"
+        },
+        {
+          "platform": "tiktok",
+          "fields": {
+            "views30Days": 2000,
+            "profileVisits30Days": 15
+          },
+          "url": "https://www.tiktok.com/tiktokstudio/analytics",
+          "gatheredAt": "2026-06-28T15:39:52.844Z"
+        },
+        {
+          "platform": "instagram",
+          "fields": {
+            "views30Days": 114
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-28T15:39:55.363Z"
+        },
+        {
+          "platform": "facebook",
+          "fields": {
+            "views30Days": 114
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-28T15:39:57.879Z"
+        },
+        {
+          "platform": "patreon",
+          "fields": {
+            "members": 30
+          },
+          "url": "https://www.patreon.com/insights/membership",
+          "gatheredAt": "2026-06-28T15:40:03.135Z"
+        },
+        {
+          "platform": "royalroad",
+          "fields": {
+            "followers": 55,
+            "reads": 2
+          },
+          "url": "https://www.royalroad.com/author-dashboard",
+          "gatheredAt": "2026-06-28T15:40:05.650Z"
+        }
+      ]
+    },
+    {
+      "collectedAt": "2026-06-28 08:42:35",
+      "updates": {
+        "youtube": {
+          "subscribers": 36,
+          "publicWatchHours12Months": 31.6,
+          "views30Days": 254
+        },
+        "tiktok": {
+          "views30Days": 2000,
+          "profileVisits30Days": 15
+        },
+        "instagram": {
+          "views30Days": 114
+        },
+        "facebook": {
+          "views30Days": 114
+        },
+        "patreon": {
+          "members": 0
+        },
+        "royalroad": {
+          "followers": 55,
+          "reads": 2
+        }
+      },
+      "evidence": [
+        {
+          "platform": "youtube",
+          "fields": {
+            "subscribers": 36,
+            "publicWatchHours12Months": 31.6,
+            "views30Days": 254
+          },
+          "url": "https://studio.youtube.com/channel/UCBKiJENwFqvVIItR4WbMY6A/analytics/tab-overview/period-default",
+          "gatheredAt": "2026-06-28T15:39:50.326Z"
+        },
+        {
+          "platform": "tiktok",
+          "fields": {
+            "views30Days": 2000,
+            "profileVisits30Days": 15
+          },
+          "url": "https://www.tiktok.com/tiktokstudio/analytics",
+          "gatheredAt": "2026-06-28T15:39:52.844Z"
+        },
+        {
+          "platform": "instagram",
+          "fields": {
+            "views30Days": 114
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-28T15:39:55.363Z"
+        },
+        {
+          "platform": "facebook",
+          "fields": {
+            "views30Days": 114
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-28T15:39:57.879Z"
+        },
+        {
+          "platform": "patreon",
+          "fields": {
+            "members": 0
+          },
+          "url": "https://www.patreon.com/insights/membership",
+          "gatheredAt": "2026-06-28T15:40:03.135Z"
+        },
+        {
+          "platform": "royalroad",
+          "fields": {
+            "followers": 55,
+            "reads": 2
+          },
+          "url": "https://www.royalroad.com/author-dashboard",
+          "gatheredAt": "2026-06-28T15:40:05.650Z"
+        }
+      ]
+    },
+    {
+      "collectedAt": "2026-06-30 09:34:40",
+      "updates": {
+        "youtube": {
+          "subscribers": 1,
+          "publicWatchHours12Months": 31.6,
+          "views30Days": 286
+        },
+        "tiktok": {
+          "views30Days": 2100,
+          "profileVisits30Days": 19
+        },
+        "instagram": {
+          "views30Days": 135
+        },
+        "facebook": {
+          "views30Days": 135
+        },
+        "patreon": {
+          "members": 0
+        },
+        "royalroad": {
+          "followers": 55,
+          "reads": 2
+        }
+      },
+      "evidence": [
+        {
+          "platform": "youtube",
+          "fields": {
+            "subscribers": 1,
+            "publicWatchHours12Months": 31.6,
+            "views30Days": 286
+          },
+          "url": "https://studio.youtube.com/channel/UCBKiJENwFqvVIItR4WbMY6A/analytics/tab-overview/period-default",
+          "gatheredAt": "2026-06-30T16:34:20.304Z"
+        },
+        {
+          "platform": "tiktok",
+          "fields": {
+            "views30Days": 2100,
+            "profileVisits30Days": 19
+          },
+          "url": "https://www.tiktok.com/tiktokstudio/analytics",
+          "gatheredAt": "2026-06-30T16:34:23.404Z"
+        },
+        {
+          "platform": "instagram",
+          "fields": {
+            "views30Days": 135
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-30T16:34:29.216Z"
+        },
+        {
+          "platform": "facebook",
+          "fields": {
+            "views30Days": 135
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-06-30T16:34:31.722Z"
+        },
+        {
+          "platform": "patreon",
+          "fields": {
+            "members": 0
+          },
+          "url": "https://www.patreon.com/insights/membership",
+          "gatheredAt": "2026-06-30T16:34:37.654Z"
+        },
+        {
+          "platform": "royalroad",
+          "fields": {
+            "followers": 55,
+            "reads": 2
+          },
+          "url": "https://www.royalroad.com/author-dashboard",
+          "gatheredAt": "2026-06-30T16:34:40.814Z"
+        }
+      ]
+    },
+    {
+      "collectedAt": "2026-07-02 08:35:28",
+      "updates": {
+        "youtube": {
+          "subscribers": 1,
+          "publicWatchHours12Months": 32.9,
+          "views30Days": 303
+        },
+        "tiktok": {
+          "views30Days": 2100,
+          "profileVisits30Days": 24
+        },
+        "instagram": {
+          "views30Days": 161
+        },
+        "facebook": {
+          "views30Days": 161
+        },
+        "patreon": {
+          "members": 0
+        },
+        "royalroad": {
+          "followers": 55,
+          "reads": 2
+        }
+      },
+      "evidence": [
+        {
+          "platform": "youtube",
+          "fields": {
+            "subscribers": 1,
+            "publicWatchHours12Months": 32.9,
+            "views30Days": 303
+          },
+          "url": "https://studio.youtube.com/channel/UCBKiJENwFqvVIItR4WbMY6A/analytics/tab-overview/period-default",
+          "gatheredAt": "2026-07-02T15:35:16.281Z"
+        },
+        {
+          "platform": "tiktok",
+          "fields": {
+            "views30Days": 2100,
+            "profileVisits30Days": 24
+          },
+          "url": "https://www.tiktok.com/tiktokstudio/analytics",
+          "gatheredAt": "2026-07-02T15:35:18.802Z"
+        },
+        {
+          "platform": "instagram",
+          "fields": {
+            "views30Days": 161
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-07-02T15:35:21.321Z"
+        },
+        {
+          "platform": "facebook",
+          "fields": {
+            "views30Days": 161
+          },
+          "url": "https://business.facebook.com/latest/insights/overview/",
+          "gatheredAt": "2026-07-02T15:35:23.833Z"
+        },
+        {
+          "platform": "patreon",
+          "fields": {
+            "members": 0
+          },
+          "url": "https://www.patreon.com/insights/membership",
+          "gatheredAt": "2026-07-02T15:35:26.362Z"
+        },
+        {
+          "platform": "royalroad",
+          "fields": {
+            "followers": 55,
+            "reads": 2
+          },
+          "url": "https://www.royalroad.com/author-dashboard",
+          "gatheredAt": "2026-07-02T15:35:28.889Z"
+        }
+      ]
+    }
+  ]
+}
