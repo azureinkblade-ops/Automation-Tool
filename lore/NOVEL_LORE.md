@@ -69,3 +69,32 @@ All 4 novels are actively being written (not complete). My lane is support (prom
 - Test renders: `test_kael.png` (cyberpunk Kael), `test_kai_ha.png` (HA Kai v2 ★), `test_kael_en.png` (EN Kael v2), `test_jarek_sf.png` (SF Jarek v2), `test_liang_hp.png` (HP Liang v2)
 - Generator scripts: `tools/lora_training/gen_*.py`
 - Backed up at: `backup/2026-07-13` (commit f37abac)
+
+---
+
+## Working relationship with David (learned from our conversations)
+*David asked me to keep this lore file growing from our talks and to learn from how he asks and speaks. Started 2026-07-13; will keep adding.*
+
+**Communication style**
+- Short, declarative sentences. Go-ahead is often one word: "go", "push it", "create the lore file + skill".
+- Delegates judgment: says "use your judgement" — wants me to decide, not ask.
+- Collaborative "we" framing ("we can remove it once its gone", "we can't save anything else").
+- Corrects mistakes directly and promptly (Kael-EN vs Kai-HA mix-up; the python-kill confusion). Values accuracy on character identity.
+- Efficient pointers over pasted text: attaches docx files, drops GitHub URLs, lets me fetch.
+- Art feedback by picking a favorite ("v2 is better", "image 2 is great") rather than detailed critique — then expects me to regenerate stronger if elements are missing.
+
+**How he wants me to work**
+- Project start: listen/absorb context before acting (his stated preference).
+- Once directed: execute the FULL task end-to-end without re-confirming sub-steps.
+- Match existing formats — never invent a new style (verbatim: "use the style that is already present").
+- Verification matters: show real execution evidence, not claims. (Ad-hoc re-run > assertion.)
+- GPU/process safety: he survived a crash from orphaned foreground processes; wants one tracked process at a time, no foreground pip, kill stray procs before training.
+- Secret hygiene: rotate tokens (he reissues), never print/persist them; scrub by exact value not prefix.
+- Pragmatic about temporary promos (LAUNCH banner: "we can remove it once its gone").
+- Thinks about persistence/scalability: asked about expanding memory, mobile monitoring, remote status checks.
+
+**What he's building toward**
+- Maximize earnings from web novels via Azure Inkblade (persona) + Inkblade Author Studio (Gumroad tools).
+- Tooling > manual: prefers automated pipelines (app.py, LoRA training, scheduled backups).
+- Character/brand accuracy is high-value: Kael(EN) ≠ Kai(HA); don't let LoRA styles bleed across the 3 cultivation flavors.
+- Novels are a live, evolving product — promo copy and art are current-angle, revisable as the story develops.
