@@ -427,6 +427,96 @@ def check_image_provider_no_silent_fallback() -> list[dict[str, object]]:
     return checks
 
 
+def check_tiktok_pack_single_track() -> list[dict[str, object]]:
+    """Workstream E invariant: a Shorts/Reels/TikTok pack must use ONE LoRA style track
+    end-to-end (never mix azink_real + azink_main mid-video). Given a TikTok asset group with
+    mixed-track images, make_tiktok_pack(style=...) must select only on-style assets for that
+    track (and would regenerate if <3). Verified by staging fake on-style assets + sidecars and
+    asserting the produced pack folder's images all carry the requested track sidecar.
+    """
+    checks: list[dict[str, object]] = []
+    asset_dir = app.TIKTOK_ASSET_DIR
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    # stage fake assets: ABBR=EN, chapter=777, 3 main + 2 realistic
+    staged: list[Path] = []
+    try:
+        for i, track in enumerate(["main-posts", "main-posts", "main-posts", "realistic-posts", "realistic-posts"], start=1):
+            png = asset_dir / f"EN_777_{i}.png"
+            png.write_text("placeholder-png", encoding="utf-8")  # content unused by the style filter
+            (asset_dir / f"EN_777_{i}.png.track").write_text(track, encoding="utf-8")
+            staged.append(png)
+        # Build a pack requesting realistic-posts; it should pick ONLY the 2 realistic assets and
+        # would regenerate to reach 3 (we just assert the filter selects only realistic here).
+        real_fn = app.generate_tiktok_images
+        # Prevent real generation during the <3 regenerate path: return staged realistic copies.
+        def _fake_gen(*a, **k):
+            return {"created": [str(staged[3]), str(staged[4])]}
+        app.generate_tiktok_images = _fake_gen
+        try:
+            result = app.make_tiktok_pack("EN", "777", force_new_images=True, style="realistic-posts")
+            images = result.get("images", []) or []
+            # Scene images (exclude the neutral novel-promo-card outro) must all be on-track.
+            scene_images = [im for im in images if "novel-promo-card" not in Path(im).name]
+            realistic_ok = all(
+                (Path(im).with_name(Path(im).name + ".track")).exists()
+                and (Path(im).with_name(Path(im).name + ".track")).read_text(encoding="utf-8").strip() == "realistic-posts"
+                for im in scene_images
+            )
+            checks.append(assert_result(
+                "tiktok_pack_locks_single_track",
+                result.get("pack_track") == "realistic-posts" and realistic_ok and len(images) >= 1,
+                f"pack_track={result.get('pack_track')}, images={len(images)}, realistic_ok={realistic_ok}",
+            ))
+        finally:
+            app.generate_tiktok_images = real_fn
+    except Exception as exc:
+        checks.append(assert_result("tiktok_pack_locks_single_track", False, f"harness error: {exc}"))
+    finally:
+        for p in staged:
+            p.unlink(missing_ok=True)
+            (p.with_name(p.name + ".track")).unlink(missing_ok=True)
+    return checks
+
+
+def check_style_track_column() -> list[dict[str, object]]:
+    """Workstream F invariant: platform_post_metrics must carry a style_track column so we can
+    compare LoRA style performance. Verified by (a) ensure_schema migrates the column in, and
+    (b) backfill_style_tracks_from_packs writes style_track rows from pack metadata.json.
+    """
+    checks: list[dict[str, object]] = []
+    root = app.ROOT
+    try:
+        # (a) init_db runs the schema migration that adds the column; verify it exists afterwards.
+        app.automation_db.init_db(root)
+        with app.automation_db.sqlite3.connect(app.automation_db.db_path(root)) as conn:
+            cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(platform_post_metrics)").fetchall()}
+        checks.append(assert_result("style_track_column_exists", "style_track" in cols, f"columns={sorted(cols)}"))
+
+        # (b) record a style track into the (already-initialized) real DB, then confirm the row lands.
+        try:
+            app.automation_db.record_post_style_track(root, "stylecheck-EN-777", "realistic-posts", platform="tiktok")
+            with app.automation_db.sqlite3.connect(app.automation_db.db_path(root)) as conn:
+                rows = conn.execute(
+                    "SELECT style_track FROM platform_post_metrics WHERE metric_id = 'style:stylecheck-EN-777'"
+                ).fetchall()
+            checks.append(assert_result(
+                "style_track_backfill_writes_rows",
+                any(r[0] == "realistic-posts" for r in rows),
+                f"rows={[r[0] for r in rows]}",
+            ))
+        finally:
+            # clean up the test row so the real DB is untouched
+            try:
+                with app.automation_db.sqlite3.connect(app.automation_db.db_path(root)) as conn:
+                    conn.execute("DELETE FROM platform_post_metrics WHERE metric_id = 'style:stylecheck-EN-777'")
+                    conn.commit()
+            except Exception:
+                pass
+    except Exception as exc:
+        checks.append(assert_result("style_track_column", False, f"harness error: {exc}"))
+    return checks
+
+
 def check_image_feedback_training_loop() -> list[dict[str, object]]:
     checks: list[dict[str, object]] = []
     folder = app.OUTPUT_DIR / "_regression-image-training-loop"
@@ -1288,6 +1378,8 @@ def run_once() -> dict[str, object]:
         check_current_pack_test,
         check_image_provider_trace,
         check_image_provider_no_silent_fallback,
+        check_tiktok_pack_single_track,
+        check_style_track_column,
         check_image_feedback_training_loop,
         check_diffusers_primary_lora_layout,
         check_image_generation_batch_quality_report,

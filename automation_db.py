@@ -21,7 +21,7 @@ except Exception:  # pragma: no cover - app can still run without pydantic
 
 
 DB_FILENAME = "automation_state.db"
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 _LOCK = threading.RLock()
 
 DEFAULT_NOVELS = {
@@ -549,7 +549,8 @@ def init_db(root: Path) -> Path:
                     engagement_rate REAL,
                     result TEXT,
                     notes TEXT,
-                    payload_json TEXT NOT NULL DEFAULT '{}'
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    style_track TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_platform_post_metrics_lookup
@@ -627,6 +628,13 @@ def init_db(root: Path) -> Path:
                         seen.add(event_hash)
                         conn.execute("UPDATE recovery_events SET event_hash=? WHERE id=?", (event_hash, row["id"]))
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_recovery_events_hash ON recovery_events(event_hash)")
+            # F: capture which LoRA style track a post used, so we can compare style performance.
+            metrics_columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(platform_post_metrics)").fetchall()
+            }
+            if "style_track" not in metrics_columns:
+                conn.execute("ALTER TABLE platform_post_metrics ADD COLUMN style_track TEXT")
             now = utc_now_text()
             conn.execute(
                 """
@@ -638,6 +646,47 @@ def init_db(root: Path) -> Path:
             )
             conn.commit()
     return db_path(root)
+
+
+def record_post_style_track(root: Path, post_id: str, style_track: str, platform: str | None = None) -> None:
+    """F: persist which LoRA style track a post used, so style performance can be compared later.
+    Writes into platform_post_metrics (one row per post, window='style') if not already present.
+    """
+    if not style_track:
+        return
+    with _LOCK, sqlite3.connect(db_path(root)) as conn:
+        conn.execute(
+            """
+            INSERT INTO platform_post_metrics
+                (metric_id, post_id, platform, window, source, collected_at, style_track, payload_json)
+            VALUES (?, ?, ?, 'style', 'pack_metadata', ?, ?, ?)
+            ON CONFLICT(metric_id) DO UPDATE SET style_track=excluded.style_track
+            """,
+            (f"style:{post_id}", post_id, platform, utc_now_text(), style_track, json.dumps({"style_track": style_track})),
+        )
+        conn.commit()
+
+
+def backfill_style_tracks_from_packs(root: Path) -> int:
+    """F: scan tiktok-posts/*/metadata.json for pack_track and write style_track rows.
+    Returns the number of packs backfilled. Idempotent (uses ON CONFLICT by metric_id).
+    """
+    count = 0
+    tiktok_dir = root / "tiktok-posts"
+    if not tiktok_dir.exists():
+        return 0
+    for meta in tiktok_dir.glob("*/metadata.json"):
+        try:
+            data = json.loads(meta.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        pack_track = data.get("pack_track") or data.get("style_track")
+        if not pack_track:
+            continue
+        post_id = f"{data.get('abbr','')}-{data.get('chapter','')}-{meta.parent.name}"
+        record_post_style_track(root, post_id, pack_track, platform="tiktok")
+        count += 1
+    return count
 
 
 def ensure_default_novels(
@@ -2208,8 +2257,8 @@ def list_release_jobs(root: Path, statuses: list[str] | None = None, limit: int 
                 f"""
                 SELECT * FROM release_automation_jobs
                 {where}
-                ORDER BY scheduled_for, novel_abbr, chapter_number,
-                    CASE stage WHEN 'inner_disciple' THEN 0 WHEN 'path_initiate' THEN 1 ELSE 2 END
+                ORDER BY CASE stage WHEN 'inner_disciple' THEN 0 WHEN 'path_initiate' THEN 1 ELSE 2 END,
+                    scheduled_for, novel_abbr, chapter_number
                 LIMIT ?
                 """,
                 params,
@@ -2255,8 +2304,17 @@ def claim_next_release_job(root: Path, worker_id: str) -> dict[str, Any] | None:
                         OR (release_automation_jobs.stage='royal_road' AND prerequisite.stage IN ('inner_disciple','path_initiate'))
                       )
                   )
-                ORDER BY scheduled_for, novel_abbr, chapter_number,
-                    CASE stage WHEN 'inner_disciple' THEN 0 WHEN 'path_initiate' THEN 1 ELSE 2 END
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM release_automation_jobs AS phase_prerequisite
+                    WHERE phase_prerequisite.status NOT IN ('verified','cancelled')
+                      AND (
+                        (release_automation_jobs.stage='path_initiate' AND phase_prerequisite.stage='inner_disciple')
+                        OR (release_automation_jobs.stage='royal_road' AND phase_prerequisite.stage IN ('inner_disciple','path_initiate'))
+                      )
+                  )
+                ORDER BY CASE stage WHEN 'inner_disciple' THEN 0 WHEN 'path_initiate' THEN 1 ELSE 2 END,
+                    scheduled_for, novel_abbr, chapter_number
                 LIMIT 1
                 """,
                 (now,),
