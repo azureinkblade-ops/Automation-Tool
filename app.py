@@ -38,6 +38,16 @@ import automation_db
 import growth_scheduler
 import release_planner
 
+# Workstream B: central limiter for heavy subprocess spawns (diffusers / ffmpeg).
+try:
+    import tools.concurrency as _concurrency
+except Exception:  # fallback if tools/ isn't importable as a package
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).resolve().parent / "tools"))
+    import concurrency as _concurrency  # type: ignore
+HeavyJobLimiter = _concurrency.HeavyJobLimiter
+
 
 # --- Diffusers / local image pipeline env self-defense ---
 # A parent shell can leak PYTHONPATH/PYTHONHOME from another venv (e.g. an agent
@@ -7990,7 +8000,8 @@ def create_local_stable_diffusion_image(
     if input_image and input_image.exists():
         command.extend(["--input-image", str(input_image), "--strength", str(strength if strength is not None else os.environ.get("LOCAL_SD_IMG2IMG_STRENGTH", "0.52"))])
     timeout = int(status.get("timeoutSeconds") or 360)
-    completed = subprocess.run(command, cwd=str(ROOT), capture_output=True, text=True, timeout=timeout)
+    with HeavyJobLimiter():
+        completed = subprocess.run(command, cwd=str(ROOT), capture_output=True, text=True, timeout=timeout)
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip()
         raise RuntimeError(detail[-800:] or f"Local Stable Diffusion exited with code {completed.returncode}.")
@@ -33556,14 +33567,15 @@ def run_generated_video_builder(folder: Path, script_name: str, output_name: str
         return {"script": script_name, "output": output_name, "created": False, "message": "Builder file was not created."}
     started = time.strftime("%Y-%m-%d %H:%M:%S")
     try:
-        run = subprocess.run(
-            [sys.executable, str(script)],
-            cwd=str(folder),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
+        with HeavyJobLimiter():
+            run = subprocess.run(
+                [sys.executable, str(script)],
+                cwd=str(folder),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
         message = (run.stdout + "\n" + run.stderr).strip()
         if output.suffix.lower() in VIDEO_EXTENSIONS:
             created, duration = wait_for_video_ready(output, 0.0, 30.0)
