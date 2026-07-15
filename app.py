@@ -6370,11 +6370,19 @@ def rebuild_deep_tiktok_video_from_metadata(target: Path, metadata: dict[str, An
     overlays = list(metadata.get("video_overlays") or [])
     if len(overlays) < len(images):
         overlays.extend([str(metadata.get("title") or "Deep chapter scene")] * (len(images) - len(overlays)))
-    sound = Path(str(metadata.get("sound") or ""))
-    if not sound.exists():
+    sound_value = str(metadata.get("sound") or "").strip()
+    sound = Path(sound_value).resolve() if sound_value else None
+    if not sound or not sound.is_file() or sound.suffix.lower() not in AUDIO_EXTENSIONS:
         sound = next((path for path in target.iterdir() if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS), None)
-    if not sound or not sound.exists():
+    if not sound:
+        sound_source = choose_rotating_weekly_promo_audio()
+        if sound_source and sound_source.is_file() and sound_source.suffix.lower() in AUDIO_EXTENSIONS:
+            sound = target / sound_source.name
+            if sound.resolve() != sound_source.resolve():
+                shutil.copy2(sound_source, sound)
+    if not sound or not sound.is_file():
         raise RuntimeError("No audio file is available for this deep TikTok.")
+    metadata["sound"] = str(sound)
     draw_overlays = not (
         bool(metadata.get("browser_images_have_text"))
         or str(metadata.get("overlay_mode") or "").strip().lower() == "image_embedded_text"
@@ -15265,6 +15273,12 @@ def list_tiktok_assets() -> dict[str, Any]:
             "chapter": chapter,
             "count": len(paths),
             "files": [str(path) for path in paths],
+            # E1: surface each image's recorded style track (sidecar) so packs can lock one style.
+            "tracks": [
+                (path.with_name(f"{path.name}.track").read_text(encoding="utf-8").strip()
+                 if (path.with_name(f"{path.name}.track")).exists() else "")
+                for path in paths
+            ],
         }
         for (abbr, chapter), paths in sorted(groups.items(), key=lambda item: (item[0][0], int(item[0][1])))
     ]
@@ -15382,7 +15396,8 @@ def tiktok_chapter_teaser_overlays(
     return candidates[:3] + [final]
 
 
-def prepare_tiktok_outro_image(folder: Path, abbr: str, novel: str, chapter: str | int) -> str:
+def prepare_tiktok_outro_image(folder: Path, abbr: str, novel: str, chapter: str | int, style: str = "main-posts") -> str:
+    pack_track = style if style in LORA_STYLE_TRACKS else "main-posts"
     source = choose_rotating_daily_promo_image(abbr)
     target = folder / "novel-promo-card.png"
     if source and source.exists():
@@ -15392,6 +15407,8 @@ def prepare_tiktok_outro_image(folder: Path, abbr: str, novel: str, chapter: str
         f"Vertical 9:16 bold fantasy web novel promotional background for {novel} chapter {chapter}. "
         "Strong central composition, dramatic lighting, no text, no typography, no logo."
     )
+    # Keep the outro on the same single pack track as the rest of the video (E).
+    prompt = enhance_local_sd_prompt(prompt, orientation="vertical", lora_track=pack_track)
     create_prompt_fallback_image(prompt, target, 4, abbr, allow_banked=False, fresh=True)
     return str(target)
 
@@ -15402,7 +15419,12 @@ def make_tiktok_pack(
     force_new_images: bool = False,
     visual_prompt: str = "",
     chapter_text: str = "",
+    style: str = "main-posts",
 ) -> dict[str, Any]:
+    # Single-style lock (Workstream E): pick ONE track for the whole pack. Default main-posts;
+    # caller may request realistic-posts / comic-style. We filter the asset group to that track and
+    # regenerate if we don't have >=3 on-style images, so the video never mixes styles.
+    pack_track = style if style in LORA_STYLE_TRACKS else "main-posts"
     assets = list_tiktok_assets()
     groups = [group for group in assets["imageGroups"] if group["abbr"] == abbr]
     if chapter:
@@ -15410,6 +15432,18 @@ def make_tiktok_pack(
     if not groups:
         raise RuntimeError(f"No TikTok image group found for {abbr}{' chapter ' + str(chapter) if chapter else ''}.")
     group = groups[-1] if not chapter else groups[0]
+    # Filter to on-style assets using the recorded track sidecars (E1).
+    files = group.get("files", [])
+    tracks = group.get("tracks", [""] * len(files))
+    on_style = [f for f, t in zip(files, tracks) if t == pack_track]
+    if len(on_style) < 3:
+        # Not enough on-style assets: regenerate this chapter's images in pack_track (generate-missing).
+        generated = generate_tiktok_images(
+            abbr, str(group["chapter"]), visual_prompt,
+            force_new_images=True, chapter_text=chapter_text, style=pack_track,
+        )
+        on_style = generated.get("created", [])[:3] or on_style
+    group = {**group, "files": on_style[:3]}
     sounds = assets["sounds"]
     if not sounds:
         raise RuntimeError("No TikTok sound files were found.")
@@ -15432,9 +15466,10 @@ def make_tiktok_pack(
         sound_path = folder / Path(sound_value).name if sound_value else None
         overlays = tiktok_chapter_teaser_overlays(abbr, group["chapter"], novel, chapter_text=chapter_text, fallback_text=visual_prompt or reused["caption"])
         if len(image_files) < 4:
-            image_files = image_files[:3] + [prepare_tiktok_outro_image(folder, abbr, novel, group["chapter"])]
+            image_files = image_files[:3] + [prepare_tiktok_outro_image(folder, abbr, novel, group["chapter"], style=pack_track)]
             reused["images"] = image_files
         reused["video_overlays"] = overlays
+        reused["pack_track"] = pack_track
         if len(image_files) >= 3 and sound_path and sound_path.exists():
             write_tiktok_video_helper(folder, image_files[:4], sound_path, overlays=overlays)
         (folder / "metadata.json").write_text(json.dumps(reused, indent=2), encoding="utf-8")
@@ -15459,6 +15494,10 @@ def make_tiktok_pack(
         source = Path(image)
         target = folder / source.name
         shutil.copy2(source, target)
+        # Carry the style-track sidecar into the pack folder so the pack is self-describing (E/F).
+        sidecar = source.with_name(f"{source.name}.track")
+        if sidecar.exists():
+            shutil.copy2(sidecar, folder / sidecar.name)
         copied_images.append(str(target))
     sound_source = Path(sound["path"])
     sound_target = folder / sound_source.name
@@ -15467,10 +15506,11 @@ def make_tiktok_pack(
     caption = tiktok_caption(novel, group["chapter"])
     reel_caption = instagram_reel_caption(novel, group["chapter"])
     shorts = youtube_shorts_metadata(novel, group["chapter"])
-    copied_images.append(prepare_tiktok_outro_image(folder, abbr, novel, group["chapter"]))
+    copied_images.append(prepare_tiktok_outro_image(folder, abbr, novel, group["chapter"], style=pack_track))
     overlays = tiktok_chapter_teaser_overlays(abbr, group["chapter"], novel, chapter_text=chapter_text, fallback_text=visual_prompt or caption)
     payload = {
         "abbr": abbr,
+        "pack_track": pack_track,
         "novel": novel,
         "chapter": group["chapter"],
         "images": copied_images,
@@ -15514,7 +15554,11 @@ def generate_tiktok_images(
     force_new_images: bool = False,
     chapter_text: str = "",
     chapter_title: str = "",
+    style: str = "main-posts",
 ) -> dict[str, Any]:
+    # Single-style lock (Workstream E): every frame in a Shorts/Reels/TikTok pack must use
+    # ONE LoRA track end-to-end. Default main-posts; caller may pass realistic-posts/comic-style.
+    pack_track = style if style in LORA_STYLE_TRACKS else "main-posts"
     TIKTOK_ASSET_DIR.mkdir(parents=True, exist_ok=True)
     novel = NOVEL_NAMES.get(abbr, abbr)
     existing_pack = [] if force_new_images else chapter_image_pack(abbr, chapter, f"{novel} Chapter {chapter}")
@@ -15558,6 +15602,8 @@ def generate_tiktok_images(
             f"Vertical TikTok promo image {index} for {novel} chapter {chapter}. "
             f"{scene_prompt}. Cinematic, dramatic, readable composition, no text, 9:16 poster art."
         )
+        # Bake the single pack_track into the prompt so generation stays on-style (E).
+        prompt = enhance_local_sd_prompt(prompt, orientation="vertical", lora_track=pack_track)
         image_prompts.append(prompt)
         image_source = "openai"
         try:
@@ -15602,6 +15648,12 @@ def generate_tiktok_images(
         created.append(str(target))
         image_sources.append(image_source)
         archive_generated_promo_image(target, abbr, f"{novel} Chapter {chapter}", f"tiktok-{index}")
+        # E1: record the pack track as a sidecar so list_tiktok_assets / make_tiktok_pack can
+        # lock a single style per video even when reusing pre-generated assets.
+        try:
+            target.with_name(f"{target.name}.track").write_text(pack_track, encoding="utf-8")
+        except Exception:
+            pass
     return {
         "created": created,
         "abbr": abbr,
@@ -15619,6 +15671,7 @@ def make_or_generate_tiktok_pack(
     force_new_images: bool = False,
     chapter_text: str = "",
     chapter_title: str = "",
+    style: str = "main-posts",
 ) -> dict[str, Any]:
     if not abbr or not str(chapter).strip():
         raise RuntimeError("Choose a novel and enter a chapter number for TikTok.")
@@ -15635,6 +15688,7 @@ def make_or_generate_tiktok_pack(
             force_new_images=True,
             chapter_text=chapter_text,
             chapter_title=chapter_title,
+            style=style,
         )
     result = make_tiktok_pack(
         abbr,
@@ -15642,6 +15696,7 @@ def make_or_generate_tiktok_pack(
         force_new_images=should_generate,
         visual_prompt=visual_prompt,
         chapter_text=chapter_text,
+        style=style,
     )
     if generation:
         result["image_sources"] = generation.get("image_sources", [])
@@ -15731,6 +15786,9 @@ def write_animated_reel_builder_script(
     draw_overlays: bool = True,
     deep: bool = False,
 ) -> Path:
+    sound = Path(sound).resolve()
+    if not sound.is_file() or sound.suffix.lower() not in AUDIO_EXTENSIONS:
+        raise RuntimeError("A valid audio file is required before building a TikTok/Reel video.")
     ffmpeg_exe = find_ffmpeg_executable()
     script = folder / "make_tiktok_video.py"
     slide_duration = max(5 if not deep else 7, math.ceil(target_duration / max(1, len(images))))
@@ -15741,7 +15799,6 @@ import subprocess
 import wave
 import audioop
 from PIL import Image
-import numpy as np
 
 folder = Path(__file__).resolve().parent
 images = {[Path(image).name for image in images]!r}
@@ -15850,6 +15907,7 @@ for index, image in enumerate(images, start=1):
         clean_images.append(image)
 
 def render_with_moviepy():
+    import numpy as np
     from moviepy import VideoClip, AudioFileClip, concatenate_videoclips
     from moviepy.audio.fx import AudioLoop
     clips = []
@@ -16302,13 +16360,14 @@ def complete_random_deep_tiktok_selection(selection: dict[str, Any], success: bo
         return state
 
 
-def make_random_deep_tiktok_pack(force_new_images: bool = True) -> dict[str, Any]:
+def make_random_deep_tiktok_pack(force_new_images: bool = True, style: str = "main-posts") -> dict[str, Any]:
     selection = select_random_deep_tiktok_chapter()
     try:
         payload = make_deep_tiktok_pack(
             str(selection["abbr"]),
             str(selection["chapter"]),
             force_new_images=force_new_images,
+            style=style,
         )
         success = bool(payload.get("video")) and bool(payload.get("quality_gate", {}).get("ok")) and 60 <= float(payload.get("duration") or 0) <= 75
         state = complete_random_deep_tiktok_selection(
@@ -16333,7 +16392,8 @@ def make_random_deep_tiktok_pack(force_new_images: bool = True) -> dict[str, Any
         raise
 
 
-def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True) -> dict[str, Any]:
+def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True, style: str = "main-posts") -> dict[str, Any]:
+    pack_track = style if style in LORA_STYLE_TRACKS else "main-posts"
     abbr = story_key(abbr)
     chapter = str(chapter or "").strip()
     if not abbr or not chapter:
@@ -16367,10 +16427,12 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
             "no text, no typography, no logo, avoid a generic landscape unless the scene requires it."
         )
         prompts.append(prompt)
+        # Bake the single pack_track into the prompt so deep scenes stay on-style (E).
+        baked = enhance_local_sd_prompt(prompt, orientation="vertical", lora_track=pack_track)
         source = "openai"
         if openai_images_enabled:
             try:
-                create_openai_image(prompt, target)
+                create_openai_image(baked, target)
                 fingerprint = image_file_fingerprint(target)
                 if fingerprint in used_hashes:
                     raise RuntimeError("Generated image duplicated an earlier scene.")
@@ -16388,7 +16450,7 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
         images.append(str(target))
         sources.append(source)
         archive_generated_promo_image(target, abbr, title, f"deep-tiktok-{index}")
-    images.append(prepare_tiktok_outro_image(folder, abbr, novel, chapter))
+    images.append(prepare_tiktok_outro_image(folder, abbr, novel, chapter, style=pack_track))
     sources.append("rotating-novel-card")
     overlays = [reel_overlay_text(moment, limit=58) for moment in moments]
     overlays.append(reel_overlay_text(f"READ {novel} ON ROYAL ROAD", limit=62))
@@ -16408,6 +16470,7 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
         "abbr": abbr,
         "novel": novel,
         "chapter": chapter,
+        "pack_track": pack_track,
         "title": title,
         "source_hash": source_hash,
         "images": images,
@@ -17907,6 +17970,36 @@ def build_release_automation_backlog(*, include_prepared: bool = False) -> dict[
     }
 
 
+def summarize_release_stage_progress(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    stage_labels = {
+        "inner_disciple": "Inner Disciple",
+        "path_initiate": "Path Initiate",
+        "royal_road": "Royal Road",
+    }
+    progress: list[dict[str, Any]] = []
+    for stage, label in stage_labels.items():
+        stage_jobs = [job for job in jobs if str(job.get("stage") or "") == stage]
+        counts: dict[str, int] = {}
+        for job in stage_jobs:
+            status = str(job.get("status") or "unknown")
+            counts[status] = counts.get(status, 0) + 1
+        verified = [job for job in stage_jobs if str(job.get("status") or "") == "verified"]
+        verified.sort(
+            key=lambda job: str(job.get("verifiedAt") or job.get("completedAt") or job.get("updatedAt") or ""),
+            reverse=True,
+        )
+        progress.append({
+            "stage": stage,
+            "label": label,
+            "counts": counts,
+            "total": len(stage_jobs),
+            "active": next((job for job in stage_jobs if str(job.get("status") or "") == "running"), None),
+            "next": next((job for job in stage_jobs if str(job.get("status") or "") in {"pending", "retrying"}), None),
+            "lastVerified": verified[0] if verified else None,
+        })
+    return progress
+
+
 def release_automation_status() -> dict[str, Any]:
     jobs = automation_db.list_release_jobs(ROOT, limit=5000)
     counts: dict[str, int] = {}
@@ -17934,6 +18027,7 @@ def release_automation_status() -> dict[str, Any]:
         "next": next((job for job in jobs if job.get("status") in {"pending", "retrying"}), None),
         "failures": failures[:25],
         "jobs": jobs[:100],
+        "stageProgress": summarize_release_stage_progress(jobs),
         "runtime": runtime,
     }
 
@@ -18029,6 +18123,54 @@ def _verified_royal_road_result(result_path: Path) -> dict[str, Any]:
     if not submit.get("verified"):
         raise RuntimeError("Royal Road submission outcome is uncertain and requires review before retrying.")
     return row
+
+
+def reconcile_completed_release_job_results() -> dict[str, Any]:
+    reconciled: list[str] = []
+    errors: list[dict[str, str]] = []
+    running_jobs = automation_db.list_release_jobs(ROOT, statuses=["running"], limit=5000)
+    for job in running_jobs:
+        job_id = str(job.get("jobId") or "")
+        stage = str(job.get("stage") or "")
+        abbr = story_key(str(job.get("abbr") or ""))
+        chapter = int(job.get("chapter") or 0)
+        assignment_key = str(job.get("assignmentKey") or job.get("key") or "")
+        if not job_id or not assignment_key or not abbr or chapter <= 0:
+            continue
+        result_path = Path(str(job.get("resultPath") or "")) if job.get("resultPath") else None
+        if not result_path or not result_path.exists():
+            folder_name = f"royal-road-{abbr.lower()}-{chapter}" if stage == "royal_road" else f"release-{abbr.lower()}-{chapter}"
+            candidate = ROOT / "social-posts" / folder_name / f"release-automation-{job_id}-result.json"
+            result_path = candidate if candidate.exists() else None
+        if not result_path:
+            continue
+        try:
+            if stage == "royal_road":
+                row = _verified_royal_road_result(result_path)
+                submit = row.get("submitResult") if isinstance(row.get("submitResult"), dict) else {}
+                dashboard = submit.get("dashboardVerification") if isinstance(submit.get("dashboardVerification"), dict) else {}
+                remote_url = str(dashboard.get("editUrl") or submit.get("pageUrl") or row.get("url") or "")
+            else:
+                row = _verified_patreon_result(result_path, stage)
+                remote_url = str(row.get("pageUrl") or "")
+            completed = mark_chapter_release_stage_complete(assignment_key, stage)
+            if not completed.get("completed") and not completed.get("alreadyCompleted"):
+                raise RuntimeError(str(completed.get("message") or "Release ledger completion gate failed."))
+            automation_db.update_release_job(
+                ROOT,
+                job_id,
+                "verified",
+                remoteUrl=remote_url,
+                payloadUpdates={
+                    "resultPath": str(result_path),
+                    "completion": completed,
+                    "verificationSource": "reconciled-browser-result",
+                },
+            )
+            reconciled.append(job_id)
+        except Exception as exc:
+            errors.append({"jobId": job_id, "error": str(exc)})
+    return {"reconciled": reconciled, "errors": errors}
 
 
 def run_release_automation_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -18306,6 +18448,11 @@ def start_release_automation(max_jobs: int = 0) -> dict[str, Any]:
     with RELEASE_AUTOMATION_LOCK:
         if RELEASE_AUTOMATION_THREAD and RELEASE_AUTOMATION_THREAD.is_alive():
             return {"ok": True, "alreadyRunning": True, "status": release_automation_status()}
+        reconciliation = reconcile_completed_release_job_results()
+        automation_db.recover_stale_release_jobs(
+            ROOT,
+            (datetime.now() + timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S"),
+        )
         backlog = build_release_automation_backlog(include_prepared=True)
         preflight = release_automation_preflight()
         if not preflight.get("ready"):
@@ -18314,6 +18461,7 @@ def start_release_automation(max_jobs: int = 0) -> dict[str, Any]:
                 "started": False,
                 "preflight": preflight,
                 "backlog": backlog,
+                "reconciliation": reconciliation,
                 "status": release_automation_status(),
                 "message": "Release automation did not start because its browser preflight failed.",
             }
@@ -18324,6 +18472,7 @@ def start_release_automation(max_jobs: int = 0) -> dict[str, Any]:
                 "alreadyComplete": True,
                 "preflight": preflight,
                 "backlog": backlog,
+                "reconciliation": reconciliation,
                 "status": release_automation_status(),
                 "message": "All release jobs are already complete.",
             }
@@ -18337,7 +18486,7 @@ def start_release_automation(max_jobs: int = 0) -> dict[str, Any]:
             name="release-automation",
         )
         RELEASE_AUTOMATION_THREAD.start()
-    return {"ok": True, "started": True, "preflight": preflight, "backlog": backlog, "status": release_automation_status()}
+    return {"ok": True, "started": True, "preflight": preflight, "backlog": backlog, "reconciliation": reconciliation, "status": release_automation_status()}
 
 
 def control_release_automation(action: str) -> dict[str, Any]:
@@ -19704,9 +19853,9 @@ def parse_story_hook_output(raw_text: str, fallback: dict[str, Any]) -> dict[str
     story = normalize_story_body_text(str(data.get("story") or data.get("script") or ""))
     if len(story.split()) < 300:
         raise RuntimeError("ChatGPT returned a story hook that was too short to build into a full video.")
-    description = str(data.get("description") or youtube_description_from_text(title, story, abbr, "web novel, fantasy story, reddit style story"))
     tags_value = data.get("tags")
     tags = ", ".join(str(item).strip() for item in tags_value if str(item).strip()) if isinstance(tags_value, list) else str(tags_value or "web novel, fantasy story, progression fantasy")
+    description = story_hook_youtube_description(title, story, abbr, tags)
     return {
         "abbr": abbr,
         "novel": novel,
@@ -19725,8 +19874,13 @@ def build_story_hook_video_files(title: str, story_text: str, abbr: str = "", an
     metadata = youtube_metadata_from_text(title, story_text, abbr)
     metadata["title"] = clean_youtube_chapter_title(title or metadata["title"], abbr) or metadata["title"]
     if metadata_extra:
-        metadata["description"] = str(metadata_extra.get("description") or metadata.get("description") or "")
         metadata["tags"] = str(metadata_extra.get("tags") or metadata.get("tags") or "")
+    metadata["description"] = story_hook_youtube_description(
+        metadata["title"],
+        story_text,
+        abbr,
+        str(metadata.get("tags") or ""),
+    )
     hash_value = content_hash(story_text)
     folder = STORY_HOOK_OUTPUT_DIR / f"{(abbr or 'ai').lower()}-{slugify(metadata['title'])}-{hash_value[:8]}"
     reused = reusable_pack_result(folder, hash_value, ["story-script.txt", "build_youtube_video.py"])
@@ -22209,6 +22363,16 @@ async function submitPatreonDraft(page, verification) {{
   const body = await page.locator('body').innerText().catch(() => '');
   const successText = /scheduled|published|your post is live|post scheduled/i.test(body);
   const leftEditor = !(afterUrl.includes('/edit') || afterUrl.includes('/posts/new'));
+  if (successText || leftEditor || afterUrl !== beforeUrl) {{
+    const successDialog = page.getByRole('dialog').last();
+    if (await successDialog.count().catch(() => 0)) {{
+      const dismiss = successDialog.getByRole('button', {{ name: /^(okay|ok|done|close)$/i }}).last();
+      if (await dismiss.count().catch(() => 0)) {{
+        await dismiss.click({{ timeout: 5000 }}).catch(() => null);
+        await page.waitForTimeout(500);
+      }}
+    }}
+  }}
   return {{
     submitted: true,
     verified: Boolean(successText || leftEditor || afterUrl !== beforeUrl),
@@ -22244,10 +22408,14 @@ async function findReusablePatreonPage(context, editUrl) {{
   const results = [];
   for (const draft of payloads) {{
     let page = null;
+    let createdPage = false;
     if (draft.edit_url) {{
       page = await findReusablePatreonPage(context, draft.edit_url);
     }}
-    if (!page) page = await context.newPage();
+    if (!page) {{
+      page = await context.newPage();
+      createdPage = true;
+    }}
     const row = {{ stage: draft.tier_stage, title: draft.title, publish_date: draft.publish_date, ok: false }};
     try {{
       const targetUrl = draft.edit_url || 'https://www.patreon.com/posts/new';
@@ -22269,6 +22437,9 @@ async function findReusablePatreonPage(context, editUrl) {{
     }}
     results.push(row);
     save(results);
+    if (draft.auto_submit && row.ok && createdPage) {{
+      await page.close().catch(() => null);
+    }}
   }}
   save(results);
   process.exit(0);
@@ -26246,9 +26417,11 @@ def social_post_preview(
     platforms: list[str] | None = None,
 ) -> dict[str, Any]:
     post_folder = Path(folder).resolve()
-    allowed_roots = [SOCIAL_OUTPUT_DIR.resolve(), EXPERIMENT_OUTPUT_DIR.resolve()]
+    campaign_root = OUTPUT_DIR.resolve()
+    allowed_roots = [campaign_root, SOCIAL_OUTPUT_DIR.resolve(), EXPERIMENT_OUTPUT_DIR.resolve()]
     if not any(str(post_folder).startswith(str(root)) for root in allowed_roots):
         raise RuntimeError("Social post folder is not valid.")
+    is_campaign = str(post_folder).startswith(str(campaign_root))
     metadata_path = post_folder / "metadata.json"
     if not metadata_path.exists():
         raise RuntimeError("This folder does not contain social post metadata.")
@@ -26349,22 +26522,26 @@ def social_post_preview(
                 "media_path": str(image_path) if image_path.exists() else "",
             }
         )
-    cockpit = write_manual_posts_cockpit(post_folder, [
-        {
-            **spec,
-            "text_path": str(post_folder / f"{spec['key']}.txt"),
-            "file": f"{spec['key']}.txt",
-            "media": image_path.name if image_path.exists() else "",
-        }
-        for spec in specs
-    ])
-    script = write_manual_posts_playwright_script(post_folder, [
-        {
-            **spec,
-            "text_path": str(post_folder / f"{spec['key']}.txt"),
-        }
-        for spec in specs
-    ])
+    if is_campaign:
+        specs = [
+            spec
+            for spec in manual_campaign_platform_specs(post_folder)
+            if wants(str(spec.get("key") or ""))
+        ]
+    prepared_specs = []
+    for spec in specs:
+        text_path = str(spec.get("text_path") or post_folder / f"{spec['key']}.txt")
+        media_path = Path(str(spec.get("media_path") or ""))
+        prepared_specs.append(
+            {
+                **spec,
+                "text_path": text_path,
+                "file": Path(text_path).name,
+                "media": media_path.name if media_path.is_file() else "",
+            }
+        )
+    cockpit = write_manual_posts_cockpit(post_folder, prepared_specs)
+    script = write_manual_posts_playwright_script(post_folder, prepared_specs)
     ready = playwright_available()
     launched = False
     playwright_returncode: int | None = None
@@ -26416,26 +26593,32 @@ def social_post_preview(
                 playwright_events = []
         if run.returncode != 0:
             preview_error = playwright_stderr or playwright_stdout or f"Browser helper exited with code {run.returncode}."
-        if any(str(spec.get("key") or "").lower() == "x" for spec in specs):
-            x_result = next(
+        for platform_key, platform_label in (("x", "X"), ("facebook", "Facebook")):
+            if not any(str(spec.get("key") or "").lower() == platform_key for spec in specs):
+                continue
+            platform_result = next(
                 (
                     event
                     for event in reversed(playwright_events)
-                    if str(event.get("platform") or "").lower() == "x" and "filled" in event
+                    if str(event.get("platform") or "").lower() == platform_key and "filled" in event
                 ),
                 None,
             )
-            if not x_result or not bool(x_result.get("filled")):
-                x_failure = next(
+            if not platform_result or not bool(platform_result.get("filled")):
+                platform_failure = next(
                     (
                         event
                         for event in reversed(playwright_events)
-                        if str(event.get("platform") or "").lower() == "x" and event.get("error")
+                        if str(event.get("platform") or "").lower() == platform_key and event.get("error")
                     ),
                     {},
                 )
-                detail = str(x_failure.get("error") or "The X composer did not confirm that the caption was populated.")
-                preview_error = f"X preview failed: {detail}"
+                detail = str(
+                    platform_failure.get("error")
+                    or f"The {platform_label} composer did not confirm that the caption was populated."
+                )
+                preview_error = f"{platform_label} preview failed: {detail}"
+                break
     else:
         playwright_stdout = ""
         playwright_stderr = ""
@@ -27173,8 +27356,10 @@ def youtube_upload_payload(folder: str) -> dict[str, Any]:
     chapter = str(metadata.get("chapter") or "").strip()
     chapter_text = chapter_text_file.read_text(encoding="utf-8") if chapter_text_file.exists() else ""
     is_story_hook = str(metadata.get("kind") or "") == "story_hook_video" or str(post_folder).startswith(str(STORY_HOOK_OUTPUT_DIR.resolve()))
-    if is_story_hook and description_file.exists():
-        description = description_file.read_text(encoding="utf-8").strip()
+    if is_story_hook:
+        story_text = chapter_text or story_hook_text_from_folder(post_folder, metadata)
+        description = story_hook_youtube_description(raw_title, story_text, abbr or novel, tags)
+        description_file.write_text(description.strip() + "\n", encoding="utf-8")
     else:
         description = youtube_description_from_text(raw_title, chapter_text or str(metadata.get("description") or ""), abbr or novel, tags)
         description_file.write_text(description.strip() + "\n", encoding="utf-8")
@@ -27868,8 +28053,23 @@ def mark_manual_text_platform_posted(folder: str, platform: str) -> dict[str, An
 def manual_campaign_platform_specs(campaign_folder: Path) -> list[dict[str, str]]:
     campaign_metadata = read_metadata(campaign_folder)
     social_folder, social_metadata = latest_social_post_for_abbr(str(campaign_metadata.get("abbr") or ""))
+    campaign_chapter = str(campaign_metadata.get("chapter") or "").strip()
+    social_chapter = str(social_metadata.get("chapter") or "").strip() if social_metadata else ""
+    matching_social_post = bool(social_folder and campaign_chapter and social_chapter == campaign_chapter)
     social_image = Path(str(social_metadata.get("image") or "")).resolve() if social_metadata else None
-    manual_social_image = social_image_for_manual_post(str(campaign_metadata.get("abbr") or "")) or (social_image if social_image and social_image.exists() else None)
+    campaign_images = [
+        Path(str(path)).resolve()
+        for path in campaign_metadata.get("images", [])
+        if str(path).strip() and Path(str(path)).resolve().is_file()
+    ]
+    campaign_image = campaign_images[0] if campaign_images else next(
+        (path for path in sorted(campaign_folder.glob("promo-*")) if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS),
+        None,
+    )
+    if matching_social_post and social_image and social_image.is_file():
+        manual_social_image = social_image
+    else:
+        manual_social_image = campaign_image or social_image_for_manual_post(str(campaign_metadata.get("abbr") or ""))
     specs = [
         {
             "key": "patreon",
@@ -27902,7 +28102,7 @@ def manual_campaign_platform_specs(campaign_folder: Path) -> list[dict[str, str]
     ]
     result: list[dict[str, str]] = []
     for spec in specs:
-        if spec["key"] in {"x", "facebook"} and social_folder:
+        if spec["key"] in {"x", "facebook"} and matching_social_post:
             social_file = "x.txt" if spec["key"] == "x" else "facebook.txt"
             text_path = social_folder / social_file
             media_path = manual_social_image if manual_social_image and manual_social_image.exists() else None
@@ -27944,7 +28144,7 @@ def manual_campaign_platform_specs(campaign_folder: Path) -> list[dict[str, str]
                 "text": text,
                 "text_path": str(text_path),
                 "media_path": str(media_path) if media_path and media_path.exists() else "",
-                "source_folder": str(social_folder if spec["key"] in {"x", "facebook"} and social_folder else campaign_folder),
+                "source_folder": str(social_folder if spec["key"] in {"x", "facebook"} and matching_social_post else campaign_folder),
                 "media_source": "social_promo" if spec["key"] in {"x", "facebook"} and media_path else spec["media"],
                 "chapter_title": chapter_title if spec["key"] == "royal-road" else "",
                 "chapter_body": chapter_body if spec["key"] == "royal-road" else "",
@@ -28851,12 +29051,17 @@ async function submitRoyalRoadDraft(page, post, verification) {{
   const successText = /chapter (?:has been )?(?:successfully )?(?:scheduled|published|saved)|successfully (?:scheduled|published|saved)/i.test(pageText);
   const leftNewEditor = verification.editExisting || !afterUrl.includes('/author-dashboard/chapters/new/');
   const leftEditForm = !verification.editExisting || afterUrl !== beforeUrl || successText;
+  // After a successful submit, Royal Road redirects to the saved draft edit page
+  // (.../chapters/editdraft/<id>) or the published chapter edit page (.../chapters/edit/<id>).
+  // That redirect is itself strong proof the chapter was created/saved, even when the
+  // dashboard list scrape below has not yet indexed the freshly-written row.
+  const landedOnSavedDraft = /\/author-dashboard\/chapters\/(editdraft|edit)\//.test(afterUrl);
   const dashboardVerification = verification.editExisting
     ? null
     : await findRoyalRoadChapterInDashboard(page, post, verification.expectedTitle);
   const verified = verification.editExisting
     ? validationErrors.length === 0 && leftNewEditor && leftEditForm
-    : validationErrors.length === 0 && Boolean(dashboardVerification && dashboardVerification.found);
+    : validationErrors.length === 0 && (Boolean(dashboardVerification && dashboardVerification.found) || (landedOnSavedDraft && leftNewEditor));
   const result = {{
     attempted: true,
     verified,
@@ -29136,6 +29341,7 @@ async function reusablePage(context, post) {{
           chapter: post.chapter || '',
         }});
         console.log(`${{post.label}} existing scheduled chapter was found and verified.`);
+        if (post.auto_submit && !reused) await page.close().catch(() => null);
         continue;
       }}
       if (existingRelease && existingRelease.recordFound && !existingRelease.found) {{
@@ -29180,6 +29386,7 @@ async function reusablePage(context, post) {{
       console.log(post.auto_submit
         ? `${{post.label}} chapter was submitted and verified.`
         : `${{post.label}} ${{filled ? 'draft fields were prepared' : 'opened for review'}}. Publish manually after review.`);
+      if (post.auto_submit && submitResult.verified && !reused) await page.close().catch(() => null);
       continue;
     }}
     await page.waitForTimeout(2500);
@@ -29590,6 +29797,66 @@ def youtube_description_from_text(chapter_title: str, chapter_text: str, abbr: s
     ).strip()
 
 
+def story_hook_youtube_description(title: str, story_text: str, abbr: str = "", tags: str = "") -> str:
+    abbr = story_key(abbr)
+    novel = NOVEL_NAMES.get(abbr, "Azure Inkblade")
+    clean_title = clean_youtube_chapter_title(title, abbr) or "Original Fantasy Story"
+    hook = youtube_chapter_summary(clean_title, story_text)
+    keywords = youtube_tag_list(tags, limit=5)
+    discovery = ", ".join(keywords) if keywords else "progression fantasy, web novels, and original fantasy stories"
+    return (
+        f"{hook}\n\n"
+        f"{clean_title} is an original Azure Inkblade story hook connected to {novel}, "
+        f"created for readers and listeners who enjoy {discovery}.\n\n"
+        "Watch to the end, then tell me in the comments: what would you have done?\n\n"
+        f"Read the novels, watch more stories, and find author resources: {linktree_url()}"
+    ).strip()
+
+
+def story_hook_single_hub_description(value: str) -> str:
+    hub = linktree_url()
+    hub_line = f"Read the novels, watch more stories, and find author resources: {hub}"
+    legacy_hosts = ("patreon.com", "royalroad.com", "youtube.com", "tiktok.com", "x.com")
+    lines: list[str] = []
+    hub_added = False
+    for raw_line in str(value or "").splitlines():
+        line = raw_line.strip()
+        lowered = line.lower()
+        if any(host in lowered for host in legacy_hosts):
+            continue
+        if hub.lower() in lowered:
+            if not hub_added:
+                lines.append(hub_line)
+                hub_added = True
+            continue
+        lines.append(raw_line.rstrip())
+    cleaned = "\n".join(lines).strip()
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    if not hub_added:
+        cleaned = f"{cleaned}\n\n{hub_line}".strip()
+    return cleaned
+
+
+def normalize_story_hook_description(folder: Path, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    folder = folder.resolve()
+    if not path_is_within(folder, [STORY_HOOK_OUTPUT_DIR.resolve()]):
+        raise RuntimeError("Story Hook folder is not valid.")
+    metadata = dict(metadata or read_metadata(folder))
+    title_file = folder / "youtube-title.txt"
+    tags_file = folder / "youtube-tags.txt"
+    title = str(title_file.read_text(encoding="utf-8", errors="replace").strip() if title_file.exists() else metadata.get("title") or folder.name)
+    tags = str(tags_file.read_text(encoding="utf-8", errors="replace").strip() if tags_file.exists() else metadata.get("tags") or "")
+    abbr = story_key(str(metadata.get("abbr") or ""))
+    story_text = story_hook_text_from_folder(folder, metadata)
+    description = story_hook_youtube_description(title, story_text, abbr, tags)
+    (folder / "youtube-description.txt").write_text(description + "\n", encoding="utf-8")
+    metadata["description"] = description
+    metadata["descriptionFormat"] = "linktree_v1"
+    metadata["descriptionUpdatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    (folder / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return {"folder": str(folder), "description": description, "metadata": metadata}
+
+
 def youtube_tag_list(value: str | list[Any], limit: int = 15) -> list[str]:
     if isinstance(value, list):
         raw = value
@@ -29624,7 +29891,7 @@ def story_hook_metadata_variants(folder_value: str) -> dict[str, Any]:
     story_text = (folder / "story-script.txt").read_text(encoding="utf-8", errors="replace") if (folder / "story-script.txt").exists() else ""
     hook = youtube_chapter_summary(title, story_text)
     visual_terms = chapter_keywords(title, story_text, 10)
-    base_links = youtube_links_block(abbr or novel)
+    hub_line = f"Read the novels, watch more stories, and find author resources: {linktree_url()}"
     variants = [
         {
             "variantId": "curiosity_revenge",
@@ -29633,7 +29900,7 @@ def story_hook_metadata_variants(folder_value: str) -> dict[str, Any]:
             "description": (
                 f"{hook}\n\n"
                 f"A standalone {novel} story hook built for betrayal, reversal, and progression fantasy readers.\n\n"
-                f"{base_links}\n\n"
+                f"{hub_line}\n\n"
                 "Question for viewers: would you forgive someone who stole your future if they lost everything?"
             ).strip(),
             "tags": youtube_tag_list(tags + ["betrayal story", "revenge story", "underdog comeback", "fantasy audiobook", "progression fantasy", novel]),
@@ -29646,7 +29913,7 @@ def story_hook_metadata_variants(folder_value: str) -> dict[str, Any]:
             "description": (
                 f"{hook}\n\n"
                 f"Original progression fantasy narration connected to {novel}. If you like hidden classes, system worlds, guild betrayal, power progression, and web novel audiobooks, start here.\n\n"
-                f"{base_links}"
+                f"{hub_line}"
             ).strip(),
             "tags": youtube_tag_list(["progression fantasy", "litrpg", "web novel", "fantasy audiobook", "system fantasy", "hidden class", "guild betrayal", "royal road", "Azure Inkblade", novel] + visual_terms),
             "hypothesis": "Tests search/discovery positioning around LitRPG and web novel terms.",
@@ -29658,7 +29925,7 @@ def story_hook_metadata_variants(folder_value: str) -> dict[str, Any]:
             "description": (
                 f"{hook}\n\n"
                 f"This is a standalone entry point into {novel}. Read the main story on Royal Road, then follow Azure Inkblade for more chapter narrations and story hooks.\n\n"
-                f"{base_links}"
+                f"{hub_line}"
             ).strip(),
             "tags": youtube_tag_list(["Royal Road fantasy", "web serial", "webnovel", "fantasy narration", "Azure Inkblade", novel, "cultivation fantasy", "progression fantasy"] + tags),
             "hypothesis": "Tests whether making Royal Road the clearest next step creates more reader conversion.",
@@ -29671,7 +29938,7 @@ def story_hook_metadata_variants(folder_value: str) -> dict[str, Any]:
                 f"{hook}\n\n"
                 "Would you take revenge, expose the truth, or walk away and build something better?\n"
                 "Drop your answer in the comments. Strong comments help decide which story hooks become longer videos.\n\n"
-                f"{base_links}"
+                f"{hub_line}"
             ).strip(),
             "tags": youtube_tag_list(["fantasy story", "commentary story", "moral dilemma", "betrayal", "revenge", "fantasy audiobook", "Azure Inkblade", novel] + visual_terms),
             "hypothesis": "Tests direct comment prompts for engagement lift.",
@@ -29699,7 +29966,7 @@ def apply_story_hook_metadata_variant(folder_value: str, variant: dict[str, Any]
         raise RuntimeError("Story Hook folder is not valid.")
     metadata = read_metadata(folder)
     title = clean_youtube_chapter_title(str(variant.get("title") or metadata.get("title") or "Story Hook Video"), str(metadata.get("abbr") or ""))
-    description = str(variant.get("description") or "").strip()
+    description = story_hook_single_hub_description(str(variant.get("description") or ""))
     tags = youtube_tag_list(variant.get("tags") or "")
     if not title or not description or not tags:
         raise RuntimeError("Metadata variant must include title, description, and tags.")
@@ -33850,6 +34117,12 @@ HTML = r"""<!doctype html>
           <input id="tiktokManualChapter" type="hidden">
           <label for="tiktokVisualPrompt">TikTok image prompt</label>
           <textarea id="tiktokVisualPrompt" class="short" placeholder="Auto-filled from the selected GitHub chapter."></textarea>
+          <label for="tiktokStyle">Image style (single track per video)</label>
+          <select id="tiktokStyle">
+            <option value="main-posts" selected>Main Posts (azink_main)</option>
+            <option value="realistic-posts">Realistic (azink_real)</option>
+            <option value="comic-style">Comic / Manhwa (azink_comic)</option>
+          </select>
           <div class="row">
             <button id="tiktokLoadChapterBtn" class="secondary" type="button">Load TikTok Chapter</button>
             <button id="tiktokBtn" type="button">Create TikTok Pack</button>
@@ -33962,6 +34235,12 @@ HTML = r"""<!doctype html>
             <button id="growthDeepTikTokBtn" type="button">Create Rotating 60-75s TikTok</button>
             <button id="growthDeepTikTokPacksBtn" class="secondary" type="button">Show Deep TikTok Packs</button>
             <label class="toggle"><input id="growthDeepFreshImages" type="checkbox" checked> Create fresh scene images</label>
+            <label for="growthDeepStyle">Image style (single track per video)</label>
+            <select id="growthDeepStyle">
+              <option value="main-posts" selected>Main Posts (azink_main)</option>
+              <option value="realistic-posts">Realistic (azink_real)</option>
+              <option value="comic-style">Comic / Manhwa (azink_comic)</option>
+            </select>
           </div>
           <h3>Creator Benchmarking</h3>
           <p class="meta">Track public patterns from successful adjacent creators on YouTube, TikTok, Instagram, and Facebook. The app stores structure and metrics only, not copied content.</p>
@@ -34332,6 +34611,7 @@ HTML = r"""<!doctype html>
     const growthDeepTikTokBtn = document.getElementById('growthDeepTikTokBtn');
     const growthDeepTikTokPacksBtn = document.getElementById('growthDeepTikTokPacksBtn');
     const growthDeepFreshImages = document.getElementById('growthDeepFreshImages');
+    const growthDeepStyle = document.getElementById('growthDeepStyle');
     const creatorBenchmarkPlatform = document.getElementById('creatorBenchmarkPlatform');
     const creatorBenchmarkTarget = document.getElementById('creatorBenchmarkTarget');
     const creatorBenchmarkAddBtn = document.getElementById('creatorBenchmarkAddBtn');
@@ -34411,6 +34691,7 @@ HTML = r"""<!doctype html>
     const tiktokBtn = document.getElementById('tiktokBtn');
     const tiktokManualChapter = document.getElementById('tiktokManualChapter');
     const tiktokVisualPrompt = document.getElementById('tiktokVisualPrompt');
+    const tiktokStyle = document.getElementById('tiktokStyle');
     const tiktokLoadChapterBtn = document.getElementById('tiktokLoadChapterBtn');
     const youtubeTextBtn = document.getElementById('youtubeTextBtn');
     const youtubeNovel = document.getElementById('youtubeNovel');
@@ -36102,7 +36383,8 @@ ${escapeHtml(skipped || 'none')}</div>
       results.innerHTML = '';
       try {
         const data = await postJson('/api/deep-tiktok-post', {
-          forceNewImages: Boolean(growthDeepFreshImages.checked)
+          forceNewImages: Boolean(growthDeepFreshImages.checked),
+          style: growthDeepStyle ? growthDeepStyle.value : 'main-posts'
         });
         renderDeepTikTokPost(data);
       } catch (error) {
@@ -36777,7 +37059,8 @@ ${errors ? `\nErrors:\n${escapeHtml(errors)}` : ''}</div>
           visualPrompt: tiktokVisualPrompt.value.trim(),
           chapterTitle: data.title || data.heading || '',
           chapterText: data.text || '',
-          forceNewImages: true
+          forceNewImages: true,
+          style: tiktokStyle ? tiktokStyle.value : 'main-posts'
         });
         recordTiming('Shorts/Reels pack', shortsStartedAt, `Chapter ${tiktok.chapter || data.number || ''}`);
         outputs.push({label: 'TikTok / Reel / Short', folder: tiktok.folder, detail: `Chapter ${tiktok.chapter}`});
@@ -38301,11 +38584,26 @@ ${escapeHtml(errors)}</div>`);
       const counts = data.counts || {};
       const active = data.active || runtime.current || {};
       const next = data.next || {};
+      const formatReleaseJob = job => {
+        if (!job || !job.abbr || !job.chapter) return 'none';
+        const scheduled = job.scheduledFor || job.date || '';
+        return `${job.abbr} Ch. ${job.chapter}${scheduled ? ` on ${scheduled}` : ''}`;
+      };
+      const stageLines = (data.stageProgress || []).flatMap(stage => {
+        const stageCounts = stage.counts || {};
+        const attention = (stageCounts.blocked || 0) + (stageCounts.failed || 0);
+        return [
+          `${stage.label}: ${stageCounts.verified || 0} verified | ${stageCounts.pending || 0} pending | ${attention} need attention`,
+          `  Last verified: ${formatReleaseJob(stage.lastVerified)}`,
+          `  Next in this tier: ${formatReleaseJob(stage.active || stage.next)}`
+        ];
+      });
       releaseAutomationStatusEl.textContent = [
         `State: ${runtime.running ? (runtime.paused ? 'paused' : 'running') : 'stopped'}`,
         `Verified: ${counts.verified || 0} | Pending: ${counts.pending || 0} | Retrying: ${counts.retrying || 0} | Needs attention: ${(counts.blocked || 0) + (counts.failed || 0)}`,
-        active.jobKey ? `Current: ${active.jobKey}` : 'Current: none',
-        next.jobKey ? `Next: ${next.jobKey}` : 'Next: none',
+        active.jobKey ? `Current stage job: ${formatReleaseJob(active)} (${active.stage || 'unknown stage'})` : 'Current stage job: none',
+        next.jobKey ? `Next executable job: ${formatReleaseJob(next)} (${next.stage || 'unknown stage'})` : 'Next executable job: none',
+        ...stageLines,
         runtime.lastError ? `Last issue: ${runtime.lastError}` : ''
       ].filter(Boolean).join('\n');
     }
@@ -38584,7 +38882,8 @@ Prepared stages still needing review are not lost. Reopen those stages and finis
           body: JSON.stringify({
             abbr: tiktokNovel.value,
             chapter: selectedChapter,
-            visualPrompt: tiktokVisualPrompt.value.trim()
+            visualPrompt: tiktokVisualPrompt.value.trim(),
+            style: tiktokStyle ? tiktokStyle.value : 'main-posts'
           })
         });
         const data = await response.json();
@@ -40817,17 +41116,9 @@ ${data.message || 'Builder finished.'}`;
         if (packPlatformAction === 'patreon') {
           buildPatreonDraftForFolder(currentFolder);
         } else if (packPlatformAction === 'x') {
-          if ((currentFolder || '').toLowerCase().includes('\\social-posts\\') || (currentFolder || '').toLowerCase().includes('/social-posts/')) {
-            socialPostPreviewForFolder(currentFolder, ['x']);
-          } else {
-            manualTextPlatformAssist('x');
-          }
+          socialPostPreviewForFolder(currentFolder, ['x']);
         } else if (packPlatformAction === 'facebook') {
-          if ((currentFolder || '').toLowerCase().includes('\\social-posts\\') || (currentFolder || '').toLowerCase().includes('/social-posts/')) {
-            socialPostPreviewForFolder(currentFolder, ['facebook']);
-          } else {
-            manualTextPlatformAssist('facebook');
-          }
+          socialPostPreviewForFolder(currentFolder, ['facebook']);
         } else if (packPlatformAction === 'royal-road') {
           manualTextPlatformAssist('royal-road');
         }
@@ -41469,11 +41760,14 @@ ${data.message || 'Builder finished.'}`;
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Post preview failed');
-        const xResult = [...(data.playwright_events || [])].reverse().find(item => String(item.platform || '').toLowerCase() === 'x' && Object.prototype.hasOwnProperty.call(item, 'filled'));
-        statusEl.textContent = xResult?.filled ? 'X post populated. Review it in Chrome before publishing.' : data.message;
+        const requestedKeys = Array.isArray(platforms) && platforms.length ? platforms.map(item => String(item).toLowerCase()) : ['x', 'facebook'];
+        const verifiedResults = requestedKeys.map(key => [...(data.playwright_events || [])].reverse().find(item => String(item.platform || '').toLowerCase() === key && Object.prototype.hasOwnProperty.call(item, 'filled'))).filter(Boolean);
+        const verifiedLabels = verifiedResults.filter(item => item.filled).map(item => item.platform);
+        statusEl.textContent = verifiedLabels.length ? `${verifiedLabels.join(' and ')} post populated. Review in Chrome before publishing.` : data.message;
         const log = document.createElement('div');
         log.className = 'copy';
-        log.textContent = `Preview cockpit:\n${data.cockpit}\n\nBrowser helper: ${data.playwright_launched ? 'launched' : 'not launched'}${xResult ? `\nX caption verified: ${xResult.filled ? 'yes' : 'no'}` : ''}\nNothing was published automatically.`;
+        const verification = verifiedResults.map(item => `\n${item.platform} caption verified: ${item.filled ? 'yes' : 'no'}`).join('');
+        log.textContent = `Preview cockpit:\n${data.cockpit}\n\nBrowser helper: ${data.playwright_launched ? 'launched' : 'not launched'}${verification}\nNothing was published automatically.`;
         results.appendChild(log);
       } catch (error) {
         statusEl.textContent = error.message;
@@ -43000,6 +43294,7 @@ class Handler(BaseHTTPRequestHandler):
                         bool(body.get("forceNewImages", False)),
                         str(body.get("chapterText") or ""),
                         str(body.get("chapterTitle") or ""),
+                        str(body.get("style") or "main-posts"),
                     )
                 )
                 return
@@ -43007,9 +43302,9 @@ class Handler(BaseHTTPRequestHandler):
                 abbr = str(body.get("abbr") or "")
                 chapter = str(body.get("chapter") or "")
                 self.send_json(
-                    make_deep_tiktok_pack(abbr, chapter, bool(body.get("forceNewImages", True)))
+                    make_deep_tiktok_pack(abbr, chapter, bool(body.get("forceNewImages", True)), str(body.get("style") or "main-posts"))
                     if abbr and chapter
-                    else make_random_deep_tiktok_pack(bool(body.get("forceNewImages", True)))
+                    else make_random_deep_tiktok_pack(bool(body.get("forceNewImages", True)), str(body.get("style") or "main-posts"))
                 )
                 return
             if self.path == "/api/tiktok-manual-assist":
