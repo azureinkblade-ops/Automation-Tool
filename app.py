@@ -58,10 +58,25 @@ try:
     _deps = {n: _ilu.find_spec(n) is not None for n in ("torch", "diffusers", "transformers", "PIL")}
     if all(_deps.values()):
         print(f"[image-pipeline] diffusers local SDXL enabled (torch/diffusers/transformers/PIL importable)", flush=True)
+        print(
+            f"[image-pipeline] external stock fallback policy: "
+            f"{'ALLOWED (ALLOW_EXTERNAL_IMAGE_FALLBACK=1)' if ALLOW_EXTERNAL_IMAGE_FALLBACK else 'DISABLED — local SDXL failure will NOT substitute Pexels/Pixabay'}",
+            flush=True,
+        )
     else:
         print(f"[image-pipeline] WARNING diffusers deps missing: {_deps} (falling back to external providers)", flush=True)
 except Exception as _exc:  # pragma: no cover - logging only
     print(f"[image-pipeline] dependency check skipped: {_exc}", flush=True)
+
+# Layer-1 of diffusers protection (complements the startup env-guard above).
+# Default False: when local SDXL is the selected/priority image provider but generation
+# fails, REFUSE to silently substitute Pexels/Pixabay stock photos (which would be
+# mislabeled as branded SDXL art). Instead fall through to the local emergency fallback
+# image and flag the trace as refusedExternalFallback. Set ALLOW_EXTERNAL_IMAGE_FALLBACK=1
+# to permit the stock substitution (deliberate opt-in only).
+ALLOW_EXTERNAL_IMAGE_FALLBACK = str(os.environ.get("ALLOW_EXTERNAL_IMAGE_FALLBACK", "")).strip().lower() in (
+    "1", "true", "yes", "on",
+)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -31390,6 +31405,25 @@ def create_prompt_fallback_image(
             except Exception as exc:
                 errors.append(f"local_stable_diffusion: {exc}")
                 note_provider("local_stable_diffusion", started if "started" in locals() else time.perf_counter(), False, exc)
+                if not ALLOW_EXTERNAL_IMAGE_FALLBACK:
+                    # Fail-loud: do NOT silently substitute Pexels/Pixabay stock for branded
+                    # SDXL art. Record the refusal and break out of the provider loop so the
+                    # function falls through to the local emergency fallback image instead.
+                    provider_trace["refusedExternalFallback"] = True
+                    provider_trace.setdefault("notes", []).append(
+                        "local SDXL failed; external stock fallback DISABLED (ALLOW_EXTERNAL_IMAGE_FALLBACK unset) — using local emergency fallback"
+                    )
+                    print(
+                        f"[image-pipeline] WARNING local SDXL generation failed and external "
+                        f"fallback is DISABLED (refusing stock substitution): {exc}",
+                        flush=True,
+                    )
+                    break
+                print(
+                    f"[image-pipeline] WARNING local SDXL failed, FALLING BACK to external "
+                    f"provider (ALLOW_EXTERNAL_IMAGE_FALLBACK=1): {exc}",
+                    flush=True,
+                )
                 continue
         if provider == "banked":
             if not allow_banked:
