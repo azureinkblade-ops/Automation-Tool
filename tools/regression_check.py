@@ -379,6 +379,54 @@ def check_image_provider_trace() -> list[dict[str, object]]:
     return checks
 
 
+def check_image_provider_no_silent_fallback() -> list[dict[str, object]]:
+    """Layer-1 invariant: when local SDXL is the priority provider but generation fails and
+    ALLOW_EXTERNAL_IMAGE_FALLBACK is unset (default), the wrapper must NOT silently substitute
+    Pexels/Pixabay stock photos. It must flag the trace as refusedExternalFallback and fall
+    through to the local emergency fallback image. Verified two ways:
+      (a) the module flag exists and defaults to False (refuse);
+      (b) monkeypatching create_local_stable_diffusion_image to raise yields a trace with
+          refusedExternalFallback==True and a produced file whose source is NOT pexels/pixabay.
+    """
+    checks: list[dict[str, object]] = []
+    # (a) flag default
+    checks.append(assert_result(
+        "image_provider_fallback_flag_default_refuse",
+        getattr(app, "ALLOW_EXTERNAL_IMAGE_FALLBACK", True) is False,
+        f"ALLOW_EXTERNAL_IMAGE_FALLBACK={getattr(app, 'ALLOW_EXTERNAL_IMAGE_FALLBACK', 'MISSING')}",
+    ))
+    folder = app.OUTPUT_DIR / "_regression-no-silent-fallback"
+    if folder.exists():
+        shutil.rmtree(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    image = folder / "refuse-stock.png"
+    create_test_png(image)
+    real_fn = app.create_local_stable_diffusion_image
+    try:
+        def _raise(*_a, **_k):
+            raise RuntimeError("injected SDXL generation failure for regression")
+        app.create_local_stable_diffusion_image = _raise
+        source = app.create_prompt_fallback_image(
+            "Regression: refuse silent stock substitution", image, 1, abbr="EN",
+            allow_banked=False, fresh=True,
+        )
+        trace = app.read_image_provider_trace(image)
+        refused = bool(trace.get("refusedExternalFallback"))
+        has_stock = "pexels" in str(source).lower() or "pixabay" in str(source).lower()
+        produced = image.exists() and image.stat().st_size > 0
+        checks.append(assert_result(
+            "image_provider_refuses_silent_stock_fallback",
+            refused and (not has_stock) and produced,
+            f"source={source!r}, refused={refused}, produced={produced}, trace_keys={list(trace.keys())}",
+        ))
+    except Exception as exc:
+        checks.append(assert_result("image_provider_refuses_silent_stock_fallback", False, f"harness error: {exc}"))
+    finally:
+        app.create_local_stable_diffusion_image = real_fn
+        shutil.rmtree(folder, ignore_errors=True)
+    return checks
+
+
 def check_image_feedback_training_loop() -> list[dict[str, object]]:
     checks: list[dict[str, object]] = []
     folder = app.OUTPUT_DIR / "_regression-image-training-loop"
@@ -765,6 +813,25 @@ def check_linktree_dynamic_caption_engine() -> list[dict[str, object]]:
 
 def check_deep_tiktok_weekend_workflow() -> list[dict[str, object]]:
     checks: list[dict[str, object]] = []
+    try:
+        app.write_animated_reel_builder_script(
+            app.TIKTOK_OUTPUT_DIR,
+            [],
+            app.TIKTOK_OUTPUT_DIR,
+            [],
+            target_duration=68,
+            deep=True,
+        )
+        directory_audio_rejected = False
+    except RuntimeError:
+        directory_audio_rejected = True
+    checks.append(
+        assert_result(
+            "deep_tiktok_rejects_directory_as_audio",
+            directory_audio_rejected,
+            "The video builder must accept an audio file, never a folder path.",
+        )
+    )
     packs = app.existing_deep_tiktok_packs(include_completed=False, limit=8, fast=True)
     checks.append(assert_result("deep_tiktok_active_packs_visible", bool(packs), f"count={len(packs)}"))
     ready = [pack for pack in packs if pack.get("ready")]
@@ -836,6 +903,23 @@ def check_story_hook_pack_readiness() -> list[dict[str, object]]:
             not folder_errors,
             f"checked={min(5, len(items))}",
             failures=folder_errors,
+        )
+    )
+    legacy_hosts = ("patreon.com", "royalroad.com", "youtube.com", "tiktok.com", "x.com")
+    description_errors: list[str] = []
+    for item in items:
+        folder = Path(str(item.get("folder") or ""))
+        description_file = folder / "youtube-description.txt"
+        description = description_file.read_text(encoding="utf-8", errors="replace") if description_file.exists() else ""
+        legacy = [host for host in legacy_hosts if host in description.lower()]
+        if description.count(app.linktree_url()) != 1 or legacy:
+            description_errors.append(f"{folder.name}: linktree={description.count(app.linktree_url())}, legacy={legacy}")
+    checks.append(
+        assert_result(
+            "story_hook_descriptions_use_single_linktree_cta",
+            not description_errors,
+            f"checked={len(items)}",
+            failures=description_errors,
         )
     )
     try:
@@ -979,19 +1063,61 @@ def check_pack_health_social_preview_controls() -> list[dict[str, object]]:
             "Pack Health social buttons should use the working social preview helper.",
         )
     )
-    if social_folder and social_folder.exists():
-        preview = app.social_post_preview(str(social_folder), use_playwright=False, platforms=["x", "facebook"])
-        platforms = sorted(item.get("key") for item in preview.get("platforms", []) if item.get("key"))
-        missing_media = [item.get("key") for item in preview.get("platforms", []) if not item.get("media_path")]
-        checks.append(
-            assert_result(
-                "weekend_social_preview_has_x_facebook_media",
-                platforms == ["facebook", "x"] and not missing_media,
-                f"folder={social_folder.name}, platforms={platforms}, missingMedia={missing_media}",
-            )
+    checks.append(
+        assert_result(
+            "social_preview_verifies_x_and_facebook_composers",
+            '(("x", "X"), ("facebook", "Facebook"))' in source
+            and "The {platform_label} composer did not confirm that the caption was populated." in source,
+            "X and Facebook previews should fail clearly unless the browser confirms that the composer was filled.",
         )
-    else:
-        checks.append(result("weekend_social_preview_has_x_facebook_media", True, "No social post folder found in recent Pack Health results."))
+    )
+    original_gate = app.ensure_quality_gate
+    original_playwright = app.playwright_available
+    original_open = app.open_url_once
+    try:
+        app.ensure_quality_gate = lambda *_args, **_kwargs: None
+        app.playwright_available = lambda: False
+        app.open_url_once = lambda *_args, **_kwargs: None
+        if social_folder and social_folder.exists():
+            preview = app.social_post_preview(str(social_folder), use_playwright=False, platforms=["x", "facebook"])
+            platforms = sorted(item.get("key") for item in preview.get("platforms", []) if item.get("key"))
+            missing_media = [item.get("key") for item in preview.get("platforms", []) if not item.get("media_path")]
+            checks.append(
+                assert_result(
+                    "weekend_social_preview_has_x_facebook_media",
+                    platforms == ["facebook", "x"] and not missing_media,
+                    f"folder={social_folder.name}, platforms={platforms}, missingMedia={missing_media}",
+                )
+            )
+        else:
+            checks.append(result("weekend_social_preview_has_x_facebook_media", True, "No social post folder found in recent Pack Health results."))
+
+        campaign_folder = next(iter(recent_pack_folders(app.OUTPUT_DIR, 8)), None)
+        if campaign_folder:
+            preview = app.social_post_preview(str(campaign_folder), use_playwright=False, platforms=["x", "facebook"])
+            platforms = sorted(item.get("key") for item in preview.get("platforms", []) if item.get("key"))
+            missing_text = [item.get("key") for item in preview.get("platforms", []) if not str(item.get("text") or "").strip()]
+            missing_media = [item.get("key") for item in preview.get("platforms", []) if not Path(str(item.get("media_path") or "")).is_file()]
+            wrong_chapter_media = [
+                item.get("key")
+                for item in preview.get("platforms", [])
+                if Path(str(item.get("media_path") or "")).is_file()
+                and Path(str(item.get("source_folder") or "")) == campaign_folder
+                and Path(str(item.get("media_path") or "")).parent != campaign_folder
+            ]
+            checks.append(
+                assert_result(
+                    "campaign_open_pack_preview_prefills_x_and_facebook",
+                    platforms == ["facebook", "x"] and not missing_text and not missing_media and not wrong_chapter_media,
+                    f"folder={campaign_folder.name}, platforms={platforms}, missingText={missing_text}, missingMedia={missing_media}, wrongChapterMedia={wrong_chapter_media}",
+                )
+            )
+        else:
+            checks.append(result("campaign_open_pack_preview_prefills_x_and_facebook", True, "No recent campaign folder found."))
+    finally:
+        app.ensure_quality_gate = original_gate
+        app.playwright_available = original_playwright
+        app.open_url_once = original_open
     return checks
 
 
@@ -1161,6 +1287,7 @@ def run_once() -> dict[str, object]:
         check_image_approval_roundtrip,
         check_current_pack_test,
         check_image_provider_trace,
+        check_image_provider_no_silent_fallback,
         check_image_feedback_training_loop,
         check_diffusers_primary_lora_layout,
         check_image_generation_batch_quality_report,
