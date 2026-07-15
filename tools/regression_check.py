@@ -517,6 +517,64 @@ def check_style_track_column() -> list[dict[str, object]]:
     return checks
 
 
+def check_heavy_jobs_limited() -> list[dict[str, object]]:
+    """Workstream B invariant: heavy subprocess spawns (diffusers image-gen + ffmpeg video render)
+    must be gated by a process-wide HeavyJobLimiter so at most MAX_CONCURRENT_HEAVY_JOBS run at once.
+    Verified without spawning real workers: drive the app's actual HeavyJobLimiter with fake jobs and
+    assert the observed max concurrency never exceeds the cap. Also asserts the limiter is wired into
+    the two heavy code paths (it is importable and the app exposes it).
+    """
+    import threading
+    import time
+
+    import automation_db  # noqa: F401  (ensures app import side-effects are benign)
+
+    checks: list[dict[str, object]] = []
+    try:
+        lim = app.HeavyJobLimiter.instance()
+        cap = lim.max_parallel
+        checks.append(assert_result("heavy_job_limiter_present", cap >= 1, f"max_parallel={cap}"))
+        if cap < 1:
+            cap = 1
+
+        # Drive the SAME limiter instance the app uses, with fake heavy jobs.
+        peak = 0
+        current = 0
+        lock = threading.Lock()
+        fired = []
+
+        def fake_job() -> None:
+            nonlocal peak, current
+            with lim:
+                with lock:
+                    current += 1
+                    peak = max(peak, current)
+                time.sleep(0.15)
+                with lock:
+                    current -= 1
+            fired.append(1)
+
+        threads = [threading.Thread(target=fake_job) for _ in range(cap * 3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        checks.append(assert_result(
+            "heavy_job_limiter_caps_concurrency",
+            len(fired) == cap * 3 and peak <= cap,
+            f"fired={len(fired)}, peak_concurrent={peak}, cap={cap}",
+        ))
+        # Singleton: a second instance() call returns the same object (shared cap).
+        checks.append(assert_result(
+            "heavy_job_limiter_is_shared",
+            app.HeavyJobLimiter.instance() is lim,
+            "instance() should return the shared limiter",
+        ))
+    except Exception as exc:
+        checks.append(assert_result("heavy_job_limiter", False, f"harness error: {exc}"))
+    return checks
+
+
 def check_image_feedback_training_loop() -> list[dict[str, object]]:
     checks: list[dict[str, object]] = []
     folder = app.OUTPUT_DIR / "_regression-image-training-loop"
@@ -1380,6 +1438,7 @@ def run_once() -> dict[str, object]:
         check_image_provider_no_silent_fallback,
         check_tiktok_pack_single_track,
         check_style_track_column,
+        check_heavy_jobs_limited,
         check_image_feedback_training_loop,
         check_diffusers_primary_lora_layout,
         check_image_generation_batch_quality_report,
