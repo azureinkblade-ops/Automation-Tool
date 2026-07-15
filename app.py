@@ -39,6 +39,31 @@ import growth_scheduler
 import release_planner
 
 
+# --- Diffusers / local image pipeline env self-defense ---
+# A parent shell can leak PYTHONPATH/PYTHONHOME from another venv (e.g. an agent
+# venv whose PIL build is broken). That shadows this interpreter's own packages and
+# makes `import diffusers` (via `import PIL`) crash, silently pushing image
+# generation to Pexels/Pixabay. Strip those vars so we always resolve packages from
+# this interpreter's own site-packages. The launcher (server_control.py) does this
+# too; this guard protects direct `python app.py` launches.
+for _var in ("PYTHONPATH", "PYTHONHOME"):
+    os.environ.pop(_var, None)
+sys.path = [p for p in sys.path if p and os.path.normcase(str(p)) not in (
+    os.path.normcase(r"C:\Users\David\AppData\Local\hermes\hermes-agent"),
+    os.path.normcase(r"C:\Users\David\AppData\Local\hermes\hermes-agent\venv\Lib\site-packages"),
+)]
+# Make the leak observable instead of silent: log once at startup.
+try:
+    import importlib.util as _ilu
+    _deps = {n: _ilu.find_spec(n) is not None for n in ("torch", "diffusers", "transformers", "PIL")}
+    if all(_deps.values()):
+        print(f"[image-pipeline] diffusers local SDXL enabled (torch/diffusers/transformers/PIL importable)", flush=True)
+    else:
+        print(f"[image-pipeline] WARNING diffusers deps missing: {_deps} (falling back to external providers)", flush=True)
+except Exception as _exc:  # pragma: no cover - logging only
+    print(f"[image-pipeline] dependency check skipped: {_exc}", flush=True)
+
+
 ROOT = Path(__file__).resolve().parent
 APP_PROCESS_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
 APP_SOURCE_MTIME_AT_START = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(Path(__file__).resolve().stat().st_mtime))

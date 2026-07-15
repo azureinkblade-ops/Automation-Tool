@@ -118,6 +118,12 @@ def start_server(port: int) -> dict[str, Any]:
     env = dict(os.environ)
     env["AUTOMATION_TOOL_PORT"] = str(port)
     env.setdefault("PYTHONUNBUFFERED", "1")
+    # Strip any leaked PYTHONPATH/PYTHONHOME from a parent shell (e.g. an agent venv
+    # with a broken PIL build) so the child interpreter resolves its own packages and
+    # `import diffusers` does not crash into a Pexels/Pixabay fallback. app.py also
+    # self-defends, but the launcher is the canonical entry point from start.bat.
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTHONHOME", None)
     SERVER_LOG_DIR.mkdir(exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     out_log = SERVER_LOG_DIR / f"automation-server-{stamp}.out.log"
