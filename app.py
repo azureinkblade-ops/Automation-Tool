@@ -7294,6 +7294,117 @@ def clickup_configured() -> bool:
     return bool(os.environ.get("CLICKUP_API_TOKEN", "").strip() and os.environ.get("CLICKUP_TASK_LIST_ID", "").strip())
 
 
+def chapter_review_packs(abbr: str | None = None, chapter: int | str | None = None) -> dict[str, Any]:
+    """Aggregate every pending pack for a chapter (or the active approval path) for the
+    Review & Publish view. Reuses approval_inbox() bucketing; filters to the chosen
+    novel/chapter when provided.
+    """
+    inbox = approval_inbox()
+    if abbr or chapter:
+        def matches(item: dict[str, Any]) -> bool:
+            if abbr and str(item.get("abbr") or "").upper() != str(abbr).upper():
+                return False
+            if chapter and str(item.get("chapter") or "").strip() and str(item.get("chapter")) != str(chapter):
+                return False
+            return True
+        for key in ("patreon", "dailyShorts", "deepTikToks", "manualSocial", "youtube"):
+            inbox[key] = [it for it in inbox.get(key, []) if matches(it)]
+        inbox["total"] = sum(inbox.get("counts", {}).values())
+    return inbox
+
+
+def auto_fix_weak_images(abbr: str | None = None, chapter: int | str | None = None) -> dict[str, Any]:
+    """Locally regenerate weak/rejected pack images (no OpenAI/external API).
+
+    Walks the pending packs for the chapter and runs regenerate_weak_images(folder,
+    use_openai=False) so weak art is refreshed with the local diffusers pipeline.
+    Returns per-pack results; never posts or publishes.
+    """
+    packs = chapter_review_packs(abbr, chapter)
+    folders: list[str] = []
+    for key in ("patreon", "dailyShorts", "deepTikToks", "manualSocial", "youtube"):
+        for it in packs.get(key, []):
+            f = str(it.get("folder") or "")
+            if f and f not in folders:
+                folders.append(f)
+    fixed: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for folder in folders:
+        try:
+            result = regenerate_weak_images(folder, use_openai=False)
+            fixed.append({"folder": folder, "result": result})
+        except Exception as exc:  # noqa: BLE001 - surface per-pack, keep going
+            errors.append({"folder": folder, "error": str(exc)})
+    return {"ok": not errors, "fixed": fixed, "errors": errors, "folder_count": len(folders)}
+
+
+def upload_all_for_chapter(
+    abbr: str | None = None,
+    chapter: int | str | None = None,
+    *,
+    auto_fix_weak: bool = False,
+) -> dict[str, Any]:
+    """One-click chain: (optional) local auto-fix-weak, then gate on all-images-approved,
+    then trigger every relevant publish assist for the chapter:
+      - Patreon draft (free for teasers per #2)
+      - X post (publish_x_post)
+      - Facebook (manual_facebook_assist)
+      - Shorts + Instagram -> Buffer (buffer_post_from_folder)
+    Gated: if any pack still needs review, returns blocked=True with the offending items.
+    """
+    if auto_fix_weak:
+        auto_fix_weak_images(abbr, chapter)
+    packs = chapter_review_packs(abbr, chapter)
+    needs_review: list[dict[str, Any]] = []
+    for key in ("patreon", "dailyShorts", "deepTikToks", "manualSocial"):
+        for it in packs.get(key, []):
+            if it.get("needsReview") or it.get("needs_review"):
+                needs_review.append({**it, "kind": key})
+    if needs_review:
+        return {
+            "ok": False,
+            "blocked": True,
+            "reason": "Images still need review. Approve all pack images before Upload All.",
+            "needs_review": needs_review,
+        }
+    results: dict[str, Any] = {"patreon": [], "x": [], "facebook": [], "shorts_buffer": [], "instagram_buffer": [], "errors": []}
+    for it in packs.get("patreon", []):
+        try:
+            results["patreon"].append(build_patreon_draft(str(it["folder"]), tier_stage_override=""))
+        except Exception as exc:  # noqa: BLE001
+            results["errors"].append({"step": "patreon", "folder": it.get("folder"), "error": str(exc)})
+    for it in packs.get("manualSocial", []):
+        f = str(it.get("folder") or "")
+        if not f:
+            continue
+        try:
+            results["x"].append(publish_x_post(f))
+        except Exception as exc:  # noqa: BLE001
+            results["errors"].append({"step": "x", "folder": f, "error": str(exc)})
+        try:
+            results["facebook"].append(manual_facebook_assist(f))
+        except Exception as exc:  # noqa: BLE001
+            results["errors"].append({"step": "facebook", "folder": f, "error": str(exc)})
+    channels = configured_buffer_channels()
+    short_ids = [c["id"] for c in channels if c.get("id") and c.get("service") == "tiktok"]
+    ig_ids = [c["id"] for c in channels if c.get("id") and c.get("service") == "instagram"]
+    for it in packs.get("dailyShorts", []):
+        f = str(it.get("folder") or "")
+        if not f:
+            continue
+        if short_ids:
+            try:
+                results["shorts_buffer"].append(buffer_post_from_folder(f, short_ids, "tiktok", "addToQueue"))
+            except Exception as exc:  # noqa: BLE001
+                results["errors"].append({"step": "shorts_buffer", "folder": f, "error": str(exc)})
+        if ig_ids:
+            try:
+                results["instagram_buffer"].append(buffer_post_from_folder(f, ig_ids, "instagram", "addToQueue"))
+            except Exception as exc:  # noqa: BLE001
+                results["errors"].append({"step": "instagram_buffer", "folder": f, "error": str(exc)})
+    return {"ok": not results["errors"], "blocked": False, **results}
+
+
 def clickup_request(method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     load_env_file()
     token = os.environ.get("CLICKUP_API_TOKEN", "").strip()
@@ -35624,6 +35735,8 @@ Generated: ${escapeHtml(data.generatedAt || '')}</div>
           <button id="reconcileApprovalInboxBtn" class="secondary" type="button">Clear Stale Done Items</button>
           <button id="dismissVisibleApprovalBtn" class="secondary" type="button">Dismiss Visible Inbox Items</button>
           <button id="clearVisibleFailuresBtn" class="secondary" type="button">Clear Visible Failures</button>
+          <button id="uploadAllBtn" type="button">Upload All (Patreon free + X + FB + Buffer)</button>
+          <button id="autoFixWeakBtn" class="secondary" type="button">Auto-Fix Weak Images</button>
         </div>
         ${section(`Message Replies (${data.counts?.messages || 0})`, messages)}
         ${section(`Comment Replies (${data.counts?.comments || 0})`, comments)}
@@ -35856,6 +35969,48 @@ Generated: ${escapeHtml(data.generatedAt || '')}</div>
       renderApprovalInbox(data);
       statusEl.textContent = `${data.total || 0} item(s) need attention.`;
     }
+
+    document.getElementById('uploadAllBtn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('uploadAllBtn');
+      btn.disabled = true;
+      statusEl.textContent = 'Running Upload All (gated on all images approved)...';
+      try {
+        const body = {abbr: docsNovel?.value || '', chapter: docsChapter?.value || ''};
+        const response = await postJson('/api/upload-all', body);
+        if (response.blocked) {
+          statusEl.textContent = `Blocked: ${response.reason || 'review needed'} (${response.needs_review?.length || 0} item(s)).`;
+        } else {
+          const parts = [];
+          if (response.patreon?.length) parts.push(`${response.patreon.length} Patreon draft(s)`);
+          if (response.x?.length) parts.push(`${response.x.length} X`);
+          if (response.facebook?.length) parts.push(`${response.facebook.length} FB`);
+          if (response.shorts_buffer?.length) parts.push(`${response.shorts_buffer.length} Shorts→Buffer`);
+          if (response.instagram_buffer?.length) parts.push(`${response.instagram_buffer.length} IG→Buffer`);
+          statusEl.textContent = `Upload All done: ${parts.join(', ') || 'nothing to do'}.${response.errors?.length ? ' Errors: ' + response.errors.length : ''}`;
+        }
+        await showApprovalInbox();
+      } catch (error) {
+        statusEl.textContent = error.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    document.getElementById('autoFixWeakBtn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('autoFixWeakBtn');
+      btn.disabled = true;
+      statusEl.textContent = 'Regenerating weak images locally (no OpenAI)...';
+      try {
+        const query = `abbr=${encodeURIComponent(docsNovel?.value || '')}&chapter=${encodeURIComponent(docsChapter?.value || '')}`;
+        const response = await (await fetch(`/api/auto-fix-weak-images?${query}`)).json();
+        statusEl.textContent = `Auto-fix weak: ${response.folder_count || 0} pack(s) scanned${response.errors?.length ? ', ' + response.errors.length + ' error(s)' : '.'}`;
+        await showApprovalInbox();
+      } catch (error) {
+        statusEl.textContent = error.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
 
     async function gatherComments() {
       commentGatherBtn.disabled = true;
@@ -42190,6 +42345,22 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+        if parsed.path == "/api/review-packs":
+            query = urllib.parse.parse_qs(parsed.query)
+            abbr = (query.get("abbr", [""])[0] or None)
+            chapter = (query.get("chapter", [""])[0] or None)
+            self.send_json(chapter_review_packs(abbr, chapter))
+            return
+        if parsed.path == "/api/auto-fix-weak-images":
+            query = urllib.parse.parse_qs(parsed.query)
+            abbr = (query.get("abbr", [""])[0] or None)
+            chapter = (query.get("chapter", [""])[0] or None)
+            try:
+                self.send_json(auto_fix_weak_images(abbr, chapter))
+            except Exception as exc:
+                self.send_json({"ok": False, "error": str(exc)}, 400)
+            return
+
     def do_OPTIONS(self) -> None:
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -42481,6 +42652,21 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(docs_chapter_text(query.get("abbr", [""])[0], int(query.get("chapter", ["0"])[0])))
             except Exception as exc:
                 self.send_json({"error": str(exc)}, 500)
+            return
+        if parsed.path == "/api/upload-all":
+            try:
+                length = int(self.headers.get("Content-Length", "0") or "0")
+                raw = self.rfile.read(length) if length else b"{}"
+                body = json.loads(raw.decode("utf-8") or "{}") if raw.strip() else {}
+            except Exception:
+                body = {}
+            abbr = body.get("abbr") or None
+            chapter = body.get("chapter") or None
+            auto_fix = bool(body.get("auto_fix_weak"))
+            try:
+                self.send_json(upload_all_for_chapter(abbr, chapter, auto_fix_weak=auto_fix))
+            except Exception as exc:
+                self.send_json({"ok": False, "error": str(exc)}, 500)
             return
         if parsed.path == "/api/chapter-workflow-status":
             try:
