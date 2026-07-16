@@ -29,3 +29,6 @@ app-regression-dashboard.json
 /.playwright-profile/
 /automation_state.db*
 *.tmp
+
+# Dedicated GPU env for local Stable Diffusion (CUDA torch, isolated from app runtime)
+.venv-gpu/

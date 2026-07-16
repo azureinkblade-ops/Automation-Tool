@@ -8061,18 +8061,59 @@ def enhance_local_sd_prompt(prompt: str, *, orientation: str = "vertical", lora_
     return prompt
 
 
+def local_sd_python() -> Path:
+    """Resolve the Python interpreter used to run the local Stable Diffusion / diffusers
+    generator. Kept separate from the app's main interpreter so the heavy GPU stack
+    (torch/diffusers) lives in its own .venv-gpu and a Codex runtime refresh can't
+    wipe it. Order: LOCAL_SD_PYTHON env -> project .venv-gpu -> main interpreter."""
+    configured = os.environ.get("LOCAL_SD_PYTHON", "").strip()
+    if configured:
+        return Path(configured)
+    project_python = ROOT / ".venv-gpu" / "Scripts" / "python.exe"
+    if project_python.exists():
+        return project_python
+    return Path(sys.executable)
+
+
 def local_stable_diffusion_status() -> dict[str, Any]:
     enabled = str(os.environ.get("LOCAL_SD_ENABLED", "1")).strip().lower() not in {"0", "false", "no", "off"}
-    dependencies: dict[str, bool] = {}
+    dependencies: dict[str, bool] = {name: False for name in ["torch", "diffusers", "transformers", "PIL"]}
+    cuda_available = False
+    gpu_name = ""
     try:
-        import importlib.util
-
-        dependencies = {
-            name: importlib.util.find_spec(name) is not None
-            for name in ["torch", "diffusers", "transformers", "PIL"]
-        }
+        import tempfile
+        probe_path = Path(tempfile.mkstemp(prefix="hermes-sd-probe-", suffix=".py", dir=str(ROOT))[1])
+        probe_path.write_text(
+            "import importlib.util as u,json\n"
+            "mods=['torch','diffusers','transformers','PIL']\n"
+            "deps={m:(u.find_spec(m) is not None) for m in mods}\n"
+            "cuda=False;gpu=''\n"
+            "try:\n"
+            " import torch\n"
+            " cuda=torch.cuda.is_available()\n"
+            " gpu=torch.cuda.get_device_name(0) if cuda else ''\n"
+            "except Exception:\n"
+            " pass\n"
+            "print(json.dumps({'deps':deps,'cuda':cuda,'gpu':gpu}))\n",
+            encoding="utf-8",
+        )
+        env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
+        completed = subprocess.run(
+            [str(local_sd_python()), str(probe_path)],
+            capture_output=True, text=True, timeout=60, env=env,
+        )
+        if completed.returncode == 0 and completed.stdout.strip():
+            payload = json.loads(completed.stdout.strip().splitlines()[-1])
+            dependencies = payload.get("deps", dependencies)
+            cuda_available = payload.get("cuda", False)
+            gpu_name = payload.get("gpu", "")
     except Exception:
         dependencies = {name: False for name in ["torch", "diffusers", "transformers", "PIL"]}
+    finally:
+        try:
+            probe_path.unlink(missing_ok=True)
+        except Exception:
+            pass
     return {
         "ready": enabled and LOCAL_IMAGE_GENERATOR_SCRIPT.exists() and all(dependencies.values()),
         "enabled": enabled,
@@ -8084,6 +8125,8 @@ def local_stable_diffusion_status() -> dict[str, Any]:
         "lora": local_lora_status(),
         "timeoutSeconds": int(os.environ.get("LOCAL_SD_TIMEOUT_SECONDS", "360")),
         "dependencies": dependencies,
+        "cudaAvailable": cuda_available,
+        "gpuName": gpu_name,
         "use": "primary local SDXL/diffusers image pipeline before external quota providers",
     }
 
@@ -8121,7 +8164,7 @@ def create_local_stable_diffusion_image(
         "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
     )
     command = [
-        sys.executable,
+        str(local_sd_python()),
         str(LOCAL_IMAGE_GENERATOR_SCRIPT),
         "--prompt",
         prompt,
@@ -8155,8 +8198,9 @@ def create_local_stable_diffusion_image(
     if input_image and input_image.exists():
         command.extend(["--input-image", str(input_image), "--strength", str(strength if strength is not None else os.environ.get("LOCAL_SD_IMG2IMG_STRENGTH", "0.52"))])
     timeout = int(status.get("timeoutSeconds") or 360)
+    gen_env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
     with HeavyJobLimiter():
-        completed = subprocess.run(command, cwd=str(ROOT), capture_output=True, text=True, timeout=timeout)
+        completed = subprocess.run(command, cwd=str(ROOT), capture_output=True, text=True, timeout=timeout, env=gen_env)
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip()
         raise RuntimeError(detail[-800:] or f"Local Stable Diffusion exited with code {completed.returncode}.")
