@@ -3450,11 +3450,11 @@ def rotated_hashtags(abbr: str, seed: str, chapter_text: str = "", limit: int = 
     novel_tag = next((t for t in base if t.lower() != "#azureinkblade" and t.lower().lstrip("#") in profile.get("name", "").lower().replace(" ", "")), None)
     anchor = ["#AzureInkblade"] + ([novel_tag] if novel_tag else [])
     rest = [t for t in base if t not in anchor]
-    seed_hash = hash((seed or "").strip().lower())
-    offset = abs(seed_hash) % max(1, len(rest)) if rest else 0
-    rotated = rest[offset:] + rest[:offset]
-    chosen = rotated[: max(0, limit - len(anchor))]
-    tags = anchor + chosen
+    # Deterministically reorder the rest by a per-seed key so ANY two distinct seeds yield a
+    # distinct ordering (not just a rotating window, which can collide for different days on
+    # the same chapter). Stable for a given seed.
+    ordered = sorted(rest, key=lambda t: hash(f"{seed}:{t}"))
+    tags = anchor + ordered[: max(0, limit - len(anchor))]
     if chapter_text:
         for kw in chapter_keywords(chapter_text, chapter_text, limit=6):
             tag = "#" + "".join(w.capitalize() for w in re.split(r"[^\w]+", kw) if w)
@@ -3469,10 +3469,8 @@ def rotated_x_hashtags(abbr: str, seed: str, limit: int = 5) -> str:
     base = [t for t in re.findall(r"#\w+", profile.get("x_hashtags", "")) if t]
     if not base:
         base = ["#AzureInkblade"]
-    seed_hash = hash((seed or "").strip().lower())
-    offset = abs(seed_hash) % max(1, len(base)) if base else 0
-    rotated = base[offset:] + base[:offset]
-    return " ".join(rotated[:limit])
+    ordered = sorted(base, key=lambda t: hash(f"{seed}:{t}"))
+    return " ".join(ordered[:limit])
 
 
 def chapter_range_text(start: int | str, end: int | str | None = None, prefix: str = "Ch.") -> str:
