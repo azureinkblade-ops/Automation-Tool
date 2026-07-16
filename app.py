@@ -3433,8 +3433,46 @@ def social_profile(abbr_or_name: str) -> dict[str, str]:
             "release": "New chapter live",
             "hashtags": "#AzureInkblade #BookTok #BookTokFantasy #FantasyBooks #WebNovel #WebNovelCommunity #RoyalRoad #RoyalRoadFantasy #ProgressionFantasy #FantasyReads",
             "x_hashtags": "#AzureInkblade #RoyalRoad #webnovel",
-        },
-    )
+            },
+            )
+
+
+def rotated_hashtags(abbr: str, seed: str, chapter_text: str = "", limit: int = 9) -> str:
+    """Deterministic per-(abbr,chapter,day) hashtag set so daily posts don't repeat.
+
+    Anchors the brand + novel tag, then rotates the remaining base hashtags by a hash of
+    `seed` and appends up to two chapter-specific keywords. OpenAI-free; stable for a given seed.
+    """
+    profile = social_profile(abbr)
+    base = [t for t in re.findall(r"#\w+", profile.get("hashtags", "")) if t]
+    if not base:
+        base = ["#AzureInkblade"]
+    novel_tag = next((t for t in base if t.lower() != "#azureinkblade" and t.lower().lstrip("#") in profile.get("name", "").lower().replace(" ", "")), None)
+    anchor = ["#AzureInkblade"] + ([novel_tag] if novel_tag else [])
+    rest = [t for t in base if t not in anchor]
+    seed_hash = hash((seed or "").strip().lower())
+    offset = abs(seed_hash) % max(1, len(rest)) if rest else 0
+    rotated = rest[offset:] + rest[:offset]
+    chosen = rotated[: max(0, limit - len(anchor))]
+    tags = anchor + chosen
+    if chapter_text:
+        for kw in chapter_keywords(chapter_text, chapter_text, limit=6):
+            tag = "#" + "".join(w.capitalize() for w in re.split(r"[^\w]+", kw) if w)
+            if tag not in tags and len(tags) < limit:
+                tags.append(tag)
+    return " ".join(tags)
+
+
+def rotated_x_hashtags(abbr: str, seed: str, limit: int = 5) -> str:
+    """X/Twitter variant of rotated_hashtags using the shorter x_hashtags base."""
+    profile = social_profile(abbr)
+    base = [t for t in re.findall(r"#\w+", profile.get("x_hashtags", "")) if t]
+    if not base:
+        base = ["#AzureInkblade"]
+    seed_hash = hash((seed or "").strip().lower())
+    offset = abs(seed_hash) % max(1, len(base)) if base else 0
+    rotated = base[offset:] + base[:offset]
+    return " ".join(rotated[:limit])
 
 
 def chapter_range_text(start: int | str, end: int | str | None = None, prefix: str = "Ch.") -> str:
@@ -15338,13 +15376,14 @@ def short_platform_intro(abbr_or_name: str, chapter: str, platform: str) -> str:
 def tiktok_caption(novel: str, chapter: str) -> str:
     profile = social_profile(novel)
     destination = short_destination_copy(novel, chapter, source="tiktok")
+    hashtags = rotated_hashtags(novel, f"{novel}-{chapter}", chapter_text=chapter, limit=9)
     return "\n".join(
         [
             f"{profile['emoji']} {short_platform_intro(novel, chapter, 'tiktok')}",
             destination["hook"],
             destination["links"],
             "",
-            profile["hashtags"],
+            hashtags,
         ]
     )
 
@@ -16538,8 +16577,8 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
 
 def fallback_social_copy(novel: str, abbr: str, day: str, filename: str) -> dict[str, str]:
     profile = social_profile(abbr or novel)
-    tags = profile["hashtags"]
-    x_tags = profile["x_hashtags"]
+    tags = rotated_hashtags(abbr, f"{abbr}-{day}", chapter_text=filename, limit=9)
+    x_tags = rotated_x_hashtags(abbr, f"{abbr}-{day}", limit=5)
     royal_road_url = royal_road_url_for_story(abbr or novel)
     focus = rotating_post_focus(abbr, f"fallback_social_{day}")
     style = rotating_caption_style(abbr, f"fallback_social_{day}_{focus}")
