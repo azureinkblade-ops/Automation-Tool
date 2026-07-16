@@ -8075,11 +8075,30 @@ def local_sd_python() -> Path:
     return Path(sys.executable)
 
 
-def local_stable_diffusion_status() -> dict[str, Any]:
-    enabled = str(os.environ.get("LOCAL_SD_ENABLED", "1")).strip().lower() not in {"0", "false", "no", "off"}
-    dependencies: dict[str, bool] = {name: False for name in ["torch", "diffusers", "transformers", "PIL"]}
+_SD_PROBE_CACHE: dict[str, Any] = {"key": None, "at": 0.0, "deps": None, "cuda": False, "gpu": ""}
+_SD_PROBE_TTL_SECONDS = 300
+
+
+def _probe_local_sd_dependencies() -> tuple[dict[str, bool], bool, str]:
+    """Probe torch/diffusers deps + CUDA in the GPU interpreter via a subprocess.
+    Cached for _SD_PROBE_TTL_SECONDS keyed on the interpreter path, because the
+    subprocess imports torch (~seconds) and the result is stable during a run.
+    Build All Posts calls status once per image, so caching avoids re-importing
+    torch on every generation."""
+    default_deps = {name: False for name in ["torch", "diffusers", "transformers", "PIL"]}
+    interp = str(local_sd_python())
+    now = time.time()
+    if (
+        _SD_PROBE_CACHE["key"] == interp
+        and _SD_PROBE_CACHE["deps"] is not None
+        and (now - _SD_PROBE_CACHE["at"]) < _SD_PROBE_TTL_SECONDS
+    ):
+        return _SD_PROBE_CACHE["deps"], _SD_PROBE_CACHE["cuda"], _SD_PROBE_CACHE["gpu"]
+
+    dependencies = dict(default_deps)
     cuda_available = False
     gpu_name = ""
+    probe_path = None
     try:
         import tempfile
         probe_path = Path(tempfile.mkstemp(prefix="hermes-sd-probe-", suffix=".py", dir=str(ROOT))[1])
@@ -8099,7 +8118,7 @@ def local_stable_diffusion_status() -> dict[str, Any]:
         )
         env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
         completed = subprocess.run(
-            [str(local_sd_python()), str(probe_path)],
+            [interp, str(probe_path)],
             capture_output=True, text=True, timeout=60, env=env,
         )
         if completed.returncode == 0 and completed.stdout.strip():
@@ -8107,13 +8126,22 @@ def local_stable_diffusion_status() -> dict[str, Any]:
             dependencies = payload.get("deps", dependencies)
             cuda_available = payload.get("cuda", False)
             gpu_name = payload.get("gpu", "")
+            # Only cache a successful probe; failures fall through and retry next call.
+            _SD_PROBE_CACHE.update({"key": interp, "at": now, "deps": dependencies, "cuda": cuda_available, "gpu": gpu_name})
     except Exception:
-        dependencies = {name: False for name in ["torch", "diffusers", "transformers", "PIL"]}
+        dependencies = dict(default_deps)
     finally:
-        try:
-            probe_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+        if probe_path is not None:
+            try:
+                probe_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+    return dependencies, cuda_available, gpu_name
+
+
+def local_stable_diffusion_status() -> dict[str, Any]:
+    enabled = str(os.environ.get("LOCAL_SD_ENABLED", "1")).strip().lower() not in {"0", "false", "no", "off"}
+    dependencies, cuda_available, gpu_name = _probe_local_sd_dependencies()
     return {
         "ready": enabled and LOCAL_IMAGE_GENERATOR_SCRIPT.exists() and all(dependencies.values()),
         "enabled": enabled,
