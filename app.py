@@ -239,7 +239,13 @@ IMAGE_LAB_FILE = ROOT / "image-lab.json"
 IMAGE_LAB_DIR = ROOT / "image-lab"
 IMAGE_FEEDBACK_FILE = ROOT / "image-feedback.json"
 TRAINING_DATA_DIR = ROOT / "training-data"
-ANALYTICS_LAB_FILE = ROOT / "analytics-lab.json"
+
+# External paid AI (OpenAI + Google Gemini) is disabled by default: no API credits are
+# configured, so we must not burn quota. Every caller already has a local/fallback path that
+# fires on request failure, so disabling just makes those fallbacks trigger instantly instead
+# of after a network round-trip + 429. Set ENABLE_EXTERNAL_AI=1 to re-enable if credits return.
+EXTERNAL_AI_ENABLED = os.environ.get("ENABLE_EXTERNAL_AI", "0").strip() == "1"
+
 THUMBNAIL_TESTS_FILE = ROOT / "thumbnail-tests.json"
 PINNED_ASSET_PLAN_FILE = ROOT / "pinned-profile-assets.json"
 PINNED_ASSET_OUTPUT_DIR = ROOT / "pinned-profile-assets-output"
@@ -7569,6 +7575,8 @@ def google_ai_image_model() -> str:
 
 
 def google_ai_request(payload: dict[str, Any]) -> dict[str, Any]:
+    if not EXTERNAL_AI_ENABLED:
+        raise RuntimeError("External AI disabled (ENABLE_EXTERNAL_AI not set); using local/fallback path.")
     key = os.environ.get("GOOGLE_AI_API_KEY", "").strip()
     if not key:
         raise RuntimeError("GOOGLE_AI_API_KEY is not configured.")
@@ -16535,7 +16543,7 @@ def fallback_social_copy(novel: str, abbr: str, day: str, filename: str) -> dict
     royal_road_url = royal_road_url_for_story(abbr or novel)
     focus = rotating_post_focus(abbr, f"fallback_social_{day}")
     style = rotating_caption_style(abbr, f"fallback_social_{day}_{focus}")
-    cta = focused_social_cta(abbr, focus, f"daily_{item['day']}_{chapter_number or 'general'}", "daily")
+    cta = focused_social_cta(abbr, focus, f"daily_{day}_general", "daily")
     generic_hooks = {
         "scene_hook": f"{profile['name']} is moving into the next pressure point.",
         "reader_question": "What kind of power would you chase if the cost kept rising?",
@@ -23325,6 +23333,8 @@ def build_master_release_posts(selections: dict[str, Any]) -> dict[str, Any]:
 
 
 def openai_request(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if not EXTERNAL_AI_ENABLED:
+        raise RuntimeError("External AI disabled (ENABLE_EXTERNAL_AI not set); using local/fallback path.")
     key = os.environ.get("OPENAI_API_KEY")
     if not key:
         raise RuntimeError("OPENAI_API_KEY is not configured.")
@@ -31174,6 +31184,8 @@ def download_url(url: str, target: Path) -> None:
 
 
 def create_openai_image(prompt: str, target: Path, size: str | None = None, quality: str | None = None) -> None:
+    if not EXTERNAL_AI_ENABLED:
+        raise RuntimeError("External AI disabled (ENABLE_EXTERNAL_AI not set); caller should use local image source.")
     primary_payload = {
         "model": os.environ.get("OPENAI_IMAGE_MODEL", "gpt-image-1"),
         "prompt": prompt,
