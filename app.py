@@ -29808,20 +29808,69 @@ def youtube_description_from_text(chapter_title: str, chapter_text: str, abbr: s
     ).strip()
 
 
+def _story_hook_chapter_number(title: str) -> str:
+    m = re.search(r"chapter\s+(\d+[A-Za-z]?)", str(title or ""), re.IGNORECASE)
+    return m.group(1) if m else ""
+
+
+def _story_hook_engagement_question(abbr: str) -> str:
+    # Varied per-novel voice (pulled from the brand-brain profile) instead of one global question.
+    questions = {
+        "EN": "Watch to the end, then tell me in the comments: which thread in the Nexus would you have pulled?",
+        "HA": "Watch to the end, then tell me in the comments: what would you sacrifice to ascend?",
+        "SF": "Watch to the end, then tell me in the comments: what would you forge from this moment?",
+        "HP": "Watch to the end, then tell me in the comments: which path would you have chosen?",
+    }
+    return questions.get(abbr, "Watch to the end, then tell me in the comments: what would you have done?")
+
+
+def _story_hook_rich_summary(title: str, story_text: str) -> str:
+    # Limitation fix #1: use more than the first sentence. Base sentence + a second
+    # supporting sentence, capped so the hook stays tight.
+    base = youtube_chapter_summary(title, story_text)
+    try:
+        body = chapter_body_for_marketing(story_text)
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", normalize_story_text(body)) if s.strip()]
+        if len(sentences) >= 2:
+            second = clean_teaser_text(sentences[1], limit=200, max_words=None)
+            combined = f"{base} {second}."
+            return combined if len(combined) <= 480 else combined[:480].rsplit(".", 1)[0] + "."
+    except Exception:
+        pass
+    return base
+
+
 def story_hook_youtube_description(title: str, story_text: str, abbr: str = "", tags: str = "") -> str:
     abbr = story_key(abbr)
     novel = NOVEL_NAMES.get(abbr, "Azure Inkblade")
+    # Limitation fix #2/#4: brand-brain profile (voice/emoji) via social_profile; generic fallback if abbr unresolved.
+    profile = social_profile(abbr or novel)
     clean_title = clean_youtube_chapter_title(title, abbr) or "Original Fantasy Story"
-    hook = youtube_chapter_summary(clean_title, story_text)
+    hook = _story_hook_rich_summary(clean_title, story_text)
     keywords = youtube_tag_list(tags, limit=5)
     discovery = ", ".join(keywords) if keywords else "progression fantasy, web novels, and original fantasy stories"
-    return (
+    # Limitation fix #3: surface live-status truth from release state (Royal Road) when a chapter is detectable.
+    cue = ""
+    ch = _story_hook_chapter_number(clean_title) or _story_hook_chapter_number(title)
+    if ch and abbr in NOVEL_NAMES:
+        try:
+            if chapter_is_live_on_royal_road(abbr, ch):
+                cue = "\n\nThe full chapter is already live on Royal Road — start reading free."
+        except Exception:
+            cue = ""
+    # Limitation fix #6: per-novel engagement question.
+    question = _story_hook_engagement_question(abbr)
+    description = (
         f"{hook}\n\n"
         f"{clean_title} is an original Azure Inkblade story hook connected to {novel}, "
-        f"created for readers and listeners who enjoy {discovery}.\n\n"
-        "Watch to the end, then tell me in the comments: what would you have done?\n\n"
+        f"created for readers and listeners who enjoy {discovery}.{cue}\n\n"
+        f"{question}\n\n"
         f"Read the novels, watch more stories, and find author resources: {linktree_url()}"
     ).strip()
+    # Limitation fix #7: explicit YouTube 5,000-char guard.
+    if len(description) > 5000:
+        description = description[:4980].rsplit(" ", 1)[0] + "..."
+    return description
 
 
 def story_hook_single_hub_description(value: str) -> str:
