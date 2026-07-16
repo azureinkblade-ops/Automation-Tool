@@ -3365,7 +3365,7 @@ def short_destination_copy(
         focus = "royal_road_live"
     else:
         hook_options = [
-            "This teaser points to early access first, with public chapters ready to catch up.",
+            "Get the next chapters first on Patreon, or catch up free on the public chapters.",
             "Read ahead now or start from the public chapters when you are ready.",
             "The next turn is already waiting for early readers.",
         ]
@@ -13205,7 +13205,10 @@ def write_variant_short_pack(experiment: dict[str, Any], variant: dict[str, Any]
             create_fallback_image(f"{prompt} fresh-build-{time.time_ns()}", target, slot)
             used_image_hashes.add(image_file_fingerprint(target))
         images.append(str(target))
-    outro_image = prepare_tiktok_outro_image(target_folder, abbr, novel, chapter)
+    outro_image = prepare_tiktok_outro_image(
+        target_folder, abbr, novel, chapter,
+        style=experiment.get("style") or experiment.get("loraTrack") or "comic-style",
+    )
     images.append(outro_image)
     sounds = list_tiktok_assets().get("sounds", [])
     if not sounds:
@@ -15637,11 +15640,19 @@ def tiktok_chapter_teaser_overlays(
 
 def prepare_tiktok_outro_image(folder: Path, abbr: str, novel: str, chapter: str | int, style: str = "main-posts") -> str:
     pack_track = style if style in LORA_STYLE_TRACKS else "main-posts"
-    source = choose_rotating_daily_promo_image(abbr)
     target = folder / "novel-promo-card.png"
+    # Only reuse a banked daily promo if its recorded track matches this pack's
+    # track. Otherwise the outro card can mix a realistic/main promo into a
+    # comic-style short (and vice versa). If no on-track banked image exists,
+    # generate a fresh on-track outro instead of copying an off-style one.
+    source = choose_rotating_daily_promo_image(abbr)
     if source and source.exists():
-        shutil.copy2(source, target)
-        return str(target)
+        sidecar = source.with_name(f"{source.name}.track")
+        source_track = sidecar.read_text(encoding="utf-8").strip() if sidecar.exists() else ""
+        if source_track == pack_track:
+            shutil.copy2(source, target)
+            target.with_name(f"{target.name}.track").write_text(pack_track, encoding="utf-8")
+            return str(target)
     prompt = (
         f"Vertical 9:16 bold fantasy web novel promotional background for {novel} chapter {chapter}. "
         "Strong central composition, dramatic lighting, no text, no typography, no logo."
@@ -15649,6 +15660,7 @@ def prepare_tiktok_outro_image(folder: Path, abbr: str, novel: str, chapter: str
     # Keep the outro on the same single pack track as the rest of the video (E).
     prompt = enhance_local_sd_prompt(prompt, orientation="vertical", lora_track=pack_track)
     create_prompt_fallback_image(prompt, target, 4, abbr, allow_banked=False, fresh=True)
+    target.with_name(f"{target.name}.track").write_text(pack_track, encoding="utf-8")
     return str(target)
 
 
@@ -15956,7 +15968,8 @@ def rebuild_normal_tiktok_video_from_metadata(target: Path, metadata: dict[str, 
     if len(images) < 3:
         raise RuntimeError("This Shorts/Reels pack needs at least three valid images before the MP4 can be rebuilt.")
     if len(images) < 4:
-        images.append(prepare_tiktok_outro_image(target, abbr, novel, chapter or ""))
+        rebuild_track = metadata.get("packTrack") or metadata.get("loraTrack") or "main-posts"
+        images.append(prepare_tiktok_outro_image(target, abbr, novel, chapter or "", style=rebuild_track))
         metadata["images"] = images
     sound = Path(str(metadata.get("sound") or ""))
     if not sound.exists():
@@ -16537,7 +16550,20 @@ def deep_tiktok_eligible_chapters(abbr: str, used: set[int]) -> list[int]:
 def select_random_deep_tiktok_chapter() -> dict[str, Any]:
     with DEEP_TIKTOK_ROTATION_LOCK:
         state = load_deep_tiktok_rotation()
-        if isinstance(state.get("pending"), dict):
+        # Self-heal: a "pending" selection that was never completed (app crash,
+        # hard-kill, or abandoned build) wedges the guard below forever. A 60-75s
+        # build never runs >1h, so treat anything older as orphaned and clear it.
+        pending = state.get("pending")
+        if isinstance(pending, dict) and str(pending.get("selectedAt", "")).strip():
+            try:
+                age_h = (time.time() - time.mktime(time.strptime(pending["selectedAt"], "%Y-%m-%d %H:%M:%S"))) / 3600
+            except Exception:
+                age_h = 0.0
+            if age_h >= 1.0:
+                state["pending"] = None
+                save_deep_tiktok_rotation(state)
+                pending = None
+        if isinstance(pending, dict):
             raise RuntimeError("A 60-75 second TikTok selection is already being built. Wait for it to finish before starting another.")
         remaining = [story_key(str(value)) for value in state.get("remainingNovels", [])]
         remaining = [abbr for abbr in remaining if abbr in {"EN", "HA", "SF", "HP"}]
