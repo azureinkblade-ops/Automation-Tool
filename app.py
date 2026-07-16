@@ -22153,6 +22153,21 @@ async function fillBody(page, draft) {{
 
 async function tryConfigureAudience(page, draft) {{
   const actions = [];
+  const accessLevel = (draft.access_level || 'paid').toLowerCase();
+  if (accessLevel === 'free') {{
+    const free = page.locator('input[type="radio"][value="free"]:visible').first();
+    if (await free.count().catch(() => 0)) {{
+      await free.check({{ force: true }}).catch(async () => {{
+        await free.locator('xpath=ancestor::label[1]').click({{ force: true }});
+      }});
+      actions.push('selected Free access');
+    }} else {{
+      const clickedFree = await clickIfVisible(page, ['Free', 'Everyone', 'Public', 'Who can see this post?']);
+      actions.push(clickedFree ? 'selected Free access by label' : 'Free access control not found');
+    }}
+    await page.waitForTimeout(600);
+    return actions;
+  }}
   const paid = page.locator('input[type="radio"][value="paid"]:visible').first();
   if (await paid.count().catch(() => 0)) {{
     await paid.check({{ force: true }}).catch(async () => {{
@@ -26777,6 +26792,11 @@ def patreon_draft_payload(folder: str, *, ignore_existing: bool = False, tier_st
     publish_date = path_initiate_date if tier_stage == "path_initiate" else inner_disciple_date
     publish_time = str(ensure_schedule_file().get("chapterReleaseTime") or "09:00").strip()
     tiers = ["Path Initiate"] if tier_stage == "path_initiate" else ["Inner Disciple"]
+    # Access level: only real chapter early-access drafts (patreon_early focus, or an explicit
+    # tier_stage_override from release automation) are Paid. Teasers / campaign / story-hook packs
+    # built manually are Free advertising posts. (David: teasers are for advertising only, free.)
+    is_chapter_draft = bool(tier_stage_override) or str(metadata.get("focus") or "").strip().lower() == "patreon_early"
+    access_level = "paid" if is_chapter_draft else "free"
     body = text_path.read_text(encoding="utf-8").strip()
     media_path = select_patreon_media(post_folder, metadata)
     summary_lines = [
@@ -26804,6 +26824,7 @@ def patreon_draft_payload(folder: str, *, ignore_existing: bool = False, tier_st
         "royal_road_date": royal_road_date,
         "tier_stage": tier_stage,
         "tiers": tiers,
+        "access_level": access_level,
         "tier_schedule": [
             {"tier": tiers[0], "date": publish_date},
         ],
@@ -27004,6 +27025,21 @@ async function setTierSelection(page, tier, shouldSelect) {{
 
 async function tryConfigureAudience(page) {{
   const actions = [];
+  const accessLevel = (draft.access_level || 'paid').toLowerCase();
+  if (accessLevel === 'free') {{
+    const free = page.locator('input[type="radio"][value="free"]:visible').first();
+    if (await free.count()) {{
+      await free.check({{ force: true }}).catch(async () => {{
+        await free.locator('xpath=ancestor::label[1]').click({{ force: true }});
+      }});
+      actions.push('selected Free access');
+    }} else {{
+      const clickedFree = await clickIfVisible(page, ['Free', 'Everyone', 'Public', 'Who can see this post?']);
+      actions.push(clickedFree ? 'selected Free access by label' : 'Free access control not found');
+    }}
+    await page.waitForTimeout(600);
+    return actions;
+  }}
   const paid = page.locator('input[type="radio"][value="paid"]:visible').first();
   if (await paid.count()) {{
     await paid.check({{ force: true }}).catch(async () => {{
