@@ -942,6 +942,96 @@ def normalize_chapter_id(title: str, chapter: str | int = "") -> str:
     return match.group(1) if match else ""
 
 
+def with_instagram_links(text: str, story: str = "") -> str:
+    text = text.strip()
+    if linktree_url() in text:
+        return text
+    footer = platform_links_block(story)
+    return f"{text}\n\n{footer}" if text else footer
+
+
+def fallback_social_copy(novel: str, abbr: str, day: str, filename: str) -> dict[str, str]:
+    profile = social_profile(abbr or novel)
+    tags = rotated_hashtags(abbr, f"{abbr}-{day}", chapter_text=filename, limit=9)
+    x_tags = rotated_x_hashtags(abbr, f"{abbr}-{day}", limit=5)
+    royal_road_url = royal_road_url_for_story(abbr or novel)
+    focus = rotating_post_focus(abbr, f"fallback_social_{day}")
+    style = rotating_caption_style(abbr, f"fallback_social_{day}_{focus}")
+    cta = focused_social_cta(abbr, focus, f"daily_{day}_general", "daily")
+    generic_hooks = {
+        "scene_hook": f"{profile['name']} is moving into the next pressure point.",
+        "reader_question": "What kind of power would you chase if the cost kept rising?",
+        "stakes": f"The next step is never free in {profile['name']}.",
+        "character_moment": "Every arc has a moment where the path starts choosing back.",
+        "worldbuilding": "Step into a world of hidden systems, rising threats, and hard-won power.",
+        "catch_up": "Start from the beginning or catch up before the next release lands.",
+    }
+    hook = generic_hooks.get(style, generic_hooks["scene_hook"])
+    instagram = "\n".join(
+        [
+            f"{profile['emoji']} {profile['name']} - {day} spotlight",
+            "",
+            hook,
+            "",
+            cta,
+            "",
+            platform_links_block(abbr),
+            "",
+            tags,
+        ]
+    )
+    x_link = linktree_url()
+    x_text = f"{profile['emoji']} {hook}\n{x_link}\n{x_tags}"
+    if len(x_text) > 260:
+        x_text = x_text[:257].rsplit(" ", 1)[0] + "..."
+    facebook = "\n\n".join(
+        [
+            f"{profile['emoji']} {profile['name']} - {day} spotlight",
+            hook,
+            cta,
+            "Follow the story updates across the main channels.",
+            platform_links_block(abbr),
+            tags,
+        ]
+    )
+    return {
+        "instagram": with_instagram_links(instagram, abbr),
+        "x": x_text,
+        "facebook": facebook,
+        "alt_text": f"Promotional image for {profile['name']}, scheduled for {day}.",
+        "post_focus": focus,
+        "caption_style": style,
+    }
+    instagram = "\n".join(
+        [
+            f"{profile['emoji']} {profile['patreon']} — {profile['name']} has chapters waiting on Patreon!",
+            f"RR {royal_road_url}",
+            f"Patreon {PATREON_URL}",
+            f"YouTube {YOUTUBE_SOCIAL_URL}",
+            f"TikTok {TIKTOK_URL}",
+            "",
+            tags,
+        ]
+    )
+    x_text = f"{profile['emoji']} {profile['name']} chapters are waiting on Patreon.\n👉 {PATREON_URL}\n{x_tags}"
+    if len(x_text) > 260:
+        x_text = x_text[:257].rsplit(" ", 1)[0] + "..."
+    facebook = "\n\n".join(
+        [
+            f"{profile['emoji']} {profile['patreon']} — {profile['name']} has chapters waiting on Patreon!",
+            "Read now on Royal Road, support early access on Patreon, and follow the story updates here.",
+            platform_links_block(abbr),
+            tags,
+        ]
+    )
+    return {
+        "instagram": with_instagram_links(instagram, abbr),
+        "x": x_text,
+        "facebook": facebook,
+        "alt_text": f"Promotional image for {profile['name']}, scheduled for {day}.",
+    }
+
+
 # --- app-bound collaborators (injected, not imported) ---
 # Two functions in this closure depend on app/DB state that lives in app.py / release_state
 # (Task 3) and is intentionally NOT imported here (the plan forbids promo_copy importing app):
