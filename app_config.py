@@ -31,6 +31,7 @@ STORY_HOOK_OUTPUT_DIR = ROOT / "story-hook-videos"
 MANUAL_VIDEO_OUTPUT_DIR = ROOT / "manual-video-packs"
 OUTPUT_DIR = ROOT / "campaigns"
 MANUAL_VIDEO_IMAGE_BANK_DIR = ROOT / "manual-video-image-bank"
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 EXPERIMENT_OUTPUT_DIR = ROOT / "experiment-post-packs"
 LOCAL_IMAGE_GENERATOR_SCRIPT = ROOT / "local_image_generator.py"
 LORA_TRAINING_DIR = ROOT / "lora-training"
