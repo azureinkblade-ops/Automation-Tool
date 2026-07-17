@@ -16,6 +16,7 @@ if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
 # Fresh rotation state so app.py's rotation_next returns 0 (matches promo_copy default).
+# rotation_next has a disk side-effect; reset BEFORE any comparison so app and pc agree.
 from pathlib import Path
 PROMO_STATE = Path(REPO) / "promo-image-rotation.json"
 _backup = None
