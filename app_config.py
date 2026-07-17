@@ -48,6 +48,8 @@ META_GRAPH_API_VERSION = os.environ.get("META_GRAPH_API_VERSION", "v25.0")
 PATREON_URL = "https://www.patreon.com/c/azureinkblade"
 YOUTUBE_SOCIAL_URL = "https://www.youtube.com/channel/UCBKiJENwFqvVIItR4WbMY6A"
 TIKTOK_URL = "https://www.tiktok.com/@azureinkblade"
+INSTAGRAM_URL = "https://www.instagram.com/azureinkblade"
+LINKTREE_URL = os.environ.get("LINKTREE_URL", "https://linktr.ee/azureinkblade").strip() or "https://linktr.ee/azureinkblade"
 
 # --- State / JSON-shadow file paths (SQLite is canonical; JSON kept for read-compat) ---
 CHAPTER_RELEASE_QUEUE_FILE = ROOT / "chapter-release-queue.json"
