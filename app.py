@@ -7110,6 +7110,13 @@ def local_sd_python() -> Path:
 _SD_PROBE_CACHE: dict[str, Any] = {"key": None, "at": 0.0, "deps": None, "cuda": False, "gpu": ""}
 _SD_PROBE_TTL_SECONDS = 300
 
+# Serialize diffusers image generation on the GPU. HeavyJobLimiter is a shared
+# semaphore that also admits ffmpeg and allows parallel heavy jobs, so it does NOT
+# prevent two Stable Diffusion subprocesses from contending for VRAM. This lock
+# guarantees only one diffusers GPU job runs at a time. A second call blocks until
+# the GPU clears (auto-queues the next), and local_sd_busy() reports the state.
+_LOCAL_SD_GPU_LOCK = threading.Lock()
+
 
 def _probe_local_sd_dependencies() -> tuple[dict[str, bool], bool, str]:
     """Probe torch/diffusers deps + CUDA in the GPU interpreter via a subprocess.
@@ -7191,6 +7198,15 @@ def local_stable_diffusion_status() -> dict[str, Any]:
     }
 
 
+def local_sd_busy() -> bool:
+    """True when a diffusers image generation is currently holding the GPU lock.
+
+    Callers (UI/CLI/weekend builder) can check this to report 'image gen already
+    in progress' instead of launching a contending job. A second generation call
+    auto-queues behind the lock and runs once the GPU clears."""
+    return _LOCAL_SD_GPU_LOCK.locked()
+
+
 def create_local_stable_diffusion_image(
     prompt: str,
     target: Path,
@@ -7257,26 +7273,27 @@ def create_local_stable_diffusion_image(
         command.extend(["--lora-path", str(lora_path), "--lora-scale", os.environ.get("LOCAL_SD_LORA_SCALE", "0.75")])
     if input_image and input_image.exists():
         command.extend(["--input-image", str(input_image), "--strength", str(strength if strength is not None else os.environ.get("LOCAL_SD_IMG2IMG_STRENGTH", "0.52"))])
-    timeout = int(status.get("timeoutSeconds") or 360)
-    gen_env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
-    with HeavyJobLimiter():
-        completed = subprocess.run(command, cwd=str(ROOT), capture_output=True, text=True, timeout=timeout, env=gen_env)
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout or "").strip()
-        raise RuntimeError(detail[-800:] or f"Local Stable Diffusion exited with code {completed.returncode}.")
-    if not target.exists() or target.stat().st_size < 1024:
-        raise RuntimeError("Local Stable Diffusion did not create a valid image file.")
-    try:
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8")) if metadata_path.exists() else {}
-    except Exception:
-        metadata = {}
-    state = mark_image_used(target)
-    save_promo_rotation_state(state)
-    metadata.setdefault("provider", "local_stable_diffusion")
-    metadata.setdefault("model", status.get("model", ""))
-    metadata.setdefault("loraTrack", lora_track)
-    metadata.setdefault("loraPath", str(lora_path) if lora_path else "")
-    return metadata
+    with _LOCAL_SD_GPU_LOCK:
+        timeout = int(status.get("timeoutSeconds") or 360)
+        gen_env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
+        with HeavyJobLimiter():
+            completed = subprocess.run(command, cwd=str(ROOT), capture_output=True, text=True, timeout=timeout, env=gen_env)
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "").strip()
+            raise RuntimeError(detail[-800:] or f"Local Stable Diffusion exited with code {completed.returncode}.")
+        if not target.exists() or target.stat().st_size < 1024:
+            raise RuntimeError("Local Stable Diffusion did not create a valid image file.")
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8")) if metadata_path.exists() else {}
+        except Exception:
+            metadata = {}
+        state = mark_image_used(target)
+        save_promo_rotation_state(state)
+        metadata.setdefault("provider", "local_stable_diffusion")
+        metadata.setdefault("model", status.get("model", ""))
+        metadata.setdefault("loraTrack", lora_track)
+        metadata.setdefault("loraPath", str(lora_path) if lora_path else "")
+        return metadata
 
 
 def google_ai_generate_text(prompt: str, system_instruction: str = "", model: str = "", temperature: float | None = None) -> dict[str, Any]:
