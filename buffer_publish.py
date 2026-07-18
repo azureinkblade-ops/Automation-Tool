@@ -91,6 +91,20 @@ def _default_collaborators() -> dict[str, Any]:
     return {name: _stub_raise(name) for name in REQUIRED_COLLABORATORS}
 
 
+# Module-global collaborator registry (see promo_builder for the convention).
+_COLLAB: dict[str, Any] = _default_collaborators()
+
+
+def set_collaborators(collab: dict[str, Any]) -> None:
+    """Wire the real app.py functions (and data) into this module. Call once at startup."""
+    global _COLLAB
+    _COLLAB = dict(collab)
+
+
+def get_collaborators() -> dict[str, Any]:
+    return dict(_COLLAB)
+
+
 def _get(collab: dict[str, Any], name: str):
     fn = collab.get(name)
     if fn is None:
@@ -160,7 +174,7 @@ def buffer_post_from_folder(
     *,
     collaborators: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    collab = collaborators or _default_collaborators()
+    collab = collaborators if collaborators is not None else _COLLAB
     if mode not in {"addToQueue", "draft"}:
         raise RuntimeError("Buffer mode must be addToQueue or draft.")
     post_folder = Path(folder).resolve()

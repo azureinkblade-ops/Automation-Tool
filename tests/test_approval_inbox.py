@@ -18,6 +18,10 @@ if REPO not in sys.path:
 import app as app_mod
 import approval_inbox as ai
 
+# Task 8 inversion: app.py's moved functions are now delegators to the extracted modules.
+# Wire them (as main() does at startup) so app_mod.* uses the real implementations.
+app_mod.wire_extracted_modules()
+
 FAILS = []
 
 def check(name, got, want):

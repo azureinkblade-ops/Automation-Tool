@@ -337,13 +337,27 @@ def _default_release_status_collaborators() -> dict[str, Any]:
     return {name: _stub_raise(name) for name in REQUIRED_RELEASE_STATUS_COLLABORATORS}
 
 
+# Module-global collaborator registry (see promo_builder for the convention).
+_RELEASE_STATUS_COLLAB: dict[str, Any] = _default_release_status_collaborators()
+
+
+def set_release_status_collaborators(collab: dict[str, Any]) -> None:
+    """Wire the real app.py functions into release_status_for_chapter. Call once at startup."""
+    global _RELEASE_STATUS_COLLAB
+    _RELEASE_STATUS_COLLAB = dict(collab)
+
+
+def get_release_status_collaborators() -> dict[str, Any]:
+    return dict(_RELEASE_STATUS_COLLAB)
+
+
 def release_status_for_chapter(
     abbr: str,
     chapter: int,
     *,
     collaborators: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    collab = collaborators or _default_release_status_collaborators()
+    collab = collaborators if collaborators is not None else _RELEASE_STATUS_COLLAB
     abbr = abbr.upper().strip()
     novel = _get_rc(collab, "novel_schedule_entry")(abbr)
     current_rr = int(novel.get("currentRoyalRoadChapter", 0))

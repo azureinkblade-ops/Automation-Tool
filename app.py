@@ -38,6 +38,17 @@ import automation_db
 import growth_scheduler
 import release_planner
 
+# --- Phase 1 extracted subsystem modules (Task 8 inversion wiring) ---
+import promo_copy
+import promo_builder
+import release_state
+import approval_inbox
+import release_automation
+import buffer_publish
+import browser_publish
+import youtube_pipeline
+import growth_analytics
+import approval_inbox as approval_inbox_mod
 # Workstream B: central limiter for heavy subprocess spawns (diffusers / ffmpeg).
 try:
     import tools.concurrency as _concurrency
@@ -329,46 +340,10 @@ PIXABAY_GOOD_TAGS = {
 }
 
 
-def json_write_lock(path: Path) -> threading.RLock:
-    key = str(path.resolve()).lower()
-    with JSON_WRITE_LOCKS_GUARD:
-        lock = JSON_WRITE_LOCKS.get(key)
-        if lock is None:
-            lock = threading.RLock()
-            JSON_WRITE_LOCKS[key] = lock
-        return lock
-
-
-def write_json_atomic(path: Path, payload: Any, attempts: int = 8) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    encoded = json.dumps(payload, indent=2)
-    last_error: Exception | None = None
-    with json_write_lock(path):
-        for attempt in range(max(1, attempts)):
-            temp_path = path.with_name(f"{path.name}.{os.getpid()}.{int(time.time() * 1000)}.{attempt}.tmp")
-            try:
-                temp_path.write_text(encoded, encoding="utf-8")
-                os.replace(temp_path, path)
-                return
-            except PermissionError as exc:
-                last_error = exc
-                try:
-                    temp_path.unlink()
-                except OSError:
-                    pass
-                time.sleep(0.08 * (attempt + 1))
-            except OSError as exc:
-                last_error = exc
-                try:
-                    temp_path.unlink()
-                except OSError:
-                    pass
-                time.sleep(0.04 * (attempt + 1))
-    if last_error:
-        raise last_error
-
-
+def json_write_lock(*args, **kwargs):
+    return release_state.json_write_lock(*args, **kwargs)
+def write_json_atomic(*args, **kwargs):
+    return release_state.write_json_atomic(*args, **kwargs)
 def database_state_files() -> dict[str, Path]:
     return {
         "postRecords": POST_RECORDS_FILE,
@@ -389,48 +364,18 @@ def bootstrap_state_database_from_json() -> dict[str, Any]:
     return automation_db.bootstrap_from_json_files(ROOT, database_state_files())
 
 
-def mirror_post_record_to_database(record: dict[str, Any]) -> None:
-    try:
-        automation_db.upsert_post_record(ROOT, record)
-    except Exception as exc:
-        print(f"Database mirror failed for post record: {exc}", file=sys.stderr)
-
-
-def mirror_chapter_ledger_to_database(entry: dict[str, Any]) -> None:
-    try:
-        automation_db.upsert_chapter_ledger_entry(ROOT, entry)
-    except Exception as exc:
-        print(f"Database mirror failed for chapter ledger: {exc}", file=sys.stderr)
-
-
-def mirror_release_status_to_database(data: dict[str, Any]) -> None:
-    try:
-        automation_db.upsert_release_status(ROOT, data)
-    except Exception as exc:
-        print(f"Database mirror failed for release status: {exc}", file=sys.stderr)
-
-
-def mirror_approval_cleared_to_database(key: str, record: dict[str, Any]) -> None:
-    try:
-        automation_db.upsert_approval_cleared(ROOT, key, record)
-    except Exception as exc:
-        print(f"Database mirror failed for approval item: {exc}", file=sys.stderr)
-
-
-def mirror_recovery_event_to_database(event: dict[str, Any]) -> None:
-    try:
-        automation_db.insert_recovery_event(ROOT, event)
-    except Exception as exc:
-        print(f"Database mirror failed for recovery event: {exc}", file=sys.stderr)
-
-
-def mirror_state_snapshot_to_database(key: str, payload: dict[str, Any]) -> None:
-    try:
-        automation_db.upsert_state_snapshot(ROOT, key, payload)
-    except Exception as exc:
-        print(f"Database mirror failed for {key}: {exc}", file=sys.stderr)
-
-
+def mirror_post_record_to_database(*args, **kwargs):
+    return release_state.mirror_post_record_to_database(*args, **kwargs)
+def mirror_chapter_ledger_to_database(*args, **kwargs):
+    return release_state.mirror_chapter_ledger_to_database(*args, **kwargs)
+def mirror_release_status_to_database(*args, **kwargs):
+    return release_state.mirror_release_status_to_database(*args, **kwargs)
+def mirror_approval_cleared_to_database(*args, **kwargs):
+    return release_state.mirror_approval_cleared_to_database(*args, **kwargs)
+def mirror_recovery_event_to_database(*args, **kwargs):
+    return release_state.mirror_recovery_event_to_database(*args, **kwargs)
+def mirror_state_snapshot_to_database(*args, **kwargs):
+    return release_state.mirror_state_snapshot_to_database(*args, **kwargs)
 def load_state_snapshot_from_database(key: str) -> dict[str, Any] | None:
     try:
         return automation_db.load_state_snapshot(ROOT, key)
@@ -446,25 +391,8 @@ def database_available() -> bool:
         return False
 
 
-def read_json_safe(path: Path) -> Any | None:
-    if not path.exists():
-        return None
-    try:
-        if path.stat().st_size == 0:
-            return None
-        raw = path.read_text(encoding="utf-8-sig").strip()
-        if not raw:
-            return None
-        return json.loads(raw)
-    except (OSError, json.JSONDecodeError):
-        try:
-            bad_path = path.with_name(f"{path.name}.bad-{int(time.time())}")
-            path.replace(bad_path)
-        except OSError:
-            pass
-        return None
-
-
+def read_json_safe(*args, **kwargs):
+    return promo_copy.read_json_safe(*args, **kwargs)
 def load_recovery_log() -> dict[str, Any]:
     data = read_json_safe(RECOVERY_LOG_FILE)
     if not isinstance(data, dict):
@@ -674,32 +602,8 @@ def expected_youtube_min_duration(folder: Path) -> float:
     return max(45.0, estimated_seconds * 0.55)
 
 
-def youtube_build_status(folder_value: str) -> dict[str, Any]:
-    folder = resolve_youtube_pack_folder(folder_value)
-    status_file = folder / "youtube-build-status.json"
-    output = folder / "youtube-video.mp4"
-    payload = read_json_safe(status_file) if status_file.exists() else {}
-    payload.update(
-        {
-            "folder": str(folder),
-            "statusFile": str(status_file),
-            "video": str(output),
-            "videoExists": output.exists(),
-            "videoValid": media_file_valid(output, "v:0"),
-            "duration": media_duration_seconds(output) if output.exists() else 0.0,
-            "minimumDuration": expected_youtube_min_duration(folder),
-        }
-    )
-    started = payload.get("startedAt")
-    if payload.get("running") and started:
-        try:
-            started_at = time.mktime(time.strptime(str(started), "%Y-%m-%d %H:%M:%S"))
-            payload["elapsedSeconds"] = round(time.time() - started_at, 1)
-        except Exception:
-            pass
-    return payload
-
-
+def youtube_build_status(*args, **kwargs):
+    return youtube_pipeline.youtube_build_status(*args, **kwargs)
 def media_dimensions(path: Path) -> dict[str, int]:
     info = media_probe_info(path)
     width = int(info.get("width") or 0)
@@ -2025,55 +1929,16 @@ INSTAGRAM_LINK_FOOTER = "\n".join(
 )
 
 
-def linktree_url() -> str:
-    return os.environ.get("LINKTREE_URL", LINKTREE_URL).strip() or LINKTREE_URL
-
-
-def audience_hub_line(story: str = "", *, verb: str = "Start reading") -> str:
-    profile = social_profile(story) if story else {"name": "Azure Inkblade"}
-    name = str(profile.get("name") or "Azure Inkblade")
-    if story_key(story):
-        return f"{verb} {name}, watch chapter videos, and find all links: {linktree_url()}"
-    return f"{verb}, watch, and follow Azure Inkblade: {linktree_url()}"
-
-
-def platform_links_block(story: str = "") -> str:
-    return audience_hub_line(story)
-
-
-def tracked_url(url: str, source: str, campaign: str, content: str = "", medium: str = "social") -> str:
-    if not url:
-        return ""
-    parsed = urllib.parse.urlsplit(url)
-    query = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
-    query.update(
-        {
-            "utm_source": slugify(source)[:40],
-            "utm_medium": slugify(medium)[:40],
-            "utm_campaign": slugify(campaign)[:80],
-        }
-    )
-    if content:
-        query["utm_content"] = slugify(content)[:80]
-    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urllib.parse.urlencode(query), parsed.fragment))
-
-
-def track_copy_links(text: str, story: str, source: str, campaign: str, content: str = "") -> str:
-    replacements = {
-        royal_road_url_for_story(story): tracked_url(royal_road_url_for_story(story), source, campaign, content),
-        linktree_url(): tracked_url(linktree_url(), source, campaign, content),
-        PATREON_URL: tracked_url(PATREON_URL, source, campaign, content),
-        YOUTUBE_SOCIAL_URL: tracked_url(YOUTUBE_SOCIAL_URL, source, campaign, content),
-        TIKTOK_URL: tracked_url(TIKTOK_URL, source, campaign, content),
-        INSTAGRAM_URL: tracked_url(INSTAGRAM_URL, source, campaign, content),
-    }
-    result = text
-    for original, replacement in sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True):
-        if original and replacement:
-            result = result.replace(original, replacement)
-    return result
-
-
+def linktree_url(*args, **kwargs):
+    return promo_copy.linktree_url(*args, **kwargs)
+def audience_hub_line(*args, **kwargs):
+    return promo_copy.audience_hub_line(*args, **kwargs)
+def platform_links_block(*args, **kwargs):
+    return promo_copy.platform_links_block(*args, **kwargs)
+def tracked_url(*args, **kwargs):
+    return promo_copy.tracked_url(*args, **kwargs)
+def track_copy_links(*args, **kwargs):
+    return promo_copy.track_copy_links(*args, **kwargs)
 def youtube_links_block(story: str = "") -> str:
     links = []
     royal_road_url = royal_road_url_for_story(story)
@@ -2189,48 +2054,8 @@ def backfill_verified_pinned_comments_from_queue() -> int:
     return count
 
 
-def queue_youtube_pinned_comment(upload: dict[str, Any]) -> dict[str, Any]:
-    folder = str(upload.get("folder") or "")
-    upload_id = str(upload.get("id") or "")
-    metadata = upload.get("metadata") if isinstance(upload.get("metadata"), dict) else {}
-    now = time.strftime("%Y-%m-%d %H:%M:%S")
-    with YOUTUBE_COMMENT_QUEUE_LOCK:
-        queue = load_youtube_comment_queue()
-        library_backfill = upload_id.startswith("library-")
-        existing = next(
-            (
-                item for item in queue["items"]
-                if (upload_id and str(item.get("uploadId") or "") == upload_id)
-                or (not library_backfill and str(item.get("folder") or "") == folder)
-            ),
-            None,
-        )
-        if existing is None:
-            existing = {
-                "id": hashlib.sha256(f"youtube-comment|{upload_id if library_backfill else folder}".encode("utf-8")).hexdigest()[:16],
-                "createdAt": now,
-                "attempts": 0,
-                "status": "waiting_video_id",
-            }
-            queue["items"].append(existing)
-        existing.update(
-            {
-                "uploadId": upload_id,
-                "folder": folder,
-                "abbr": story_key(str(metadata.get("abbr") or "")),
-                "chapter": str(metadata.get("chapter") or ""),
-                "title": str(upload.get("title") or metadata.get("title") or ""),
-                "comment": str(upload.get("pinned_comment") or "").strip() or youtube_pinned_comment_text(metadata),
-                "updatedAt": now,
-            }
-        )
-        if existing.get("status") not in {"posted", "pinned"}:
-            existing["status"] = "waiting_video_id" if not existing.get("videoId") else "waiting_public"
-        queue["updatedAt"] = now
-        write_json_atomic(YOUTUBE_COMMENT_QUEUE_FILE, queue)
-        return dict(existing)
-
-
+def queue_youtube_pinned_comment(*args, **kwargs):
+    return youtube_pipeline.queue_youtube_pinned_comment(*args, **kwargs)
 def youtube_comment_capture_video(upload_id: str, video_id: str = "", video_url: str = "") -> dict[str, Any] | None:
     match = re.search(r"(?:youtu\.be/|[?&]v=|/video/)([A-Za-z0-9_-]{11})", video_url)
     video_id = str(video_id or (match.group(1) if match else "")).strip()
@@ -2976,25 +2801,16 @@ def fix_existing_youtube_audience() -> dict[str, Any]:
     }
 
 
-def royal_road_url_for_story(story: str = "") -> str:
-    story = story.strip()
-    return ROYAL_ROAD_URLS.get(story) or ROYAL_ROAD_URLS_BY_NAME.get(story, "")
-
-
+def royal_road_url_for_story(*args, **kwargs):
+    return promo_copy.royal_road_url_for_story(*args, **kwargs)
 def royal_road_syndication_url(story: str = "") -> str:
     url = royal_road_url_for_story(story)
     match = re.search(r"/fiction/(\d+)", url)
     return f"https://www.royalroad.com/fiction/syndication/{match.group(1)}" if match else ""
 
 
-def with_instagram_links(text: str, story: str = "") -> str:
-    text = text.strip()
-    if linktree_url() in text:
-        return text
-    footer = platform_links_block(story)
-    return f"{text}\n\n{footer}" if text else footer
-
-
+def with_instagram_links(*args, **kwargs):
+    return promo_copy.with_instagram_links(*args, **kwargs)
 def rotation_next(key: str, count: int) -> int:
     if count <= 0:
         return 0
@@ -3010,326 +2826,26 @@ def rotation_next(key: str, count: int) -> int:
     return state[key]
 
 
-def rotating_post_focus(abbr: str, context: str) -> str:
-    variants = ["royal_road_live", "patreon_early", "weekly_general_promo", "youtube_release", "catch_up_archive"]
-    index = rotation_next(f"POST_FOCUS_{context}_{story_key(abbr)}".upper(), len(variants))
-    return variants[index]
-
-
-def normalize_post_copy_mode(value: str) -> str:
-    value = (value or "").strip().lower().replace("-", "_").replace(" ", "_")
-    aliases = {
-        "royal_road": "royal_road_live",
-        "royalroad": "royal_road_live",
-        "rr": "royal_road_live",
-        "patreon": "patreon_early",
-        "youtube": "youtube_release",
-        "tiktok": "weekly_general_promo",
-        "story": "weekly_general_promo",
-        "general": "weekly_general_promo",
-        "weekly": "weekly_general_promo",
-        "catch_up": "catch_up_archive",
-        "archive": "catch_up_archive",
-    }
-    return aliases.get(value, value)
-
-
-def auto_post_copy_mode(abbr: str, chapter: str | int = "", *, rr_live: bool = False) -> str:
-    chapter_text = str(chapter or "").strip()
-    if not chapter_text.isdigit():
-        return "weekly_general_promo"
-    entry = chapter_ledger_entry(abbr, int(chapter_text))
-    if entry.get("socialPostsQueued") and (entry.get("postedToRoyalRoad") or rr_live):
-        return "catch_up_archive"
-    if entry.get("postedToRoyalRoad") or rr_live:
-        return "royal_road_live"
-    if entry.get("postedToPatreon") or entry.get("patreonDraftPrepared"):
-        return "patreon_early"
-    if entry.get("youtubeFullVideoBuilt"):
-        return "youtube_release"
-    return "weekly_general_promo"
-
-
-def resolve_post_focus(abbr: str, context: str, requested: str = "", *, rr_live: bool = False, chapter: str | int = "") -> str:
-    requested = (requested or "").strip().lower().replace("-", "_")
-    requested = normalize_post_copy_mode(requested)
-    allowed = {"royal_road_live", "patreon_early", "weekly_general_promo", "youtube_release", "catch_up_archive"}
-    if requested in allowed:
-        return requested
-    if chapter:
-        return auto_post_copy_mode(abbr, chapter, rr_live=rr_live)
-    return "royal_road_live" if rr_live else rotating_post_focus(abbr, context)
-
-
-def dynamic_cta_goal(abbr: str, focus: str, context: str = "") -> str:
-    focus = normalize_post_copy_mode(focus)
-    if focus == "royal_road_live":
-        variants = ["start_reading", "comment_question", "follow_next"]
-    elif focus == "patreon_early":
-        variants = ["read_ahead", "support_release", "follow_next"]
-    elif focus == "youtube_release":
-        variants = ["watch_listen", "subscribe", "comment_question"]
-    elif focus == "catch_up_archive":
-        variants = ["catch_up", "start_reading", "follow_next"]
-    elif "weekend" in context.lower():
-        variants = ["start_reading", "catch_up", "author_resources", "follow_next"]
-    else:
-        variants = ["start_reading", "follow_next", "watch_listen", "author_resources"]
-    key = f"CTA_GOAL_{context}_{story_key(abbr)}_{focus}".upper()
-    return variants[rotation_next(key, len(variants))]
-
-
-def focused_social_cta(abbr: str, focus: str, context: str = "", platform: str = "") -> str:
-    focus = normalize_post_copy_mode(focus)
-    profile = social_profile(abbr)
-    goal = dynamic_cta_goal(abbr, focus, context or platform)
-    hub = linktree_url()
-    name = profile["name"]
-    variants = {
-        "start_reading": [
-            f"Start {name} here: {hub}",
-            f"New to {name}? Begin reading here: {hub}",
-            f"Pick up {name} from the hub: {hub}",
-        ],
-        "read_ahead": [
-            f"Read ahead and catch the public chapters here: {hub}",
-            f"Early access, public chapters, and updates are all here: {hub}",
-            f"Want the next chapter sooner? Start here: {hub}",
-        ],
-        "watch_listen": [
-            f"Watch or listen to chapter releases here: {hub}",
-            f"Prefer video chapters and shorts? Find them here: {hub}",
-            f"Read, watch, or listen from one hub: {hub}",
-        ],
-        "follow_next": [
-            f"Follow for the next chapter drop: {hub}",
-            f"Do not miss the next update. Follow here: {hub}",
-            f"Follow the release trail here: {hub}",
-        ],
-        "comment_question": [
-            f"Tell me what you think, then read more here: {hub}",
-            f"Drop your prediction and continue here: {hub}",
-            f"Which choice would you make? Continue here: {hub}",
-        ],
-        "catch_up": [
-            f"Catch up before the next arc lands: {hub}",
-            f"Start from chapter one or jump into the latest updates: {hub}",
-            f"Weekend catch-up starts here: {hub}",
-        ],
-        "support_release": [
-            f"Support the release schedule and read more here: {hub}",
-            f"Help keep the chapters coming and read ahead here: {hub}",
-            f"Support Azure Inkblade and find every series here: {hub}",
-        ],
-        "subscribe": [
-            f"Subscribe, read, and watch from the Azure Inkblade hub: {hub}",
-            f"Follow the videos and chapters here: {hub}",
-            f"Keep the next chapter in your feed: {hub}",
-        ],
-        "author_resources": [
-            f"Readers can start the novels, and writers can find author tools here: {hub}",
-            f"Stories, videos, and author resources are all here: {hub}",
-            f"Read the novels or check out the author resources here: {hub}",
-        ],
-    }.get(goal, [])
-    if not variants:
-        return audience_hub_line(abbr)
-    key = f"CTA_TEXT_{context}_{platform}_{story_key(abbr)}_{focus}_{goal}".upper()
-    return variants[rotation_next(key, len(variants))]
-
-
-def engagement_prompt_line(abbr: str, style: str, context: str = "") -> str:
-    profile = social_profile(abbr)
-    prompts = {
-        "reader_question": [
-            "Would you make the same choice?",
-            "What would you do in this situation?",
-            "Who do you trust after a scene like this?",
-        ],
-        "stakes": [
-            "Comment with the moment you think changes everything.",
-            "Save this if you like progression fantasy with real consequences.",
-            "Which cost would be too high for you?",
-        ],
-        "character_moment": [
-            "Follow if character turns are your favorite part of a long arc.",
-            "Drop the character you are watching closest right now.",
-            "Save this for your next serial fantasy read.",
-        ],
-        "worldbuilding": [
-            "Follow for more hidden systems, strange realms, and chapter drops.",
-            "Which part of this world would you explore first?",
-            "Save this if you like web novels with layered worlds.",
-        ],
-        "catch_up": [
-            f"Start {profile['name']} before the next chapter lands.",
-            "Send this to someone who needs a new web novel.",
-            "Weekend readers, this is your catch-up sign.",
-        ],
-    }.get(style, [
-        "Follow for the next chapter drop.",
-        "Save this for your next fantasy web novel read.",
-        "Comment with your prediction for what happens next.",
-    ])
-    key = f"ENGAGEMENT_PROMPT_{context}_{story_key(abbr)}_{style}".upper()
-    return prompts[rotation_next(key, len(prompts))]
-
-
-def platform_engagement_prompt_line(abbr: str, style: str, platform: str = "", focus: str = "", context: str = "") -> str:
-    platform = (platform or "").strip().lower().replace("_", "-")
-    focus = normalize_post_copy_mode(focus)
-    profile = social_profile(abbr)
-    if platform in {"tiktok", "youtube-shorts", "instagram-reel", "shorts"}:
-        prompts = [
-            "Comment your prediction before the next reveal lands.",
-            "Follow for the next scene if this kind of pressure is your thing.",
-            "Which choice would you make here?",
-        ]
-    elif platform == "instagram":
-        prompts = [
-            "Save this for your next serial fantasy read.",
-            "Comment with the moment you think changes everything.",
-            "Send this to someone looking for a new web novel arc.",
-        ]
-    elif platform == "facebook":
-        prompts = [
-            "What would you do if this was the chapter you walked into?",
-            "Which Azure Inkblade series should someone start with first?",
-            "If you are catching up this week, tell me where you are starting.",
-        ]
-    elif platform == "x":
-        prompts = [
-            "Prediction?",
-            "Start here.",
-            "New readers welcome.",
-        ]
-    elif platform == "patreon":
-        prompts = [
-            "Thank you for helping keep the release schedule moving.",
-            "Your support keeps the next chapter closer.",
-            "Early readers help shape the momentum of the series.",
-        ]
-    else:
-        return engagement_prompt_line(abbr, style, context)
-    if focus == "royal_road_live" and platform in {"instagram", "facebook"}:
-        prompts = [
-            f"{profile['name']} is live publicly now. Where do you think the next turn goes?",
-            "Comment with the scene you want to see paid off next.",
-            "Save this if you are catching up on Royal Road this week.",
-        ]
-    key = f"PLATFORM_ENGAGEMENT_{context}_{platform}_{story_key(abbr)}_{style}_{focus}".upper()
-    return prompts[rotation_next(key, len(prompts))]
-
-
-def rotating_caption_style(abbr: str, context: str = "") -> str:
-    benchmark_style = benchmark_preferred_caption_style(abbr, context)
-    if benchmark_style and rotation_next(f"BENCHMARK_STYLE_{context}_{story_key(abbr)}".upper(), 3) == 0:
-        return benchmark_style
-    styles = [
-        "scene_hook",
-        "reader_question",
-        "stakes",
-        "character_moment",
-        "worldbuilding",
-        "catch_up",
-    ]
-    key = f"CAPTION_STYLE_{context}_{story_key(abbr)}".upper()
-    return styles[rotation_next(key, len(styles))]
-
-
-def caption_style_lines(
-    abbr: str,
-    novel: str,
-    title: str,
-    hook: str,
-    focus: str,
-    style: str,
-    cta: str,
-    status_line: str,
-    context: str = "",
-    platform: str = "",
-) -> tuple[list[str], str]:
-    profile = social_profile(abbr or novel)
-    rr_url = royal_road_url_for_story(abbr)
-    platform_key = (platform or "").strip().lower().replace("_", "-")
-    engagement = platform_engagement_prompt_line(abbr, style, platform_key, focus, context)
-    platform_bridge = {
-        "instagram": "Built for readers who like serial fantasy, progression arcs, and chapter-by-chapter tension.",
-        "facebook": "I am using these posts to help new readers find the right starting point without burying them in links.",
-        "patreon": "This note is here for readers who want to support the release schedule and stay ahead.",
-        "campaign": "Built for readers who want one clear place to start, watch, or read ahead.",
-    }.get(platform_key, "")
-    if style == "reader_question":
-        opener = f"What would you do if {hook[:1].lower() + hook[1:] if hook else 'the next step changed everything'}?"
-        body = [
-            opener,
-            f"{profile['name']} turns that pressure into the next chapter.",
-            platform_bridge,
-            engagement,
-            cta,
-        ]
-        x_hook = opener
-    elif style == "stakes":
-        body = [
-            f"The cost keeps climbing in {profile['name']}.",
-            hook,
-            "This chapter is about pressure, consequence, and the next choice that cannot be taken back.",
-            platform_bridge,
-            engagement,
-            cta,
-        ]
-        x_hook = f"The cost keeps climbing in {profile['name']}: {hook}"
-    elif style == "character_moment":
-        body = [
-            f"{profile['name']} - {title}",
-            hook,
-            "A character moment sits at the center of this update, with the larger arc tightening around it.",
-            platform_bridge,
-            engagement,
-            cta,
-        ]
-        x_hook = f"{title}: {hook}"
-    elif style == "worldbuilding":
-        body = [
-            f"Step deeper into {profile['name']}.",
-            hook,
-            "The world is widening, and the next reveal changes what the path ahead looks like.",
-            platform_bridge,
-            engagement,
-            cta,
-        ]
-        x_hook = f"Step deeper into {profile['name']}: {hook}"
-    elif style == "catch_up":
-        body = [
-            f"New to {profile['name']}?",
-            "This is a good point to catch up from the beginning before the next arc gets louder.",
-            hook,
-            platform_bridge,
-            engagement,
-            cta if focus != "catch_up_archive" else focused_social_cta(abbr, "catch_up_archive"),
-        ]
-        x_hook = f"Catch up on {profile['name']}: {rr_url or hook}"
-    else:
-        if platform_key == "instagram":
-            opener = f"A chapter scene from {profile['name']}."
-        elif platform_key == "facebook":
-            opener = f"This {profile['name']} update is built around one pressure point."
-        elif platform_key == "patreon":
-            opener = f"{profile['name']} early-access note"
-        else:
-            opener = f"{profile['name']} - {title}"
-        body = [
-            opener,
-            hook,
-            status_line,
-            platform_bridge,
-            engagement,
-            cta,
-        ]
-        x_hook = hook
-    return [line for line in body if str(line or "").strip()], clean_teaser_text(x_hook, 180, max_words=28)
-
-
+def rotating_post_focus(*args, **kwargs):
+    return promo_copy.rotating_post_focus(*args, **kwargs)
+def normalize_post_copy_mode(*args, **kwargs):
+    return promo_copy.normalize_post_copy_mode(*args, **kwargs)
+def auto_post_copy_mode(*args, **kwargs):
+    return promo_copy.auto_post_copy_mode(*args, **kwargs)
+def resolve_post_focus(*args, **kwargs):
+    return promo_copy.resolve_post_focus(*args, **kwargs)
+def dynamic_cta_goal(*args, **kwargs):
+    return promo_copy.dynamic_cta_goal(*args, **kwargs)
+def focused_social_cta(*args, **kwargs):
+    return promo_copy.focused_social_cta(*args, **kwargs)
+def engagement_prompt_line(*args, **kwargs):
+    return promo_copy.engagement_prompt_line(*args, **kwargs)
+def platform_engagement_prompt_line(*args, **kwargs):
+    return promo_copy.platform_engagement_prompt_line(*args, **kwargs)
+def rotating_caption_style(*args, **kwargs):
+    return promo_copy.rotating_caption_style(*args, **kwargs)
+def caption_style_lines(*args, **kwargs):
+    return promo_copy.caption_style_lines(*args, **kwargs)
 def chapter_is_live_on_royal_road(abbr: str, chapter: str | int, material: dict[str, Any] | None = None) -> bool:
     material = material or {}
     status = material.get("release_status") if isinstance(material.get("release_status"), dict) else {}
@@ -3344,282 +2860,24 @@ def chapter_is_live_on_royal_road(abbr: str, chapter: str | int, material: dict[
     return False
 
 
-def short_destination_copy(
-    abbr: str,
-    chapter: str | int = "",
-    *,
-    source: str = "",
-    campaign: str = "",
-    content: str = "daily-short",
-) -> dict[str, str]:
-    profile = social_profile(abbr)
-    chapter_text = str(chapter or "").strip()
-    rr_url = royal_road_url_for_story(abbr)
-    rr_live = chapter_is_live_on_royal_road(abbr, chapter_text)
-    if rr_live and rr_url:
-        hook_options = [
-            "This chapter is live now, with more waiting when you are ready.",
-            "Read the public chapter, then jump ahead if the cliffhanger catches you.",
-            "The chapter is public now. Follow the trail before the next update lands.",
-        ]
-        focus = "royal_road_live"
-    else:
-        hook_options = [
-            "Get the next chapters first on Patreon, or catch up free on the public chapters.",
-            "Read ahead now or start from the public chapters when you are ready.",
-            "The next turn is already waiting for early readers.",
-        ]
-        focus = "patreon_early"
-    hook = hook_options[rotation_next(f"SHORT_HOOK_{story_key(abbr)}_{chapter_text}_{source}_{focus}".upper(), len(hook_options))]
-    links = focused_social_cta(abbr, focus, f"short_{source}_{chapter_text}", source)
-    if source:
-        links = track_copy_links(
-            links,
-            abbr,
-            source,
-            campaign or f"{story_key(abbr)}-{chapter_text or 'general'}-daily-short",
-            content,
-        )
-    return {"hook": hook, "links": links, "hashtags": profile["hashtags"], "x_hashtags": profile["x_hashtags"]}
-
-
-def social_profile(abbr_or_name: str) -> dict[str, str]:
-    value = abbr_or_name.strip()
-    abbr = value.upper() if value.upper() in NOVEL_NAMES else ""
-    if not abbr:
-        for key, name in NOVEL_NAMES.items():
-            if name.lower() == value.lower() or name.replace(" ", "").lower() == value.replace(" ", "").lower():
-                abbr = key
-                break
-    return {
-        "HP": {
-            "name": "Hundredfold Path",
-            "emoji": "🌲",
-            "patreon": "Stay ahead",
-            "release": "The path continues",
-            "hashtags": "#AzureInkblade #HundredfoldPath #BookTok #BookTokFantasy #FantasyBooks #WebNovel #WebNovelCommunity #RoyalRoad #RoyalRoadFantasy #ProgressionFantasy #CultivationFantasy #CultivationJourney #FantasyReads",
-            "x_hashtags": "#HundredfoldPath #AzureInkblade #RoyalRoad #ProgressionFantasy",
-        },
-        "SF": {
-            "name": "Soul Forge Era",
-            "emoji": "⚔️",
-            "patreon": "The forge burns bright",
-            "release": "The forge burns bright",
-            "hashtags": "#AzureInkblade #SoulForgeEra #BookTok #BookTokFantasy #FantasyBooks #WebNovel #WebNovelCommunity #RoyalRoad #RoyalRoadFantasy #ProgressionFantasy #CultivationFantasy #LitRPG #CultivationSaga #ForgedInFire",
-            "x_hashtags": "#SoulForgeEra #AzureInkblade #RoyalRoad #ProgressionFantasy",
-        },
-        "EN": {
-            "name": "Eternal Nexus",
-            "emoji": "✨",
-            "patreon": "Read ahead",
-            "release": "The Nexus expands",
-            "hashtags": "#AzureInkblade #EternalNexus #BookTok #BookTokFantasy #FantasyBooks #WebNovel #WebNovelCommunity #RoyalRoad #RoyalRoadFantasy #ProgressionFantasy #FantasyWorlds #NexusAwakens #FantasyReads",
-            "x_hashtags": "#EternalNexus #AzureInkblade #RoyalRoad #FantasyBooks",
-        },
-        "HA": {
-            "name": "Heavenly Ascension System",
-            "emoji": "🔥",
-            "patreon": "Ascend ahead",
-            "release": "A new ascension begins",
-            "hashtags": "#AzureInkblade #HeavenlyAscensionSystem #BookTok #BookTokFantasy #FantasyBooks #WebNovel #WebNovelCommunity #RoyalRoad #RoyalRoadFantasy #ProgressionFantasy #CultivationFantasy #LitRPG #FantasyReads",
-            "x_hashtags": "#HeavenlyAscensionSystem #AzureInkblade #RoyalRoad #LitRPG",
-        },
-    }.get(
-        abbr,
-        {
-            "name": value or "Azure Inkblade",
-            "emoji": "✨",
-            "patreon": "Read ahead",
-            "release": "New chapter live",
-            "hashtags": "#AzureInkblade #BookTok #BookTokFantasy #FantasyBooks #WebNovel #WebNovelCommunity #RoyalRoad #RoyalRoadFantasy #ProgressionFantasy #FantasyReads",
-            "x_hashtags": "#AzureInkblade #RoyalRoad #webnovel",
-            },
-            )
-
-
-def rotated_hashtags(abbr: str, seed: str, chapter_text: str = "", limit: int = 9) -> str:
-    """Deterministic per-(abbr,chapter,day) hashtag set so daily posts don't repeat.
-
-    Anchors the brand + novel tag, then rotates the remaining base hashtags by a hash of
-    `seed` and appends up to two chapter-specific keywords. OpenAI-free; stable for a given seed.
-    """
-    profile = social_profile(abbr)
-    base = [t for t in re.findall(r"#\w+", profile.get("hashtags", "")) if t]
-    if not base:
-        base = ["#AzureInkblade"]
-    novel_tag = next((t for t in base if t.lower() != "#azureinkblade" and t.lower().lstrip("#") in profile.get("name", "").lower().replace(" ", "")), None)
-    anchor = ["#AzureInkblade"] + ([novel_tag] if novel_tag else [])
-    rest = [t for t in base if t not in anchor]
-    # Deterministically reorder the rest by a per-seed key so ANY two distinct seeds yield a
-    # distinct ordering (not just a rotating window, which can collide for different days on
-    # the same chapter). Stable for a given seed.
-    ordered = sorted(rest, key=lambda t: hash(f"{seed}:{t}"))
-    tags = anchor + ordered[: max(0, limit - len(anchor))]
-    if chapter_text:
-        for kw in chapter_keywords(chapter_text, chapter_text, limit=6):
-            tag = "#" + "".join(w.capitalize() for w in re.split(r"[^\w]+", kw) if w)
-            if tag not in tags and len(tags) < limit:
-                tags.append(tag)
-    return " ".join(tags)
-
-
-def rotated_x_hashtags(abbr: str, seed: str, limit: int = 5) -> str:
-    """X/Twitter variant of rotated_hashtags using the shorter x_hashtags base."""
-    profile = social_profile(abbr)
-    base = [t for t in re.findall(r"#\w+", profile.get("x_hashtags", "")) if t]
-    if not base:
-        base = ["#AzureInkblade"]
-    ordered = sorted(base, key=lambda t: hash(f"{seed}:{t}"))
-    return " ".join(ordered[:limit])
-
-
-def chapter_range_text(start: int | str, end: int | str | None = None, prefix: str = "Ch.") -> str:
-    start_text = str(start).strip()
-    end_text = str(end).strip() if end is not None and str(end).strip() else ""
-    if not start_text:
-        return "new chapters"
-    if end_text and end_text != start_text:
-        return f"{prefix} {start_text}-{end_text}"
-    return f"{prefix} {start_text}"
-
-
-def compact_chapter_hook(title: str, chapter: str, phrases: list[str] | None = None, story: str = "") -> str:
-    phrases = phrases or []
-    for phrase in phrases:
-        cleaned = clean_teaser_text(str(phrase), 140, max_words=22)
-        if cleaned:
-            return cleaned
-    for sentence in visual_sentences(chapter, 3, story or title):
-        cleaned = clean_teaser_text(sentence, 160, max_words=24)
-        if cleaned:
-            return cleaned
-    body = chapter_body_for_marketing(chapter)
-    sentences = re.split(r"(?<=[.!?])\s+", re.sub(r"\s+", " ", body).strip())
-    for sentence in sentences:
-        cleaned = clean_teaser_text(sentence, 160, max_words=24)
-        if cleaned:
-            return cleaned
-    return f"A new chapter of {title} is ready."
-
-
-def build_platform_posts(title: str, chapter: str, material: dict[str, Any], requested_focus: str = "") -> dict[str, str]:
-    story = str(material.get("abbr") or material.get("novel") or "").strip()
-    novel = str(material.get("novel") or NOVEL_NAMES.get(str(material.get("abbr", "")).upper(), "") or "Azure Inkblade").strip()
-    phrases = [str(item) for item in material.get("phrases", [])]
-    hook = compact_chapter_hook(title, chapter, phrases, story or novel)
-    links = platform_links_block(story)
-    royal_road_url = royal_road_url_for_story(story)
-    chapter_id = str(material.get("chapter") or normalize_chapter_id(title, material.get("chapter_number", "")) or "")
-    rr_live = chapter_is_live_on_royal_road(story, chapter_id, material)
-    auto_focus = predictive_default_post_focus(story, rr_live=rr_live)
-    focus = resolve_post_focus(
-        story,
-        f"campaign_{chapter_id or slugify(title)}",
-        requested_focus or str(material.get("post_focus_override") or "") or auto_focus,
-        rr_live=rr_live,
-        chapter=chapter_id,
-    )
-    campaign_key = f"{story_key(story)}-{chapter_id or slugify(title)}-{focus}"
-    cta = focused_social_cta(story, focus, f"campaign_{chapter_id or slugify(title)}", "instagram")
-    public_status_line = {
-        "royal_road_live": "This chapter is live on Royal Road now. Patreon remains the place to read ahead.",
-        "patreon_early": "Early access is open on Patreon before the public Royal Road release.",
-        "weekly_general_promo": "Follow the weekly release cycle across Royal Road, Patreon, YouTube, and short-form teasers.",
-        "youtube_release": "The chapter video release is ready on YouTube for readers who want to listen.",
-        "catch_up_archive": "Catch up from the archive and follow the next release when you are ready.",
-    }.get(focus, "Follow the latest Azure Inkblade story updates.")
-    style = rotating_caption_style(story, f"campaign_{chapter_id or slugify(title)}_{focus}")
-    context = f"campaign_{chapter_id or slugify(title)}"
-    style_lines, x_hook = caption_style_lines(story, novel, title, hook, focus, style, cta, public_status_line, context, "instagram")
-    facebook_cta = focused_social_cta(story, focus, context, "facebook")
-    facebook_lines, _ = caption_style_lines(story, novel, title, hook, focus, style, facebook_cta, public_status_line, context, "facebook")
-    patreon_cta = focused_social_cta(story, "patreon_early" if focus != "royal_road_live" else focus, context, "patreon")
-    patreon_lines, _ = caption_style_lines(story, novel, title, hook, focus, style, patreon_cta, public_status_line, context, "patreon")
-    instagram_caption = "\n\n".join(style_lines + ["#AzureInkblade #RoyalRoad #WebNovelCommunity #ProgressionFantasy #FantasyReads"])
-    facebook_intro_lines = facebook_lines[:4] if len(facebook_lines) > 4 else facebook_lines
-    if facebook_intro_lines and (
-        facebook_intro_lines[0].strip().lower() == f"{novel} - {title}".strip().lower()
-        or facebook_intro_lines[0].strip().lower() == title.strip().lower()
-    ):
-        facebook_intro_lines = facebook_intro_lines[1:]
-    facebook_intro = "\n\n".join(facebook_intro_lines)
-    patreon_note = (
-        f"{novel}\n{title}\n\n"
-        f"{patreon_lines[0] if patreon_lines else hook}\n\n"
-        f"{hook}\n\n"
-        f"{patreon_cta}\n\n"
-        "Thank you for supporting the stories and helping keep the release schedule moving."
-    )
-    facebook_post = (
-        f"{novel} - {title}\n\n"
-        f"{facebook_intro}\n\n"
-        "Follow the story across the main channels for chapter drops, teasers, and early access updates.\n\n"
-        f"{facebook_cta}\n\n"
-        "#webnovel #royalroad #serialfiction #progressionfantasy #indieauthor"
-    )
-    x_destination = track_copy_links(linktree_url(), story, "x", campaign_key, "daily-post")
-    x_parts = [f"{novel} - {title}", x_hook or hook]
-    if focus == "royal_road_live" and royal_road_url:
-        x_parts.append(track_copy_links(f"Read and follow: {linktree_url()}", story, "x", campaign_key, "daily-post"))
-    elif focus == "patreon_early":
-        x_parts.append(track_copy_links(f"Read ahead: {linktree_url()}", story, "x", campaign_key, "daily-post"))
-    elif focus == "youtube_release":
-        x_parts.append(track_copy_links(f"Watch/listen: {linktree_url()}", story, "x", campaign_key, "daily-post"))
-    elif focus == "weekly_general_promo":
-        x_parts.append(x_destination)
-    elif focus == "catch_up_archive":
-        x_parts.append(x_destination)
-    elif royal_road_url:
-        x_parts.append(x_destination)
-    else:
-        x_parts.append(x_destination)
-    x_parts.append("#webnovel #RoyalRoad")
-    x_post = "\n\n".join(x_parts)
-    if len(x_post) > 275:
-        available = max(24, 275 - len(x_destination) - len("\n\n#webnovel") - 2)
-        compact_hook = clean_teaser_text(hook, available, max_words=18)
-        x_post = f"{compact_hook}\n\n{x_destination}\n\n#webnovel"
-    if len(x_post) > 275:
-        x_post = f"{x_destination}\n#webnovel"
-    return {
-        "caption": track_copy_links(instagram_caption, story, "instagram", campaign_key, "daily-post"),
-        "patreon_note": track_copy_links(patreon_note, story, "patreon", campaign_key, "daily-post"),
-        "facebook_post": track_copy_links(facebook_post, story, "facebook", campaign_key, "daily-post"),
-        "x_post": x_post,
-        "x_thread_links": track_copy_links(links, story, "x", campaign_key, "daily-post-links"),
-        "post_focus": focus,
-        "caption_style": style,
-        "tracking_campaign": campaign_key,
-    }
-
-
-def predictive_default_post_focus(story: str = "", *, rr_live: bool = False) -> str:
-    if rr_live:
-        return "royal_road_live"
-    plan = read_json_safe(PREDICTIVE_GROWTH_PLAN_FILE)
-    if not isinstance(plan, dict):
-        return ""
-    weekly = plan.get("weeklyReport") if isinstance(plan.get("weeklyReport"), dict) else {}
-    best_hooks = weekly.get("bestHookTypes") if isinstance(weekly.get("bestHookTypes"), list) else []
-    if best_hooks:
-        top_hook = str(best_hooks[0].get("name") or "").lower()
-        if "youtube" in top_hook:
-            return "youtube_release"
-        if "archive" in top_hook or "catch" in top_hook:
-            return "catch_up_archive"
-    primary = str(plan.get("primaryPlatform") or "").lower()
-    if primary == "youtube":
-        return "youtube_release"
-    if primary in {"tiktok", "instagram", "facebook", "x"}:
-        return "royal_road_live" if rr_live else "weekly_general_promo"
-    return ""
-
-
-def slugify(value: str) -> str:
-    value = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower()).strip("-")
-    return value[:70] or "chapter"
-
-
+def short_destination_copy(*args, **kwargs):
+    return promo_copy.short_destination_copy(*args, **kwargs)
+def social_profile(*args, **kwargs):
+    return promo_copy.social_profile(*args, **kwargs)
+def rotated_hashtags(*args, **kwargs):
+    return promo_copy.rotated_hashtags(*args, **kwargs)
+def rotated_x_hashtags(*args, **kwargs):
+    return promo_copy.rotated_x_hashtags(*args, **kwargs)
+def chapter_range_text(*args, **kwargs):
+    return promo_copy.chapter_range_text(*args, **kwargs)
+def compact_chapter_hook(*args, **kwargs):
+    return promo_copy.compact_chapter_hook(*args, **kwargs)
+def build_platform_posts(*args, **kwargs):
+    return promo_copy.build_platform_posts(*args, **kwargs)
+def predictive_default_post_focus(*args, **kwargs):
+    return promo_copy.predictive_default_post_focus(*args, **kwargs)
+def slugify(*args, **kwargs):
+    return promo_copy.slugify(*args, **kwargs)
 def content_hash(value: str) -> str:
     normalized = re.sub(r"\s+", " ", value or "").strip()
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
@@ -6948,90 +6206,16 @@ def reconcile_approval_inbox_items() -> dict[str, Any]:
     return {"ok": True, "cleared": cleared, "message": f"Cleared {len(cleared)} stale approval bucket(s).", "approvalInbox": approval_inbox()}
 
 
-def load_approval_cleared_state() -> dict[str, Any]:
-    try:
-        data = automation_db.load_approval_cleared_state(ROOT)
-        if isinstance(data, dict) and isinstance(data.get("items"), dict) and data["items"]:
-            return data
-    except Exception as exc:
-        print(f"Database read failed for approval cleared state: {exc}", file=sys.stderr)
-    data = read_json_safe(APPROVAL_INBOX_CLEARED_FILE)
-    if not isinstance(data, dict):
-        data = {"schemaVersion": 1, "items": {}}
-    data.setdefault("items", {})
-    return data
-
-
-def save_approval_cleared_state(data: dict[str, Any]) -> None:
-    data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(APPROVAL_INBOX_CLEARED_FILE, data)
-
-
-def approval_item_key(kind: str, item: dict[str, Any]) -> str:
-    kind = str(kind or "").strip()
-    stable = [
-        kind,
-        story_key(str(item.get("abbr") or "")),
-        str(item.get("chapter") or ""),
-        str(item.get("platform") or ""),
-        str(item.get("commentId") or item.get("id") or ""),
-        str(item.get("folder") or ""),
-        str(item.get("video") or ""),
-        str(item.get("watchUrl") or ""),
-        str(item.get("errorType") or ""),
-    ]
-    return content_hash("|".join(stable))
-
-
-def approval_item_is_cleared(kind: str, item: dict[str, Any], cleared_state: dict[str, Any] | None = None) -> bool:
-    key = approval_item_key(kind, item)
-    if cleared_state is None:
-        try:
-            if automation_db.is_approval_cleared(ROOT, key):
-                return True
-        except Exception as exc:
-            print(f"Database read failed for approval item: {exc}", file=sys.stderr)
-    state = cleared_state if isinstance(cleared_state, dict) else load_approval_cleared_state()
-    items = state.get("items") if isinstance(state.get("items"), dict) else {}
-    return key in items
-
-
-def filter_uncleared_approval_items(
-    kind: str,
-    items: list[dict[str, Any]],
-    cleared_state: dict[str, Any] | None = None,
-    active_paths: dict[str, int | None] | None = None,
-) -> list[dict[str, Any]]:
-    state = cleared_state if isinstance(cleared_state, dict) else load_approval_cleared_state()
-    result = []
-    for item in items:
-        if approval_item_is_cleared(kind, item, state):
-            continue
-        enriched = dict(item)
-        folder = str(enriched.get("folder") or "").strip()
-        if folder and Path(folder).exists():
-            metadata = read_metadata(Path(folder))
-            if metadata:
-                enriched.setdefault("packId", metadata.get("packId"))
-                enriched.setdefault("packType", metadata.get("packType"))
-                enriched.setdefault("packStatus", metadata.get("packStatus"))
-                enriched.setdefault("abbr", metadata.get("abbr"))
-                enriched.setdefault("novel", metadata.get("novel"))
-                enriched.setdefault("chapter", metadata.get("chapter") or metadata.get("chapter_number"))
-                enriched.setdefault("title", metadata.get("title"))
-                if kind == "deepTikToks" and metadata.get("packStatus") in PACK_DONE_STATUSES:
-                    continue
-                if kind == "youtube" and metadata.get("packStatus") in {"uploaded", "posted"}:
-                    continue
-                if kind == "failures" and metadata.get("packStatus") not in {"failed", "needs_video_build", "needs_image_review"}:
-                    continue
-        if kind not in {"comments", "messages", "youtubeComments"} and not approval_item_matches_active_chapter(enriched, active_paths):
-            continue
-        enriched["approvalKey"] = approval_item_key(kind, item)
-        result.append(enriched)
-    return result
-
-
+def load_approval_cleared_state(*args, **kwargs):
+    return approval_inbox_mod.load_approval_cleared_state(*args, **kwargs)
+def save_approval_cleared_state(*args, **kwargs):
+    return approval_inbox_mod.save_approval_cleared_state(*args, **kwargs)
+def approval_item_key(*args, **kwargs):
+    return approval_inbox_mod.approval_item_key(*args, **kwargs)
+def approval_item_is_cleared(*args, **kwargs):
+    return approval_inbox_mod.approval_item_is_cleared(*args, **kwargs)
+def filter_uncleared_approval_items(*args, **kwargs):
+    return approval_inbox_mod.filter_uncleared_approval_items(*args, **kwargs)
 def pending_daily_shorts_items(ledger: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for abbr, novel in NOVEL_NAMES.items():
@@ -7240,171 +6424,19 @@ def pending_patreon_items(
     return list(latest.values())[:4]
 
 
-def approval_inbox() -> dict[str, Any]:
-    cleared_state = load_approval_cleared_state()
-    ledger = load_chapter_ledger()
-    active_paths = {abbr: active_chapter_path_next(abbr, "approval") for abbr in NOVEL_NAMES}
-    engagement_items = [
-        item for item in comment_assistant_status().get("comments", [])
-        if item.get("status") in {"pending", "prepared"}
-    ]
-    messages = filter_uncleared_approval_items("messages", [item for item in engagement_items if item.get("itemType") == "message"], cleared_state, active_paths)
-    comments = filter_uncleared_approval_items("comments", [item for item in engagement_items if item.get("itemType") != "message"], cleared_state, active_paths)
-    youtube = filter_uncleared_approval_items("youtube", youtube_created_not_uploaded(ledger), cleared_state, active_paths)
-    daily_shorts = filter_uncleared_approval_items("dailyShorts", pending_daily_shorts_items(ledger), cleared_state, active_paths)
-    deep_tiktoks = filter_uncleared_approval_items("deepTikToks", pending_deep_tiktok_items(ledger=ledger, active_paths=active_paths), cleared_state, active_paths)
-    patreon = filter_uncleared_approval_items("patreon", pending_patreon_items(ledger, active_paths), cleared_state, active_paths)
-    social = filter_uncleared_approval_items("manualSocial", pending_manual_social_items(active_paths), cleared_state, active_paths)
-    failures = filter_uncleared_approval_items("failures", unresolved_recovery_items(ledger, active_paths), cleared_state, active_paths)
-    youtube_comments = [
-        item for item in load_youtube_comment_queue().get("items", [])
-        if item.get("status") in {"ready", "posted", "failed", "waiting_public"}
-        and (item.get("videoId") or item.get("watchUrl") or item.get("status") == "failed")
-    ]
-    youtube_comments = filter_uncleared_approval_items("youtubeComment", youtube_comments, cleared_state, active_paths)
-    counts = {
-        "comments": len(comments),
-        "messages": len(messages),
-        "youtube": len(youtube),
-        "dailyShorts": len(daily_shorts),
-        "deepTikToks": len(deep_tiktoks),
-        "patreon": len(patreon),
-        "manualSocial": len(social),
-        "failures": len(failures),
-        "youtubeComments": len(youtube_comments),
-    }
-    return {
-        "generatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "total": sum(counts.values()),
-        "counts": counts,
-        "comments": comments[:40],
-        "messages": messages[:40],
-        "youtube": youtube[:20],
-        "dailyShorts": daily_shorts[:20],
-        "deepTikToks": deep_tiktoks[:20],
-        "patreon": patreon,
-        "manualSocial": social,
-        "failures": failures,
-        "youtubeComments": youtube_comments[:20],
-    }
-
-
+def approval_inbox(*args, **kwargs):
+    return approval_inbox_mod.approval_inbox(*args, **kwargs)
 def clickup_configured() -> bool:
     load_env_file()
     return bool(os.environ.get("CLICKUP_API_TOKEN", "").strip() and os.environ.get("CLICKUP_TASK_LIST_ID", "").strip())
 
 
-def chapter_review_packs(abbr: str | None = None, chapter: int | str | None = None) -> dict[str, Any]:
-    """Aggregate every pending pack for a chapter (or the active approval path) for the
-    Review & Publish view. Reuses approval_inbox() bucketing; filters to the chosen
-    novel/chapter when provided.
-    """
-    inbox = approval_inbox()
-    if abbr or chapter:
-        def matches(item: dict[str, Any]) -> bool:
-            if abbr and str(item.get("abbr") or "").upper() != str(abbr).upper():
-                return False
-            if chapter and str(item.get("chapter") or "").strip() and str(item.get("chapter")) != str(chapter):
-                return False
-            return True
-        for key in ("patreon", "dailyShorts", "deepTikToks", "manualSocial", "youtube"):
-            inbox[key] = [it for it in inbox.get(key, []) if matches(it)]
-        inbox["total"] = sum(inbox.get("counts", {}).values())
-    return inbox
-
-
-def auto_fix_weak_images(abbr: str | None = None, chapter: int | str | None = None) -> dict[str, Any]:
-    """Locally regenerate weak/rejected pack images (no OpenAI/external API).
-
-    Walks the pending packs for the chapter and runs regenerate_weak_images(folder,
-    use_openai=False) so weak art is refreshed with the local diffusers pipeline.
-    Returns per-pack results; never posts or publishes.
-    """
-    packs = chapter_review_packs(abbr, chapter)
-    folders: list[str] = []
-    for key in ("patreon", "dailyShorts", "deepTikToks", "manualSocial", "youtube"):
-        for it in packs.get(key, []):
-            f = str(it.get("folder") or "")
-            if f and f not in folders:
-                folders.append(f)
-    fixed: list[dict[str, Any]] = []
-    errors: list[dict[str, Any]] = []
-    for folder in folders:
-        try:
-            result = regenerate_weak_images(folder, use_openai=False)
-            fixed.append({"folder": folder, "result": result})
-        except Exception as exc:  # noqa: BLE001 - surface per-pack, keep going
-            errors.append({"folder": folder, "error": str(exc)})
-    return {"ok": not errors, "fixed": fixed, "errors": errors, "folder_count": len(folders)}
-
-
-def upload_all_for_chapter(
-    abbr: str | None = None,
-    chapter: int | str | None = None,
-    *,
-    auto_fix_weak: bool = False,
-) -> dict[str, Any]:
-    """One-click chain: (optional) local auto-fix-weak, then gate on all-images-approved,
-    then trigger every relevant publish assist for the chapter:
-      - Patreon draft (free for teasers per #2)
-      - X post (publish_x_post)
-      - Facebook (manual_facebook_assist)
-      - Shorts + Instagram -> Buffer (buffer_post_from_folder)
-    Gated: if any pack still needs review, returns blocked=True with the offending items.
-    """
-    if auto_fix_weak:
-        auto_fix_weak_images(abbr, chapter)
-    packs = chapter_review_packs(abbr, chapter)
-    needs_review: list[dict[str, Any]] = []
-    for key in ("patreon", "dailyShorts", "deepTikToks", "manualSocial"):
-        for it in packs.get(key, []):
-            if it.get("needsReview") or it.get("needs_review"):
-                needs_review.append({**it, "kind": key})
-    if needs_review:
-        return {
-            "ok": False,
-            "blocked": True,
-            "reason": "Images still need review. Approve all pack images before Upload All.",
-            "needs_review": needs_review,
-        }
-    results: dict[str, Any] = {"patreon": [], "x": [], "facebook": [], "shorts_buffer": [], "instagram_buffer": [], "errors": []}
-    for it in packs.get("patreon", []):
-        try:
-            results["patreon"].append(build_patreon_draft(str(it["folder"]), tier_stage_override=""))
-        except Exception as exc:  # noqa: BLE001
-            results["errors"].append({"step": "patreon", "folder": it.get("folder"), "error": str(exc)})
-    for it in packs.get("manualSocial", []):
-        f = str(it.get("folder") or "")
-        if not f:
-            continue
-        try:
-            results["x"].append(publish_x_post(f))
-        except Exception as exc:  # noqa: BLE001
-            results["errors"].append({"step": "x", "folder": f, "error": str(exc)})
-        try:
-            results["facebook"].append(manual_facebook_assist(f))
-        except Exception as exc:  # noqa: BLE001
-            results["errors"].append({"step": "facebook", "folder": f, "error": str(exc)})
-    channels = configured_buffer_channels()
-    short_ids = [c["id"] for c in channels if c.get("id") and c.get("service") == "tiktok"]
-    ig_ids = [c["id"] for c in channels if c.get("id") and c.get("service") == "instagram"]
-    for it in packs.get("dailyShorts", []):
-        f = str(it.get("folder") or "")
-        if not f:
-            continue
-        if short_ids:
-            try:
-                results["shorts_buffer"].append(buffer_post_from_folder(f, short_ids, "tiktok", "addToQueue"))
-            except Exception as exc:  # noqa: BLE001
-                results["errors"].append({"step": "shorts_buffer", "folder": f, "error": str(exc)})
-        if ig_ids:
-            try:
-                results["instagram_buffer"].append(buffer_post_from_folder(f, ig_ids, "instagram", "addToQueue"))
-            except Exception as exc:  # noqa: BLE001
-                results["errors"].append({"step": "instagram_buffer", "folder": f, "error": str(exc)})
-    return {"ok": not results["errors"], "blocked": False, **results}
-
-
+def chapter_review_packs(*args, **kwargs):
+    return release_automation.chapter_review_packs(*args, **kwargs)
+def auto_fix_weak_images(*args, **kwargs):
+    return release_automation.auto_fix_weak_images(*args, **kwargs)
+def upload_all_for_chapter(*args, **kwargs):
+    return release_automation.upload_all_for_chapter(*args, **kwargs)
 def clickup_request(method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     load_env_file()
     token = os.environ.get("CLICKUP_API_TOKEN", "").strip()
@@ -9127,28 +8159,8 @@ def collect_creator_benchmarks(max_per_source: int = 6) -> dict[str, Any]:
     }
 
 
-def benchmark_preferred_caption_style(abbr: str = "", context: str = "") -> str:
-    data = read_json_safe(CREATOR_BENCHMARK_FILE)
-    if not isinstance(data, dict):
-        return ""
-    patterns = data.get("patterns") if isinstance(data.get("patterns"), dict) else {}
-    top_hooks = patterns.get("topHookTypes") if isinstance(patterns.get("topHookTypes"), list) else []
-    if not top_hooks:
-        return ""
-    hook = str(top_hooks[0].get("name") or "").lower()
-    mapping = {
-        "betrayal": "stakes",
-        "revenge": "stakes",
-        "power_fantasy": "scene_hook",
-        "mystery": "worldbuilding",
-        "horror": "scene_hook",
-        "confession": "character_moment",
-        "question": "reader_question",
-        "cliffhanger": "stakes",
-    }
-    return mapping.get(hook, "")
-
-
+def benchmark_preferred_caption_style(*args, **kwargs):
+    return promo_copy.benchmark_preferred_caption_style(*args, **kwargs)
 def youtube_api_connection_test() -> dict[str, Any]:
     channel = youtube_channel_stats()
     metrics = channel.get("metrics", {})
@@ -9835,73 +8847,10 @@ def clear_visible_recovery_failures() -> dict[str, Any]:
     }
 
 
-def clear_visible_approval_items() -> dict[str, Any]:
-    inbox = approval_inbox()
-    bucket_map = {
-        "comments": "comments",
-        "messages": "messages",
-        "youtube": "youtube",
-        "dailyShorts": "dailyShorts",
-        "deepTikToks": "deepTikToks",
-        "patreon": "patreon",
-        "manualSocial": "manualSocial",
-        "youtubeComments": "youtubeComment",
-    }
-    cleared = []
-    for bucket, kind in bucket_map.items():
-        for item in inbox.get(bucket, []) if isinstance(inbox.get(bucket), list) else []:
-            cleared.append(mark_approval_item_cleared(kind, item, "dismissed_visible_approval_inbox"))
-    return {
-        "ok": True,
-        "cleared": len(cleared),
-        "message": f"Dismissed {len(cleared)} visible approval item(s).",
-        "approvalInbox": approval_inbox(),
-    }
-
-
-def find_current_approval_item(kind: str, folder: str = "", platform: str = "", comment_id: str = "") -> dict[str, Any]:
-    kind = str(kind or "").strip()
-    folder = str(folder or "").strip()
-    platform = str(platform or "").strip().lower()
-    comment_id = str(comment_id or "").strip()
-    candidates: list[dict[str, Any]] = []
-    if kind == "comments":
-        candidates = approval_inbox().get("comments", [])
-    elif kind == "messages":
-        candidates = approval_inbox().get("messages", [])
-    elif kind == "youtube":
-        candidates = approval_inbox().get("youtube", [])
-    elif kind == "dailyShorts":
-        candidates = approval_inbox().get("dailyShorts", [])
-    elif kind == "deepTikToks":
-        candidates = approval_inbox().get("deepTikToks", [])
-    elif kind == "patreon":
-        candidates = approval_inbox().get("patreon", [])
-    elif kind == "manualSocial":
-        candidates = approval_inbox().get("manualSocial", [])
-    elif kind == "failures":
-        candidates = approval_inbox().get("failures", [])
-    elif kind == "youtubeComment":
-        candidates = approval_inbox().get("youtubeComments", [])
-    for item in candidates if isinstance(candidates, list) else []:
-        if comment_id and str(item.get("commentId") or item.get("id") or "") == comment_id:
-            return item
-        if folder and str(item.get("folder") or "").strip():
-            try:
-                if str(Path(str(item.get("folder"))).resolve()) == str(Path(folder).resolve()):
-                    if not platform or str(item.get("platform") or "").lower() == platform:
-                        return item
-            except Exception:
-                if str(item.get("folder") or "") == folder and (not platform or str(item.get("platform") or "").lower() == platform):
-                    return item
-        if platform and str(item.get("platform") or "").lower() == platform and not folder and not comment_id:
-            return item
-    fallback: dict[str, Any] = {"folder": folder, "platform": platform, "commentId": comment_id}
-    if comment_id:
-        fallback["id"] = comment_id
-    return fallback
-
-
+def clear_visible_approval_items(*args, **kwargs):
+    return approval_inbox_mod.clear_visible_approval_items(*args, **kwargs)
+def find_current_approval_item(*args, **kwargs):
+    return approval_inbox_mod.find_current_approval_item(*args, **kwargs)
 def mark_approval_item_cleared(kind: str, item: dict[str, Any], reason: str = "cleared_from_approval_inbox") -> dict[str, Any]:
     state = load_approval_cleared_state()
     items = state.setdefault("items", {})
@@ -9921,44 +8870,8 @@ def mark_approval_item_cleared(kind: str, item: dict[str, Any], reason: str = "c
     return {"approvalKey": key, "clearedRecord": items[key], "file": str(APPROVAL_INBOX_CLEARED_FILE)}
 
 
-def clear_approval_inbox_item(kind: str, folder: str = "", platform: str = "", comment_id: str = "") -> dict[str, Any]:
-    kind = str(kind or "").strip()
-    platform = str(platform or "").strip().lower()
-    matched_item = find_current_approval_item(kind, folder, platform, comment_id)
-    clear_record: dict[str, Any] = {}
-    if kind == "patreon":
-        result = mark_patreon_done_from_folder(folder)
-        clear_record = mark_approval_item_cleared(kind, matched_item)
-        return {**result, **clear_record}
-    if kind == "manualSocial":
-        if platform == "x":
-            result = mark_manual_x_posted(folder)
-        elif platform == "facebook":
-            result = mark_manual_facebook_posted(folder)
-        else:
-            raise RuntimeError("Unknown manual social platform.")
-        clear_record = mark_approval_item_cleared(kind, matched_item)
-        return {**result, **clear_record, "ok": True, "message": f"{platform.title()} item marked complete and removed from the approval inbox."}
-    if kind == "youtubeComment":
-        result = clear_youtube_comment_inbox_item(comment_id)
-        clear_record = mark_approval_item_cleared(kind, matched_item)
-        return {**result, **clear_record}
-    if kind == "failures":
-        result = clear_recovery_failure(str(matched_item.get("abbr") or ""), str(matched_item.get("chapter") or ""), str(folder or matched_item.get("folder") or ""))
-        clear_record = mark_approval_item_cleared(kind, matched_item)
-        return {**result, **clear_record}
-    if kind in {"youtube", "deepTikToks", "comments", "messages"}:
-        if kind in {"comments", "messages"} and comment_id:
-            try:
-                update_comment_status(comment_id, "dismissed")
-            except Exception:
-                pass
-        clear_record = mark_approval_item_cleared(kind, matched_item)
-        return {"ok": True, **clear_record, "message": "Approval item cleared and will not be shown again."}
-    clear_record = mark_approval_item_cleared(kind, matched_item)
-    return {"ok": True, **clear_record, "message": "Approval item cleared and will not be shown again."}
-
-
+def clear_approval_inbox_item(*args, **kwargs):
+    return approval_inbox_mod.clear_approval_inbox_item(*args, **kwargs)
 def update_conversion_tracking(results: list[dict[str, Any]]) -> dict[str, Any]:
     data = read_json_safe(CONVERSION_TRACKING_FILE)
     if not isinstance(data, dict):
@@ -13411,16 +12324,8 @@ def stable_chapter_folder(root: Path, kind: str, title: str, abbr: str = "", cha
     return root / f"{abbr_part}-{chapter_part}-{title_part}"
 
 
-def normalize_chapter_id(title: str, chapter: str | int = "") -> str:
-    chapter_id = str(chapter).strip()
-    if chapter_id:
-        return chapter_id
-    if re.search(r"\bprologue\b", title or "", re.IGNORECASE):
-        return "0"
-    match = re.search(r"\bchapter\s+(\d+[A-Za-z]?)\b", title or "", re.IGNORECASE)
-    return match.group(1) if match else ""
-
-
+def normalize_chapter_id(*args, **kwargs):
+    return promo_copy.normalize_chapter_id(*args, **kwargs)
 def path_is_within(path: Path, roots: list[Path]) -> bool:
     try:
         resolved = path.resolve()
@@ -14434,50 +13339,12 @@ def read_json_body(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
     return json.loads(raw or "{}")
 
 
-def chapter_body_for_marketing(text: str) -> str:
-    text = repair_text_encoding(text)
-    lines = [line.strip() for line in text.splitlines()]
-    while lines and not lines[0]:
-        lines.pop(0)
-    if lines and re.match(r"^chapter\s+\d+[A-Za-z]?(?:\s+Part\s+\d+)?\b", lines[0], re.IGNORECASE):
-        lines = lines[1:]
-    return "\n".join(lines).strip() or text
-
-
-def repair_text_encoding(text: str) -> str:
-    if any(marker in text for marker in ("â€", "â€™", "â€œ", "â€“", "Â")):
-        try:
-            repaired = text.encode("cp1252", errors="strict").decode("utf-8", errors="strict")
-            if repaired.count("�") <= text.count("�"):
-                text = repaired
-        except UnicodeError:
-            pass
-    replacements = {
-        "â€™": "'",
-        "â€˜": "'",
-        "â€œ": '"',
-        "â€": '"',
-        "â€�": '"',
-        "â€“": "-",
-        "â€”": "-",
-        "â€¦": "...",
-        "Â ": " ",
-        "Â": "",
-    }
-    for bad, good in replacements.items():
-        text = text.replace(bad, good)
-    return text
-
-
-def normalize_story_text(text: str) -> str:
-    text = repair_text_encoding(text)
-    text = text.replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
-    text = text.replace("\u2013", "-").replace("\u2014", "-")
-    text = re.sub(r"([.!?])([A-Z\"'])", r"\1 \2", text)
-    text = re.sub(r"([a-z0-9])([A-Z][a-z])", r"\1 \2", text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
+def chapter_body_for_marketing(*args, **kwargs):
+    return promo_copy.chapter_body_for_marketing(*args, **kwargs)
+def repair_text_encoding(*args, **kwargs):
+    return promo_copy.repair_text_encoding(*args, **kwargs)
+def normalize_story_text(*args, **kwargs):
+    return promo_copy.normalize_story_text(*args, **kwargs)
 def normalize_story_body_text(text: str) -> str:
     text = repair_text_encoding(str(text or ""))
     text = text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", " ")
@@ -14908,40 +13775,10 @@ def format_chapter_for_platform(title: str, raw_text: str, chapter: int, abbr: s
     return chapter_text.rstrip() + "\n"
 
 
-def sentence_split(text: str) -> list[str]:
-    text = chapter_body_for_marketing(text)
-    cleaned = normalize_story_text(text)
-    parts = re.split(r"(?<=[.!?])\s+", cleaned)
-    return [part.strip() for part in parts if len(part.strip()) > 35]
-
-
-def score_sentence(sentence: str) -> int:
-    drama = {
-        "blood",
-        "dark",
-        "secret",
-        "death",
-        "monster",
-        "magic",
-        "sword",
-        "heart",
-        "fire",
-        "shadow",
-        "betray",
-        "king",
-        "queen",
-        "war",
-        "kiss",
-        "fear",
-        "truth",
-        "danger",
-        "promise",
-        "curse",
-    }
-    words = re.findall(r"[a-zA-Z']+", sentence.lower())
-    return len(set(words) & drama) * 4 + min(len(words), 28)
-
-
+def sentence_split(*args, **kwargs):
+    return promo_copy.sentence_split(*args, **kwargs)
+def score_sentence(*args, **kwargs):
+    return promo_copy.score_sentence(*args, **kwargs)
 VISUAL_WORDS = {
     "altar", "armor", "ash", "beast", "blade", "blood", "castle", "cave", "chain", "city",
     "cliff", "crystal", "door", "dragon", "ember", "fire", "flame", "forge", "gate", "glow",
@@ -14960,45 +13797,12 @@ STORY_VISUAL_WORDS = {
 }
 
 
-def story_key(value: str = "") -> str:
-    value = value.upper().strip()
-    if value in NOVEL_NAMES:
-        return value
-    for abbr, name in NOVEL_NAMES.items():
-        if value == name.upper():
-            return abbr
-    return ""
-
-
-def visual_score(sentence: str, story: str = "") -> int:
-    words = set(re.findall(r"[a-zA-Z']+", sentence.lower()))
-    key = story_key(story)
-    story_words = STORY_VISUAL_WORDS.get(key, set())
-    return len(words & VISUAL_WORDS) * 8 + len(words & story_words) * 10 + score_sentence(sentence)
-
-
-def clean_teaser_text(sentence: str, limit: int = 82, max_words: int | None = 12) -> str:
-    sentence = sentence.replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
-    sentence = sentence.replace("\u2013", "-").replace("\u2014", "-")
-    sentence = re.sub(r"\s+", " ", sentence).strip()
-    sentence = re.sub(r"^[\"'`]+|[\"'`]+$", "", sentence).strip()
-    sentence = re.sub(r"\b(said|asked|whispered|muttered|shouted)\s+[A-Z][a-zA-Z'-]+[,.]?\s*", "", sentence)
-    if len(sentence) > limit:
-        sentence = sentence[:limit].rsplit(" ", 1)[0].rstrip(",;:")
-    if max_words:
-        words = sentence.split()
-        if len(words) > max_words:
-            sentence = " ".join(words[:max_words]).rstrip(",;:")
-    weak_tail = {"a", "an", "and", "are", "as", "because", "by", "for", "from", "in", "of", "the", "through", "to", "was", "were", "with"}
-    words = sentence.split()
-    while len(words) > 4 and words[-1].lower().strip(".,;:!?") in weak_tail:
-        words.pop()
-    sentence = " ".join(words)
-    if sentence:
-        sentence = sentence[0].upper() + sentence[1:]
-    return sentence.rstrip(".")
-
-
+def story_key(*args, **kwargs):
+    return promo_copy.story_key(*args, **kwargs)
+def visual_score(*args, **kwargs):
+    return promo_copy.visual_score(*args, **kwargs)
+def clean_teaser_text(*args, **kwargs):
+    return promo_copy.clean_teaser_text(*args, **kwargs)
 def teaser_from_sentence(sentence: str) -> str:
     sentence = clean_teaser_text(sentence, limit=180, max_words=None)
     clauses = re.split(r"\s+(?:because|while|when|before|after|as|and realized|and knew|but)\s+|[,;:]", sentence, flags=re.IGNORECASE)
@@ -15009,33 +13813,10 @@ def teaser_from_sentence(sentence: str) -> str:
     return max(candidates, key=visual_score)
 
 
-def chapter_keywords(title: str, chapter: str, limit: int = 10) -> list[str]:
-    chapter = chapter_body_for_marketing(chapter)
-    stopwords = {
-        "about", "after", "again", "against", "almost", "around", "because", "before", "being", "between",
-        "chapter", "could", "every", "from", "have", "into", "just", "like", "more", "only", "over",
-        "said", "some", "than", "that", "their", "them", "then", "there", "these", "they", "this",
-        "through", "under", "until", "upon", "were", "what", "when", "where", "which", "while", "with",
-        "would", "your",
-    }
-    counts: dict[str, int] = {}
-    for word in re.findall(r"[A-Za-z][A-Za-z'-]{3,}", f"{title} {chapter}"):
-        normalized = word.strip("'").lower()
-        if normalized in stopwords:
-            continue
-        counts[normalized] = counts.get(normalized, 0) + 1
-    ranked = sorted(counts, key=lambda item: (counts[item], len(item)), reverse=True)
-    return ranked[:limit]
-
-
-def visual_sentences(chapter: str, count: int = 3, story: str = "") -> list[str]:
-    candidates = []
-    for sentence in sentence_split(chapter):
-        candidates.append((visual_score(sentence, story), sentence))
-    ranked = [sentence for _, sentence in sorted(candidates, key=lambda item: item[0], reverse=True)]
-    return ranked[:count]
-
-
+def chapter_keywords(*args, **kwargs):
+    return promo_copy.chapter_keywords(*args, **kwargs)
+def visual_sentences(*args, **kwargs):
+    return promo_copy.visual_sentences(*args, **kwargs)
 def fallback_phrases(chapter: str, story: str = "") -> list[str]:
     sentences = sentence_split(chapter)
     if not sentences:
@@ -15664,140 +14445,8 @@ def prepare_tiktok_outro_image(folder: Path, abbr: str, novel: str, chapter: str
     return str(target)
 
 
-def make_tiktok_pack(
-    abbr: str,
-    chapter: str | None = None,
-    force_new_images: bool = False,
-    visual_prompt: str = "",
-    chapter_text: str = "",
-    style: str = "main-posts",
-) -> dict[str, Any]:
-    # Single-style lock (Workstream E): pick ONE track for the whole pack. Default main-posts;
-    # caller may request realistic-posts / comic-style. We filter the asset group to that track and
-    # regenerate if we don't have >=3 on-style images, so the video never mixes styles.
-    pack_track = style if style in LORA_STYLE_TRACKS else "main-posts"
-    assets = list_tiktok_assets()
-    groups = [group for group in assets["imageGroups"] if group["abbr"] == abbr]
-    if chapter:
-        groups = [group for group in groups if group["chapter"] == str(chapter)]
-    if not groups:
-        raise RuntimeError(f"No TikTok image group found for {abbr}{' chapter ' + str(chapter) if chapter else ''}.")
-    group = groups[-1] if not chapter else groups[0]
-    # Filter to on-style assets using the recorded track sidecars (E1).
-    files = group.get("files", [])
-    tracks = group.get("tracks", [""] * len(files))
-    on_style = [f for f, t in zip(files, tracks) if t == pack_track]
-    if len(on_style) < 3:
-        # Not enough on-style assets: regenerate this chapter's images in pack_track (generate-missing).
-        generated = generate_tiktok_images(
-            abbr, str(group["chapter"]), visual_prompt,
-            force_new_images=True, chapter_text=chapter_text, style=pack_track,
-        )
-        on_style = generated.get("created", [])[:3] or on_style
-    group = {**group, "files": on_style[:3]}
-    sounds = assets["sounds"]
-    if not sounds:
-        raise RuntimeError("No TikTok sound files were found.")
-    sound = random.choice(sounds)
-    folder = stable_chapter_folder(TIKTOK_OUTPUT_DIR, "tiktok", f"{abbr} Chapter {group['chapter']}", abbr, group["chapter"])
-    reused = reusable_pack_result(folder, required_files=["caption.txt", "instagram-reel-caption.txt", "youtube-shorts-description.txt"])
-    if not force_new_images and reused and reused.get("chapter") == group["chapter"] and reused.get("abbr") == abbr:
-        novel = NOVEL_NAMES.get(abbr, abbr)
-        reused["caption"] = tiktok_caption(novel, group["chapter"])
-        reused["instagram_reel_caption"] = instagram_reel_caption(novel, group["chapter"])
-        shorts = youtube_shorts_metadata(novel, group["chapter"])
-        reused["youtube_shorts_title"] = shorts["title"]
-        reused["youtube_shorts_description"] = shorts["description"]
-        (folder / "caption.txt").write_text(reused["caption"] + "\n", encoding="utf-8")
-        (folder / "instagram-reel-caption.txt").write_text(reused["instagram_reel_caption"] + "\n", encoding="utf-8")
-        (folder / "youtube-shorts-title.txt").write_text(reused["youtube_shorts_title"] + "\n", encoding="utf-8")
-        (folder / "youtube-shorts-description.txt").write_text(reused["youtube_shorts_description"] + "\n", encoding="utf-8")
-        image_files = [str(folder / Path(value).name) for value in reused.get("images", []) or [] if (folder / Path(value).name).exists()]
-        sound_value = str(reused.get("sound") or "")
-        sound_path = folder / Path(sound_value).name if sound_value else None
-        overlays = tiktok_chapter_teaser_overlays(abbr, group["chapter"], novel, chapter_text=chapter_text, fallback_text=visual_prompt or reused["caption"])
-        if len(image_files) < 4:
-            image_files = image_files[:3] + [prepare_tiktok_outro_image(folder, abbr, novel, group["chapter"], style=pack_track)]
-            reused["images"] = image_files
-        reused["video_overlays"] = overlays
-        reused["pack_track"] = pack_track
-        if len(image_files) >= 3 and sound_path and sound_path.exists():
-            write_tiktok_video_helper(folder, image_files[:4], sound_path, overlays=overlays)
-        (folder / "metadata.json").write_text(json.dumps(reused, indent=2), encoding="utf-8")
-        try:
-            update_chapter_ledger(
-                abbr,
-                group["chapter"],
-                {
-                    "shortsReelsBuilt": True,
-                    "shortsPackBuilt": True,
-                    "shortsPackBuiltAt": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "shortsFolder": str(folder),
-                    "folders": {"shorts": str(folder)},
-                },
-            )
-        except Exception:
-            pass
-        return reused
-    reset_generated_folder(folder)
-    copied_images: list[str] = []
-    for image in group["files"][:3]:
-        source = Path(image)
-        target = folder / source.name
-        shutil.copy2(source, target)
-        # Carry the style-track sidecar into the pack folder so the pack is self-describing (E/F).
-        sidecar = source.with_name(f"{source.name}.track")
-        if sidecar.exists():
-            shutil.copy2(sidecar, folder / sidecar.name)
-        copied_images.append(str(target))
-    sound_source = Path(sound["path"])
-    sound_target = folder / sound_source.name
-    shutil.copy2(sound_source, sound_target)
-    novel = NOVEL_NAMES.get(abbr, abbr)
-    caption = tiktok_caption(novel, group["chapter"])
-    reel_caption = instagram_reel_caption(novel, group["chapter"])
-    shorts = youtube_shorts_metadata(novel, group["chapter"])
-    copied_images.append(prepare_tiktok_outro_image(folder, abbr, novel, group["chapter"], style=pack_track))
-    overlays = tiktok_chapter_teaser_overlays(abbr, group["chapter"], novel, chapter_text=chapter_text, fallback_text=visual_prompt or caption)
-    payload = {
-        "abbr": abbr,
-        "pack_track": pack_track,
-        "novel": novel,
-        "chapter": group["chapter"],
-        "images": copied_images,
-        "sound": str(sound_target),
-        "caption": caption,
-        "instagram_reel_caption": reel_caption,
-        "youtube_shorts_title": shorts["title"],
-        "youtube_shorts_description": shorts["description"],
-        "folder": str(folder),
-        "visual_prompt": visual_prompt,
-        "video_overlays": overlays,
-    }
-    (folder / "caption.txt").write_text(caption + "\n", encoding="utf-8")
-    (folder / "instagram-reel-caption.txt").write_text(reel_caption + "\n", encoding="utf-8")
-    (folder / "youtube-shorts-title.txt").write_text(shorts["title"] + "\n", encoding="utf-8")
-    (folder / "youtube-shorts-description.txt").write_text(shorts["description"] + "\n", encoding="utf-8")
-    (folder / "sound.txt").write_text(str(sound_target) + "\n", encoding="utf-8")
-    (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    write_tiktok_video_helper(folder, copied_images, sound_target, overlays=overlays)
-    try:
-        update_chapter_ledger(
-            abbr,
-            group["chapter"],
-            {
-                "shortsReelsBuilt": True,
-                "shortsPackBuilt": True,
-                "shortsPackBuiltAt": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "shortsFolder": str(folder),
-                "folders": {"shorts": str(folder)},
-            },
-        )
-    except Exception:
-        pass
-    return auto_publish_generated_media(folder, payload)
-
-
+def make_tiktok_pack(*args, **kwargs):
+    return promo_builder.make_tiktok_pack(*args, **kwargs)
 def generate_tiktok_images(
     abbr: str,
     chapter: str,
@@ -16782,88 +15431,8 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
     return auto_publish_generated_media(folder, payload)
 
 
-def fallback_social_copy(novel: str, abbr: str, day: str, filename: str) -> dict[str, str]:
-    profile = social_profile(abbr or novel)
-    tags = rotated_hashtags(abbr, f"{abbr}-{day}", chapter_text=filename, limit=9)
-    x_tags = rotated_x_hashtags(abbr, f"{abbr}-{day}", limit=5)
-    royal_road_url = royal_road_url_for_story(abbr or novel)
-    focus = rotating_post_focus(abbr, f"fallback_social_{day}")
-    style = rotating_caption_style(abbr, f"fallback_social_{day}_{focus}")
-    cta = focused_social_cta(abbr, focus, f"daily_{day}_general", "daily")
-    generic_hooks = {
-        "scene_hook": f"{profile['name']} is moving into the next pressure point.",
-        "reader_question": "What kind of power would you chase if the cost kept rising?",
-        "stakes": f"The next step is never free in {profile['name']}.",
-        "character_moment": "Every arc has a moment where the path starts choosing back.",
-        "worldbuilding": "Step into a world of hidden systems, rising threats, and hard-won power.",
-        "catch_up": "Start from the beginning or catch up before the next release lands.",
-    }
-    hook = generic_hooks.get(style, generic_hooks["scene_hook"])
-    instagram = "\n".join(
-        [
-            f"{profile['emoji']} {profile['name']} - {day} spotlight",
-            "",
-            hook,
-            "",
-            cta,
-            "",
-            platform_links_block(abbr),
-            "",
-            tags,
-        ]
-    )
-    x_link = linktree_url()
-    x_text = f"{profile['emoji']} {hook}\n{x_link}\n{x_tags}"
-    if len(x_text) > 260:
-        x_text = x_text[:257].rsplit(" ", 1)[0] + "..."
-    facebook = "\n\n".join(
-        [
-            f"{profile['emoji']} {profile['name']} - {day} spotlight",
-            hook,
-            cta,
-            "Follow the story updates across the main channels.",
-            platform_links_block(abbr),
-            tags,
-        ]
-    )
-    return {
-        "instagram": with_instagram_links(instagram, abbr),
-        "x": x_text,
-        "facebook": facebook,
-        "alt_text": f"Promotional image for {profile['name']}, scheduled for {day}.",
-        "post_focus": focus,
-        "caption_style": style,
-    }
-    instagram = "\n".join(
-        [
-            f"{profile['emoji']} {profile['patreon']} — {profile['name']} has chapters waiting on Patreon!",
-            f"RR {royal_road_url}",
-            f"Patreon {PATREON_URL}",
-            f"YouTube {YOUTUBE_SOCIAL_URL}",
-            f"TikTok {TIKTOK_URL}",
-            "",
-            tags,
-        ]
-    )
-    x_text = f"{profile['emoji']} {profile['name']} chapters are waiting on Patreon.\n👉 {PATREON_URL}\n{x_tags}"
-    if len(x_text) > 260:
-        x_text = x_text[:257].rsplit(" ", 1)[0] + "..."
-    facebook = "\n\n".join(
-        [
-            f"{profile['emoji']} {profile['patreon']} — {profile['name']} has chapters waiting on Patreon!",
-            "Read now on Royal Road, support early access on Patreon, and follow the story updates here.",
-            platform_links_block(abbr),
-            tags,
-        ]
-    )
-    return {
-        "instagram": with_instagram_links(instagram, abbr),
-        "x": x_text,
-        "facebook": facebook,
-        "alt_text": f"Promotional image for {profile['name']}, scheduled for {day}.",
-    }
-
-
+def fallback_social_copy(*args, **kwargs):
+    return promo_copy.fallback_social_copy(*args, **kwargs)
 def docs_file_content(path: str) -> bytes:
     encoded = urllib.parse.quote(path, safe="/")
     if os.environ.get("GITHUB_TOKEN", "").strip():
@@ -17165,135 +15734,10 @@ def social_copy_with_openai(prompt_template: str, novel: str, abbr: str, day: st
     return json.loads(result["choices"][0]["message"]["content"])
 
 
-def make_social_post(abbr: str, day: str, prompt_template: str, use_openai: bool, post_focus: str = "", chapter_number: str | int = "") -> dict[str, Any]:
-    matches = [
-        item
-        for item in list_daily_promo_images()
-        if item["abbr"] == abbr and item["day"].lower() == day.lower()
-    ]
-    if not matches:
-        raise RuntimeError(f"No daily promo image found for {abbr} {day}.")
-    item = matches[0]
-    folder = social_post_folder(abbr, item["day"], chapter_number)
-    reset_generated_folder(folder)
-
-    source = "fallback"
-    try:
-        if use_openai:
-            copy = social_copy_with_openai(prompt_template, item["novel"], abbr, item["day"], item["filename"])
-            source = "openai"
-        else:
-            raise RuntimeError("OpenAI disabled for this run.")
-    except Exception as exc:
-        copy = fallback_social_copy(item["novel"], abbr, item["day"], item["filename"])
-        copy["warning"] = str(exc)
-    focus = resolve_post_focus(abbr, f"daily_{item['day']}", post_focus, chapter=chapter_number)
-    cta = focused_social_cta(abbr, focus)
-    style = str(copy.get("caption_style") or rotating_caption_style(abbr, f"daily_{item['day']}_{focus}_{chapter_number or 'general'}"))
-    daily_hook = {
-        "scene_hook": f"{item['novel']} has another scene worth stepping into today.",
-        "reader_question": "Would you read ahead if the next choice changed the whole path?",
-        "stakes": f"The stakes are moving again in {item['novel']}.",
-        "character_moment": f"Today's spotlight leans into a character turn from {item['novel']}.",
-        "worldbuilding": f"Today's post opens another door into the world of {item['novel']}.",
-        "catch_up": f"This is a good day to catch up on {item['novel']} before the next release.",
-    }.get(style, f"{item['novel']} has another update ready.")
-    base_instagram = str(copy.get("instagram", "")).strip()
-    if daily_hook and daily_hook not in base_instagram:
-        base_instagram = f"{daily_hook}\n\n{base_instagram}" if base_instagram else daily_hook
-    if cta not in base_instagram:
-        base_instagram = f"{base_instagram}\n\n{cta}" if base_instagram else cta
-    copy["instagram"] = with_instagram_links(base_instagram, abbr)
-    copy["x"] = str(copy.get("x") or fallback_social_copy(item["novel"], abbr, item["day"], item["filename"])["x"]).strip()
-    x_focus_link = linktree_url()
-    if x_focus_link and x_focus_link not in copy["x"]:
-        candidate = f"{copy['x']}\n{x_focus_link}".strip()
-        copy["x"] = candidate if len(candidate) <= 275 else copy["x"]
-    copy["facebook"] = str(copy.get("facebook") or "").strip()
-    if not copy["facebook"]:
-        copy["facebook"] = "\n\n".join(
-            [
-                f"{item['day']} spotlight: {item['novel']}.",
-                cta,
-                "Follow the story updates across the main channels.",
-                platform_links_block(abbr),
-                "#webnovel #royalroad #serialfiction #indieauthor",
-            ]
-        )
-    else:
-        if cta not in copy["facebook"]:
-            copy["facebook"] = f"{copy['facebook']}\n\n{cta}"
-        if linktree_url() not in copy["facebook"]:
-            copy["facebook"] = f"{copy['facebook']}\n\n{platform_links_block(abbr)}"
-    copy["caption_style"] = style
-
-    image_target = folder / f"{abbr}_{item['day']}.png"
-    image_source = create_fresh_social_image_from_caption(
-        image_target,
-        abbr=abbr,
-        novel=item["novel"],
-        title=f"{item['novel']} {item['day']} social post",
-        caption=copy["instagram"],
-        hook=copy.get("x", ""),
-        index=DAYS.index(item["day"]) + 1 if item["day"] in DAYS else 1,
-    )
-    copy["image_source"] = image_source
-
-    payload = {
-        **item,
-        **copy,
-        "source": source,
-        "folder": str(folder),
-        "image": str(image_target),
-        "prompt_template": prompt_template,
-        "post_focus": focus,
-    }
-    if str(chapter_number).strip():
-        payload["chapter"] = str(chapter_number).strip()
-    (folder / "instagram.txt").write_text(copy["instagram"].strip() + "\n", encoding="utf-8")
-    (folder / "x.txt").write_text(copy["x"].strip() + "\n", encoding="utf-8")
-    (folder / "facebook.txt").write_text(copy["facebook"].strip() + "\n", encoding="utf-8")
-    (folder / "alt-text.txt").write_text(copy["alt_text"].strip() + "\n", encoding="utf-8")
-    (folder / "prompt-template.txt").write_text(prompt_template.strip() + "\n", encoding="utf-8")
-    (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    if str(chapter_number).strip():
-        try:
-            update_chapter_ledger(
-                abbr,
-                str(chapter_number).strip(),
-                {
-                    "socialPostsBuilt": True,
-                    "dailySocialBuilt": True,
-                    "dailySocialBuiltAt": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "dailySocialFolder": str(folder),
-                    "folders": {"social": str(folder)},
-                },
-            )
-        except Exception:
-            pass
-    return auto_publish_generated_media(folder, payload)
-
-
-def build_week_social_posts(use_openai: bool = False, days: list[str] | None = None) -> dict[str, Any]:
-    selected_days = days or ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-    posts: list[dict[str, Any]] = []
-    errors: list[dict[str, str]] = []
-    template = SOCIAL_PROMPT_FILE.read_text(encoding="utf-8") if SOCIAL_PROMPT_FILE.exists() else "{novel} {day}"
-    for day in selected_days:
-        for abbr in NOVEL_NAMES:
-            try:
-                posts.append(make_social_post(abbr, day, template, use_openai))
-            except Exception as exc:
-                errors.append({"abbr": abbr, "day": day, "error": str(exc)})
-    return {
-        "createdAt": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "days": selected_days,
-        "posts": posts,
-        "errors": errors,
-        "count": len(posts),
-    }
-
-
+def make_social_post(*args, **kwargs):
+    return promo_builder.make_social_post(*args, **kwargs)
+def build_week_social_posts(*args, **kwargs):
+    return promo_builder.build_week_social_posts(*args, **kwargs)
 def next_planner_chapter(abbr: str, tool: str = "promo") -> int | None:
     try:
         index = docs_chapter_index(abbr)
@@ -18204,132 +16648,16 @@ def automate_due_release_uploads(
     }
 
 
-def build_release_automation_backlog(*, include_prepared: bool = False) -> dict[str, Any]:
-    queue = ensure_chapter_release_queue(days_ahead=365)
-    assignments = [release_queue_assignment_status(item) for item in queue.get("assignments", [])]
-    targets = release_planner.release_stage_due_targets(
-        assignments,
-        today=iso_today().isoformat(),
-        include_prepared=include_prepared,
-        include_scheduled=True,
-    )
-    assignment_by_key = {str(item.get("key") or ""): item for item in assignments}
-    jobs: list[dict[str, Any]] = []
-    for target in targets:
-        assignment = assignment_by_key.get(str(target.get("key") or ""), {})
-        jobs.append({
-            **target,
-            "scheduledFor": str(target.get("date") or ""),
-            "novel": str(assignment.get("novel") or NOVEL_NAMES.get(str(target.get("abbr") or ""), "")),
-            "title": str(assignment.get("title") or ""),
-            "assignmentKey": str(target.get("key") or ""),
-            "releasePlanId": str(assignment.get("releasePlanId") or ""),
-        })
-    queued = automation_db.enqueue_release_jobs(ROOT, jobs)
-    return {
-        "ok": True,
-        "targets": len(targets),
-        "queued": queued,
-        "status": release_automation_status(),
-        "message": f"Release automation backlog contains {len(targets)} missing stage job(s).",
-    }
-
-
-def summarize_release_stage_progress(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    stage_labels = {
-        "inner_disciple": "Inner Disciple",
-        "path_initiate": "Path Initiate",
-        "royal_road": "Royal Road",
-    }
-    progress: list[dict[str, Any]] = []
-    for stage, label in stage_labels.items():
-        stage_jobs = [job for job in jobs if str(job.get("stage") or "") == stage]
-        counts: dict[str, int] = {}
-        for job in stage_jobs:
-            status = str(job.get("status") or "unknown")
-            counts[status] = counts.get(status, 0) + 1
-        verified = [job for job in stage_jobs if str(job.get("status") or "") == "verified"]
-        verified.sort(
-            key=lambda job: str(job.get("verifiedAt") or job.get("completedAt") or job.get("updatedAt") or ""),
-            reverse=True,
-        )
-        progress.append({
-            "stage": stage,
-            "label": label,
-            "counts": counts,
-            "total": len(stage_jobs),
-            "active": next((job for job in stage_jobs if str(job.get("status") or "") == "running"), None),
-            "next": next((job for job in stage_jobs if str(job.get("status") or "") in {"pending", "retrying"}), None),
-            "lastVerified": verified[0] if verified else None,
-        })
-    return progress
-
-
-def release_automation_status() -> dict[str, Any]:
-    jobs = automation_db.list_release_jobs(ROOT, limit=5000)
-    counts: dict[str, int] = {}
-    for job in jobs:
-        status = str(job.get("status") or "unknown")
-        counts[status] = counts.get(status, 0) + 1
-    active = next((job for job in jobs if job.get("status") == "running"), None)
-    failures = [job for job in jobs if job.get("status") in {"blocked", "failed"}]
-    thread = RELEASE_AUTOMATION_THREAD
-    runtime = read_json_safe(RELEASE_AUTOMATION_STATE_FILE)
-    if not isinstance(runtime, dict):
-        runtime = {}
-    if not str(runtime.get("lastError") or "").strip():
-        runtime["failedJob"] = {}
-    runtime.update({
-        "running": bool(thread and thread.is_alive()),
-        "paused": RELEASE_AUTOMATION_PAUSE.is_set(),
-        "stopRequested": RELEASE_AUTOMATION_STOP.is_set(),
-    })
-    return {
-        "ok": True,
-        "counts": counts,
-        "total": len(jobs),
-        "active": active,
-        "next": next((job for job in jobs if job.get("status") in {"pending", "retrying"}), None),
-        "failures": failures[:25],
-        "jobs": jobs[:100],
-        "stageProgress": summarize_release_stage_progress(jobs),
-        "runtime": runtime,
-    }
-
-
-def release_automation_preflight() -> dict[str, Any]:
-    browser_ready, browser_message = chrome_debug_available()
-    node_path = bundled_node_executable()
-    jobs = automation_db.list_release_jobs(ROOT, statuses=["pending", "retrying"], limit=5000)
-    checks = {
-        "chromeBridge": browser_ready,
-        "playwrightRuntime": bool(node_path and Path(node_path).exists()),
-        "queueReadable": True,
-    }
-    issues = []
-    if not checks["chromeBridge"]:
-        issues.append(browser_message)
-    if not checks["playwrightRuntime"]:
-        issues.append("The bundled browser automation runtime is missing.")
-    return {
-        "ready": all(checks.values()),
-        "checks": checks,
-        "browser": browser_message,
-        "pendingJobs": len(jobs),
-        "issues": issues,
-    }
-
-
-def _save_release_automation_runtime(**updates: Any) -> dict[str, Any]:
-    state = read_json_safe(RELEASE_AUTOMATION_STATE_FILE)
-    if not isinstance(state, dict):
-        state = {}
-    state.update(updates)
-    state["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(RELEASE_AUTOMATION_STATE_FILE, state)
-    return state
-
-
+def build_release_automation_backlog(*args, **kwargs):
+    return release_automation.build_release_automation_backlog(*args, **kwargs)
+def summarize_release_stage_progress(*args, **kwargs):
+    return release_automation.summarize_release_stage_progress(*args, **kwargs)
+def release_automation_status(*args, **kwargs):
+    return release_automation.release_automation_status(*args, **kwargs)
+def release_automation_preflight(*args, **kwargs):
+    return release_automation.release_automation_preflight(*args, **kwargs)
+def _save_release_automation_runtime(*args, **kwargs):
+    return release_automation._save_release_automation_runtime(*args, **kwargs)
 def _release_job_already_complete(job: dict[str, Any]) -> bool:
     ledger = chapter_ledger_entry(str(job.get("abbr") or ""), int(job.get("chapter") or 0))
     stage = str(job.get("stage") or "")
@@ -19120,133 +17448,16 @@ def remember_release_dates(abbr: str, chapter: int, dates: dict[str, str], sourc
     return entry
 
 
-def load_chapter_ledger() -> dict[str, Any]:
-    try:
-        data = automation_db.load_chapter_ledger(ROOT)
-        if isinstance(data, dict) and isinstance(data.get("chapters"), dict) and data["chapters"]:
-            return data
-    except Exception as exc:
-        print(f"Database read failed for chapter ledger: {exc}", file=sys.stderr)
-    if not CHAPTER_LEDGER_FILE.exists():
-        return {"schemaVersion": 1, "chapters": {}, "updatedAt": ""}
-    try:
-        data = json.loads(CHAPTER_LEDGER_FILE.read_text(encoding="utf-8-sig"))
-    except Exception:
-        return {"schemaVersion": 1, "chapters": {}, "updatedAt": ""}
-    data.setdefault("schemaVersion", 1)
-    data.setdefault("chapters", {})
-    return data
-
-
-def save_chapter_ledger(data: dict[str, Any]) -> None:
-    data.setdefault("schemaVersion", 1)
-    data.setdefault("chapters", {})
-    data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(CHAPTER_LEDGER_FILE, data)
-    for entry in data.get("chapters", {}).values() if isinstance(data.get("chapters"), dict) else []:
-        if isinstance(entry, dict):
-            mirror_chapter_ledger_to_database(entry)
-
-
-def chapter_ledger_default_entry(abbr: str, chapter_number: int) -> dict[str, Any]:
-    return {
-        "abbr": abbr,
-        "novel": NOVEL_NAMES.get(abbr, abbr),
-        "chapter": chapter_number,
-        "title": "",
-        "written": False,
-        "uploadedToGitHubDocs": False,
-        "githubDocsUploaded": False,
-        "postedToPatreon": False,
-        "postedToRoyalRoad": False,
-        "patreonDraftPrepared": False,
-        "royalRoadReviewed": False,
-        "promoPackBuilt": False,
-        "promoBuilt": False,
-        "shortsReelsBuilt": False,
-        "shortsPackBuilt": False,
-        "youtubeFullVideoBuilt": False,
-        "youtubePackBuilt": False,
-        "socialPostsBuilt": False,
-        "dailySocialBuilt": False,
-        "socialPostsQueued": False,
-        "instagramQueued": False,
-        "bufferQueued": False,
-        "folders": {},
-        "updatedAt": "",
-    }
-
-
-def normalize_chapter_ledger_entry(abbr: str, chapter_number: int, entry: dict[str, Any] | None = None) -> dict[str, Any]:
-    normalized = chapter_ledger_default_entry(abbr, chapter_number)
-    normalized.update(entry or {})
-    if normalized.get("githubDocsUploaded"):
-        normalized["uploadedToGitHubDocs"] = True
-    if normalized.get("uploadedToGitHubDocs"):
-        normalized["githubDocsUploaded"] = True
-    if normalized.get("promoBuilt"):
-        normalized["promoPackBuilt"] = True
-    if normalized.get("promoPackBuilt"):
-        normalized["promoBuilt"] = True
-    if normalized.get("shortsPackBuilt"):
-        normalized["shortsReelsBuilt"] = True
-    if normalized.get("shortsReelsBuilt"):
-        normalized["shortsPackBuilt"] = True
-    if normalized.get("shortsNeedsRebuild"):
-        normalized["shortsReelsBuilt"] = False
-        normalized["shortsPackBuilt"] = False
-    folders = normalized.get("folders") if isinstance(normalized.get("folders"), dict) else {}
-    shorts_folder = str(folders.get("shorts") or normalized.get("shortsFolder") or "").strip()
-    if shorts_folder:
-        try:
-            if not (Path(shorts_folder) / "tiktok-video.mp4").exists():
-                normalized["shortsReelsBuilt"] = False
-                normalized["shortsPackBuilt"] = False
-                normalized["shortsNeedsRebuild"] = True
-                normalized.setdefault("shortsMissingReason", "Shorts folder exists but tiktok-video.mp4 is missing.")
-        except Exception:
-            pass
-    if normalized.get("youtubeFullVideoBuilt"):
-        normalized["youtubePackBuilt"] = True
-    if normalized.get("dailySocialBuilt"):
-        normalized["socialPostsBuilt"] = True
-    if normalized.get("socialPostsBuilt"):
-        normalized["dailySocialBuilt"] = True
-    if normalized.get("instagramQueued") or normalized.get("bufferQueued"):
-        normalized["socialPostsQueued"] = True
-    if normalized.get("socialPostsQueued"):
-        normalized["instagramQueued"] = True
-    return normalized
-
-
-def chapter_ledger_updates_for_folder(folder: Path, metadata: dict[str, Any], status: str = "") -> tuple[str, int, dict[str, Any]]:
-    abbr = story_key(str(metadata.get("abbr") or metadata.get("novel") or ""))
-    chapter_value = metadata.get("chapter") or metadata.get("chapter_number") or metadata.get("chapterNumber")
-    if not abbr or chapter_value in ("", None):
-        return "", 0, {}
-    try:
-        chapter_number = int(str(chapter_value).strip())
-    except (TypeError, ValueError):
-        return "", 0, {}
-    updates: dict[str, Any] = {"title": str(metadata.get("title") or metadata.get("heading") or "").strip()}
-    folders = {}
-    if str(folder).startswith(str(OUTPUT_DIR.resolve())):
-        folders["campaign"] = str(folder)
-    elif str(folder).startswith(str(TIKTOK_OUTPUT_DIR.resolve())):
-        folders["shorts"] = str(folder)
-    elif str(folder).startswith(str(YOUTUBE_OUTPUT_DIR.resolve())):
-        folders["youtube"] = str(folder)
-    elif str(folder).startswith(str(SOCIAL_OUTPUT_DIR.resolve())):
-        folders["social"] = str(folder)
-    if folders:
-        updates["folders"] = folders
-    if status:
-        updates[status] = True
-        updates[f"{status}At"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    updates = {key: value for key, value in updates.items() if value not in ("", None, {})}
-    return abbr, chapter_number, updates
-
-
+def load_chapter_ledger(*args, **kwargs):
+    return release_state.load_chapter_ledger(*args, **kwargs)
+def save_chapter_ledger(*args, **kwargs):
+    return release_state.save_chapter_ledger(*args, **kwargs)
+def chapter_ledger_default_entry(*args, **kwargs):
+    return release_state.chapter_ledger_default_entry(*args, **kwargs)
+def normalize_chapter_ledger_entry(*args, **kwargs):
+    return release_state.normalize_chapter_ledger_entry(*args, **kwargs)
+def chapter_ledger_updates_for_folder(*args, **kwargs):
+    return release_state.chapter_ledger_updates_for_folder(*args, **kwargs)
 def is_experiment_variant_metadata(metadata: dict[str, Any]) -> bool:
     return bool(str(metadata.get("experimentId") or "").strip() or str(metadata.get("variantId") or "").strip())
 
@@ -19255,37 +17466,8 @@ def post_progress_tool(metadata: dict[str, Any]) -> str:
     return "variants" if is_experiment_variant_metadata(metadata) else "promo"
 
 
-def update_chapter_ledger(abbr: str, chapter: int | str, updates: dict[str, Any]) -> dict[str, Any]:
-    abbr = story_key(abbr)
-    if not abbr:
-        return {}
-    try:
-        chapter_number = int(chapter)
-    except (TypeError, ValueError):
-        return {}
-    ledger = load_chapter_ledger()
-    key = f"{abbr}-{chapter_number}"
-    entry = normalize_chapter_ledger_entry(abbr, chapter_number, ledger.setdefault("chapters", {}).get(key, {}))
-    existing_folders = dict(entry.get("folders") or {})
-    new_folders = updates.pop("folders", {}) if isinstance(updates.get("folders"), dict) else {}
-    entry.update(
-        {
-            "abbr": abbr,
-            "novel": NOVEL_NAMES.get(abbr, abbr),
-            "chapter": chapter_number,
-            "updatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
-            **updates,
-        }
-    )
-    if new_folders:
-        entry["folders"] = {**existing_folders, **new_folders}
-    entry = normalize_chapter_ledger_entry(abbr, chapter_number, entry)
-    ledger["chapters"][key] = entry
-    save_chapter_ledger(ledger)
-    mirror_chapter_ledger_to_database(entry)
-    return entry
-
-
+def update_chapter_ledger(*args, **kwargs):
+    return release_state.update_chapter_ledger(*args, **kwargs)
 def continuity_file_for(abbr: str) -> Path:
     CONTINUITY_DIR.mkdir(parents=True, exist_ok=True)
     return CONTINUITY_DIR / f"{story_key(abbr)}-summary.json"
@@ -20479,22 +18661,8 @@ def chapter_workflow_status(abbr: str = "") -> dict[str, Any]:
 WORKFLOW_ACTION_ORDER = ["promo", "shorts", "royal-road", "instagram"]
 
 
-def chapter_ledger_entry(abbr: str, chapter: int | str) -> dict[str, Any]:
-    abbr = story_key(abbr)
-    try:
-        chapter_number = int(chapter)
-    except (TypeError, ValueError):
-        return {}
-    try:
-        entry = automation_db.load_chapter_ledger_entry(ROOT, abbr, chapter_number)
-        if isinstance(entry, dict):
-            return normalize_chapter_ledger_entry(abbr, chapter_number, entry)
-    except Exception as exc:
-        print(f"Database read failed for chapter ledger entry: {exc}", file=sys.stderr)
-    ledger = load_chapter_ledger()
-    return normalize_chapter_ledger_entry(abbr, chapter_number, ledger.get("chapters", {}).get(f"{abbr}-{chapter_number}", {}))
-
-
+def chapter_ledger_entry(*args, **kwargs):
+    return release_state.chapter_ledger_entry(*args, **kwargs)
 def missing_workflow_actions(abbr: str, chapter: int | str) -> list[str]:
     entry = chapter_ledger_entry(abbr, chapter)
     missing = []
@@ -20700,51 +18868,8 @@ def chapter_release_dates(abbr: str, chapter: int) -> dict[str, str]:
     }
 
 
-def release_status_for_chapter(abbr: str, chapter: int) -> dict[str, Any]:
-    abbr = abbr.upper().strip()
-    novel = novel_schedule_entry(abbr)
-    current_rr = int(novel.get("currentRoyalRoadChapter", 0))
-    dates = chapter_release_dates(abbr, chapter)
-    today = iso_today()
-    override: dict[str, Any] = {}
-    try:
-        db_override = automation_db.load_release_status_entry(ROOT, abbr, chapter)
-        if isinstance(db_override, dict):
-            override = db_override
-    except Exception as exc:
-        print(f"Database read failed for release status entry: {exc}", file=sys.stderr)
-    if not override:
-        saved_status = load_release_status()
-        override = saved_status.get("chapters", {}).get(f"{abbr}-{chapter}", {}) or saved_status.get("chapters", {}).get(f"{abbr.upper()}-{chapter}", {})
-    if override.get("innerDiscipleDate") or override.get("pathInitiateDate") or override.get("royalRoadDate"):
-        dates = {
-            "innerDiscipleDate": str(override.get("innerDiscipleDate") or dates.get("innerDiscipleDate") or ""),
-            "pathInitiateDate": str(override.get("pathInitiateDate") or dates.get("pathInitiateDate") or ""),
-            "royalRoadDate": str(override.get("royalRoadDate") or dates.get("royalRoadDate") or ""),
-        }
-    rr_exists = bool(override.get("royalRoadExists")) or chapter <= current_rr
-    rr_chapter_url = str(override.get("royalRoadChapterUrl") or "").strip()
-    rr_content_status = str(override.get("royalRoadContentStatus") or "").strip()
-    rr_content_compare = override.get("royalRoadContentCompare") if isinstance(override.get("royalRoadContentCompare"), dict) else {}
-    patreon_exists = bool(override.get("patreonExists"))
-    patreon_due = bool(dates.get("innerDiscipleDate")) and today >= datetime.fromisoformat(dates["innerDiscipleDate"]).date()
-    rr_due = bool(dates.get("royalRoadDate")) and today >= datetime.fromisoformat(dates["royalRoadDate"]).date()
-    return {
-        "abbr": abbr,
-        "novel": NOVEL_NAMES.get(abbr, abbr),
-        "chapter": chapter,
-        "patreonExists": patreon_exists,
-        "patreonDue": patreon_due and not patreon_exists,
-        "royalRoadExists": rr_exists,
-        "royalRoadChapterUrl": rr_chapter_url,
-        "royalRoadContentStatus": rr_content_status,
-        "royalRoadContentCompare": rr_content_compare,
-        "royalRoadDue": rr_due and not rr_exists,
-        "dates": dates,
-        "source": "manual override + schedule" if override else "schedule",
-    }
-
-
+def release_status_for_chapter(*args, **kwargs):
+    return release_state.release_status_for_chapter(*args, **kwargs)
 def release_plan_for_chapter(abbr: str, chapter: int | str) -> dict[str, Any]:
     abbr = story_key(abbr)
     if not abbr:
@@ -23651,28 +21776,8 @@ def bearer_json_request(url: str, token: str, payload: dict[str, Any]) -> dict[s
         return json.loads(response.read().decode("utf-8"))
 
 
-def buffer_graphql(query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
-    key = os.environ.get("BUFFER_API_KEY", "").strip()
-    if not key:
-        raise RuntimeError("Buffer is not configured. Add BUFFER_API_KEY in Connections.")
-    data = json.dumps({"query": query, "variables": variables or {}}).encode("utf-8")
-    request = urllib.request.Request(
-        "https://api.buffer.com",
-        data=data,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Buffer API failed: HTTP {exc.code} {detail}") from exc
-    if payload.get("errors"):
-        raise RuntimeError(json.dumps(payload["errors"]))
-    return payload
-
-
+def buffer_graphql(*args, **kwargs):
+    return buffer_publish.buffer_graphql(*args, **kwargs)
 def buffer_connection_diagnostics() -> dict[str, Any]:
     key_saved = bool(os.environ.get("BUFFER_API_KEY", "").strip())
     diagnostics: dict[str, Any] = {
@@ -23800,30 +21905,10 @@ def buffer_channels() -> dict[str, Any]:
     return {"organizations": orgs, "channels": channels}
 
 
-def configured_buffer_channels() -> list[dict[str, str]]:
-    ids = [value.strip() for value in os.environ.get("BUFFER_CHANNEL_IDS", "").split(",") if value.strip()]
-    labels = [("instagram", "Instagram"), ("tiktok", "TikTok"), ("youtube", "YouTube")]
-    channels: list[dict[str, str]] = []
-    for index, channel_id in enumerate(ids):
-        service, name = labels[index] if index < len(labels) else ("buffer", f"Buffer Channel {index + 1}")
-        raw_id = channel_id
-        if ":" in channel_id:
-            prefix, raw_id = channel_id.split(":", 1)
-            prefix = prefix.strip().lower()
-            if prefix in {"instagram", "tiktok", "youtube"}:
-                service = prefix
-                name = prefix.title()
-        channels.append({"id": raw_id.strip(), "service": service, "name": name, "source": "saved"})
-    return channels
-
-
-def buffer_channel_service(channel_id: str) -> str:
-    for channel in configured_buffer_channels():
-        if channel.get("id") == channel_id:
-            return channel.get("service", "buffer")
-    return "buffer"
-
-
+def configured_buffer_channels(*args, **kwargs):
+    return buffer_publish.configured_buffer_channels(*args, **kwargs)
+def buffer_channel_service(*args, **kwargs):
+    return buffer_publish.buffer_channel_service(*args, **kwargs)
 def github_commit_media_url_for_file(path: Path) -> str:
     metadata_path = path.resolve().parent / "metadata.json"
     if not metadata_path.exists():
@@ -25246,234 +23331,8 @@ def cleanup_duplicate_generated_media(apply: bool = False, remote: bool = False)
     return report
 
 
-def buffer_post_from_folder(
-    folder: str,
-    channel_ids: list[str],
-    text_kind: str,
-    mode: str = "addToQueue",
-    scheduled_at: str | None = None,
-    advance_path: bool = True,
-) -> dict[str, Any]:
-    if mode not in {"addToQueue", "draft"}:
-        raise RuntimeError("Buffer mode must be addToQueue or draft.")
-    post_folder = Path(folder).resolve()
-    if str(post_folder).startswith(str(YOUTUBE_OUTPUT_DIR.resolve())):
-        metadata_probe = read_metadata(post_folder)
-        probe_title = str(metadata_probe.get("title") or post_folder.name)
-        probe_abbr = str(metadata_probe.get("abbr") or "")
-        probe_chapter = normalize_chapter_id(probe_title, metadata_probe.get("chapter") or "")
-        if not probe_abbr:
-            name_match = re.match(r"^(?P<abbr>[a-z]{2})-(?:(?P<chapter>\d+[a-z]?)|chapter)-(?P<title>.+)$", post_folder.name, re.IGNORECASE)
-            if name_match:
-                probe_abbr = name_match.group("abbr").upper()
-                probe_title = name_match.group("title")
-                probe_chapter = normalize_chapter_id(probe_title, name_match.group("chapter") or "")
-        stable = stable_chapter_folder(
-            YOUTUBE_OUTPUT_DIR,
-            "youtube",
-            probe_title,
-            probe_abbr,
-            probe_chapter,
-        ).resolve()
-        if stable != post_folder and stable.exists() and ((stable / "youtube-buffer.mp4").exists() or (stable / "youtube-video.mp4").exists()):
-            post_folder = stable
-    metadata_path = post_folder / "metadata.json"
-    if not metadata_path.exists():
-        raise RuntimeError("This folder does not contain metadata.")
-    metadata = read_metadata(post_folder)
-    if str(post_folder).startswith(str(TIKTOK_OUTPUT_DIR.resolve())) and (
-        str(metadata.get("kind") or "") == "deep_tiktok" or post_folder.name.lower().endswith("-deep")
-    ):
-        metadata = repair_deep_tiktok_metadata(post_folder, metadata)
-    video_build = ensure_buffer_video(post_folder, text_kind)
-    if video_build:
-        metadata.setdefault("buffer_video_builds", []).append(video_build)
-        metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    quality = folder_quality_gate(str(post_folder), text_kind)
-    if not quality.get("ok"):
-        record_recovery_event(
-            "buffer_quality_gate",
-            "; ".join(quality.get("errors", [])) or "Quality gate failed.",
-            error_type="quality_gate_failed",
-            folder=post_folder,
-            details=quality,
-        )
-        return {"posts": [], "qualityGate": quality, "skipped": True, "message": "Quality gate failed. Fix the listed issues before sending to Buffer."}
-    if github_auto_publish_media():
-        publish_result = publish_folder_media_to_github(str(post_folder))
-        metadata.setdefault("buffer_media_publishes", []).append(publish_result)
-        metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    posts = []
-    for channel_id in channel_ids:
-        service = buffer_channel_service(channel_id)
-        post_metadata: dict[str, Any] = {}
-        if str(post_folder).startswith(str(SOCIAL_OUTPUT_DIR.resolve())) or (
-            str(post_folder).startswith(str(EXPERIMENT_OUTPUT_DIR.resolve())) and metadata.get("kind") == "experiment_social_pack"
-        ):
-            if service != "instagram":
-                posts.append({"skipped": True, "channelId": channel_id, "reason": "Daily image posts only go to Instagram."})
-                continue
-            text = metadata.get("instagram" if text_kind == "instagram" else "x", "")
-            media = [metadata.get("image", "")]
-            post_metadata = {"instagram": {"type": "post", "shouldShareToFeed": True}}
-        elif str(post_folder).startswith(str(TIKTOK_OUTPUT_DIR.resolve())):
-            video = post_folder / "tiktok-video.mp4"
-            media = [str(video)] if video.exists() else metadata.get("images", [])
-            if str(metadata.get("kind") or "") == "deep_tiktok" and service != "tiktok":
-                posts.append({"skipped": True, "channelId": channel_id, "reason": "Deep chapter videos only go to TikTok."})
-                continue
-            if service == "youtube":
-                text = metadata.get("youtube_shorts_description") or metadata.get("caption", "")
-                post_metadata = {
-                    "youtube": {
-                        "title": metadata.get("youtube_shorts_title") or f"{metadata.get('novel', 'Chapter')} #{metadata.get('chapter', '')} #Shorts",
-                        "categoryId": "22",
-                        "license": "youtube",
-                        "privacy": "private",
-                        "notifySubscribers": False,
-                        "embeddable": True,
-                        "madeForKids": False,
-                    }
-                }
-            elif service == "instagram":
-                text = metadata.get("instagram_reel_caption") or metadata.get("caption", "")
-                post_metadata = {"instagram": {"type": "reel", "shouldShareToFeed": True}}
-            else:
-                text = metadata.get("caption", "")
-        elif str(post_folder).startswith(str(YOUTUBE_OUTPUT_DIR.resolve())):
-            if service == "youtube":
-                posts.append({"skipped": True, "channelId": channel_id, "reason": "Full YouTube videos are review-only in Buffer. Use the TikTok / Reel / YouTube Short pack to upload Shorts."})
-                continue
-            if service != "youtube":
-                posts.append({"skipped": True, "channelId": channel_id, "reason": "YouTube videos only go to YouTube."})
-                continue
-            text = metadata.get("description", "")
-            video = post_folder / "youtube-buffer.mp4"
-            if not video.exists():
-                video = post_folder / "youtube-video.mp4"
-            media = [str(video)] if video.exists() else []
-            post_metadata = {
-                "youtube": {
-                    "title": metadata.get("title") or "Chapter video",
-                    "categoryId": "22",
-                    "license": "youtube",
-                    "privacy": "private",
-                    "notifySubscribers": False,
-                    "embeddable": True,
-                    "madeForKids": False,
-                }
-            } if service == "youtube" else {}
-        else:
-            caption = metadata.get("caption") or metadata.get("patreon_note") or metadata.get("royal_road_note") or ""
-            promo_video = post_folder / "promo-video.mp4"
-            youtube_video = post_folder / "youtube-video.mp4"
-            youtube_buffer_video = post_folder / "youtube-buffer.mp4"
-            if service == "youtube":
-                posts.append({"skipped": True, "channelId": channel_id, "reason": "Full YouTube videos are review-only in Buffer. Use the TikTok / Reel / YouTube Short pack to upload Shorts."})
-                continue
-            else:
-                text = caption
-                media = [str(promo_video)] if promo_video.exists() else metadata.get("images", [])
-                if service == "instagram" and promo_video.exists():
-                    post_metadata = {"instagram": {"type": "reel", "shouldShareToFeed": True}}
-        if service == "youtube" and not media:
-            posts.append({
-                "skipped": True,
-                "channelId": channel_id,
-                "reason": "No YouTube video or Shorts video was available.",
-                "videoBuild": video_build,
-            })
-            continue
-        if service == "instagram" and post_metadata.get("instagram", {}).get("type") == "reel":
-            video_media = next((Path(str(item)) for item in media if str(item).lower().endswith(tuple(VIDEO_EXTENSIONS))), None)
-            if video_media and not video_meets_minimum_duration(video_media, 3.0):
-                posts.append({
-                    "skipped": True,
-                    "channelId": channel_id,
-                    "reason": f"Instagram Reels need video of at least 3 seconds. This file is {media_duration_seconds(video_media):.2f} seconds; rebuild the short and retry.",
-                    "media": str(video_media),
-                    "videoBuild": video_build,
-                })
-                continue
-        try:
-            created_post = create_buffer_post(channel_id, text, [m for m in media if m], mode=mode, metadata=post_metadata, scheduled_at=scheduled_at)
-            created_post["_automation"] = {"service": service, "channelId": channel_id}
-            posts.append(created_post)
-        except Exception as exc:
-            if buffer_queue_full_error(exc):
-                posts.append(
-                    buffer_queue_full_fallback(
-                        post_folder,
-                        {
-                            "service": service,
-                            "channelId": channel_id,
-                            "text": text,
-                            "media": [m for m in media if m],
-                            "metadata": post_metadata,
-                        },
-                        exc,
-                    )
-                )
-            else:
-                raise
-    metadata.setdefault("buffer_posts", []).append({"posted_at": time.strftime("%Y-%m-%d %H:%M:%S"), "mode": mode, "scheduled_at": scheduled_at, "responses": posts})
-    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    successful_posts = [post for post in posts if post and not post.get("skipped")]
-    if successful_posts:
-        for post in successful_posts:
-            try:
-                automation = post.get("_automation") if isinstance(post.get("_automation"), dict) else {}
-                service = str(automation.get("service") or "buffer").lower()
-                buffer_id = (
-                    post.get("id")
-                    or post.get("post_id")
-                    or (post.get("post") if isinstance(post.get("post"), dict) else {}).get("id")
-                    or (post.get("data") if isinstance(post.get("data"), dict) else {}).get("id")
-                    or ""
-                )
-                record = post_record_from_folder(
-                    post_folder,
-                    service,
-                    metadata,
-                    bufferPostId=buffer_id,
-                    publishDate=(scheduled_at[:10] if scheduled_at else time.strftime("%Y-%m-%d")),
-                    publishedAt=time.strftime("%Y-%m-%d %H:%M:%S"),
-                    bufferMode=mode,
-                    bufferChannelId=automation.get("channelId", ""),
-                )
-                saved_record = save_post_record(record)
-                if clickup_configured():
-                    update_clickup_on_publish(saved_record)
-            except Exception as exc:
-                record_recovery_event(
-                    "clickup_publish_sync",
-                    f"ClickUp publish sync failed after Buffer success: {exc}",
-                    error_type="clickup_publish_sync_failed",
-                    folder=post_folder,
-                    details={"post": post},
-                )
-        abbr, chapter_number, updates = chapter_ledger_updates_for_folder(post_folder, metadata, "socialPostsQueued")
-        if abbr and chapter_number:
-            queued_at = time.strftime("%Y-%m-%d %H:%M:%S")
-            progress_tool = post_progress_tool(metadata)
-            if progress_tool == "promo":
-                updates.update(
-                    {
-                        "bufferQueued": True,
-                        "bufferQueuedAt": queued_at,
-                        "socialPostsQueuedAt": queued_at,
-                    }
-                )
-                if str(post_folder).startswith(str(TIKTOK_OUTPUT_DIR.resolve())):
-                    updates["shortsReelsQueued"] = True
-                    updates["shortsReelsQueuedAt"] = queued_at
-                update_chapter_ledger(abbr, chapter_number, updates)
-            if advance_path and chapter_can_advance_active_path(abbr, chapter_number):
-                advance_completed_chapter(abbr, chapter_number, progress_tool)
-    cleanup = cleanup_generated_folder(post_folder) if successful_posts else {"removed": [], "errors": []}
-    return {"posts": posts, "cleanup": cleanup}
-
-
+def buffer_post_from_folder(*args, **kwargs):
+    return buffer_publish.buffer_post_from_folder(*args, **kwargs)
 def buffer_dry_run_from_folder(folder: str, text_kind: str = "", mode: str = "addToQueue") -> dict[str, Any]:
     post_folder = Path(folder).resolve()
     def clean_messages(values: list[Any]) -> list[str]:
@@ -26394,49 +24253,8 @@ def mark_manual_x_posted(folder: str) -> dict[str, Any]:
     return {"posted": True, "folder": str(post_folder), "clickup": clickup_sync}
 
 
-def manual_facebook_assist(folder: str) -> dict[str, Any]:
-    post_folder = Path(folder).resolve()
-    if not (
-        str(post_folder).startswith(str(SOCIAL_OUTPUT_DIR.resolve()))
-        or str(post_folder).startswith(str(EXPERIMENT_OUTPUT_DIR.resolve()))
-    ):
-        raise RuntimeError("Social post folder is not valid.")
-    ensure_quality_gate(str(post_folder), "facebook")
-    metadata_path = post_folder / "metadata.json"
-    if not metadata_path.exists():
-        raise RuntimeError("This folder does not contain social post metadata.")
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    image_path = Path(metadata["image"]).resolve()
-    facebook_file = post_folder / "facebook.txt"
-    if not facebook_file.exists():
-        facebook_file.write_text(str(metadata.get("facebook", "")).strip() + "\n", encoding="utf-8")
-    try:
-        subprocess.run(["powershell", "-NoProfile", "-Command", f"Get-Content -Raw -LiteralPath '{facebook_file}' | Set-Clipboard"], check=False)
-    except Exception:
-        pass
-    try:
-        os.startfile(str(post_folder))
-    except Exception:
-        pass
-    try:
-        open_url_once("https://www.facebook.com/")
-    except Exception:
-        pass
-    metadata["manual_facebook_assist"] = {
-        "opened_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "image": str(image_path),
-        "facebook_file": str(facebook_file),
-    }
-    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    return {
-        "image": str(image_path),
-        "text": metadata.get("facebook", ""),
-        "facebook_file": str(facebook_file),
-        "folder": str(post_folder),
-        "message": "Opened Facebook and the post folder. Facebook text copied to clipboard.",
-    }
-
-
+def manual_facebook_assist(*args, **kwargs):
+    return browser_publish.manual_facebook_assist(*args, **kwargs)
 def mark_manual_facebook_posted(folder: str) -> dict[str, Any]:
     post_folder = Path(folder).resolve()
     if not (
@@ -28149,42 +25967,8 @@ def youtube_helper_thumbnail(upload_id: str) -> tuple[bytes, str, str]:
     return media_path.read_bytes(), mime, media_path.name
 
 
-def publish_x_post(folder: str) -> dict[str, Any]:
-    token = os.environ.get("X_ACCESS_TOKEN", "").strip()
-    if not token:
-        raise RuntimeError("X is not configured. Add X_ACCESS_TOKEN to .env.local or save it in Connections.")
-    post_folder = Path(folder).resolve()
-    if not str(post_folder).startswith(str(SOCIAL_OUTPUT_DIR.resolve())):
-        raise RuntimeError("Social post folder is not valid.")
-    metadata_path = post_folder / "metadata.json"
-    if not metadata_path.exists():
-        raise RuntimeError("This folder does not contain social post metadata.")
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    image_path = Path(metadata["image"]).resolve()
-
-    upload = multipart_bearer_request(
-        "https://api.x.com/2/media/upload",
-        token,
-        {"media_category": "tweet_image"},
-        {"media": image_path},
-    )
-    media_id = upload.get("data", {}).get("id") or upload.get("media_id_string") or upload.get("media_id")
-    if not media_id:
-        raise RuntimeError(f"X media upload did not return a media id: {upload}")
-    created = bearer_json_request(
-        "https://api.x.com/2/tweets",
-        token,
-        {"text": metadata.get("x", ""), "media": {"media_ids": [str(media_id)]}},
-    )
-    metadata["x_publish"] = {
-        "media_upload": upload,
-        "post_response": created,
-        "published_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-    }
-    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    return {"media_id": media_id, "post_response": created}
-
-
+def publish_x_post(*args, **kwargs):
+    return browser_publish.publish_x_post(*args, **kwargs)
 def manual_tiktok_assist(folder: str) -> dict[str, Any]:
     post_folder = Path(folder).resolve()
     if not str(post_folder).startswith(str(TIKTOK_OUTPUT_DIR.resolve())):
@@ -44075,8 +41859,88 @@ def ensure_assets() -> None:
         )
 
 
+def wire_extracted_modules() -> dict[str, Any]:
+    """Task 8 inversion: wire the extracted subsystem modules to app.py's real functions.
+
+    Called once at startup (from main(), after load_env_file). Each module declares
+    REQUIRED_COLLABORATORS (safe stubs by default); this resolves them to app.py's real
+    implementations so the modules are fully functional. app.py's own definitions of the
+    moved functions now delegate to these modules.
+
+    EN-101 guardrail: this function performs NO mutation of the release_automation_jobs
+    SQLite table. release_automation.en101_reconcile() reads EN-101 read-only.
+
+    Returns a report of which collaborators were resolved vs left as stubs.
+    """
+    import sys as _sys
+    _app = _sys.modules[__name__]  # the app module (works whether run as __main__ or imported)
+
+    # NOTE: app.py defines a function also named `approval_inbox`, which shadows the
+    # `import approval_inbox` module binding. Fetch the module via sys.modules to avoid
+    # the shadow.
+    approval_inbox_mod = _sys.modules["approval_inbox"]
+
+    # The plan's collaborator names (Step-1 stubs) differ from app.py's real function names.
+    # Map collaborator-name -> app.py function name (identity when they match).
+    NAME_MAP = {
+        "patreon_builder": "build_patreon_draft",
+        "weak_fixer": "regenerate_weak_images",
+        "x_poster": "publish_x_post",
+        "fb_assist": "manual_facebook_assist",
+        "buffer_poster": "buffer_post_from_folder",
+        "channels_getter": "configured_buffer_channels",
+        "approval_inbox_getter": "approval_inbox",
+        "release_job_runner": "run_release_automation_job",
+        # identity mappings (same name in app.py)
+        "iso_today": "iso_today",
+        "chrome_debug_available": "chrome_debug_available",
+        "bundled_node_executable": "bundled_node_executable",
+        "ensure_chapter_release_queue": "ensure_chapter_release_queue",
+        "release_queue_assignment_status": "release_queue_assignment_status",
+        # browser_publish deferred collaborators (no app.py equivalent yet; left as stub):
+        #   browser_launcher, clipboard_copy
+    }
+
+    report: dict[str, Any] = {}
+
+    def resolve(module, collab_names):
+        resolved = {}
+        unresolved = []
+        for name in collab_names:
+            app_name = NAME_MAP.get(name, name)
+            fn = getattr(_app, app_name, None)
+            if fn is None:
+                unresolved.append(name)
+                continue
+            resolved[name] = fn
+        module.set_collaborators(resolved)
+        report[module.__name__] = {"resolved": sorted(resolved), "unresolved": sorted(unresolved)}
+        return resolved, unresolved
+
+    resolve(promo_builder, promo_builder.REQUIRED_COLLABORATORS)
+    resolve(approval_inbox_mod, approval_inbox_mod.REQUIRED_COLLABORATORS)
+    resolve(release_automation, release_automation.REQUIRED_COLLABORATORS)
+    release_automation.RELEASE_AUTOMATION_THREAD = getattr(_app, "RELEASE_AUTOMATION_THREAD", None)
+    release_automation.RELEASE_AUTOMATION_PAUSE = getattr(_app, "RELEASE_AUTOMATION_PAUSE", None)
+    release_automation.RELEASE_AUTOMATION_STOP = getattr(_app, "RELEASE_AUTOMATION_STOP", None)
+    resolve(buffer_publish, buffer_publish.REQUIRED_COLLABORATORS)
+    resolve(browser_publish, browser_publish.REQUIRED_COLLABORATORS)
+    resolve(youtube_pipeline, youtube_pipeline.REQUIRED_COLLABORATORS)
+    youtube_pipeline.YOUTUBE_COMMENT_QUEUE_LOCK = getattr(_app, "YOUTUBE_COMMENT_QUEUE_LOCK", None)
+    release_state.set_release_status_collaborators(
+        {name: getattr(_app, name) for name in release_state.REQUIRED_RELEASE_STATUS_COLLABORATORS if getattr(_app, name, None) is not None}
+    )
+    report["release_state"] = {"resolved": sorted(release_state.REQUIRED_RELEASE_STATUS_COLLABORATORS), "unresolved": []}
+    try:
+        report["en101"] = release_automation.en101_reconcile()
+    except Exception as exc:  # pragma: no cover - defensive
+        report["en101"] = {"error": str(exc)}
+    return report
+
+
 def main() -> None:
     load_env_file()
+    wire_extracted_modules()
     ensure_assets()
     ensure_state_database()
     start_automatic_metrics_worker()

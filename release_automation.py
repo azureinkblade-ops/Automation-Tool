@@ -103,6 +103,20 @@ def _default_collaborators() -> dict[str, Any]:
     return {name: _stub_raise(name) for name in REQUIRED_COLLABORATORS}
 
 
+# Module-global collaborator registry (see promo_builder for the convention).
+_COLLAB: dict[str, Any] = _default_collaborators()
+
+
+def set_collaborators(collab: dict[str, Any]) -> None:
+    """Wire the real app.py functions (and data) into this module. Call once at startup."""
+    global _COLLAB
+    _COLLAB = dict(collab)
+
+
+def get_collaborators() -> dict[str, Any]:
+    return dict(_COLLAB)
+
+
 def _get(collab: dict[str, Any], name: str):
     fn = collab.get(name)
     if fn is None:
@@ -117,7 +131,7 @@ def chapter_review_packs(abbr: str | None = None, chapter: int | str | None = No
     Review & Publish view. Reuses approval_inbox() bucketing; filters to the chosen
     novel/chapter when provided.
     """
-    collab = collaborators or _default_collaborators()
+    collab = collaborators if collaborators is not None else _COLLAB
     inbox_result = _get(collab, "approval_inbox_getter")()
     if abbr or chapter:
         def matches(item: dict[str, Any]) -> bool:
@@ -139,7 +153,7 @@ def auto_fix_weak_images(abbr: str | None = None, chapter: int | str | None = No
     use_openai=False) so weak art is refreshed with the local diffusers pipeline.
     Returns per-pack results; never posts or publishes.
     """
-    collab = collaborators or _default_collaborators()
+    collab = collaborators if collaborators is not None else _COLLAB
     packs = chapter_review_packs(abbr, chapter, collaborators=collab)
     folders: list[str] = []
     for key in ("patreon", "dailyShorts", "deepTikToks", "manualSocial", "youtube"):
@@ -173,7 +187,7 @@ def upload_all_for_chapter(
       - Shorts + Instagram -> Buffer (buffer_post_from_folder)
     Gated: if any pack still needs review, returns blocked=True with the offending items.
     """
-    collab = collaborators or _default_collaborators()
+    collab = collaborators if collaborators is not None else _COLLAB
     if auto_fix_weak:
         auto_fix_weak_images(abbr, chapter, collaborators=collab)
     packs = chapter_review_packs(abbr, chapter, collaborators=collab)
@@ -260,7 +274,7 @@ def summarize_release_stage_progress(jobs: list[dict[str, Any]]) -> list[dict[st
 
 
 def build_release_automation_backlog(*, include_prepared: bool = False, collaborators: dict[str, Any] | None = None) -> dict[str, Any]:
-    collab = collaborators or _default_collaborators()
+    collab = collaborators if collaborators is not None else _COLLAB
     queue = _get(collab, "ensure_chapter_release_queue")(days_ahead=365)
     assignments = [_get(collab, "release_queue_assignment_status")(item) for item in queue.get("assignments", [])]
     targets = release_stage_due_targets(
@@ -324,7 +338,7 @@ def release_automation_status(*, collaborators: dict[str, Any] | None = None) ->
 
 
 def release_automation_preflight(*, collaborators: dict[str, Any] | None = None) -> dict[str, Any]:
-    collab = collaborators or _default_collaborators()
+    collab = collaborators if collaborators is not None else _COLLAB
     browser_ready, browser_message = _get(collab, "chrome_debug_available")()
     node_path = _get(collab, "bundled_node_executable")()
     jobs = automation_db.list_release_jobs(ROOT, statuses=["pending", "retrying"], limit=5000)
@@ -355,3 +369,67 @@ def _save_release_automation_runtime(**updates: Any) -> dict[str, Any]:
     state["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
     write_json_atomic(RELEASE_AUTOMATION_STATE_FILE, state)
     return state
+
+
+class En101MutationError(RuntimeError):
+    """Raised if any inversion step would mutate the EN-101 orphan Royal Road job.
+
+    EN-101 policy (decided 2026-07-17): release_automation_jobs (SQLite) is the source of
+    truth for workflow state. The inverted module reads it directly. During inversion,
+    EN-101 must NOT be deleted or rewritten; if a step requires mutating it, it must stop
+    and surface the requirement instead of touching the row.
+    """
+
+
+def en101_reconcile(*, collaborators: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Read-only compatibility/reconcile check for the EN-101 orphan Royal Road job.
+
+    Reports whether the EN-101 row still exists in the SQLite release_automation_jobs table
+    and whether it is actionable or legacy/imported. Performs NO mutation. If a caller asks
+    to mutate EN-101 (e.g. via a `mutate=True` flag), raises En101MutationError per policy.
+
+    Returns a dict:
+        found        -> bool (row present in SQLite)
+        status       -> "actionable" | "legacy_imported" | "absent"
+        job          -> the row dict (or None)
+        note         -> human-readable policy note
+    """
+    collab = collaborators if collaborators is not None else _COLLAB
+    # The module reads the existing SQLite job state directly (no migration). The
+    # ensure_chapter_release_queue collaborator is the app-provided queue reader; we only
+    # READ here. Guardrail: never write.
+    jobs = automation_db.list_release_jobs(ROOT, limit=5000)
+    en101 = next(
+        (j for j in jobs if str(j.get("id") or "").upper() == "EN-101"
+         or (str(j.get("novel_abbr") or "").upper() == "EN" and str(j.get("chapter_number") or "") == "101")),
+        None,
+    )
+    if en101 is None:
+        return {
+            "found": False,
+            "status": "absent",
+            "job": None,
+            "note": "EN-101 not present in release_automation_jobs; nothing to reconcile. "
+                    "SQLite remains the source of truth.",
+        }
+    actionable = str(en101.get("status") or "").lower() not in {"done", "completed", "archived", "failed"}
+    return {
+        "found": True,
+        "status": "actionable" if actionable else "legacy_imported",
+        "job": en101,
+        "note": "EN-101 read from SQLite release_automation_jobs (source of truth). "
+                "No mutation performed. Handle via the normal release-job UI/reconcile flow "
+                "after the inverted app is stable.",
+    }
+
+
+def en101_require_no_mutation(action: str) -> None:
+    """Guardrail helper: call before any code path that would touch the EN-101 row.
+
+    Raises En101MutationError so inversion cannot silently rewrite/delete the orphan job.
+    """
+    raise En101MutationError(
+        f"EN-101 guardrail: attempted '{action}' on the EN-101 orphan Royal Road job during "
+        f"inversion. Per policy, EN-101 must not be mutated/deleted now. Handle it through the "
+        f"normal release-job UI/reconcile flow after the inverted app is stable."
+    )

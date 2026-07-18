@@ -21,6 +21,10 @@ import app as app_mod
 import app_config as config
 import release_state as rs
 
+# Task 8 inversion: app.py's moved functions are now delegators to the extracted modules.
+# Wire them (as main() does at startup) so app_mod.* uses the real implementations.
+app_mod.wire_extracted_modules()
+
 FAILS = []
 
 def check(name, got, want):

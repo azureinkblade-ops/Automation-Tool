@@ -66,6 +66,20 @@ def _default_collaborators() -> dict[str, Any]:
     return {name: _stub_raise(name) for name in REQUIRED_COLLABORATORS}
 
 
+# Module-global collaborator registry (see promo_builder for the convention).
+_COLLAB: dict[str, Any] = _default_collaborators()
+
+
+def set_collaborators(collab: dict[str, Any]) -> None:
+    """Wire the real app.py functions (and data) into this module. Call once at startup."""
+    global _COLLAB
+    _COLLAB = dict(collab)
+
+
+def get_collaborators() -> dict[str, Any]:
+    return dict(_COLLAB)
+
+
 def _get(collab: dict[str, Any], name: str):
     fn = collab.get(name)
     if fn is None:
@@ -76,7 +90,7 @@ def _get(collab: dict[str, Any], name: str):
 # --- youtube_build_status (verbatim; collaborators injected) ---
 
 def youtube_build_status(folder_value: str, *, collaborators: dict[str, Any] | None = None) -> dict[str, Any]:
-    collab = collaborators or _default_collaborators()
+    collab = collaborators if collaborators is not None else _COLLAB
     folder = _get(collab, "resolve_youtube_pack_folder")(folder_value)
     status_file = folder / "youtube-build-status.json"
     output = folder / "youtube-video.mp4"
@@ -105,7 +119,7 @@ def youtube_build_status(folder_value: str, *, collaborators: dict[str, Any] | N
 # --- queue_youtube_pinned_comment (verbatim; collaborators injected) ---
 
 def queue_youtube_pinned_comment(upload: dict[str, Any], *, collaborators: dict[str, Any] | None = None) -> dict[str, Any]:
-    collab = collaborators or _default_collaborators()
+    collab = collaborators if collaborators is not None else _COLLAB
     folder = str(upload.get("folder") or "")
     upload_id = str(upload.get("id") or "")
     metadata = upload.get("metadata") if isinstance(upload.get("metadata"), dict) else {}

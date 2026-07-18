@@ -186,7 +186,10 @@ def filter_uncleared_approval_items(
 
 def approval_inbox(*, collaborators: dict[str, Any] | None = None) -> dict[str, Any]:
     global _collab_ref
-    _collab_ref = collaborators or _default_collaborators()
+    # When called without per-call collaborators, keep the module-global _collab_ref
+    # (populated by set_collaborators at startup). Only override when explicitly passed.
+    if collaborators is not None:
+        _collab_ref = collaborators
     cleared_state = load_approval_cleared_state()
     ledger = load_chapter_ledger()
     active_paths = {abbr: _get(_collab_ref, "active_chapter_path_next")(abbr, "approval") for abbr in NOVEL_NAMES}
@@ -237,7 +240,19 @@ def approval_inbox(*, collaborators: dict[str, Any] | None = None) -> dict[str, 
 
 # Module-level collaborator reference (set per approval_inbox call; also usable by the
 # keying/clearing helpers below which need content_hash/read_metadata).
-_collab_ref: dict[str, Any] = _default_collaborators()
+# Module-global collaborator registry. app.py populates this once via set_collaborators()
+# at startup; the public fns fall back to it when no per-call collaborators are passed.
+_COLLAB_REF: dict[str, Any] = _default_collaborators()
+
+
+def set_collaborators(collab: dict[str, Any]) -> None:
+    """Wire the real app.py functions into this module. Call once at startup."""
+    global _collab_ref
+    _collab_ref = dict(collab)
+
+
+def get_collaborators() -> dict[str, Any]:
+    return dict(_collab_ref)
 
 
 # --- clearing functions (verbatim from app.py; deeper clearing fns injected as collaborators) ---

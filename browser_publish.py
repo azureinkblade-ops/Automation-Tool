@@ -71,6 +71,20 @@ def _default_collaborators() -> dict[str, Any]:
     return {name: _stub_raise(name) for name in REQUIRED_COLLABORATORS}
 
 
+# Module-global collaborator registry (see promo_builder for the convention).
+_COLLAB: dict[str, Any] = _default_collaborators()
+
+
+def set_collaborators(collab: dict[str, Any]) -> None:
+    """Wire the real app.py functions (and data) into this module. Call once at startup."""
+    global _COLLAB
+    _COLLAB = dict(collab)
+
+
+def get_collaborators() -> dict[str, Any]:
+    return dict(_COLLAB)
+
+
 def _get(collab: dict[str, Any], name: str):
     fn = collab.get(name)
     if fn is None:
@@ -81,7 +95,7 @@ def _get(collab: dict[str, Any], name: str):
 # --- publish_x_post (verbatim; network collaborators injected) ---
 
 def publish_x_post(folder: str, *, collaborators: dict[str, Any] | None = None) -> dict[str, Any]:
-    collab = collaborators or _default_collaborators()
+    collab = collaborators if collaborators is not None else _COLLAB
     token = os.environ.get("X_ACCESS_TOKEN", "").strip()
     if not token:
         raise RuntimeError("X is not configured. Add X_ACCESS_TOKEN to .env.local or save it in Connections.")
@@ -120,7 +134,7 @@ def publish_x_post(folder: str, *, collaborators: dict[str, Any] | None = None) 
 # --- manual_facebook_assist (verbatim; browser launcher + clipboard injected) ---
 
 def manual_facebook_assist(folder: str, *, collaborators: dict[str, Any] | None = None) -> dict[str, Any]:
-    collab = collaborators or _default_collaborators()
+    collab = collaborators if collaborators is not None else _COLLAB
     post_folder = Path(folder).resolve()
     if not (
         str(post_folder).startswith(str(SOCIAL_OUTPUT_DIR.resolve()))
