@@ -48,6 +48,7 @@ import buffer_publish
 import browser_publish
 import youtube_pipeline
 import growth_analytics
+import social_stats_tracker
 import approval_inbox as approval_inbox_mod
 # Workstream B: central limiter for heavy subprocess spawns (diffusers / ffmpeg).
 try:
@@ -312,6 +313,7 @@ COMMENT_ASSISTANT_AUTO_ENABLED = os.environ.get("COMMENT_ASSISTANT_AUTO_ENABLED"
 COMMENT_ASSISTANT_INTERVAL_HOURS = max(1, int(os.environ.get("COMMENT_ASSISTANT_INTERVAL_HOURS", "24")))
 COMMENT_ASSISTANT_THREAD: threading.Thread | None = None
 COMMENT_ASSISTANT_LOCK = threading.Lock()
+SOCIAL_STATS_THREAD: threading.Thread | None = None
 CHATGPT_CHAPTER_LOCK = threading.Lock()
 CHATGPT_CHAPTER_THREAD: threading.Thread | None = None
 STORY_HOOK_LOCK = threading.Lock()
@@ -11870,6 +11872,16 @@ def start_automatic_metrics_worker() -> None:
         return
     AUTO_METRICS_THREAD = threading.Thread(target=automatic_metrics_worker, daemon=True, name="automatic-metrics")
     AUTO_METRICS_THREAD.start()
+
+
+def start_daily_social_stats_worker() -> None:
+    global SOCIAL_STATS_THREAD
+    if SOCIAL_STATS_THREAD and SOCIAL_STATS_THREAD.is_alive():
+        return
+    SOCIAL_STATS_THREAD = threading.Thread(
+        target=social_stats_tracker.daily_social_stats_worker, daemon=True, name="daily-social-stats"
+    )
+    SOCIAL_STATS_THREAD.start()
 
 
 def select_test_variants(experiment: dict[str, Any], limit: int = 3) -> list[dict[str, Any]]:
@@ -32307,6 +32319,15 @@ HTML = r"""<!doctype html>
       form, section { max-height:none; }
       form { border-right:0; border-bottom:1px solid var(--line); }
     }
+    .status-badge {
+      display:inline-block; margin-left:10px; padding:2px 9px; border-radius:999px;
+      font-size:12px; font-weight:600; line-height:1.4; white-space:nowrap;
+      background:var(--line, #2a2a30); color:var(--muted, #9aa0a6);
+      border:1px solid transparent;
+    }
+    .status-badge.busy { background:rgba(220,140,40,.16); color:#f0a850; border-color:rgba(220,140,40,.4); }
+    .status-badge.idle { background:rgba(60,170,90,.14); color:#5ec97f; border-color:rgba(60,170,90,.35); }
+    .status-badge.off  { color:#9aa0a6; }
   </style>
 </head>
 <body>
@@ -32593,6 +32614,7 @@ HTML = r"""<!doctype html>
             <button id="arcCampaignBtn" class="secondary" type="button">Build Arc Drafts</button>
             <button id="imageLabPlanBtn" class="secondary" type="button">Image Lab Plan</button>
             <button id="imageLabGenerateBtn" class="secondary" type="button">Generate Image Candidates</button>
+            <span id="sdStatusBadgeGrowth" class="status-badge" title="Local image generation (GPU) status">checking…</span>
             <button id="analyticsLabBtn" class="secondary" type="button">Analytics Lab</button>
             <button id="thumbnailTestsBtn" class="secondary" type="button">Thumbnail Tests</button>
             <button id="pinnedAssetsBtn" class="secondary" type="button">Pinned Assets</button>
@@ -32620,6 +32642,7 @@ HTML = r"""<!doctype html>
           </div>
           <div class="row">
             <button id="weekendBtn" type="button">Build Weekend Posts</button>
+            <span id="sdStatusBadge" class="status-badge" title="Local image generation (GPU) status">checking…</span>
           </div>
         </div>
         <div id="royalRoadToolsPanel" class="option-panel" data-option-panel="royal-road">
@@ -36578,6 +36601,33 @@ ${escapeHtml(snapshot.next_chapter_setup || '')}</div>`;
         weekendBtn.disabled = false;
       }
     });
+
+    // Live GPU/image-gen status badge: polls /api/local-sd-status so the user can
+    // see when a diffusers generation is already running (and avoid launching a
+    // contending job). A second generation auto-queues behind the GPU lock.
+    function updateSdStatusBadge(badge, st) {
+      if (!badge) return;
+      badge.classList.remove('busy', 'idle', 'off');
+      if (st.busy) {
+        badge.classList.add('busy');
+        badge.textContent = '● Image gen running…';
+      } else if (st.ready || st.enabled) {
+        badge.classList.add('idle');
+        badge.textContent = '○ GPU idle';
+      } else {
+        badge.classList.add('off');
+        badge.textContent = 'Image gen off';
+      }
+    }
+    async function pollSdStatus() {
+      try {
+        const st = await (await fetch('/api/local-sd-status')).json();
+        updateSdStatusBadge(document.getElementById('sdStatusBadge'), st);
+        updateSdStatusBadge(document.getElementById('sdStatusBadgeGrowth'), st);
+      } catch (_e) { /* ignore transient poll errors */ }
+    }
+    pollSdStatus();
+    setInterval(pollSdStatus, 4000);
 
     async function buildRoyalRoadPackFromSelection() {
       const data = await postJson('/api/royal-road-pack', {
@@ -41773,6 +41823,14 @@ class Handler(BaseHTTPRequestHandler):
                 cur = str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower()
                 self.send_json({"enabled": cur not in ("", "0", "false", "no", "off")})
                 return
+            if self.path == "/api/local-sd-status":
+                _sd = local_stable_diffusion_status()
+                self.send_json({
+                    "busy": local_sd_busy(),
+                    "ready": _sd.get("ready", False),
+                    "enabled": _sd.get("enabled", False),
+                })
+                return
             if self.path == "/api/x-manual-assist":
                 self.send_json(manual_x_assist(str(body.get("folder") or "")))
                 return
@@ -42126,6 +42184,7 @@ def main() -> None:
     ensure_state_database()
     start_automatic_metrics_worker()
     start_automatic_comment_worker()
+    start_daily_social_stats_worker()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"Chapter Promo Builder running at http://127.0.0.1:{PORT}")
     try:
