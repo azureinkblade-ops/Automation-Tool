@@ -18453,22 +18453,54 @@ def build_story_hook_video_files(title: str, story_text: str, abbr: str = "", an
     return result
 
 
+def _run_chatgpt_story_hook(job: dict[str, Any]) -> None:
+    """Original ChatGPT/CDP browser-scrape path (fallback for Hermes failures)."""
+    run = subprocess.run(
+        [str(bundled_node_executable()), str(STORY_HOOK_SCRIPT_FILE)],
+        cwd=str(ROOT),
+        env={**os.environ, "NODE_PATH": str(ROOT / "node_modules"), "PLAYWRIGHT_BROWSERS_PATH": str(ROOT / "ms-playwright")},
+        capture_output=True,
+        text=True,
+        timeout=1200,
+        check=False,
+        creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+    )
+    if run.returncode != 0 and not STORY_HOOK_RESULT_FILE.exists():
+        # Surface the failure so the worker can report it (don't overwrite a
+        # partial result file the script may have written on error).
+        STORY_HOOK_RESULT_FILE.write_text(
+            json.dumps(
+                {"ok": False, "jobId": job.get("jobId"), "error": run.stderr.strip() or "ChatGPT browser helper failed."},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+
 def story_hook_video_worker(job: dict[str, Any]) -> None:
     try:
-        run = subprocess.run(
-            [str(bundled_node_executable()), str(STORY_HOOK_SCRIPT_FILE)],
-            cwd=str(ROOT),
-            env={**os.environ, "NODE_PATH": str(ROOT / "node_modules"), "PLAYWRIGHT_BROWSERS_PATH": str(ROOT / "ms-playwright")},
-            capture_output=True,
-            text=True,
-            timeout=1200,
-            check=False,
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
-        )
-        result = read_json_safe(STORY_HOOK_RESULT_FILE)
+        # Hermes-authored packs bypass the ChatGPT/CDP browser scrape entirely.
+        if str(job.get("source") or "").lower() == "hermes":
+            from tools.story_hook_writer import generate_and_write as _hermes_story_hook
+            os.environ["STORY_HOOK_JOB_ID"] = str(job.get("jobId") or "hermes")
+            hermes_result = _hermes_story_hook(
+                str(job.get("abbr") or ""),
+                str(job.get("angle") or ""),
+                int(job.get("targetWords") or 1600),
+                str(job.get("prompt") or ""),
+                STORY_HOOK_RESULT_FILE,
+            )
+            if not hermes_result or not hermes_result.get("ok"):
+                # Fall back to the ChatGPT/CDP path so capability is never lost.
+                _run_chatgpt_story_hook(job)
+            result = read_json_safe(STORY_HOOK_RESULT_FILE)
+        else:
+            _run_chatgpt_story_hook(job)
+            result = read_json_safe(STORY_HOOK_RESULT_FILE)
         if not isinstance(result, dict) or str(result.get("jobId") or "") != str(job.get("jobId") or ""):
-            result = {"ok": False, "error": run.stderr.strip() or "ChatGPT browser helper did not return a story hook result."}
-        state = {**job, **result, "running": False, "ready": False, "stdout": run.stdout.strip(), "stderr": run.stderr.strip(), "finishedAt": time.strftime("%Y-%m-%d %H:%M:%S")}
+            result = {"ok": False, "error": "Story hook helper did not return a result."}
+        state = {**job, **result, "running": False, "ready": False, "finishedAt": time.strftime("%Y-%m-%d %H:%M:%S")}
         if result.get("ok") and result.get("storyText"):
             parsed = parse_story_hook_output(str(result.get("storyText") or ""), job)
             pack = build_story_hook_video_files(parsed["title"], parsed["story"], parsed["abbr"], parsed.get("hookAngle", ""), parsed)
@@ -18477,6 +18509,14 @@ def story_hook_video_worker(job: dict[str, Any]) -> None:
             state["folder"] = pack.get("folder", "")
             state["ready"] = True
             state["message"] = "Story hook video files are ready. Build the MP4 from the pack when you are ready."
+            # Guarantee each pack is captured into the Obsidian vault.
+            try:
+                from tools.story_hook_writer import _write_vault_pack
+                _vault_note = _write_vault_pack(parsed.get("abbr", ""), parsed, str(pack.get("folder", "")))
+                if _vault_note:
+                    state["vaultNote"] = _vault_note
+            except Exception:
+                pass
         recent = []
         previous = read_json_safe(STORY_HOOK_STATUS_FILE)
         if isinstance(previous, dict) and isinstance(previous.get("recentArchetypes"), list):
@@ -18497,18 +18537,24 @@ def start_story_hook_video_writer(abbr: str = "", angle: str = "", target_words:
     if not STORY_HOOK_LOCK.acquire(blocking=False):
         return {**story_hook_video_status(), "busy": True, "message": "A story hook video is already being created."}
     try:
-        chrome_ready, chrome_message = chrome_debug_available()
-        if not chrome_ready:
-            raise RuntimeError(chrome_message)
-        if not playwright_available():
-            raise RuntimeError("The bundled Playwright helper is unavailable.")
+        # Hermes-authored packs bypass the ChatGPT/CDP browser requirement.
+        use_hermes = str(os.environ.get("STORY_HOOK_USE_HERMES", "1")).strip().lower() not in {
+            "", "0", "false", "no", "off"
+        }
+        if not use_hermes:
+            chrome_ready, chrome_message = chrome_debug_available()
+            if not chrome_ready:
+                raise RuntimeError(chrome_message)
+            if not playwright_available():
+                raise RuntimeError("The bundled Playwright helper is unavailable.")
         context = story_hook_prompt(abbr, angle, target_words)
         job_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{context['abbr']}-story-hook"
         try:
             STORY_HOOK_RESULT_FILE.unlink()
         except OSError:
             pass
-        write_story_hook_playwright_script(job_id, str(context.get("prompt") or ""), int(context.get("targetWords") or 1600))
+        if not use_hermes:
+            write_story_hook_playwright_script(job_id, str(context.get("prompt") or ""), int(context.get("targetWords") or 1600))
         state = {
             "jobId": job_id,
             "abbr": context["abbr"],
@@ -18518,16 +18564,21 @@ def start_story_hook_video_writer(abbr: str = "", angle: str = "", target_words:
             "titlePattern": context.get("titlePattern", ""),
             "targetWords": context["targetWords"],
             "prompt": context["prompt"],
+            "source": "hermes" if use_hermes else "chatgpt",
             "running": True,
             "ready": False,
             "startedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
             "outputRoot": str(STORY_HOOK_OUTPUT_DIR),
-            "message": "ChatGPT is creating an original story hook video script in helper Chrome.",
+            "message": (
+                "Hermes is writing an original story hook video script."
+                if use_hermes else
+                "ChatGPT is creating an original story hook video script in helper Chrome."
+            ),
         }
         write_json_atomic(STORY_HOOK_STATUS_FILE, state)
         STORY_HOOK_THREAD = threading.Thread(target=story_hook_video_worker, args=(state,), daemon=True, name="story-hook-video-writer")
         STORY_HOOK_THREAD.start()
-        return {**state, "chromeMessage": chrome_message}
+        return {**state, "chromeMessage": ("" if use_hermes else chrome_message)}
     except Exception:
         STORY_HOOK_LOCK.release()
         raise
