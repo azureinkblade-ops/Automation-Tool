@@ -32614,7 +32614,7 @@ HTML = r"""<!doctype html>
             <button id="arcCampaignBtn" class="secondary" type="button">Build Arc Drafts</button>
             <button id="imageLabPlanBtn" class="secondary" type="button">Image Lab Plan</button>
             <button id="imageLabGenerateBtn" class="secondary" type="button">Generate Image Candidates</button>
-            <span id="sdStatusBadgeGrowth" class="status-badge" title="Local image generation (GPU) status">checking…</span>
+            <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checking…</span>
             <button id="analyticsLabBtn" class="secondary" type="button">Analytics Lab</button>
             <button id="thumbnailTestsBtn" class="secondary" type="button">Thumbnail Tests</button>
             <button id="pinnedAssetsBtn" class="secondary" type="button">Pinned Assets</button>
@@ -32642,7 +32642,7 @@ HTML = r"""<!doctype html>
           </div>
           <div class="row">
             <button id="weekendBtn" type="button">Build Weekend Posts</button>
-            <span id="sdStatusBadge" class="status-badge" title="Local image generation (GPU) status">checking…</span>
+            <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checking…</span>
           </div>
         </div>
         <div id="royalRoadToolsPanel" class="option-panel" data-option-panel="royal-road">
@@ -33419,6 +33419,7 @@ HTML = r"""<!doctype html>
           <button class="secondary" type="button" data-pack-health-approve-images="${escapeHtml(folder)}">Approve Images</button>
           ${item.canPushToBuffer ? `<button type="button" data-pack-buffer-folder="${escapeHtml(folder)}" data-pack-buffer-kind="${escapeHtml(item.bufferTextKind || 'instagram')}">${escapeHtml(item.bufferLabel || 'Push to Buffer')}</button>` : ''}
           <button class="secondary" type="button" data-regenerate-pack-images="${escapeHtml(folder)}">Regenerate Images In This Pack</button>
+          <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checking…</span>
           <button class="secondary" type="button" data-pack-health-refresh="${escapeHtml(folder)}">Refresh Pack State</button>
         </article>`;
       }).join('');
@@ -36605,6 +36606,9 @@ ${escapeHtml(snapshot.next_chapter_setup || '')}</div>`;
     // Live GPU/image-gen status badge: polls /api/local-sd-status so the user can
     // see when a diffusers generation is already running (and avoid launching a
     // contending job). A second generation auto-queues behind the GPU lock.
+    // Uses the .sd-status-badge class so every diffusers trigger (weekend, Image
+    // Lab, weak-image regen, pack regen, story-hook) shares one live indicator,
+    // including dynamically rendered per-pack buttons (no id collisions).
     function updateSdStatusBadge(badge, st) {
       if (!badge) return;
       badge.classList.remove('busy', 'idle', 'off');
@@ -36620,11 +36624,12 @@ ${escapeHtml(snapshot.next_chapter_setup || '')}</div>`;
       }
     }
     async function pollSdStatus() {
+      let st = null;
       try {
-        const st = await (await fetch('/api/local-sd-status')).json();
-        updateSdStatusBadge(document.getElementById('sdStatusBadge'), st);
-        updateSdStatusBadge(document.getElementById('sdStatusBadgeGrowth'), st);
+        st = await (await fetch('/api/local-sd-status')).json();
       } catch (_e) { /* ignore transient poll errors */ }
+      if (!st) return;
+      document.querySelectorAll('.sd-status-badge').forEach(b => updateSdStatusBadge(b, st));
     }
     pollSdStatus();
     setInterval(pollSdStatus, 4000);
@@ -37986,6 +37991,7 @@ ${escapeHtml(report.safety || data.note || 'No publish or queue action is run he
             <div class="row">
               <button type="button" data-open-pack="${escapeHtml(folder)}">Review Images</button>
               <button class="secondary" type="button" data-regenerate-pack-images="${escapeHtml(folder)}">Regenerate Weak Images</button>
+              <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checking…</span>
             </div>
           </section>
         `;
@@ -38000,6 +38006,7 @@ ${escapeHtml(report.safety || data.note || 'No publish or queue action is run he
           <div class="row">
             <button type="button" data-image-review-approve="${escapeHtml(folder)}">Approve Pack After Review</button>
             <button class="secondary" type="button" data-regenerate-pack-images="${escapeHtml(folder)}">Regenerate Rejected/Weak Images</button>
+            <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checking…</span>
             ${isShortsPack ? `<button class="secondary" type="button" data-rebuild-part="shorts" data-rebuild-folder="${escapeHtml(folder)}">Rebuild This MP4</button>` : ''}
             ${canPush ? `<button type="button" data-pack-buffer-folder="${escapeHtml(folder)}" data-pack-buffer-kind="${escapeHtml(pushKind)}">${escapeHtml(pushLabel)}</button>` : ''}
           </div>
@@ -38117,6 +38124,7 @@ ${escapeHtml(report.safety || data.note || 'No publish or queue action is run he
           <button id="oneClickCampaignUploadBtn" type="button">One-Click Daily Upload</button>
           <button id="qualityGateBtn" class="secondary" type="button">Run Quality Gate</button>
           <button id="regenerateWeakImagesBtn" class="secondary" type="button">Regenerate Weak Images</button>
+          <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checking…</span>
           <button id="githubMediaBtn" class="secondary" type="button">Copy Media to GitHub</button>
         </div>
         <div class="copy"><strong>YouTube backgrounds</strong>\n${escapeHtml((data.background_videos || []).map(path => path.split(/[\\\\/]/).pop()).join('\n') || 'No background videos found.')}</div>
@@ -39203,6 +39211,7 @@ Newer 60-75 second TikTok packs that still need review or posting are listed her
         <div class="copy"><strong>Background videos</strong>\n${escapeHtml((data.background_videos || []).map(path => path.split(/[\\\\/]/).pop()).join('\n'))}</div>
         <div class="row">
           <button id="rebuildYoutubeThumbnailBtn" class="secondary" type="button">Rebuild Thumbnail</button>
+          <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checking…</span>
           <button id="importStoryHookThumbnailBtn" class="secondary" type="button">Import Thumbnail Art</button>
           <button id="youtubeEngagementPlanBtn" class="secondary" type="button">Engagement Plan</button>
           <button id="youtubeMetadataTestsBtn" class="secondary" type="button">Metadata Tests</button>
