@@ -1734,7 +1734,10 @@ def check_db_source_of_truth() -> list[dict[str, object]]:
                 json_data = None
             if db_ok and json_data is not None:
                 # Both present: they must agree (no stale divergence).
-                agree = json.dumps(db_snap, sort_keys=True, default=str) == json.dumps(json_data, sort_keys=True, default=str)
+                # load_state_snapshot injects a "_source": "sqlite" key that the
+                # JSON mirror does not have, so strip it before comparing.
+                db_compare = {k: v for k, v in db_snap.items() if k != "_source"}
+                agree = json.dumps(db_compare, sort_keys=True, default=str) == json.dumps(json_data, sort_keys=True, default=str)
                 checks.append(assert_result(
                     f"{state_key}_db_matches_json",
                     agree,
