@@ -2825,6 +2825,10 @@ def rotation_next(key: str, count: int) -> int:
     index = int(state.get(key, -1)) + 1
     state[key] = index % count
     PROMO_ROTATION_STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    try:
+        mirror_state_snapshot_to_database("promoRotation", state)
+    except Exception as exc:
+        print(f"Database mirror failed for promo rotation: {exc}", file=sys.stderr)
     return state[key]
 
 
@@ -14314,6 +14318,10 @@ def choose_rotating_weekly_promo_audio() -> Path | None:
     used.append(choice)
     state[pool_key] = used
     PROMO_ROTATION_STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    try:
+        mirror_state_snapshot_to_database("promoRotation", state)
+    except Exception as exc:
+        print(f"Database mirror failed for promo rotation: {exc}", file=sys.stderr)
     return Path(choice)
 
 
@@ -16039,6 +16047,10 @@ def rotating_weekend_hook(abbr: str, day: str) -> str:
     index = int(state.get(key, -1)) + 1
     state[key] = index % len(variants)
     PROMO_ROTATION_STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    try:
+        mirror_state_snapshot_to_database("promoRotation", state)
+    except Exception as exc:
+        print(f"Database mirror failed for promo rotation: {exc}", file=sys.stderr)
     return variants[state[key]]
 
 
