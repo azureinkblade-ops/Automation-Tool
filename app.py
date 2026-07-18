@@ -40891,6 +40891,8 @@ class Handler(BaseHTTPRequestHandler):
             "/api/github-media-publish",
             "/api/database-bootstrap",
             "/api/settings",
+            "/api/set-agent-posts",
+            "/api/agent-posts-status",
         }:
             self.send_error(404)
             return
