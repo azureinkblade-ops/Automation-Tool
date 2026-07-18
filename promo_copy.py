@@ -14,6 +14,7 @@ compatibility wrappers that call these functions so existing behavior is unchang
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -340,7 +341,8 @@ def rotated_hashtags(abbr: str, seed: str, chapter_text: str = "", limit: int = 
     novel_tag = next((t for t in base if t.lower() != "#azureinkblade" and t.lower().lstrip("#") in profile.get("name", "").lower().replace(" ", "")), None)
     anchor = ["#AzureInkblade"] + ([novel_tag] if novel_tag else [])
     rest = [t for t in base if t not in anchor]
-    ordered = sorted(rest, key=lambda t: hash(f"{seed}:{t}"))
+    # BUG FIX #1: deterministic SHA-256 ordering (built-in hash() is not stable across restarts)
+    ordered = sorted(rest, key=lambda t: int(hashlib.sha256(f"{seed}:{t}".encode("utf-8")).hexdigest()[:8], 16))
     tags = anchor + ordered[: max(0, limit - len(anchor))]
     if chapter_text:
         for kw in chapter_keywords(chapter_text, chapter_text, limit=6):
@@ -356,7 +358,8 @@ def rotated_x_hashtags(abbr: str, seed: str, limit: int = 5) -> str:
     base = [t for t in re.findall(r"#\w+", profile.get("x_hashtags", "")) if t]
     if not base:
         base = ["#AzureInkblade"]
-    ordered = sorted(base, key=lambda t: hash(f"{seed}:{t}"))
+    # BUG FIX #1: deterministic SHA-256 ordering (built-in hash() is not stable across restarts)
+    ordered = sorted(base, key=lambda t: int(hashlib.sha256(f"{seed}:{t}".encode("utf-8")).hexdigest()[:8], 16))
     return " ".join(ordered[:limit])
 
 
@@ -682,7 +685,7 @@ def caption_style_lines(
         opener = f"What would you do if {hook[:1].lower() + hook[1:] if hook else 'the next step changed everything'}?"
         body = [
             opener,
-            f"{profile['name']} turns that pressure into the next chapter.",
+            hook,
             platform_bridge,
             engagement,
             cta,
@@ -692,7 +695,6 @@ def caption_style_lines(
         body = [
             f"The cost keeps climbing in {profile['name']}.",
             hook,
-            "This chapter is about pressure, consequence, and the next choice that cannot be taken back.",
             platform_bridge,
             engagement,
             cta,
@@ -702,7 +704,6 @@ def caption_style_lines(
         body = [
             f"{profile['name']} - {title}",
             hook,
-            "A character moment sits at the center of this update, with the larger arc tightening around it.",
             platform_bridge,
             engagement,
             cta,
@@ -712,7 +713,6 @@ def caption_style_lines(
         body = [
             f"Step deeper into {profile['name']}.",
             hook,
-            "The world is widening, and the next reveal changes what the path ahead looks like.",
             platform_bridge,
             engagement,
             cta,
@@ -732,7 +732,7 @@ def caption_style_lines(
         if platform_key == "instagram":
             opener = f"A chapter scene from {profile['name']}."
         elif platform_key == "facebook":
-            opener = f"This {profile['name']} update is built around one pressure point."
+            opener = f"{profile['name']} - {title}"
         elif platform_key == "patreon":
             opener = f"{profile['name']} early-access note"
         else:
@@ -817,9 +817,14 @@ def build_platform_posts(
     rotation_next=_in_memory_rotation_next,
     chapter_ledger_entry=_ledger_entry_default,
     release_status_for_chapter: Any = _release_status_default,
+    agent_copy: dict | None = None,
 ) -> dict[str, str]:
     story = str(material.get("abbr") or material.get("novel") or "").strip()
     novel = str(material.get("novel") or NOVEL_NAMES.get(str(material.get("abbr", "")).upper(), "") or "Azure Inkblade").strip()
+    # BUG FIX #2 helper: per-novel tag (not the generic #webnovel) for X/FB/IG tails.
+    _profile = social_profile(story)
+    novel_tag = next((t for t in re.findall(r"#\w+", _profile.get("hashtags", "")) if t.lower() != "#azureinkblade"), "")
+    facebook_tail = f"{novel_tag} #RoyalRoad #ProgressionFantasy #FantasyReads" if novel_tag else "#AzureInkblade #RoyalRoad #ProgressionFantasy #FantasyReads"
     phrases = [str(item) for item in material.get("phrases", [])]
     hook = compact_chapter_hook(title, chapter, phrases, story or novel)
     links = platform_links_block(story)
@@ -852,7 +857,7 @@ def build_platform_posts(
     facebook_lines, _ = caption_style_lines(story, novel, title, hook, focus, style, facebook_cta, public_status_line, context, "facebook", rotation_next=rotation_next)
     patreon_cta = focused_social_cta(story, "patreon_early" if focus != "royal_road_live" else focus, context, "patreon", rotation_next=rotation_next)
     patreon_lines, _ = caption_style_lines(story, novel, title, hook, focus, style, patreon_cta, public_status_line, context, "patreon", rotation_next=rotation_next)
-    instagram_caption = "\n\n".join(style_lines + ["#AzureInkblade #RoyalRoad #WebNovelCommunity #ProgressionFantasy #FantasyReads"])
+    instagram_caption = "\n\n".join(style_lines + [f"#AzureInkblade {novel_tag} #RoyalRoad #WebNovelCommunity #ProgressionFantasy #FantasyReads" if novel_tag else "#AzureInkblade #RoyalRoad #WebNovelCommunity #ProgressionFantasy #FantasyReads"])
     facebook_intro_lines = facebook_lines[:4] if len(facebook_lines) > 4 else facebook_lines
     if facebook_intro_lines and (
         facebook_intro_lines[0].strip().lower() == f"{novel} - {title}".strip().lower()
@@ -872,7 +877,7 @@ def build_platform_posts(
         f"{facebook_intro}\n\n"
         "Follow the story across the main channels for chapter drops, teasers, and early access updates.\n\n"
         f"{facebook_cta}\n\n"
-        "#webnovel #royalroad #serialfiction #progressionfantasy #indieauthor"
+        f"{facebook_tail}"
     )
     x_destination = track_copy_links(linktree_url(), story, "x", campaign_key, "daily-post")
     x_parts = [f"{novel} - {title}", x_hook or hook]
@@ -890,14 +895,58 @@ def build_platform_posts(
         x_parts.append(x_destination)
     else:
         x_parts.append(x_destination)
-    x_parts.append("#webnovel #RoyalRoad")
+    x_parts.append(f"{novel_tag} #RoyalRoad" if novel_tag else "#AzureInkblade #RoyalRoad")
     x_post = "\n\n".join(x_parts)
-    if len(x_post) > 275:
-        available = max(24, 275 - len(x_destination) - len("\n\n#webnovel") - 2)
-        compact_hook = clean_teaser_text(hook, available, max_words=18)
-        x_post = f"{compact_hook}\n\n{x_destination}\n\n#webnovel"
-    if len(x_post) > 275:
-        x_post = f"{x_destination}\n#webnovel"
+    if len(x_post) > 280:
+        # Fallback 1: keep destination + novel tag (drop rotated X hook frame).
+        fallback_1 = f"{x_destination}\n\n{novel_tag}" if novel_tag else f"{x_destination}\n#AzureInkblade"
+        if len(fallback_1) <= 280:
+            x_post = fallback_1
+        else:
+            # Fallback 2: destination + brand only (never reintroduce generic #webnovel).
+            x_post = f"{x_destination}\n#AzureInkblade"
+    # ---- Agent override (Hermes post-differentiation). ----
+    # When the caller passes agent_copy (from tools/agent_post_writer.generate_post_copy),
+    # splice the agent's reader-facing caption/cta/hashtags over the template output.
+    # The template above remains the fallback when agent_copy is None (or partial).
+    if isinstance(agent_copy, dict) and agent_copy.get("caption"):
+        _ag_caption = str(agent_copy["caption"]).strip()
+        _ag_cta = str(agent_copy.get("cta") or "").strip()
+        _ag_tags = agent_copy.get("hashtags") or []
+        _ag_tag_str = " ".join(str(t) for t in _ag_tags if str(t).strip())
+        # Ensure brand + novel anchors are present even if the agent omitted them.
+        if "#AzureInkblade" not in _ag_tag_str:
+            _ag_tag_str = f"#AzureInkblade {_ag_tag_str}".strip()
+        if novel_tag and novel_tag not in _ag_tag_str:
+            _ag_tag_str = f"{_ag_tag_str} {novel_tag}".strip()
+        # Instagram: agent caption + agent hashtags (drops the template style lines).
+        instagram_caption = f"{_ag_caption}\n\n{_ag_tag_str}"
+        # Facebook: keep novel/title header + agent caption + agent cta + agent tags.
+        _fb_body = _ag_caption
+        if _ag_cta:
+            _fb_body = f"{_fb_body}\n\n{_ag_cta}"
+        facebook_post = (
+            f"{novel} - {title}\n\n"
+            f"{_fb_body}\n\n"
+            f"{_ag_tag_str}"
+        )
+        # Patreon note: keep structure, swap in agent caption + cta.
+        patreon_note = (
+            f"{novel}\n{title}\n\n"
+            f"{_ag_caption}\n\n"
+            f"{_ag_cta or patreon_cta}\n\n"
+            "Thank you for supporting the stories and helping keep the release schedule moving."
+        )
+        # X: agent caption (trimmed to 280) + agent tags; keep tracked destination.
+        _x_body = _ag_caption
+        if _ag_cta:
+            _x_body = f"{_x_body}\n\n{_ag_cta}"
+        _x_full = f"{novel} - {title}\n\n{_x_body}\n\n{_ag_tag_str}"
+        if len(_x_full) > 280:
+            _x_full = f"{_x_body}\n\n{_ag_tag_str}"
+        if len(_x_full) > 280:
+            _x_full = f"{_ag_tag_str}"
+        x_post = _x_full
     return {
         "caption": track_copy_links(instagram_caption, story, "instagram", campaign_key, "daily-post"),
         "patreon_note": track_copy_links(patreon_note, story, "patreon", campaign_key, "daily-post"),
@@ -907,6 +956,7 @@ def build_platform_posts(
         "post_focus": focus,
         "caption_style": style,
         "tracking_campaign": campaign_key,
+        "_agent_source": (agent_copy.get("_source") if isinstance(agent_copy, dict) else None),
     }
 
 
@@ -959,11 +1009,11 @@ def fallback_social_copy(novel: str, abbr: str, day: str, filename: str) -> dict
     style = rotating_caption_style(abbr, f"fallback_social_{day}_{focus}")
     cta = focused_social_cta(abbr, focus, f"daily_{day}_general", "daily")
     generic_hooks = {
-        "scene_hook": f"{profile['name']} is moving into the next pressure point.",
+        "scene_hook": f"One scene from {profile['name']} worth pausing on.",
         "reader_question": "What kind of power would you chase if the cost kept rising?",
         "stakes": f"The next step is never free in {profile['name']}.",
-        "character_moment": "Every arc has a moment where the path starts choosing back.",
-        "worldbuilding": "Step into a world of hidden systems, rising threats, and hard-won power.",
+        "character_moment": f"A turning point for {profile['name']} — the kind that changes what comes next.",
+        "worldbuilding": f"Step into the world of {profile['name']}: hidden systems, rising threats, hard-won power.",
         "catch_up": "Start from the beginning or catch up before the next release lands.",
     }
     hook = generic_hooks.get(style, generic_hooks["scene_hook"])

@@ -1,0 +1,266 @@
+"""Agent-driven post copy writer.
+
+Wraps the headless Hermes CLI (`hermes.exe chat -q ... -Q --max-turns N`) to produce
+reader-facing, research-aware social post copy per novel, replacing the template
+engine's prose. Consumed by `promo_copy.build_platform_posts` via `agent_copy=`.
+
+Design rules (mirrors the Codex file-boundary pattern + the app's fail-loud rule):
+- The agent reads a per-novel RESEARCH BRIEF (Markdown) the app passes in. It never
+  touches app internals.
+- Output is the post-differentiation-agent JSON contract:
+  {hook, caption, cta, hashtags (array), content_angle, intended_audience, ...}.
+- On ANY failure (CLI missing, timeout, unparseable output) -> return None so the
+  caller falls back to the existing `build_platform_posts()` template engine. Posts
+  never break.
+- The Hermes venv leaks a broken numpy onto sys.path via PYTHONPATH/PYTHONHOME; the
+  subprocess MUST strip those (same class of bug as the LoRA trainer / diffusers).
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+# Diagnostics: every agent failure (rc!=0, unparseable output, subprocess error) is
+# logged here with the raw Hermes stdout/stderr so a failed post-build is diagnosable
+# instead of silently falling back to the template. The app's own logs/ dir.
+_LOG_PATH = Path(__file__).resolve().parent.parent / "logs" / "agent_post_writer.log"
+try:
+    _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        filename=str(_LOG_PATH),
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        force=True,
+    )
+    _logger = logging.getLogger("agent_post_writer")
+except OSError:
+    _logger = logging.getLogger("agent_post_writer")
+    _logger.addHandler(logging.NullHandler())
+
+
+def _log(msg: str, *, abbr: str = "", stdout: str = "", stderr: str = "") -> None:
+    """Record a diagnostic line (with raw agent output on failure) to logs/agent_post_writer.log."""
+    tail = ""
+    if stdout:
+        tail += f"\n  STDOUT>>> {stdout!r}"
+    if stderr:
+        tail += f"\n  STDERR>>> {stderr!r}"
+    _logger.error("[%s] %s%s", abbr or "-", msg, tail)
+
+
+# Hermes CLI lives in its own venv; resolve from the known location, else PATH.
+_HERMES_DEFAULT = (
+    Path.home()
+    / "AppData"
+    / "Local"
+    / "hermes"
+    / "hermes-agent"
+    / "venv"
+    / "Scripts"
+    / "hermes.exe"
+)
+
+# Per-novel research brief folder. Override with RESEARCH_BRIEF_PATH (a folder) or
+# RESEARCH_BRIEF_FILE (an explicit file). The app points this at the Obsidian vault.
+_RESEARCH_BRIEF_FOLDER = os.environ.get(
+    "RESEARCH_BRIEF_PATH",
+    str(Path.home() / "Documents" / "Hermes Vault" / "Hermes" / "Research Briefs"),
+)
+_RESEARCH_BRIEF_FILE = os.environ.get("RESEARCH_BRIEF_FILE", "")
+
+_DEFAULT_SKILLS = "post-differentiation-agent,seo-audience-research"
+
+# Novel title lookup so the brief filename / prompt can name the novel correctly.
+_NOVEL_TITLES = {
+    "EN": "Eternal Nexus",
+    "HA": "Heavenly Ascension System",
+    "SF": "Soulforge Era",
+    "HP": "Hundredfold Path",
+}
+
+
+def _resolve_hermes() -> str | None:
+    if _HERMES_DEFAULT.exists():
+        return str(_HERMES_DEFAULT)
+    found = shutil.which("hermes")
+    return found
+
+
+def _brief_for_abbr(abbr: str) -> str:
+    """Return the path to the per-novel research brief, or '' if none resolvable."""
+    if _RESEARCH_BRIEF_FILE:
+        return _RESEARCH_BRIEF_FILE
+    folder = Path(_RESEARCH_BRIEF_FOLDER)
+    if not folder.is_dir():
+        return ""
+    abbr = (abbr or "").upper().strip()
+    title = _NOVEL_TITLES.get(abbr, abbr)
+    # Try "ABBR — Title.md" then a few fallbacks.
+    candidates = [
+        folder / f"{abbr} — {title}.md",
+        folder / f"{title}.md",
+        folder / f"{abbr}.md",
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return ""
+
+
+def _build_prompt(abbr: str, title: str, chapter: str, hook: str, brief_text: str, material: dict) -> str:
+    novel = _NOVEL_TITLES.get(abbr.upper(), title or abbr)
+    release_status = material.get("release_status") or {}
+    rr_live = bool(release_status.get("royalRoadExists"))
+    focus = material.get("post_focus_override") or ""
+    brief_excerpt = (brief_text or "").strip()
+    if len(brief_excerpt) > 4000:
+        brief_excerpt = brief_excerpt[:4000] + "\n...[brief truncated]"
+
+    return f"""You are the post-differentiation agent for the web novel "{novel}".
+Write ONE reader-facing social post for Instagram (the app reuses it for X/FB with
+platform tails). The copy must speak TO the reader, never ABOUT the post or marketing.
+
+NOVEL: {novel} (abbr {abbr})
+CHAPTER: {chapter or "unknown"}
+CHAPTER HOOK (real teaser from the chapter): {hook or "(none provided)"}
+ROYAL ROAD LIVE: {"yes" if rr_live else "no"}
+POST FOCUS: {focus or "default"}
+
+PER-NOVEL RESEARCH BRIEF (voice, audience language, hook angles, CTA phrasings,
+allowed/banned hashtags — follow it strictly, especially the banned-hashtag set so
+this novel never borrows another novel's voice):
+{brief_excerpt or "(no brief provided — use the novel name and general progression-fantasy voice)"}
+
+Return ONLY a JSON object (no markdown fence, no commentary) with these keys:
+- "hook": a 1-line reader hook (may reuse or sharpen the chapter hook above)
+- "caption": the post body (2-4 sentences, reader-facing, novel-specific)
+- "cta": a single call-to-action line
+- "hashtags": an array of 6-9 hashtags (must include the novel tag + #AzureInkblade;
+  respect the brief's banned set)
+- "content_angle": one short phrase naming the angle you chose
+- "intended_audience": one short phrase
+
+Do NOT mention "this post", "caption", "hashtags", or the marketing strategy.
+"""
+
+
+def _strip_session_line(text: str) -> str:
+    """Drop the `session_id: ...` line Hermes quietly appends in -Q mode."""
+    lines = [ln for ln in text.splitlines() if not ln.strip().startswith("session_id:")]
+    return "\n".join(lines).strip()
+
+
+def _extract_json(text: str) -> dict | None:
+    """Parse JSON from the agent output, tolerating a prose wrapper or ```fence."""
+    cleaned = _strip_session_line(text)
+    # Try direct parse.
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+    # Try fenced block.
+    if "```" in cleaned:
+        start = cleaned.find("```")
+        end = cleaned.find("```", start + 3)
+        if end > start:
+            inner = cleaned[start + 3 : end].lstrip("json").strip()
+            try:
+                return json.loads(inner)
+            except json.JSONDecodeError:
+                pass
+    # Try first { to last }.
+    fb = cleaned.find("{")
+    lb = cleaned.rfind("}")
+    if fb != -1 and lb > fb:
+        try:
+            return json.loads(cleaned[fb : lb + 1])
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+def generate_post_copy(
+    abbr: str,
+    title: str,
+    chapter: str,
+    hook: str,
+    material: dict | None = None,
+    *,
+    skills: str = _DEFAULT_SKILLS,
+    timeout: int = 180,
+    max_turns: int = 4,
+) -> dict | None:
+    """Return the agent's post copy dict, or None to signal 'fall back to template'.
+
+    Never raises — any failure returns None so the caller uses build_platform_posts().
+    """
+    material = material or {}
+    hermes = _resolve_hermes()
+    if not hermes:
+        _log("FAIL: hermes CLI not resolvable", abbr=abbr)
+        return None
+    brief_path = _brief_for_abbr(abbr)
+    brief_text = ""
+    if brief_path and Path(brief_path).exists():
+        try:
+            brief_text = Path(brief_path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            brief_text = ""
+    prompt = _build_prompt(abbr, title, chapter, hook, brief_text, material)
+
+    # Strip the Hermes venv leak (broken numpy) + suppress banner/spinner.
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
+    env["HERMES_QUIET"] = "1"
+    try:
+        proc = subprocess.run(
+            [hermes, "chat", "-q", prompt, "-s", skills, "-Q", "--max-turns", str(max_turns)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            env=env,
+            cwd=str(Path.cwd()),
+        )
+    except (subprocess.TimeoutExpired, OSError, ValueError) as exc:
+        _log(f"FAIL: subprocess error: {exc!r}", abbr=abbr)
+        return None
+    if proc.returncode != 0:
+        _log(
+            f"FAIL: hermes rc={proc.returncode}",
+            abbr=abbr,
+            stdout=proc.stdout[:2000],
+            stderr=proc.stderr[:2000],
+        )
+        return None
+    data = _extract_json(proc.stdout)
+    if not isinstance(data, dict) or not data.get("caption"):
+        _log(
+            "FAIL: output not parseable as post JSON (or missing caption)",
+            abbr=abbr,
+            stdout=proc.stdout[:3000],
+            stderr=proc.stderr[:1500],
+        )
+        return None
+    # Normalize hashtags to a list of strings.
+    tags = data.get("hashtags") or []
+    if isinstance(tags, str):
+        tags = [t.strip() for t in tags.replace(",", " ").split() if t.strip()]
+    data["hashtags"] = [str(t) for t in tags]
+    data["_source"] = "hermes_agent"
+    return data
+
+
+if __name__ == "__main__":
+    # Smoke test: python tools/agent_post_writer.py HA "Ch 24" "Kai's golden ember flares."
+    _a = (sys.argv[1] if len(sys.argv) > 1 else "HA")
+    _t = (sys.argv[2] if len(sys.argv) > 2 else "Ch 24")
+    _h = (sys.argv[3] if len(sys.argv) > 3 else "")
+    _out = generate_post_copy(_a, _t, _t, _h, {})
+    print(json.dumps(_out, indent=2, ensure_ascii=False) if _out else "NULL (fallback)")

@@ -16066,6 +16066,36 @@ def make_weekend_social_post(abbr: str, day: str) -> dict[str, Any]:
     image_target = folder / image_source.name
     shutil.copy2(image_source, image_target)
     copy = weekend_social_copy(abbr, day)
+    # Optional Hermes agent post copy (dynamic, research-aware). Default OFF.
+    # Flip ENABLE_AGENT_POSTS=1 to replace template prose with agent-generated copy.
+    # Any failure -> keep the template copy (fail-soft).
+    if str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"}:
+        try:
+            from tools.agent_post_writer import generate_post_copy as _agent_gen
+            _wk_hook = rotating_weekend_hook(abbr, day)
+            _agent = _agent_gen(abbr, f"Weekend {day}", day, _wk_hook, {"abbr": abbr, "novel": NOVEL_NAMES.get(abbr, "")})
+            if _agent and _agent.get("caption"):
+                _ag_cap = str(_agent["caption"]).strip()
+                _ag_cta = str(_agent.get("cta") or "").strip()
+                _ag_tags = " ".join(str(t) for t in (_agent.get("hashtags") or []) if str(t).strip())
+                if "#AzureInkblade" not in _ag_tags:
+                    _ag_tags = f"#AzureInkblade {_ag_tags}".strip()
+                _profile = social_profile(abbr)
+                _novel_tag = next((t for t in re.findall(r"#\w+", _profile.get("hashtags", "")) if t.lower() != "#azureinkblade"), "")
+                if _novel_tag and _novel_tag not in _ag_tags:
+                    _ag_tags = f"{_ag_tags} {_novel_tag}".strip()
+                _fb_body = _ag_cap + (f"\n\n{_ag_cta}" if _ag_cta else "")
+                copy = {
+                    "instagram": f"{_ag_cap}\n\n{_ag_tags}",
+                    "x": f"{_ag_cap}\n\n{_ag_tags}" if len(f"{_ag_cap}\n\n{_ag_tags}") <= 280 else f"{_ag_tags}",
+                    "facebook": f"{_fb_body}\n\n{_ag_tags}",
+                    "alt_text": copy.get("alt_text", f"Weekend promotional image for {_profile.get('name', abbr)}."),
+                    "post_focus": copy.get("post_focus", ""),
+                    "caption_style": copy.get("caption_style", "") + "+agent",
+                    "_agent_source": _agent.get("_source"),
+                }
+        except Exception as _agent_exc:
+            copy.setdefault("warnings", []).append(f"agent_post_writer skipped: {_agent_exc}")
     payload = {
         **item,
         **copy,
@@ -30682,7 +30712,27 @@ def make_campaign(
     material["source"] = source
     material["folder"] = str(folder)
     material["post_focus_override"] = post_focus
-    material.update(build_platform_posts(title, chapter, material, post_focus))
+    # Optional Hermes agent post copy (dynamic, research-aware). Default OFF.
+    # Flip ENABLE_AGENT_POSTS=1 to replace template prose with agent-generated copy.
+    # Any failure returns None -> build_platform_posts uses the template engine (fail-soft).
+    agent_copy = None
+    if str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"} and abbr:
+        try:
+            from tools.agent_post_writer import generate_post_copy as _agent_gen
+            _agent_hook = " ".join(str(p) for p in material.get("phrases", [])[:3]).strip()
+            agent_copy = _agent_gen(
+                abbr,
+                title,
+                str(material.get("chapter", chapter_id) or chapter_id),
+                _agent_hook,
+                material,
+            )
+        except Exception as _agent_exc:  # never let the agent block a post build
+            agent_copy = None
+            material.setdefault("warnings", []).append(
+                f"agent_post_writer skipped: {_agent_exc}"
+            )
+    material.update(build_platform_posts(title, chapter, material, post_focus, agent_copy=agent_copy))
     write_text_artifacts(folder, material)
     if abbr and str(chapter_id).isdigit():
         update_chapter_ledger(
@@ -32266,6 +32316,11 @@ HTML = r"""<!doctype html>
       <div class="row">
         <button id="buildBtn" type="submit">Build Promo Pack</button>
         <label class="toggle"><input id="useOpenAI" type="checkbox" checked> Use ChatGPT/images when configured</label>
+        <label class="inline" for="agentPosts">Hermes agent post copy</label>
+        <select id="agentPosts">
+          <option value="0">No</option>
+          <option value="1">Yes</option>
+        </select>
       </div>
       <hr>
       <details id="optionsPanel" class="options">
@@ -32926,6 +32981,7 @@ HTML = r"""<!doctype html>
     const pexelsBgVideosBtn = document.getElementById('pexelsBgVideosBtn');
     const pixabayBgVideosBtn = document.getElementById('pixabayBgVideosBtn');
     const postFocusMode = document.getElementById('postFocusMode');
+    const agentPostsSelect = document.getElementById('agentPosts');
     const chapterTitleInput = document.getElementById('title');
     const chapterTextInput = document.getElementById('chapter');
     const chapterReaderMeta = document.getElementById('chapterReaderMeta');
@@ -32970,7 +33026,28 @@ HTML = r"""<!doctype html>
         loadDocsChapters();
       }
     });
-    showSelectedOption();
+
+    // Hermes agent post-copy toggle: Yes -> ENABLE_AGENT_POSTS=1, No -> 0.
+    // Persists to .env.local (upsert_env_values) and takes effect immediately (no restart).
+    if (agentPostsSelect) {
+      agentPostsSelect.addEventListener('change', () => {
+        const enabled = agentPostsSelect.value === '1' ? '1' : '0';
+        fetch('/api/set-agent-posts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled })
+        })
+          .then(r => r.json())
+          .then(d => { if (!d.ok) console.warn('agent-posts toggle failed', d); })
+          .catch(e => console.warn('agent-posts toggle error', e));
+      });
+      // Reflect current server-side value on load.
+      fetch('/api/agent-posts-status')
+        .then(r => r.json())
+        .then(d => { if (d && d.enabled != null) agentPostsSelect.value = d.enabled ? '1' : '0'; })
+        .catch(() => {});
+    }
+
 
     function syncYoutubeTitle(value) {
       if (!youtubeTitleEdited && value.trim()) {
@@ -40303,6 +40380,10 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
+        if parsed.path == "/api/agent-posts-status":
+            cur = str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower()
+            self.send_json({"enabled": cur not in ("", "0", "false", "no", "off")})
+            return
         if parsed.path == "/api/examples":
             self.send_json({"examples": find_examples()})
             return
@@ -41634,6 +41715,15 @@ class Handler(BaseHTTPRequestHandler):
                 }
                 upsert_env_values(values)
                 self.send_json(env_presence())
+                return
+            if self.path == "/api/set-agent-posts":
+                enabled = str(body.get("enabled") or "0").strip() == "1"
+                upsert_env_values({"ENABLE_AGENT_POSTS": "1" if enabled else "0"})
+                self.send_json({"ok": True, "enabled": enabled})
+                return
+            if self.path == "/api/agent-posts-status":
+                cur = str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower()
+                self.send_json({"enabled": cur not in ("", "0", "false", "no", "off")})
                 return
             if self.path == "/api/x-manual-assist":
                 self.send_json(manual_x_assist(str(body.get("folder") or "")))
