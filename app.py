@@ -13970,10 +13970,20 @@ def archive_generated_promo_image(source: Path, abbr: str = "", title: str = "",
 
 
 def load_promo_rotation_state() -> dict[str, Any]:
+    # SQLite-first (state_snapshots kv), JSON fallback for back-compat.
+    data = load_state_snapshot_from_database("promoRotation")
+    if isinstance(data, dict) and data:
+        return data
     if PROMO_ROTATION_STATE_FILE.exists():
         try:
             data = json.loads(PROMO_ROTATION_STATE_FILE.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else {}
+            if isinstance(data, dict):
+                # Backfill the DB so subsequent reads are DB-sourced.
+                try:
+                    mirror_state_snapshot_to_database("promoRotation", data)
+                except Exception as exc:
+                    print(f"Database backfill failed for promo rotation: {exc}", file=sys.stderr)
+                return data
         except Exception:
             return {}
     return {}
@@ -13981,6 +13991,10 @@ def load_promo_rotation_state() -> dict[str, Any]:
 
 def save_promo_rotation_state(state: dict[str, Any]) -> None:
     PROMO_ROTATION_STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    try:
+        mirror_state_snapshot_to_database("promoRotation", state)
+    except Exception as exc:
+        print(f"Database mirror failed for promo rotation: {exc}", file=sys.stderr)
 
 
 def image_reuse_key(path: Path) -> str:
@@ -28645,8 +28659,14 @@ def youtube_daily_candidates() -> list[dict[str, Any]]:
 
 
 def read_youtube_daily_status(refresh: bool = False) -> dict[str, Any]:
+    # SQLite-first (state_snapshots kv), JSON fallback for back-compat.
+    cached = load_state_snapshot_from_database("youtubeDailyStatus")
+    if isinstance(cached, dict) and cached.get("items"):
+        # Recompute the dynamic parts but keep persisted running/finished/ready/errors.
+        cached["createdNotUploaded"] = youtube_created_not_uploaded()
+        return cached
     if not YOUTUBE_DAILY_STATUS_FILE.exists():
-        return {
+        data = {
             "running": False,
             "startedAt": "",
             "finishedAt": "",
@@ -28656,6 +28676,11 @@ def read_youtube_daily_status(refresh: bool = False) -> dict[str, Any]:
             "errors": [],
             "message": "No daily YouTube run has started.",
         }
+        try:
+            mirror_state_snapshot_to_database("youtubeDailyStatus", data)
+        except Exception as exc:
+            print(f"Database backfill failed for youtube daily status: {exc}", file=sys.stderr)
+        return data
     try:
         data = json.loads(YOUTUBE_DAILY_STATUS_FILE.read_text(encoding="utf-8-sig"))
     except Exception:
@@ -28685,11 +28710,19 @@ def read_youtube_daily_status(refresh: bool = False) -> dict[str, Any]:
         data["ready"] = filtered_ready
     data["createdNotUploaded"] = youtube_created_not_uploaded()
     data.setdefault("errors", [])
+    try:
+        mirror_state_snapshot_to_database("youtubeDailyStatus", data)
+    except Exception as exc:
+        print(f"Database backfill failed for youtube daily status: {exc}", file=sys.stderr)
     return data
 
 
 def write_youtube_daily_status(data: dict[str, Any]) -> None:
     write_json_atomic(YOUTUBE_DAILY_STATUS_FILE, data)
+    try:
+        mirror_state_snapshot_to_database("youtubeDailyStatus", data)
+    except Exception as exc:
+        print(f"Database mirror failed for youtube daily status: {exc}", file=sys.stderr)
 
 
 def mark_youtube_full_video_ready(abbr: str, chapter: int, folder: Path, build: dict[str, Any]) -> None:

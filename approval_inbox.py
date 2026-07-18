@@ -113,6 +113,15 @@ def load_approval_cleared_state() -> dict[str, Any]:
 def save_approval_cleared_state(data: dict[str, Any]) -> None:
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
     write_json_atomic(APPROVAL_INBOX_CLEARED_FILE, data)
+    # Mirror every cleared item into SQLite so the DB is never stale
+    # (the read path is DB-first; without this, cleared items could reappear).
+    items = data.get("items") if isinstance(data.get("items"), dict) else {}
+    for key, record in items.items():
+        if isinstance(record, dict):
+            try:
+                automation_db.upsert_approval_cleared(ROOT, str(key), record)
+            except Exception as exc:
+                print(f"Database mirror failed for approval cleared {key}: {exc}", file=sys.stderr)
 
 
 # --- item keying + clearing ---
