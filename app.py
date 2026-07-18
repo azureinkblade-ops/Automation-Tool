@@ -355,6 +355,12 @@ def database_state_files() -> dict[str, Path]:
         "recoveryLog": RECOVERY_LOG_FILE,
         "chapterPath": CHAPTER_PATH_FILE,
         "chapterReleaseQueue": CHAPTER_RELEASE_QUEUE_FILE,
+        # Phase 2 single-blob state -> state_snapshots kv (DB-first + dual-write)
+        "storyHookStatus": STORY_HOOK_STATUS_FILE,
+        "imageLab": IMAGE_LAB_FILE,
+        "imageFeedback": IMAGE_FEEDBACK_FILE,
+        "youtubePostDrafts": YOUTUBE_POST_DRAFTS_FILE,
+        "contentExperiments": CONTENT_EXPERIMENTS_FILE,
     }
 
 
@@ -2965,8 +2971,61 @@ def brand_profile(abbr: str) -> dict[str, Any]:
     return profiles.get(abbr) or default_brand_profile(abbr)
 
 
+# ---------------------------------------------------------------------------
+# Phase 2: single-blob JSON state -> SQLite (state_snapshots kv).
+# DB-first read + dual-write + startup backfill. No new tables; reuses the
+# existing generic state_snapshots(key, payload_json, updated_at) table.
+# Every writer mirrors to DB so the snapshot can never drift (the promo
+# rotation lesson: a single mirrored writer still drifts).
+# ---------------------------------------------------------------------------
+_PHASE2_BLOB_MAP: tuple[tuple[str, Any], ...] = (
+    ("storyHookStatus", STORY_HOOK_STATUS_FILE),
+    ("imageLab", IMAGE_LAB_FILE),
+    ("imageFeedback", IMAGE_FEEDBACK_FILE),
+    ("youtubePostDrafts", YOUTUBE_POST_DRAFTS_FILE),
+    ("contentExperiments", CONTENT_EXPERIMENTS_FILE),
+)
+
+
+def _phase2_load_blob(key: str, json_file: Path) -> Any:
+    snap = load_state_snapshot(ROOT, key)
+    if isinstance(snap, dict):
+        snap.pop("_source", None)
+        return snap
+    data = read_json_safe(json_file)
+    if isinstance(data, dict):
+        try:
+            mirror_state_snapshot_to_database(key, data)
+        except Exception as exc:
+            print(f"DB mirror failed for {key}: {exc}", file=sys.stderr)
+    return data
+
+
+def _phase2_save_blob(key: str, json_file: Path, data: Any) -> None:
+    write_json_atomic(json_file, data)
+    try:
+        mirror_state_snapshot_to_database(key, data)
+    except Exception as exc:
+        print(f"DB mirror failed for {key}: {exc}", file=sys.stderr)
+
+
+def migrate_phase2_state_to_db() -> None:
+    """One-time backfill: copy each Phase-2 JSON blob into the DB snapshot.
+
+    Idempotent (upsert by key). Call at startup so DB is authoritative before
+    any read. Safe to call repeatedly.
+    """
+    for key, json_file in _PHASE2_BLOB_MAP:
+        try:
+            data = read_json_safe(json_file)
+            if isinstance(data, dict):
+                mirror_state_snapshot_to_database(key, data)
+        except Exception as exc:
+            print(f"Phase 2 backfill failed for {key}: {exc}", file=sys.stderr)
+
+
 def load_content_experiments() -> dict[str, Any]:
-    data = read_json_safe(CONTENT_EXPERIMENTS_FILE)
+    data = _phase2_load_blob("contentExperiments", CONTENT_EXPERIMENTS_FILE)
     if not isinstance(data, dict):
         data = {
             "schemaVersion": 1,
@@ -2986,7 +3045,7 @@ def load_content_experiments() -> dict[str, Any]:
 
 def save_content_experiments(data: dict[str, Any]) -> None:
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(CONTENT_EXPERIMENTS_FILE, data)
+    _phase2_save_blob("contentExperiments", CONTENT_EXPERIMENTS_FILE, data)
 
 
 def recent_experiment_openings(data: dict[str, Any], abbr: str, limit: int = 60) -> list[str]:
@@ -5903,7 +5962,7 @@ def record_image_feedback(
     records.append(record)
     data["records"] = records[-1000:]
     data["updatedAt"] = record["recordedAt"]
-    write_json_atomic(IMAGE_FEEDBACK_FILE, data)
+    _phase2_save_blob("imageFeedback", IMAGE_FEEDBACK_FILE, data)
     return record
 
 
@@ -9628,7 +9687,7 @@ def image_lab_for_chapter(abbr: str, chapter: int | str, *, generate: bool = Fal
     data.setdefault("runs", []).append(payload)
     data["runs"] = data["runs"][-50:]
     data["updatedAt"] = payload["generatedAt"]
-    write_json_atomic(IMAGE_LAB_FILE, data)
+    _phase2_save_blob("imageLab", IMAGE_LAB_FILE, data)
     return {**payload, "file": str(IMAGE_LAB_FILE), "message": "Image Lab generated candidates." if generate else "Image Lab prepared scored prompts without using image quota."}
 
 
@@ -9650,7 +9709,7 @@ def score_image_lab_candidate(run_id: str, image_path: str, score: str, note: st
     scored.append(record)
     run["updatedAt"] = record["scoredAt"]
     data["updatedAt"] = record["scoredAt"]
-    write_json_atomic(IMAGE_LAB_FILE, data)
+    _phase2_save_blob("imageLab", IMAGE_LAB_FILE, data)
     return {"ok": True, "record": record, "run": run, "file": str(IMAGE_LAB_FILE)}
 
 
@@ -11543,7 +11602,7 @@ def build_youtube_post_drafts() -> dict[str, Any]:
     data.setdefault("drafts", []).append(draft)
     data["drafts"] = data["drafts"][-80:]
     data["updatedAt"] = now
-    write_json_atomic(YOUTUBE_POST_DRAFTS_FILE, data)
+    _phase2_save_blob("youtubePostDrafts", YOUTUBE_POST_DRAFTS_FILE, data)
     return {"ok": True, "draft": draft, "drafts": data["drafts"], "file": str(YOUTUBE_POST_DRAFTS_FILE), "message": "YouTube poll draft created for review."}
 
 
@@ -11561,7 +11620,7 @@ def target_youtube_poll_draft(draft_id: str, video_id: str) -> dict[str, Any]:
     draft["status"] = "targeted"
     draft["targetedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
     data["updatedAt"] = draft["targetedAt"]
-    write_json_atomic(YOUTUBE_POST_DRAFTS_FILE, data)
+    _phase2_save_blob("youtubePostDrafts", YOUTUBE_POST_DRAFTS_FILE, data)
     return {"ok": True, "draft": draft, "file": str(YOUTUBE_POST_DRAFTS_FILE)}
 
 
@@ -18550,9 +18609,9 @@ def story_hook_video_worker(job: dict[str, Any]) -> None:
         if state.get("archetype"):
             recent.append(str(state.get("archetype")))
         state["recentArchetypes"] = recent[-12:]
-        write_json_atomic(STORY_HOOK_STATUS_FILE, state)
+        _phase2_save_blob("storyHookStatus", STORY_HOOK_STATUS_FILE, state)
     except Exception as exc:
-        write_json_atomic(STORY_HOOK_STATUS_FILE, {**job, "running": False, "ready": False, "error": str(exc), "finishedAt": time.strftime("%Y-%m-%d %H:%M:%S")})
+        _phase2_save_blob("storyHookStatus", STORY_HOOK_STATUS_FILE, {**job, "running": False, "ready": False, "error": str(exc), "finishedAt": time.strftime("%Y-%m-%d %H:%M:%S")})
     finally:
         if STORY_HOOK_LOCK.locked():
             STORY_HOOK_LOCK.release()
@@ -18601,7 +18660,7 @@ def start_story_hook_video_writer(abbr: str = "", angle: str = "", target_words:
                 "ChatGPT is creating an original story hook video script in helper Chrome."
             ),
         }
-        write_json_atomic(STORY_HOOK_STATUS_FILE, state)
+        _phase2_save_blob("storyHookStatus", STORY_HOOK_STATUS_FILE, state)
         STORY_HOOK_THREAD = threading.Thread(target=story_hook_video_worker, args=(state,), daemon=True, name="story-hook-video-writer")
         STORY_HOOK_THREAD.start()
         return {**state, "chromeMessage": ("" if use_hermes else chrome_message)}

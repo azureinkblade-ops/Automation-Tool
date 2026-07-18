@@ -1763,6 +1763,59 @@ def check_db_source_of_truth() -> list[dict[str, object]]:
         except Exception as exc:
             checks.append(result(f"{state_key}_db_matches_json", False, f"read error: {exc}"))
 
+    # --- 2b. Phase 2 single-blob state: SQLite source-of-truth (DB agrees with JSON) ---
+    # Keys mirror app._PHASE2_BLOB_MAP. Read-only: never writes live state.
+    for state_key, json_file in (
+        ("storyHookStatus", app.STORY_HOOK_STATUS_FILE),
+        ("imageLab", app.IMAGE_LAB_FILE),
+        ("imageFeedback", app.IMAGE_FEEDBACK_FILE),
+        ("youtubePostDrafts", app.YOUTUBE_POST_DRAFTS_FILE),
+        ("contentExperiments", app.CONTENT_EXPERIMENTS_FILE),
+    ):
+        try:
+            db_snap = automation_db.load_state_snapshot(app.ROOT, state_key)
+            db_ok = isinstance(db_snap, dict) and bool(db_snap)
+            json_exists = json_file.exists()
+            json_data = None
+            if json_exists:
+                try:
+                    json_data = json.loads(json_file.read_text(encoding="utf-8-sig"))
+                except Exception:
+                    json_data = None
+            if db_ok and json_data is not None:
+                db_compare = {k: v for k, v in db_snap.items() if k != "_source"}
+                json_compare = {k: v for k, v in json_data.items() if k != "_source"}
+                agree = json.dumps(db_compare, sort_keys=True, default=str) == json.dumps(json_compare, sort_keys=True, default=str)
+                checks.append(assert_result(
+                    f"{state_key}_db_matches_json",
+                    agree,
+                    f"DB snapshot disagrees with JSON mirror for '{state_key}' (stale-state risk).",
+                ))
+            elif json_exists and not db_ok:
+                checks.append(assert_result(
+                    f"{state_key}_db_not_stale_vs_json",
+                    True,
+                    f"'{state_key}': JSON present, DB not yet backfilled (startup backfill expected).",
+                ))
+            else:
+                checks.append(assert_result(
+                    f"{state_key}_db_or_json_present",
+                    True,
+                    f"'{state_key}': neither DB nor JSON present (fresh state).",
+                ))
+            # Static guard: every writer for this state must mirror to DB, i.e. no
+            # bare write_json_atomic(CONST, ...) should remain in app.py.
+            const_name = json_file.name.replace(".json", "").upper() + "_FILE"
+            src = (ROOT / "app.py").read_text(encoding="utf-8", errors="replace")
+            leaked = (f"write_json_atomic({const_name}," in src) or (f"write_json_atomic({const_name} ," in src)
+            checks.append(assert_result(
+                f"{state_key}_writers_mirror_to_db",
+                not leaked,
+                f"No bare write_json_atomic({const_name}, ...) may remain; writers must use _phase2_save_blob.",
+            ))
+        except Exception as exc:
+            checks.append(result(f"{state_key}_db_matches_json", False, f"read error: {exc}"))
+
     # --- 3. Isolated write-path test (temp db, never live) ---
     try:
         tmp = TEST_STATE_ROOT()
