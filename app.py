@@ -16062,8 +16062,29 @@ def make_weekend_social_post(abbr: str, day: str) -> dict[str, Any]:
     item = matches[0]
     folder = SOCIAL_OUTPUT_DIR / f"weekend-{abbr.lower()}-{day.lower()}"
     reset_generated_folder(folder)
-    image_source = Path(item["path"])
-    image_target = folder / image_source.name
+    # Weekend posts use the realistic diffusers workflow (azink_real track) by default,
+    # matching vertical social orientation. Fail-soft: any generation failure falls back
+    # to the stock promo image so the weekend build never breaks.
+    _stock_source = Path(item["path"])
+    image_source = _stock_source
+    image_target = folder / _stock_source.name
+    try:
+        _gen_target = folder / f"{abbr}_{day}.png"
+        _real_prompt = (
+            f"realistic fantasy promotional image for the web novel {NOVEL_NAMES.get(abbr, abbr)}, "
+            f"weekend reading theme, cinematic realism, dramatic character moment"
+        )
+        create_local_stable_diffusion_image(
+            _real_prompt,
+            _gen_target,
+            orientation="vertical",
+            seed=0,
+        )
+        if _gen_target.exists():
+            image_source = _gen_target
+            image_target = _gen_target
+    except Exception as _img_exc:
+        print(f"[weekend] realistic image gen failed for {abbr} {day}, using stock: {_img_exc}", file=sys.stderr)
     shutil.copy2(image_source, image_target)
     copy = weekend_social_copy(abbr, day)
     # Optional Hermes agent post copy (dynamic, research-aware). Default OFF.
