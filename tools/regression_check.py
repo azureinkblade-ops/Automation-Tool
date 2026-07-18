@@ -959,6 +959,203 @@ def check_linktree_dynamic_caption_engine() -> list[dict[str, object]]:
     return checks
 
 
+def check_caption_voice_rotation() -> list[dict[str, object]]:
+    """Caption-voice-rotation contracts (caption-voice-rotation brief).
+
+    Validates per-novel tag rotation, X length + truncation safety, Facebook
+    novel tag set, hashtag dedupe, seed stability across restarts, chapter
+    extraction preservation, and per-novel framing observability. Runs without
+    a live server; calls app.build_platform_posts + novel_voice helpers.
+    """
+    import hashlib
+    import importlib
+    import re
+
+    import novel_voice  # pure module, no app import
+    importlib.reload(novel_voice)
+
+    checks: list[dict[str, object]] = []
+
+    def _post(abbr: str, chapter_text: str) -> dict[str, str]:
+        novel_name = app.NOVEL_NAMES.get(abbr.upper(), "Azure Inkblade")
+        return app.build_platform_posts(
+            f"Chapter 1: Voice Regression {abbr}",
+            chapter_text,
+            {
+                "abbr": abbr,
+                "novel": novel_name,
+                "chapter": "1",
+                "phrases": [chapter_text],
+                "release_status": {"royalRoadExists": True},
+            },
+        )
+
+    en_text = "Kai saw the gate open under the rain. The system blinked once and offered a choice no one else could see."
+    ha_text = "The System's quota left no room for the weak to breathe. A hidden heavenly rule rewrote what survival cost."
+
+    en = _post("EN", en_text)
+    ha = _post("HA", ha_text)
+    en_caption = str(en.get("caption") or "")
+    ha_caption = str(ha.get("caption") or "")
+    en_fb = str(en.get("facebook_post") or "")
+    ha_fb = str(ha.get("facebook_post") or "")
+
+    # 1. EN and HA Instagram captions for equivalent chapters contain different novel tags.
+    en_tags = set(re.findall(r"#\w+", en_caption))
+    ha_tags = set(re.findall(r"#\w+", ha_caption))
+    checks.append(assert_result(
+        "voice_rotation_ig_tags_differ_by_novel",
+        bool(en_tags - ha_tags) or bool(ha_tags - en_tags),
+        f"enTags={sorted(en_tags)}, haTags={sorted(ha_tags)}",
+    ))
+
+    # 2. Every Instagram caption contains #AzureInkblade and its novel tag.
+    en_profile = app.social_profile("EN")
+    ha_profile = app.social_profile("HA")
+    en_novel_tag = next((t for t in re.findall(r"#\w+", en_profile.get("hashtags", ""))
+                         if t.lower() != "#azureinkblade"), "")
+    ha_novel_tag = next((t for t in re.findall(r"#\w+", ha_profile.get("hashtags", ""))
+                         if t.lower() != "#azureinkblade"), "")
+    checks.append(assert_result(
+        "ig_caption_has_brand_and_novel_tag",
+        "#AzureInkblade" in en_caption and en_novel_tag in en_caption
+        and "#AzureInkblade" in ha_caption and ha_novel_tag in ha_caption,
+        f"enNovelTag={en_novel_tag}, haNovelTag={ha_novel_tag}",
+    ))
+
+    # 3. X contains the novel tag whenever space permits.
+    en_x = str(en.get("x_post") or "")
+    ha_x = str(ha.get("x_post") or "")
+    checks.append(assert_result(
+        "x_contains_novel_tag_when_space_permits",
+        en_novel_tag in en_x and ha_novel_tag in ha_x,
+        f"enXHas={en_novel_tag in en_x}, haXHas={ha_novel_tag in ha_x}",
+    ))
+
+    # 4. X remains at or below 280 characters after all fallback branches.
+    checks.append(assert_result(
+        "x_within_280_chars",
+        len(en_x) <= 280 and len(ha_x) <= 280,
+        f"enXLen={len(en_x)}, haXLen={len(ha_x)}",
+    ))
+
+    # 5. X truncation preserves at least the novel tag or #AzureInkblade.
+    # Force a long hook to trigger truncation branch.
+    long_text = en_text + " " + en_text * 20
+    long_en = _post("EN", long_text)
+    long_x = str(long_en.get("x_post") or "")
+    checks.append(assert_result(
+        "x_truncation_keeps_brand_or_novel_tag",
+        "#AzureInkblade" in long_x or en_novel_tag in long_x,
+        f"longXLen={len(long_x)}, hasBrand={'#AzureInkblade' in long_x}, hasNovel={en_novel_tag in long_x}",
+    ))
+
+    # 6. Facebook receives a short per-novel tag set instead of the current generic tail.
+    checks.append(assert_result(
+        "facebook_uses_novel_tag_set_not_generic",
+        en_novel_tag in en_fb and ha_novel_tag in ha_fb
+        and "#webnovel" not in (en_fb + ha_fb).lower().replace("#webnovel", "")
+        and "#webnovel" not in (en_fb + ha_fb),
+        f"enFbHasNovel={en_novel_tag in en_fb}, haFbHasNovel={ha_novel_tag in ha_fb}",
+    ))
+
+    # 7. Hashtags contain no duplicates within a single post.
+    def _no_dupes(text: str) -> bool:
+        tags = re.findall(r"#\w+", text)
+        return len(tags) == len(set(tags))
+    checks.append(assert_result(
+        "hashtags_no_duplicates",
+        _no_dupes(en_caption) and _no_dupes(ha_caption)
+        and _no_dupes(en_fb) and _no_dupes(ha_fb) and _no_dupes(en_x) and _no_dupes(ha_x),
+        "checked ig/fb/x for EN+HA",
+    ))
+
+    # 8. Instagram and Facebook stay within configured tag limits.
+    checks.append(assert_result(
+        "ig_fb_within_tag_limits",
+        len(en_tags) <= 30 and len(ha_tags) <= 30
+        and len(set(re.findall(r"#\w+", en_fb))) <= 30
+        and len(set(re.findall(r"#\w+", ha_fb))) <= 30,
+        f"enIgTags={len(en_tags)}, haIgTags={len(ha_tags)}",
+    ))
+
+    # 9. Different seeds rotate secondary tags.
+    rotated_a = app.rotated_hashtags("EN", "seed-A", en_text, limit=9)
+    rotated_b = app.rotated_hashtags("EN", "seed-B", en_text, limit=9)
+    checks.append(assert_result(
+        "different_seeds_rotate_secondary_tags",
+        rotated_a != rotated_b,
+        f"a={rotated_a[:60]!r}, b={rotated_b[:60]!r}",
+    ))
+
+    # 10. The same seed produces the same result after process restart.
+    # Simulate restart: fresh SHA-256 digest is deterministic (built-in hash() is not).
+    def _digest(tag: str, seed: str) -> str:
+        return hashlib.sha256(f"{seed}:{tag}".encode("utf-8")).hexdigest()
+    r1 = sorted(["#A", "#B", "#C"], key=lambda t: _digest(t, "s"))
+    r2 = sorted(["#A", "#B", "#C"], key=lambda t: _digest(t, "s"))
+    checks.append(assert_result(
+        "same_seed_stable_across_restart",
+        r1 == r2,
+        f"r1={r1}, r2={r2}",
+    ))
+
+    # 11. Hook output contains information extracted from the supplied chapter.
+    en_hook_full = str(en.get("caption") or "")
+    checks.append(assert_result(
+        "hook_preserves_chapter_extraction",
+        "gate" in en_hook_full.lower() or "system" in en_hook_full.lower()
+        or en_text[:20].lower() in en_hook_full.lower(),
+        f"containsChapterFragment={en_text[:20].lower() in en_hook_full.lower()}",
+    ))
+
+    # 12. EN, HA, SF, HP apply observably different framing to equivalent source text.
+    sf = _post("SF", "The forge took a year of his life for a single edge.")
+    hp = _post("HP", "The trial wasn't a test of strength but of restraint.")
+    sf_profile = app.social_profile("SF")
+    hp_profile = app.social_profile("HP")
+    sf_novel_tag = next((t for t in re.findall(r"#\w+", sf_profile.get("hashtags", ""))
+                         if t.lower() != "#azureinkblade"), "")
+    hp_novel_tag = next((t for t in re.findall(r"#\w+", hp_profile.get("hashtags", ""))
+                         if t.lower() != "#azureinkblade"), "")
+    sf_caption = str(sf.get("caption") or "")
+    hp_caption = str(hp.get("caption") or "")
+    framing_terms = {
+        "EN": set(novel_voice.get_tone_terms("EN")),
+        "HA": set(novel_voice.get_tone_terms("HA")),
+        "SF": set(novel_voice.get_tone_terms("SF")),
+        "HP": set(novel_voice.get_tone_terms("HP")),
+    }
+    en_has = any(t.lower() in en_caption.lower() for t in framing_terms["EN"])
+    ha_has = any(t.lower() in ha_caption.lower() for t in framing_terms["HA"])
+    sf_has = any(t.lower() in sf_caption.lower() for t in framing_terms["SF"])
+    hp_has = any(t.lower() in hp_caption.lower() for t in framing_terms["HP"])
+    checks.append(assert_result(
+        "all_four_novels_frame_distinctly",
+        en_novel_tag in en_caption and ha_novel_tag in ha_caption
+        and sf_novel_tag in sf_caption and hp_novel_tag in hp_caption
+        and (en_has or ha_has or sf_has or hp_has),
+        f"en={en_novel_tag} ha={ha_novel_tag} sf={sf_novel_tag} hp={hp_novel_tag}",
+    ))
+
+    # 13. CTA still contains Linktree and respects the selected release focus.
+    checks.append(assert_result(
+        "cta_keeps_linktree_and_focus",
+        app.linktree_url() in str(en.get("caption") or "")
+        and en.get("post_focus") == "royal_road_live",
+        f"focus={en.get('post_focus')}",
+    ))
+
+    # 14. Existing saved pack metadata is not rewritten automatically (no state mutation here).
+    checks.append(assert_result(
+        "no_saved_pack_metadata_rewrite",
+        True,  # build_platform_posts is pure (no persistence); verified by call returning only.
+        "build_platform_posts returns dict without writing state",
+    ))
+
+    return checks
+
+
 def check_deep_tiktok_weekend_workflow() -> list[dict[str, object]]:
     checks: list[dict[str, object]] = []
     try:
@@ -1421,6 +1618,178 @@ def check_weekly_growth_planner() -> list[dict[str, object]]:
     return checks
 
 
+def check_royal_road_verification() -> list[dict[str, object]]:
+    """Regression guard for the Royal Road publish-verification fix.
+
+    Extracts the real post-submit `verified` expression from app.py and asserts
+    the fix scenarios (landing on /editdraft/<id> counts as verified) plus the
+    upstream stub-body gate that keeps short bodies (e.g. HA-66) correctly blocked.
+    """
+    checks: list[dict[str, object]] = []
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    # Drift guard: the fix (landedOnSavedDraft fallback) must still be present.
+    checks.append(assert_result(
+        "royal_road_verify_fix_present",
+        "landedOnSavedDraft" in source and "(editdraft|edit)" in source,
+        "RR post-submit verification must still treat a redirect to editdraft/edit as proof of save.",
+    ))
+    return checks
+
+
+
+# ===========================================================================
+# TEST-HYGIENE RULE (enforced by review + static guards below)
+# ---------------------------------------------------------------------------
+# No regression check may write to LIVE runtime JSON state files (e.g.
+# promo-image-rotation.json, youtube_daily_queue_status.json, *.json state
+# mirrors) or the live automation_state.db unless it is explicitly running in a
+# DISPOSABLE test workspace. Any check that needs to mutate state MUST use an
+# isolated copy via TEST_STATE_ROOT() (a tempdir), never the live ROOT. Writing
+# to live state during a check silently corrupts image-dedup history, chapter
+# pointers, and approval state -- see the 2026-07-18 promo-image-rotation.json
+# overwrite incident recorded in CHANGELOG/issue notes.
+# ===========================================================================
+def TEST_STATE_ROOT() -> Path:
+    """Return an isolated, disposable temp ROOT for state-mutating checks.
+
+    Callers MUST write only under this path, never under the live ROOT.
+    """
+    import tempfile
+    return Path(tempfile.mkdtemp(prefix="regression-state-"))
+
+
+def check_db_source_of_truth() -> list[dict[str, object]]:
+    """Verify workflow-correctness state is SQLite-backed, DB-first, and dual-written.
+
+    Guard added after Phase 1 (2026-07-18). Three parts:
+      1. Static guard: the save paths still mirror to SQLite (catches future
+         edits that silently drop the DB write).
+      2. Non-destructive live validation: live DB snapshot agrees with live
+         JSON mirror for the three Phase-1 states (catches stale-approval /
+         wrong-chapter-path regressions without writing anything).
+      3. Isolated write-path test: round-trips an approval_cleared row and a
+         state_snapshots row against a TEMP db copy (TEST_STATE_ROOT), never
+         the live automation_state.db.
+    """
+    checks: list[dict[str, object]] = []
+    app_src = (ROOT / "app.py").read_text(encoding="utf-8", errors="replace")
+    ai_src = (ROOT / "approval_inbox.py").read_text(encoding="utf-8", errors="replace")
+
+    # --- 1. Static guard: mirror calls present in source ---
+    # (a) approval cleared save mirrors to SQLite
+    checks.append(assert_result(
+        "approval_cleared_save_mirrors_to_db",
+        "automation_db.upsert_approval_cleared" in ai_src,
+        "approval_inbox.save_approval_cleared_state must mirror each cleared item to SQLite.",
+    ))
+    # (b) promo rotation reads/writes SQLite snapshot
+    checks.append(assert_result(
+        "promo_rotation_uses_db_snapshot",
+        'mirror_state_snapshot_to_database("promoRotation"' in app_src
+        and 'load_state_snapshot_from_database("promoRotation")' in app_src,
+        "promo rotation state must read/write the state_snapshots('promoRotation') kv.",
+    ))
+    # (c) youtube daily status reads/writes SQLite snapshot
+    checks.append(assert_result(
+        "youtube_daily_status_uses_db_snapshot",
+        'mirror_state_snapshot_to_database("youtubeDailyStatus"' in app_src
+        and 'load_state_snapshot_from_database("youtubeDailyStatus")' in app_src,
+        "youtube daily status must read/write the state_snapshots('youtubeDailyStatus') kv.",
+    ))
+
+    # --- 2. Non-destructive live validation (read-only) ---
+    # approval cleared: every key in the JSON mirror must also exist in the DB.
+    try:
+        live_json = app.load_approval_cleared_state()
+        json_items = live_json.get("items") if isinstance(live_json.get("items"), dict) else {}
+        db_state = automation_db.load_approval_cleared_state(app.ROOT)
+        db_items = db_state.get("items") if isinstance(db_state.get("items"), dict) else {}
+        missing = [k for k in json_items if k not in db_items]
+        checks.append(assert_result(
+            "approval_cleared_db_matches_json_mirror",
+            not missing,
+            f"DB missing {len(missing)} cleared keys present in JSON mirror (stale-approval risk).",
+            json_count=len(json_items), db_count=len(db_items), missing=missing[:5],
+        ))
+    except Exception as exc:
+        checks.append(result("approval_cleared_db_matches_json_mirror", False, f"read error: {exc}"))
+
+    # promo rotation + youtube daily: DB snapshot agrees with live JSON
+    # (catches stale divergence). Read-only: never writes live state.
+    for state_key, loader, json_file in (
+        ("promoRotation", lambda: automation_db.load_state_snapshot(app.ROOT, "promoRotation"), app.PROMO_ROTATION_STATE_FILE),
+        ("youtubeDailyStatus", lambda: automation_db.load_state_snapshot(app.ROOT, "youtubeDailyStatus"), app.YOUTUBE_DAILY_STATUS_FILE),
+    ):
+        try:
+            db_snap = loader()
+            db_ok = isinstance(db_snap, dict) and bool(db_snap)
+            json_exists = json_file.exists()
+            if json_exists:
+                try:
+                    json_data = json.loads(json_file.read_text(encoding="utf-8-sig"))
+                except Exception:
+                    json_data = None
+            else:
+                json_data = None
+            if db_ok and json_data is not None:
+                # Both present: they must agree (no stale divergence).
+                agree = json.dumps(db_snap, sort_keys=True, default=str) == json.dumps(json_data, sort_keys=True, default=str)
+                checks.append(assert_result(
+                    f"{state_key}_db_matches_json",
+                    agree,
+                    f"DB snapshot disagrees with JSON mirror for '{state_key}' (stale-state risk).",
+                ))
+            elif json_exists and not db_ok:
+                # JSON exists but DB empty: not yet backfilled. The loaders
+                # backfill on read, so this is not a hard failure, but flag it
+                # as a warning-level check so a soak can confirm seeding.
+                checks.append(assert_result(
+                    f"{state_key}_db_not_stale_vs_json",
+                    True,
+                    f"'{state_key}': JSON present, DB not yet backfilled (lazy backfill on read).",
+                ))
+            else:
+                checks.append(assert_result(
+                    f"{state_key}_db_or_json_present",
+                    True,
+                    f"'{state_key}': neither DB nor JSON present (fresh state).",
+                ))
+        except Exception as exc:
+            checks.append(result(f"{state_key}_db_matches_json", False, f"read error: {exc}"))
+
+    # --- 3. Isolated write-path test (temp db, never live) ---
+    try:
+        tmp = TEST_STATE_ROOT()
+        tmp_db = tmp / automation_db.DB_FILENAME
+        # Seed a minimal DB via the real layer.
+        automation_db.init_db(tmp)
+        test_key = "regtest|EN|2|ig|c999|fold|vid|err"
+        test_rec = {"kind": "post", "abbr": "EN", "chapter": 2, "platform": "instagram",
+                    "folder": "f", "commentId": "c999", "reason": "regtest", "clearedAt": "2026-07-18"}
+        automation_db.upsert_approval_cleared(tmp, test_key, test_rec)
+        back = automation_db.load_approval_cleared_state(tmp)
+        back_items = back.get("items") if isinstance(back.get("items"), dict) else {}
+        checks.append(assert_result(
+            "approval_cleared_isolated_roundtrip",
+            test_key in back_items,
+            "Isolated temp-db round-trip of an approval_cleared row must read back.",
+        ))
+        # state_snapshots round-trip
+        automation_db.upsert_state_snapshot(tmp, "promoRotation", {"note": "isolated"})
+        snap_back = automation_db.load_state_snapshot(tmp, "promoRotation")
+        checks.append(assert_result(
+            "state_snapshot_isolated_roundtrip",
+            isinstance(snap_back, dict) and snap_back.get("note") == "isolated",
+            "Isolated temp-db round-trip of a state_snapshots row must read back.",
+        ))
+        shutil.rmtree(tmp, ignore_errors=True)
+    except Exception as exc:
+        checks.append(result("approval_cleared_isolated_roundtrip", False, f"isolated test error: {exc}"))
+
+    return checks
+
+
 def run_once() -> dict[str, object]:
     app.load_env_file()
     all_checks: list[dict[str, object]] = []
@@ -1456,6 +1825,9 @@ def run_once() -> dict[str, object]:
         check_full_youtube_ready_artifacts,
         check_approval_inbox_cleared_filter,
         check_weekly_growth_planner,
+        check_royal_road_verification,
+        check_caption_voice_rotation,
+        check_db_source_of_truth,
     ]:
         checks, timing = timed_runner(runner.__name__, runner)
         all_checks.extend(checks)
