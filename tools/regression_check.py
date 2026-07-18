@@ -1816,6 +1816,48 @@ def check_db_source_of_truth() -> list[dict[str, object]]:
         except Exception as exc:
             checks.append(result(f"{state_key}_db_matches_json", False, f"read error: {exc}"))
 
+    # --- 2c. Phase 2B: reads are DB-first (not JSON-first) ---
+    # Isolated temp DB only (TEST_STATE_ROOT); never touches live state.
+    try:
+        tmp = TEST_STATE_ROOT()
+        automation_db.init_db(tmp)
+        for state_key, json_file in (
+            ("storyHookStatus", app.STORY_HOOK_STATUS_FILE),
+            ("imageLab", app.IMAGE_LAB_FILE),
+            ("imageFeedback", app.IMAGE_FEEDBACK_FILE),
+            ("youtubePostDrafts", app.YOUTUBE_POST_DRAFTS_FILE),
+            ("contentExperiments", app.CONTENT_EXPERIMENTS_FILE),
+        ):
+            sentinel = {f"__phase2b_db_first_{state_key}__": True}
+            automation_db.upsert_state_snapshot(tmp, state_key, sentinel)
+            got = app._phase2_load_blob(state_key, json_file, root=tmp)
+            db_first = isinstance(got, dict) and got.get(f"__phase2b_db_first_{state_key}__") is True
+            checks.append(assert_result(
+                f"{state_key}_reads_db_first",
+                db_first,
+                f"Reader must return DB snapshot before JSON for '{state_key}' (DB-first source-of-truth).",
+            ))
+        # Fallback: missing DB row must fall back to JSON (when JSON exists).
+        # Use a fresh temp DB (never seeded) so the row is genuinely absent.
+        tmp2 = TEST_STATE_ROOT()
+        automation_db.init_db(tmp2)
+        json_present = app.CONTENT_EXPERIMENTS_FILE.exists()
+        got2 = app._phase2_load_blob("contentExperiments", app.CONTENT_EXPERIMENTS_FILE, root=tmp2)
+        if json_present:
+            checks.append(assert_result(
+                "contentExperiments_reads_fallback_when_db_missing",
+                isinstance(got2, dict) and "__phase2b_db_first_contentExperiments__" not in got2,
+                "When DB row is missing, reader must fall back to JSON.",
+            ))
+        else:
+            checks.append(assert_result(
+                "contentExperiments_reads_fallback_when_db_missing",
+                True,
+                "JSON absent and DB absent: empty fallback acceptable.",
+            ))
+    except Exception as exc:
+        checks.append(result("phase2b_reads_db_first", False, f"read-path error: {exc}"))
+
     # --- 3. Isolated write-path test (temp db, never live) ---
     try:
         tmp = TEST_STATE_ROOT()

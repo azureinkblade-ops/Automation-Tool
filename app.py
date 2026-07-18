@@ -384,9 +384,9 @@ def mirror_recovery_event_to_database(*args, **kwargs):
     return release_state.mirror_recovery_event_to_database(*args, **kwargs)
 def mirror_state_snapshot_to_database(*args, **kwargs):
     return release_state.mirror_state_snapshot_to_database(*args, **kwargs)
-def load_state_snapshot_from_database(key: str) -> dict[str, Any] | None:
+def load_state_snapshot_from_database(key: str, root: Any = None) -> dict[str, Any] | None:
     try:
-        return automation_db.load_state_snapshot(ROOT, key)
+        return automation_db.load_state_snapshot(root or ROOT, key)
     except Exception as exc:
         print(f"Database read failed for {key}: {exc}", file=sys.stderr)
         return None
@@ -2987,8 +2987,8 @@ _PHASE2_BLOB_MAP: tuple[tuple[str, Any], ...] = (
 )
 
 
-def _phase2_load_blob(key: str, json_file: Path) -> Any:
-    snap = load_state_snapshot(ROOT, key)
+def _phase2_load_blob(key: str, json_file: Path, root: Any = None) -> Any:
+    snap = load_state_snapshot_from_database(key, root)
     if isinstance(snap, dict):
         snap.pop("_source", None)
         return snap
@@ -4618,7 +4618,7 @@ def image_lab_score_summary() -> dict[str, Any]:
         cache_key = "missing"
     if IMAGE_LAB_SUMMARY_CACHE.get("key") == cache_key:
         return IMAGE_LAB_SUMMARY_CACHE.get("value", {})
-    data = read_json_safe(IMAGE_LAB_FILE)
+    data = _phase2_load_blob("imageLab", IMAGE_LAB_FILE)
     runs = data.get("runs", []) if isinstance(data, dict) and isinstance(data.get("runs"), list) else []
     by_novel: dict[str, dict[str, Any]] = {}
     recent_winners: list[dict[str, Any]] = []
@@ -5911,7 +5911,7 @@ def record_image_feedback(
     metadata: dict[str, Any],
     note: str = "",
 ) -> dict[str, Any]:
-    data = read_json_safe(IMAGE_FEEDBACK_FILE)
+    data = _phase2_load_blob("imageFeedback", IMAGE_FEEDBACK_FILE)
     if not isinstance(data, dict):
         data = {"schemaVersion": 1, "records": []}
     records = data.setdefault("records", [])
@@ -9574,7 +9574,7 @@ def image_lab_for_chapter(abbr: str, chapter: int | str, *, generate: bool = Fal
     quotes = fallback_quotes_from_chapter(text, max(5, count + 2))[: max(3, count)]
     if not quotes:
         quotes = [clean_teaser_text(text, 180, max_words=28) or title]
-    data = read_json_safe(IMAGE_LAB_FILE)
+    data = _phase2_load_blob("imageLab", IMAGE_LAB_FILE)
     prior_scores_by_image: dict[str, dict[str, Any]] = {}
     if isinstance(data, dict):
         for prior_run in data.get("runs", []) or []:
@@ -9696,7 +9696,7 @@ def score_image_lab_candidate(run_id: str, image_path: str, score: str, note: st
     allowed = {"winner", "good", "reject"}
     if score not in allowed:
         raise RuntimeError("Choose winner, good, or reject.")
-    data = read_json_safe(IMAGE_LAB_FILE)
+    data = _phase2_load_blob("imageLab", IMAGE_LAB_FILE)
     if not isinstance(data, dict):
         raise RuntimeError("Image Lab data was not found.")
     run = next((item for item in data.get("runs", []) if str(item.get("id") or "") == str(run_id)), None)
@@ -9752,7 +9752,7 @@ def export_image_training_dataset(abbr: str = "", include_good: bool = True) -> 
             }
         )
 
-    lab = read_json_safe(IMAGE_LAB_FILE)
+    lab = _phase2_load_blob("imageLab", IMAGE_LAB_FILE)
     allowed_scores = {"winner", "good"} if include_good else {"winner"}
     if isinstance(lab, dict):
         for run in lab.get("runs", []) or []:
@@ -9793,7 +9793,7 @@ def export_image_training_dataset(abbr: str = "", include_good: bool = True) -> 
                     {"chapter": run.get("chapter"), "title": run.get("title"), "scoredAt": scored.get("scoredAt", "")},
                 )
 
-    feedback = read_json_safe(IMAGE_FEEDBACK_FILE)
+    feedback = _phase2_load_blob("imageFeedback", IMAGE_FEEDBACK_FILE)
     if isinstance(feedback, dict):
         for record in feedback.get("records", []) or []:
             if not isinstance(record, dict):
@@ -9863,7 +9863,7 @@ def image_feedback_score_maps() -> tuple[dict[str, float], set[str]]:
     rejected: set[str] = set()
     fingerprint_scores: dict[str, float] = {}
     rejected_fingerprints: set[str] = set()
-    lab = read_json_safe(IMAGE_LAB_FILE)
+    lab = _phase2_load_blob("imageLab", IMAGE_LAB_FILE)
     if isinstance(lab, dict):
         for run in lab.get("runs", []) or []:
             if not isinstance(run, dict):
@@ -9889,7 +9889,7 @@ def image_feedback_score_maps() -> tuple[dict[str, float], set[str]]:
                     if 0 < score_value <= 1:
                         score_value *= 100
                 scores[path] = max(scores.get(path, 0), score_value)
-    feedback = read_json_safe(IMAGE_FEEDBACK_FILE)
+    feedback = _phase2_load_blob("imageFeedback", IMAGE_FEEDBACK_FILE)
     if isinstance(feedback, dict):
         for item in feedback.get("records", []) or []:
             if not isinstance(item, dict) or not item.get("image"):
@@ -9932,7 +9932,7 @@ def image_feedback_training_summary(abbr: str = "") -> dict[str, Any]:
     cached_value = IMAGE_FEEDBACK_TRAINING_CACHE.get(cache_key)
     if isinstance(cached_value, dict):
         return cached_value
-    feedback = read_json_safe(IMAGE_FEEDBACK_FILE)
+    feedback = _phase2_load_blob("imageFeedback", IMAGE_FEEDBACK_FILE)
     records = feedback.get("records", []) if isinstance(feedback, dict) and isinstance(feedback.get("records"), list) else []
     provider_counts: dict[str, dict[str, int]] = {}
     term_counts: dict[str, dict[str, int]] = {}
@@ -11596,7 +11596,7 @@ def build_youtube_post_drafts() -> dict[str, Any]:
         "videoTargets": videos,
         "status": "draft",
     }
-    data = read_json_safe(YOUTUBE_POST_DRAFTS_FILE)
+    data = _phase2_load_blob("youtubePostDrafts", YOUTUBE_POST_DRAFTS_FILE)
     if not isinstance(data, dict):
         data = {"schemaVersion": 1, "drafts": []}
     data.setdefault("drafts", []).append(draft)
@@ -11607,7 +11607,7 @@ def build_youtube_post_drafts() -> dict[str, Any]:
 
 
 def target_youtube_poll_draft(draft_id: str, video_id: str) -> dict[str, Any]:
-    data = read_json_safe(YOUTUBE_POST_DRAFTS_FILE)
+    data = _phase2_load_blob("youtubePostDrafts", YOUTUBE_POST_DRAFTS_FILE)
     if not isinstance(data, dict):
         raise RuntimeError("YouTube poll drafts were not found.")
     draft = next((item for item in data.get("drafts", []) if str(item.get("id") or "") == str(draft_id)), None)
@@ -11676,7 +11676,7 @@ def growth_automation_dashboard() -> dict[str, Any]:
     return {
         "generatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
         "providerStrategy": provider_strategy_status(),
-        "imageLab": read_json_safe(IMAGE_LAB_FILE) or {"runs": []},
+        "imageLab": _phase2_load_blob("imageLab", IMAGE_LAB_FILE) or {"runs": []},
         "analyticsLab": read_json_safe(ANALYTICS_LAB_FILE) or {},
         "thumbnailTests": read_json_safe(THUMBNAIL_TESTS_FILE) or {"candidates": []},
         "pinnedAssets": read_json_safe(PINNED_ASSET_PLAN_FILE) or {"prompts": []},
@@ -11687,7 +11687,7 @@ def growth_automation_dashboard() -> dict[str, Any]:
         "resurfacing": resurfacing_and_repost_candidates(),
         "conversions": conversions if isinstance(conversions, dict) else {"platforms": {}, "snapshots": []},
         "pinned": pinned_content_plan(),
-        "youtubePollDrafts": read_json_safe(YOUTUBE_POST_DRAFTS_FILE) or {"drafts": []},
+        "youtubePollDrafts": _phase2_load_blob("youtubePostDrafts", YOUTUBE_POST_DRAFTS_FILE) or {"drafts": []},
         "winnerRecommendations": analytics_winner_recommendations(False),
         "creatorBenchmarks": creator_benchmark_dashboard(),
         "commentIdeas": comment_content_ideas(),
@@ -12478,7 +12478,7 @@ def story_hook_folder_has_rebuild_source(folder: Path) -> bool:
 
 
 def latest_ready_story_hook_folder() -> Path | None:
-    status = read_json_safe(STORY_HOOK_STATUS_FILE)
+    status = _phase2_load_blob("storyHookStatus", STORY_HOOK_STATUS_FILE)
     if not isinstance(status, dict):
         status = {}
     folder_value = str(status.get("folder") or "")
@@ -18199,7 +18199,7 @@ def choose_story_hook_archetype(abbr: str = "", angle: str = "") -> dict[str, st
     custom = str(angle or "").strip()
     if custom:
         return {"name": "custom", "angle": custom, "titlePattern": custom}
-    history = read_json_safe(STORY_HOOK_STATUS_FILE)
+    history = _phase2_load_blob("storyHookStatus", STORY_HOOK_STATUS_FILE)
     used_names: list[str] = []
     if isinstance(history, dict):
         previous = history.get("recentArchetypes")
@@ -18603,7 +18603,7 @@ def story_hook_video_worker(job: dict[str, Any]) -> None:
             except Exception:
                 pass
         recent = []
-        previous = read_json_safe(STORY_HOOK_STATUS_FILE)
+        previous = _phase2_load_blob("storyHookStatus", STORY_HOOK_STATUS_FILE)
         if isinstance(previous, dict) and isinstance(previous.get("recentArchetypes"), list):
             recent = [str(item) for item in previous.get("recentArchetypes", [])]
         if state.get("archetype"):
@@ -18670,7 +18670,7 @@ def start_story_hook_video_writer(abbr: str = "", angle: str = "", target_words:
 
 
 def story_hook_video_status() -> dict[str, Any]:
-    state = read_json_safe(STORY_HOOK_STATUS_FILE)
+    state = _phase2_load_blob("storyHookStatus", STORY_HOOK_STATUS_FILE)
     if not isinstance(state, dict) or not state:
         return {"running": False, "ready": False, "outputRoot": str(STORY_HOOK_OUTPUT_DIR), "message": "No story hook video is currently prepared."}
     folder_value = str(state.get("folder") or "")
@@ -28967,7 +28967,7 @@ def story_hook_text_from_folder(folder: Path, metadata: dict[str, Any] | None = 
                     if isinstance(nested, str) and len(nested.strip().split()) >= 80:
                         return nested.strip()
             return stripped
-    status = read_json_safe(STORY_HOOK_STATUS_FILE)
+    status = _phase2_load_blob("storyHookStatus", STORY_HOOK_STATUS_FILE)
     if str(status.get("folder") or "").strip().lower() == str(folder).strip().lower():
         for key in ["story", "storyText", "fullStory", "narration"]:
             value = status.get(key)
