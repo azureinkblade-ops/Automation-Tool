@@ -572,6 +572,18 @@ def init_db(root: Path) -> Path:
                 CREATE INDEX IF NOT EXISTS idx_platform_post_actions_lookup
                     ON platform_post_actions(post_id, action_type, created_at);
 
+                CREATE TABLE IF NOT EXISTS social_stats_daily (
+                    stat_id TEXT PRIMARY KEY,
+                    platform TEXT NOT NULL,
+                    channel TEXT NOT NULL,
+                    collected_date TEXT NOT NULL,
+                    metrics_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_social_stats_daily_lookup
+                    ON social_stats_daily(platform, channel, collected_date);
+
                 CREATE TABLE IF NOT EXISTS weekly_growth_plans (
                     plan_id TEXT PRIMARY KEY,
                     week_start TEXT NOT NULL UNIQUE,
@@ -1716,6 +1728,78 @@ def load_state_snapshot(root: Path, key: str) -> dict[str, Any] | None:
         payload["_source"] = "sqlite"
         return payload
     return None
+
+
+def save_social_stats_daily(
+    root: Path,
+    platform: str,
+    channel: str,
+    collected_date: str,
+    metrics: dict[str, Any],
+) -> None:
+    init_db(root)
+    now = utc_now_text()
+    stat_id = stable_id("social", platform, channel, collected_date)
+    with _LOCK:
+        with connect(root) as conn:
+            conn.execute(
+                """
+                INSERT INTO social_stats_daily(
+                    stat_id, platform, channel, collected_date, metrics_json, created_at
+                )
+                VALUES(?, ?, ?, ?, ?, ?)
+                ON CONFLICT(stat_id) DO UPDATE SET
+                    metrics_json=excluded.metrics_json,
+                    created_at=excluded.created_at
+                """,
+                (stat_id, platform, channel, collected_date, dumps_json(metrics), now),
+            )
+            conn.commit()
+
+
+def load_social_stats_daily(root: Path, collected_date: str) -> list[dict[str, Any]]:
+    init_db(root)
+    with _LOCK:
+        with connect(root) as conn:
+            rows = conn.execute(
+                "SELECT platform, channel, metrics_json FROM social_stats_daily "
+                "WHERE collected_date=? ORDER BY platform, channel",
+                (collected_date,),
+            ).fetchall()
+    out = []
+    for row in rows:
+        try:
+            metrics = loads_json(row["metrics_json"])
+        except Exception:
+            metrics = {}
+        out.append({"platform": row["platform"], "channel": row["channel"], "metrics": metrics})
+    return out
+
+
+def load_social_stats_recent(root: Path, limit: int = 30) -> list[dict[str, Any]]:
+    init_db(root)
+    with _LOCK:
+        with connect(root) as conn:
+            rows = conn.execute(
+                "SELECT platform, channel, collected_date, metrics_json "
+                "FROM social_stats_daily ORDER BY collected_date DESC, platform, channel LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+    out = []
+    for row in rows:
+        try:
+            metrics = loads_json(row["metrics_json"])
+        except Exception:
+            metrics = {}
+        out.append(
+            {
+                "platform": row["platform"],
+                "channel": row["channel"],
+                "collected_date": row["collected_date"],
+                "metrics": metrics,
+            }
+        )
+    return out
 
 
 def load_chapter_ledger(root: Path) -> dict[str, Any]:
