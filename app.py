@@ -16085,9 +16085,10 @@ def make_weekend_social_post(abbr: str, day: str) -> dict[str, Any]:
                 if _novel_tag and _novel_tag not in _ag_tags:
                     _ag_tags = f"{_ag_tags} {_novel_tag}".strip()
                 _fb_body = _ag_cap + (f"\n\n{_ag_cta}" if _ag_cta else "")
+                _ig_body = _ag_cap + (f"\n\n{_ag_cta}" if _ag_cta else "")
                 copy = {
-                    "instagram": f"{_ag_cap}\n\n{_ag_tags}",
-                    "x": f"{_ag_cap}\n\n{_ag_tags}" if len(f"{_ag_cap}\n\n{_ag_tags}") <= 280 else f"{_ag_tags}",
+                    "instagram": f"{_ig_body}\n\n{_ag_tags}",
+                    "x": f"{_ig_body}\n\n{_ag_tags}" if len(f"{_ig_body}\n\n{_ag_tags}") <= 280 else f"{_ag_tags}",
                     "facebook": f"{_fb_body}\n\n{_ag_tags}",
                     "alt_text": copy.get("alt_text", f"Weekend promotional image for {_profile.get('name', abbr)}."),
                     "post_focus": copy.get("post_focus", ""),

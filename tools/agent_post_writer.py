@@ -139,14 +139,18 @@ this novel never borrows another novel's voice):
 
 Return ONLY a JSON object (no markdown fence, no commentary) with these keys:
 - "hook": a 1-line reader hook (may reuse or sharpen the chapter hook above)
-- "caption": the post body (2-4 sentences, reader-facing, novel-specific)
-- "cta": a single call-to-action line
+- "caption": the post BODY only (2-4 sentences, reader-facing, novel-specific).
+  Do NOT include the call-to-action in the caption — the app appends "cta" separately,
+  so repeating it here would duplicate it.
+- "cta": a single call-to-action line (e.g. "Start {novel} here: <link>" or
+  "Add {novel} to your weekend reading queue."). One line, no repetition.
 - "hashtags": an array of 6-9 hashtags (must include the novel tag + #AzureInkblade;
   respect the brief's banned set)
 - "content_angle": one short phrase naming the angle you chose
 - "intended_audience": one short phrase
 
 Do NOT mention "this post", "caption", "hashtags", or the marketing strategy.
+The caption and cta together form one post — keep each distinct so nothing is repeated.
 """
 
 

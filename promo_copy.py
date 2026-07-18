@@ -919,8 +919,10 @@ def build_platform_posts(
             _ag_tag_str = f"#AzureInkblade {_ag_tag_str}".strip()
         if novel_tag and novel_tag not in _ag_tag_str:
             _ag_tag_str = f"{_ag_tag_str} {novel_tag}".strip()
-        # Instagram: agent caption + agent hashtags (drops the template style lines).
-        instagram_caption = f"{_ag_caption}\n\n{_ag_tag_str}"
+        # Instagram: agent caption + agent cta (once) + agent hashtags.
+        instagram_caption = (
+            f"{_ag_caption}\n\n{_ag_cta}\n\n{_ag_tag_str}" if _ag_cta else f"{_ag_caption}\n\n{_ag_tag_str}"
+        )
         # Facebook: keep novel/title header + agent caption + agent cta + agent tags.
         _fb_body = _ag_caption
         if _ag_cta:
