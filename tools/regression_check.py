@@ -1796,10 +1796,11 @@ def check_db_source_of_truth() -> list[dict[str, object]]:
 
 
 # ---------------------------------------------------------------------------
-# KNOWN-BROKEN REGRESSION CHECKS (testing contract)
+# KNOWN-BROKEN HARNESS WIRING (testing contract — NOT "expected failures")
 # ---------------------------------------------------------------------------
-# These checks fail in the current soak but are NOT caused by feature code
-# under test. They are pre-existing harness/test-architecture issues:
+# These checks fail in the current soak because of harness/test-architecture
+# wiring gaps (NOT feature code under test). They are tracked follow-up work
+# and must NOT become permanent background noise:
 #   * release_state.* and approval_inbox.* expose a "collaborator" seam that is
 #     wired only when app.py boots the live server. The regression harness
 #     imports those modules directly in its OWN process, where the seam is
@@ -1808,7 +1809,9 @@ def check_db_source_of_truth() -> list[dict[str, object]]:
 #     advance under a standalone in-process call.
 # They are listed here so Phase 2 starts from a clean contract: the soak's
 # "ok" still reflects raw failures, but "okExcludingKnownBroken" lets CI gate
-# on real regressions only. FIX or remove from this set before claiming green.
+# on real regressions only. Each is labeled category "known-broken-harness-
+# wiring" in the report. FIX or remove from this set before claiming green;
+# see the vault follow-up item for the repair plan.
 KNOWN_BROKEN_CHECKS: dict[str, str] = {
     "pack_preview_image_cards": "harness: app.pack_preview() in-process raises (collaborator seams unwired in harness process)",
     "check_pack_preview_speed": "release_state collaborator 'novel_schedule_entry' not injected (harness calls release_state in-process, seam only wired in live server)",
@@ -1870,10 +1873,13 @@ def run_once() -> dict[str, object]:
 
     failed = [item for item in all_checks if not item.get("ok")]
     # Annotate known-broken checks so the contract is explicit (Phase 2 gate).
+    # Labeled category "known-broken-harness-wiring" (NOT "expected failure") so
+    # they stay visible as tracked follow-up work, not silent background noise.
     for item in all_checks:
         name = item.get("name")
         if name in KNOWN_BROKEN_CHECKS:
             item["knownBroken"] = True
+            item["knownBrokenCategory"] = "known-broken-harness-wiring"
             item["knownBrokenReason"] = KNOWN_BROKEN_CHECKS[name]
     real_failures = [item for item in failed if not item.get("knownBroken")]
     report = {
