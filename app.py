@@ -361,6 +361,23 @@ def database_state_files() -> dict[str, Path]:
         "imageFeedback": IMAGE_FEEDBACK_FILE,
         "youtubePostDrafts": YOUTUBE_POST_DRAFTS_FILE,
         "contentExperiments": CONTENT_EXPERIMENTS_FILE,
+        # Phase 2C: growth/strategy state
+        "growthControlCenter": GROWTH_CONTROL_CENTER_FILE,
+        "growthOptimizerPlan": GROWTH_OPTIMIZER_FILE,
+        "growthWeeklyReport": GROWTH_WEEKLY_REPORT_FILE,
+        "weeklyGrowthSettings": WEEKLY_GROWTH_SETTINGS_FILE,
+        "predictiveGrowthPlan": PREDICTIVE_GROWTH_PLAN_FILE,
+        "instagramGrowthBlueprint": INSTAGRAM_GROWTH_BLUEPRINT_FILE,
+        "creatorBenchmarks": CREATOR_BENCHMARK_FILE,
+        "conversionTracking": CONVERSION_TRACKING_FILE,
+        "profileConversionAudit": PROFILE_AUDIT_FILE,
+        "brandBrain": BRAND_BRAIN_FILE,
+        "arcCampaigns": ARC_CAMPAIGN_FILE,
+        "commentAssistant": COMMENT_ASSISTANT_FILE,
+        "commentGatherResults": COMMENT_GATHER_RAW_FILE,
+        "metricsGatherResults": METRICS_GATHER_FILE,
+        "growthStatsHistory": GROWTH_STATS_HISTORY_FILE,
+        "automationStrategy": AUTOMATION_STRATEGY_FILE,
     }
 
 
@@ -1636,7 +1653,7 @@ def monetization_dashboard() -> dict[str, Any]:
         recommendations.append({"platform": "youtube", "action": "Watch-hour gap remains. Keep full chapter videos separate from the main promo workflow and post consistently."})
     if numeric_metric(instagram.get("followers")) >= numeric_metric(tiktok.get("followers")):
         recommendations.append({"platform": "instagram", "action": "Instagram is your trust/follower anchor. Use it for carousels, reels, and profile-to-Patreon conversion."})
-    weekly_report = read_json_safe(GROWTH_WEEKLY_REPORT_FILE)
+    weekly_report = _phase2_load_blob("growthWeeklyReport", GROWTH_WEEKLY_REPORT_FILE)
     if not isinstance(weekly_report, dict):
         weekly_report = write_growth_weekly_report()
     youtube_conversion = youtube_subscriber_conversion_plan(20)
@@ -2953,7 +2970,7 @@ def default_brand_profile(abbr: str) -> dict[str, Any]:
 
 
 def load_brand_brain() -> dict[str, Any]:
-    data = read_json_safe(BRAND_BRAIN_FILE)
+    data = _phase2_load_blob("brandBrain", BRAND_BRAIN_FILE)
     if not isinstance(data, dict):
         data = {"schemaVersion": 1, "profiles": {}}
     profiles = data.setdefault("profiles", {})
@@ -2961,7 +2978,7 @@ def load_brand_brain() -> dict[str, Any]:
         profiles.setdefault(abbr, default_brand_profile(abbr))
     data["updatedAt"] = data.get("updatedAt") or time.strftime("%Y-%m-%d %H:%M:%S")
     if not BRAND_BRAIN_FILE.exists():
-        write_json_atomic(BRAND_BRAIN_FILE, data)
+        _phase2_save_blob("brandBrain", BRAND_BRAIN_FILE, data)
     return data
 
 
@@ -2984,6 +3001,23 @@ _PHASE2_BLOB_MAP: tuple[tuple[str, Any], ...] = (
     ("imageFeedback", IMAGE_FEEDBACK_FILE),
     ("youtubePostDrafts", YOUTUBE_POST_DRAFTS_FILE),
     ("contentExperiments", CONTENT_EXPERIMENTS_FILE),
+    # Phase 2C: growth/strategy state -> SQLite (DB-first + dual-write)
+    ("growthControlCenter", GROWTH_CONTROL_CENTER_FILE),
+    ("growthOptimizerPlan", GROWTH_OPTIMIZER_FILE),
+    ("growthWeeklyReport", GROWTH_WEEKLY_REPORT_FILE),
+    ("weeklyGrowthSettings", WEEKLY_GROWTH_SETTINGS_FILE),
+    ("predictiveGrowthPlan", PREDICTIVE_GROWTH_PLAN_FILE),
+    ("instagramGrowthBlueprint", INSTAGRAM_GROWTH_BLUEPRINT_FILE),
+    ("creatorBenchmarks", CREATOR_BENCHMARK_FILE),
+    ("conversionTracking", CONVERSION_TRACKING_FILE),
+    ("profileConversionAudit", PROFILE_AUDIT_FILE),
+    ("brandBrain", BRAND_BRAIN_FILE),
+    ("arcCampaigns", ARC_CAMPAIGN_FILE),
+    ("commentAssistant", COMMENT_ASSISTANT_FILE),
+    ("commentGatherResults", COMMENT_GATHER_RAW_FILE),
+    ("metricsGatherResults", METRICS_GATHER_FILE),
+    ("growthStatsHistory", GROWTH_STATS_HISTORY_FILE),
+    ("automationStrategy", AUTOMATION_STRATEGY_FILE),
 )
 
 
@@ -3565,7 +3599,7 @@ def write_growth_weekly_report(store: dict[str, Any] | None = None) -> dict[str,
         "trackedLinksEnabled": True,
         "note": "Automatic scoring changes selection weights only. It does not create additional posts.",
     }
-    write_json_atomic(GROWTH_WEEKLY_REPORT_FILE, report)
+    _phase2_save_blob("growthWeeklyReport", GROWTH_WEEKLY_REPORT_FILE, report)
     return report
 
 
@@ -3891,7 +3925,7 @@ def _gather_experiment_metrics_with_playwright(apply_matches: bool = True, open_
         timeout=180,
         check=False,
     )
-    raw = read_json_safe(METRICS_GATHER_FILE)
+    raw = _phase2_load_blob("metricsGatherResults", METRICS_GATHER_FILE)
     if not isinstance(raw, dict):
         raw = {}
     normalized_results: list[dict[str, Any]] = []
@@ -3942,7 +3976,7 @@ def _gather_experiment_metrics_with_playwright(apply_matches: bool = True, open_
         "store": content_experiment_overview(),
     }
     payload["conversionTracking"] = update_conversion_tracking(normalized_results)
-    write_json_atomic(METRICS_GATHER_FILE, {**raw, "normalized": normalized_results, "applied": applied})
+    _phase2_save_blob("metricsGatherResults", METRICS_GATHER_FILE, {**raw, "normalized": normalized_results, "applied": applied})
     return payload
 
 
@@ -4036,18 +4070,18 @@ def apply_growth_stats_from_metrics(results: list[dict[str, Any]]) -> dict[str, 
     if monthly_revenue > 0:
         save_payload["monthlyPatreonRevenue"] = monthly_revenue
     saved = save_monetization_status(save_payload) if updates or monthly_revenue else load_monetization_status()
-    history = read_json_safe(GROWTH_STATS_HISTORY_FILE)
+    history = _phase2_load_blob("growthStatsHistory", GROWTH_STATS_HISTORY_FILE)
     if not isinstance(history, dict):
         history = {"schemaVersion": 1, "snapshots": []}
     snapshots = history.setdefault("snapshots", [])
     snapshots.append({"collectedAt": time.strftime("%Y-%m-%d %H:%M:%S"), "updates": updates, "evidence": evidence})
     history["snapshots"] = snapshots[-100:]
-    write_json_atomic(GROWTH_STATS_HISTORY_FILE, history)
+    _phase2_save_blob("growthStatsHistory", GROWTH_STATS_HISTORY_FILE, history)
     return {"updatedPlatforms": updates, "evidence": evidence, "status": saved, "historyFile": str(GROWTH_STATS_HISTORY_FILE)}
 
 
 def weekly_growth_stats_status() -> dict[str, Any]:
-    history = read_json_safe(GROWTH_STATS_HISTORY_FILE)
+    history = _phase2_load_blob("growthStatsHistory", GROWTH_STATS_HISTORY_FILE)
     snapshots = history.get("snapshots", []) if isinstance(history, dict) and isinstance(history.get("snapshots"), list) else []
     latest = snapshots[-1] if snapshots else {}
     collected_at = str(latest.get("collectedAt") or "")
@@ -4079,7 +4113,7 @@ def growth_snapshot_platform_metrics(snapshot: dict[str, Any], platform: str) ->
 
 
 def growth_velocity_summary() -> dict[str, Any]:
-    history = read_json_safe(GROWTH_STATS_HISTORY_FILE)
+    history = _phase2_load_blob("growthStatsHistory", GROWTH_STATS_HISTORY_FILE)
     snapshots = history.get("snapshots", []) if isinstance(history, dict) and isinstance(history.get("snapshots"), list) else []
     platforms = ["tiktok", "instagram", "youtube", "x", "facebook", "patreon", "royalroad"]
     rows: list[dict[str, Any]] = []
@@ -4129,7 +4163,7 @@ def growth_velocity_summary() -> dict[str, Any]:
 
 
 def instagram_growth_blueprint(refresh: bool = False) -> dict[str, Any]:
-    existing = read_json_safe(INSTAGRAM_GROWTH_BLUEPRINT_FILE)
+    existing = _phase2_load_blob("instagramGrowthBlueprint", INSTAGRAM_GROWTH_BLUEPRINT_FILE)
     if isinstance(existing, dict) and not refresh:
         return existing
 
@@ -4339,7 +4373,7 @@ def instagram_growth_blueprint(refresh: bool = False) -> dict[str, Any]:
         },
         "file": str(INSTAGRAM_GROWTH_BLUEPRINT_FILE),
     }
-    write_json_atomic(INSTAGRAM_GROWTH_BLUEPRINT_FILE, blueprint)
+    _phase2_save_blob("instagramGrowthBlueprint", INSTAGRAM_GROWTH_BLUEPRINT_FILE, blueprint)
     return blueprint
 
 
@@ -4548,7 +4582,7 @@ def growth_control_recommended_actions(
 
 def growth_control_center(refresh: bool = True) -> dict[str, Any]:
     if not refresh:
-        existing = read_json_safe(GROWTH_CONTROL_CENTER_FILE)
+        existing = _phase2_load_blob("growthControlCenter", GROWTH_CONTROL_CENTER_FILE)
         if isinstance(existing, dict):
             return existing
     approval = approval_inbox()
@@ -4605,7 +4639,7 @@ def growth_control_center(refresh: bool = True) -> dict[str, Any]:
         },
         "note": "This is a read-only control center. It summarizes existing app state and recommends existing workflows; it does not publish or queue posts by itself.",
     }
-    write_json_atomic(GROWTH_CONTROL_CENTER_FILE, report)
+    _phase2_save_blob("growthControlCenter", GROWTH_CONTROL_CENTER_FILE, report)
     return report
 
 
@@ -4765,7 +4799,7 @@ def growth_optimizer_plan() -> dict[str, Any]:
         "file": str(GROWTH_OPTIMIZER_FILE),
         "note": "Local optimizer only. It uses saved metrics, Image Lab scores, and experiment results; it does not create or publish posts by itself.",
     }
-    write_json_atomic(GROWTH_OPTIMIZER_FILE, payload)
+    _phase2_save_blob("growthOptimizerPlan", GROWTH_OPTIMIZER_FILE, payload)
     return payload
 
 
@@ -4775,7 +4809,7 @@ def collect_growth_stats_with_playwright(open_missing: bool = False) -> dict[str
     if youtube_api.get("normalized"):
         existing_results = gathered.setdefault("results", [])
         existing_results.extend(youtube_api["normalized"])
-        raw = read_json_safe(METRICS_GATHER_FILE)
+        raw = _phase2_load_blob("metricsGatherResults", METRICS_GATHER_FILE)
         if not isinstance(raw, dict):
             raw = {}
         normalized = raw.get("normalized") if isinstance(raw.get("normalized"), list) else []
@@ -4783,7 +4817,7 @@ def collect_growth_stats_with_playwright(open_missing: bool = False) -> dict[str
         raw["normalized"] = normalized
         raw["youtubeApi"] = youtube_api
         raw["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        write_json_atomic(METRICS_GATHER_FILE, raw)
+        _phase2_save_blob("metricsGatherResults", METRICS_GATHER_FILE, raw)
     growth = apply_growth_stats_from_metrics(gathered.get("results") or [])
     optimizer = growth_optimizer_plan()
     platform_results = gathered.get("results") or []
@@ -5108,7 +5142,7 @@ async function collectMetaInboxCandidates(page) {{
 
 
 def load_comment_assistant() -> dict[str, Any]:
-    data = read_json_safe(COMMENT_ASSISTANT_FILE)
+    data = _phase2_load_blob("commentAssistant", COMMENT_ASSISTANT_FILE)
     if not isinstance(data, dict):
         data = {"schemaVersion": 2, "comments": [], "lastGatheredAt": "", "lastError": ""}
     data["schemaVersion"] = max(2, int(data.get("schemaVersion") or 1))
@@ -5120,7 +5154,7 @@ def load_comment_assistant() -> dict[str, Any]:
 
 def save_comment_assistant(data: dict[str, Any]) -> None:
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(COMMENT_ASSISTANT_FILE, data)
+    _phase2_save_blob("commentAssistant", COMMENT_ASSISTANT_FILE, data)
 
 
 def comment_novel(text: str) -> str:
@@ -5390,7 +5424,7 @@ def gather_comments_with_playwright(open_missing: bool = True) -> dict[str, Any]
             timeout=180,
             check=False,
         )
-        raw = read_json_safe(COMMENT_GATHER_RAW_FILE)
+        raw = _phase2_load_blob("commentGatherResults", COMMENT_GATHER_RAW_FILE)
         if not isinstance(raw, dict):
             raw = {}
         gathered = normalize_gathered_comments(raw)
@@ -7710,7 +7744,7 @@ def creator_benchmark_default_queries() -> list[str]:
 
 
 def load_creator_benchmarks() -> dict[str, Any]:
-    data = read_json_safe(CREATOR_BENCHMARK_FILE)
+    data = _phase2_load_blob("creatorBenchmarks", CREATOR_BENCHMARK_FILE)
     if not isinstance(data, dict):
         data = {}
     data.setdefault("schemaVersion", 1)
@@ -7724,7 +7758,7 @@ def load_creator_benchmarks() -> dict[str, Any]:
 
 def save_creator_benchmarks(data: dict[str, Any]) -> None:
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(CREATOR_BENCHMARK_FILE, data)
+    _phase2_save_blob("creatorBenchmarks", CREATOR_BENCHMARK_FILE, data)
 
 
 def normalize_creator_handle(value: str) -> str:
@@ -8628,7 +8662,7 @@ def metrics_for_post_record(record: dict[str, Any]) -> tuple[dict[str, Any], str
         if video_id:
             item = youtube_video_stats(video_id)
             return item["metrics"], item["watchUrl"], "High"
-    raw = read_json_safe(METRICS_GATHER_FILE)
+    raw = _phase2_load_blob("metricsGatherResults", METRICS_GATHER_FILE)
     normalized = raw.get("normalized") if isinstance(raw, dict) and isinstance(raw.get("normalized"), list) else []
     if platform == "youtube":
         video_id = youtube_video_id_from_value(record.get("youtubeVideoId") or record.get("liveUrl") or "")
@@ -8955,7 +8989,7 @@ def mark_approval_item_cleared(kind: str, item: dict[str, Any], reason: str = "c
 def clear_approval_inbox_item(*args, **kwargs):
     return approval_inbox_mod.clear_approval_inbox_item(*args, **kwargs)
 def update_conversion_tracking(results: list[dict[str, Any]]) -> dict[str, Any]:
-    data = read_json_safe(CONVERSION_TRACKING_FILE)
+    data = _phase2_load_blob("conversionTracking", CONVERSION_TRACKING_FILE)
     if not isinstance(data, dict):
         data = {"schemaVersion": 1, "snapshots": [], "platforms": {}}
     now = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -8978,7 +9012,7 @@ def update_conversion_tracking(results: list[dict[str, Any]]) -> dict[str, Any]:
         data.setdefault("snapshots", []).append(snapshot)
         data["snapshots"] = data["snapshots"][-90:]
     data["updatedAt"] = now
-    write_json_atomic(CONVERSION_TRACKING_FILE, data)
+    _phase2_save_blob("conversionTracking", CONVERSION_TRACKING_FILE, data)
     return data
 
 
@@ -9366,12 +9400,12 @@ def arc_campaign_plans(build_drafts: bool = False, only_abbr: str = "") -> dict[
             (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
             drafts.append(auto_publish_generated_media(folder, payload))
     result = {"generatedAt": time.strftime("%Y-%m-%d %H:%M:%S"), "plans": plans, "drafts": drafts, "file": str(ARC_CAMPAIGN_FILE)}
-    write_json_atomic(ARC_CAMPAIGN_FILE, result)
+    _phase2_save_blob("arcCampaigns", ARC_CAMPAIGN_FILE, result)
     return result
 
 
 def profile_conversion_audit() -> dict[str, Any]:
-    raw = read_json_safe(METRICS_GATHER_FILE)
+    raw = _phase2_load_blob("metricsGatherResults", METRICS_GATHER_FILE)
     gathered = {str(item.get("platform") or ""): str(item.get("textSample") or "") for item in (raw or {}).get("results", [])} if isinstance(raw, dict) else {}
     audits = []
     for platform in ["tiktok", "instagram", "youtube", "x", "facebook", "patreon", "royalroad"]:
@@ -9386,7 +9420,7 @@ def profile_conversion_audit() -> dict[str, Any]:
         missing = [key for key, value in checks.items() if not value]
         audits.append({"platform": platform, "checks": checks, "missing": missing, "status": "review_needed" if missing else "complete"})
     result = {"generatedAt": time.strftime("%Y-%m-%d %H:%M:%S"), "audits": audits, "file": str(PROFILE_AUDIT_FILE), "note": "Browser text checks are approximate and never edit profiles automatically."}
-    write_json_atomic(PROFILE_AUDIT_FILE, result)
+    _phase2_save_blob("profileConversionAudit", PROFILE_AUDIT_FILE, result)
     return result
 
 
@@ -9426,7 +9460,7 @@ def default_automation_strategy() -> dict[str, Any]:
 
 
 def load_automation_strategy() -> dict[str, Any]:
-    data = read_json_safe(AUTOMATION_STRATEGY_FILE)
+    data = _phase2_load_blob("automationStrategy", AUTOMATION_STRATEGY_FILE)
     if not isinstance(data, dict):
         data = default_automation_strategy()
     defaults = default_automation_strategy()
@@ -9460,7 +9494,7 @@ def save_automation_strategy(updates: dict[str, Any]) -> dict[str, Any]:
         elif key in data:
             data[key] = value
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(AUTOMATION_STRATEGY_FILE, data)
+    _phase2_save_blob("automationStrategy", AUTOMATION_STRATEGY_FILE, data)
     return data
 
 
@@ -10896,7 +10930,7 @@ def mark_pinned_asset_applied(asset_id: str, status: str = "planned") -> dict[st
 
 
 def analytics_lab_dashboard() -> dict[str, Any]:
-    conversions = read_json_safe(CONVERSION_TRACKING_FILE)
+    conversions = _phase2_load_blob("conversionTracking", CONVERSION_TRACKING_FILE)
     weekly = write_growth_weekly_report()
     optimizer = growth_optimizer_plan()
     result = {
@@ -11463,7 +11497,7 @@ def predictive_growth_recommendations() -> dict[str, Any]:
     creator_benchmarks = creator_benchmark_dashboard()
     weekly_stats = weekly_growth_stats_status()
     experiments = load_content_experiments()
-    conversions = read_json_safe(CONVERSION_TRACKING_FILE)
+    conversions = _phase2_load_blob("conversionTracking", CONVERSION_TRACKING_FILE)
     if not isinstance(conversions, dict):
         conversions = {"platforms": {}, "snapshots": []}
     scores = dashboard.get("scores", {}) if isinstance(dashboard.get("scores"), dict) else {}
@@ -11547,7 +11581,7 @@ def predictive_growth_recommendations() -> dict[str, Any]:
         "quota": quota_usage_summary(),
         "file": str(PREDICTIVE_GROWTH_PLAN_FILE),
     }
-    write_json_atomic(PREDICTIVE_GROWTH_PLAN_FILE, payload)
+    _phase2_save_blob("predictiveGrowthPlan", PREDICTIVE_GROWTH_PLAN_FILE, payload)
     return payload
 
 
@@ -11672,7 +11706,7 @@ def analytics_winner_recommendations(apply: bool = False) -> dict[str, Any]:
 
 
 def growth_automation_dashboard() -> dict[str, Any]:
-    conversions = read_json_safe(CONVERSION_TRACKING_FILE)
+    conversions = _phase2_load_blob("conversionTracking", CONVERSION_TRACKING_FILE)
     return {
         "generatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
         "providerStrategy": provider_strategy_status(),
@@ -11680,7 +11714,7 @@ def growth_automation_dashboard() -> dict[str, Any]:
         "analyticsLab": read_json_safe(ANALYTICS_LAB_FILE) or {},
         "thumbnailTests": read_json_safe(THUMBNAIL_TESTS_FILE) or {"candidates": []},
         "pinnedAssets": read_json_safe(PINNED_ASSET_PLAN_FILE) or {"prompts": []},
-        "predictivePlan": read_json_safe(PREDICTIVE_GROWTH_PLAN_FILE) or {},
+        "predictivePlan": _phase2_load_blob("predictiveGrowthPlan", PREDICTIVE_GROWTH_PLAN_FILE) or {},
         "youtubeEndScreens": read_json_safe(YOUTUBE_END_SCREEN_PLAN_FILE) or {"targets": []},
         "novelStrategy": novel_level_strategy(),
         "quota": quota_usage_summary(),
@@ -11856,7 +11890,7 @@ def automatic_metrics_due_variants() -> list[dict[str, str]]:
 def automatic_metrics_status() -> dict[str, Any]:
     state = load_automatic_metrics_state()
     due = automatic_metrics_due_variants()
-    report = read_json_safe(GROWTH_WEEKLY_REPORT_FILE)
+    report = _phase2_load_blob("growthWeeklyReport", GROWTH_WEEKLY_REPORT_FILE)
     if not isinstance(report, dict):
         report = write_growth_weekly_report()
     return {
@@ -15870,7 +15904,7 @@ def youtube_narration_available() -> tuple[bool, str]:
 
 
 def weekly_growth_settings() -> dict[str, Any]:
-    saved = read_json_safe(WEEKLY_GROWTH_SETTINGS_FILE)
+    saved = _phase2_load_blob("weeklyGrowthSettings", WEEKLY_GROWTH_SETTINGS_FILE)
     if not isinstance(saved, dict):
         saved = {}
     return {
@@ -15888,7 +15922,7 @@ def save_weekly_growth_settings(weights: dict[str, Any] | None) -> dict[str, Any
         "weights": growth_scheduler.normalize_weights(weights),
         "updatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
-    write_json_atomic(WEEKLY_GROWTH_SETTINGS_FILE, payload)
+    _phase2_save_blob("weeklyGrowthSettings", WEEKLY_GROWTH_SETTINGS_FILE, payload)
     return weekly_growth_settings()
 
 
