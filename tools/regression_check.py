@@ -1816,6 +1816,20 @@ def check_db_source_of_truth() -> list[dict[str, object]]:
         ("metricsGatherResults", app.METRICS_GATHER_FILE),
         ("growthStatsHistory", app.GROWTH_STATS_HISTORY_FILE),
         ("automationStrategy", app.AUTOMATION_STRATEGY_FILE),
+        # Phase 2D: job-state / YouTube / app-ops
+        ("youtubePendingUpload", app.YOUTUBE_PENDING_UPLOAD_FILE),
+        ("youtubeCommentQueue", app.YOUTUBE_COMMENT_QUEUE_FILE),
+        ("youtubePinnedCommentVerified", app.YOUTUBE_PINNED_COMMENT_VERIFIED_FILE),
+        ("youtubeMetadataExperiments", app.YOUTUBE_METADATA_EXPERIMENTS_FILE),
+        ("chatgptChapterStatus", app.CHATGPT_CHAPTER_STATUS_FILE),
+        ("chatgptChapterResult", app.CHATGPT_CHAPTER_RESULT_FILE),
+        ("thumbnailTests", app.THUMBNAIL_TESTS_FILE),
+        ("googleAiImageUsage", app.GOOGLE_AI_IMAGE_USAGE_FILE),
+        ("patreonPendingDraft", app.PATREON_PENDING_DRAFT_FILE),
+        ("postingSchedule", app.SCHEDULE_FILE),
+        ("backgroundVideoUsage", app.BACKGROUND_VIDEO_USAGE_FILE),
+        ("clickupSync", app.CLICKUP_SYNC_FILE),
+        ("monetizationStatus", app.MONETIZATION_STATUS_FILE),
     ):
         try:
             db_snap = automation_db.load_state_snapshot(app.ROOT, state_key)
@@ -1889,7 +1903,21 @@ def check_db_source_of_truth() -> list[dict[str, object]]:
             ("metricsGatherResults", app.METRICS_GATHER_FILE),
             ("growthStatsHistory", app.GROWTH_STATS_HISTORY_FILE),
             ("automationStrategy", app.AUTOMATION_STRATEGY_FILE),
-        ):
+            # Phase 2D: job-state / YouTube / app-ops
+            ("youtubePendingUpload", app.YOUTUBE_PENDING_UPLOAD_FILE),
+            ("youtubeCommentQueue", app.YOUTUBE_COMMENT_QUEUE_FILE),
+            ("youtubePinnedCommentVerified", app.YOUTUBE_PINNED_COMMENT_VERIFIED_FILE),
+            ("youtubeMetadataExperiments", app.YOUTUBE_METADATA_EXPERIMENTS_FILE),
+            ("chatgptChapterStatus", app.CHATGPT_CHAPTER_STATUS_FILE),
+            ("chatgptChapterResult", app.CHATGPT_CHAPTER_RESULT_FILE),
+            ("thumbnailTests", app.THUMBNAIL_TESTS_FILE),
+            ("googleAiImageUsage", app.GOOGLE_AI_IMAGE_USAGE_FILE),
+            ("patreonPendingDraft", app.PATREON_PENDING_DRAFT_FILE),
+            ("postingSchedule", app.SCHEDULE_FILE),
+            ("backgroundVideoUsage", app.BACKGROUND_VIDEO_USAGE_FILE),
+            ("clickupSync", app.CLICKUP_SYNC_FILE),
+            ("monetizationStatus", app.MONETIZATION_STATUS_FILE),
+            ):
             sentinel = {f"__phase2b_db_first_{state_key}__": True}
             automation_db.upsert_state_snapshot(tmp, state_key, sentinel)
             got = app._phase2_load_blob(state_key, json_file, root=tmp)

@@ -378,6 +378,20 @@ def database_state_files() -> dict[str, Path]:
         "metricsGatherResults": METRICS_GATHER_FILE,
         "growthStatsHistory": GROWTH_STATS_HISTORY_FILE,
         "automationStrategy": AUTOMATION_STRATEGY_FILE,
+        # Phase 2D: job-state / YouTube / app-ops
+        "youtubePendingUpload": YOUTUBE_PENDING_UPLOAD_FILE,
+        "youtubeCommentQueue": YOUTUBE_COMMENT_QUEUE_FILE,
+        "youtubePinnedCommentVerified": YOUTUBE_PINNED_COMMENT_VERIFIED_FILE,
+        "youtubeMetadataExperiments": YOUTUBE_METADATA_EXPERIMENTS_FILE,
+        "chatgptChapterStatus": CHATGPT_CHAPTER_STATUS_FILE,
+        "chatgptChapterResult": CHATGPT_CHAPTER_RESULT_FILE,
+        "thumbnailTests": THUMBNAIL_TESTS_FILE,
+        "googleAiImageUsage": GOOGLE_AI_IMAGE_USAGE_FILE,
+        "patreonPendingDraft": PATREON_PENDING_DRAFT_FILE,
+        "postingSchedule": SCHEDULE_FILE,
+        "backgroundVideoUsage": BACKGROUND_VIDEO_USAGE_FILE,
+        "clickupSync": CLICKUP_SYNC_FILE,
+        "monetizationStatus": MONETIZATION_STATUS_FILE,
     }
 
 
@@ -1425,7 +1439,7 @@ def default_monetization_status() -> dict[str, Any]:
 
 
 def load_monetization_status() -> dict[str, Any]:
-    data = read_json_safe(MONETIZATION_STATUS_FILE)
+    data = _phase2_load_blob("monetizationStatus", MONETIZATION_STATUS_FILE)
     default = default_monetization_status()
     if not isinstance(data, dict):
         data = default
@@ -1444,7 +1458,7 @@ def load_monetization_status() -> dict[str, Any]:
             if platform.get(field) in ("", None) and not isinstance(fallback, bool):
                 platform[field] = fallback
     if not MONETIZATION_STATUS_FILE.exists():
-        write_json_atomic(MONETIZATION_STATUS_FILE, data)
+        _phase2_save_blob("monetizationStatus", MONETIZATION_STATUS_FILE, data)
     return data
 
 
@@ -1477,7 +1491,7 @@ def save_monetization_status(data: dict[str, Any]) -> dict[str, Any]:
     if str(data.get("priorityMode") or "").strip():
         current["priorityMode"] = str(data.get("priorityMode")).strip()
     current["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(MONETIZATION_STATUS_FILE, current)
+    _phase2_save_blob("monetizationStatus", MONETIZATION_STATUS_FILE, current)
     return current
 
 
@@ -2021,7 +2035,7 @@ def youtube_pinned_comment_text(metadata: dict[str, Any]) -> str:
 
 
 def load_youtube_comment_queue() -> dict[str, Any]:
-    data = read_json_safe(YOUTUBE_COMMENT_QUEUE_FILE)
+    data = _phase2_load_blob("youtubeCommentQueue", YOUTUBE_COMMENT_QUEUE_FILE)
     if not isinstance(data, dict):
         data = {"schemaVersion": 1, "items": []}
     if not isinstance(data.get("items"), list):
@@ -2030,7 +2044,7 @@ def load_youtube_comment_queue() -> dict[str, Any]:
 
 
 def load_verified_pinned_comments() -> dict[str, Any]:
-    data = read_json_safe(YOUTUBE_PINNED_COMMENT_VERIFIED_FILE)
+    data = _phase2_load_blob("youtubePinnedCommentVerified", YOUTUBE_PINNED_COMMENT_VERIFIED_FILE)
     if not isinstance(data, dict):
         data = {"schemaVersion": 1, "videos": {}}
     if not isinstance(data.get("videos"), dict):
@@ -2064,7 +2078,7 @@ def mark_youtube_comment_verified_pinned(item: dict[str, Any]) -> None:
         "watchUrl": str(item.get("watchUrl") or f"https://www.youtube.com/watch?v={video_id}"),
     }
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(YOUTUBE_PINNED_COMMENT_VERIFIED_FILE, data)
+    _phase2_save_blob("youtubePinnedCommentVerified", YOUTUBE_PINNED_COMMENT_VERIFIED_FILE, data)
 
 
 def backfill_verified_pinned_comments_from_queue() -> int:
@@ -2098,7 +2112,7 @@ def youtube_comment_capture_video(upload_id: str, video_id: str = "", video_url:
             item["status"] = "waiting_public"
         item["updatedAt"] = now
         queue["updatedAt"] = now
-        write_json_atomic(YOUTUBE_COMMENT_QUEUE_FILE, queue)
+        _phase2_save_blob("youtubeCommentQueue", YOUTUBE_COMMENT_QUEUE_FILE, queue)
         return dict(item)
 
 
@@ -2121,7 +2135,7 @@ def youtube_comment_mark_release(folder: Path, upload_id: str, status: str) -> d
             )
         item["updatedAt"] = now
         queue["updatedAt"] = now
-        write_json_atomic(YOUTUBE_COMMENT_QUEUE_FILE, queue)
+        _phase2_save_blob("youtubeCommentQueue", YOUTUBE_COMMENT_QUEUE_FILE, queue)
         return dict(item)
 
 
@@ -2168,7 +2182,7 @@ def youtube_comment_helper_start_backfill() -> dict[str, Any]:
                 reset += 1
         if reset:
             queue["updatedAt"] = now
-            write_json_atomic(YOUTUBE_COMMENT_QUEUE_FILE, queue)
+            _phase2_save_blob("youtubeCommentQueue", YOUTUBE_COMMENT_QUEUE_FILE, queue)
     pending = youtube_comment_helper_pending()
     item = pending.get("item")
     launched = False
@@ -2444,7 +2458,7 @@ def youtube_comment_helper_ack(comment_id: str, status: str, error: str = "") ->
             item["pinnedAt"] = now
             mark_youtube_comment_verified_pinned(item)
         queue["updatedAt"] = now
-        write_json_atomic(YOUTUBE_COMMENT_QUEUE_FILE, queue)
+        _phase2_save_blob("youtubeCommentQueue", YOUTUBE_COMMENT_QUEUE_FILE, queue)
     try:
         folder = Path(str(item.get("folder") or "")).resolve()
         metadata = read_metadata(folder)
@@ -3018,6 +3032,20 @@ _PHASE2_BLOB_MAP: tuple[tuple[str, Any], ...] = (
     ("metricsGatherResults", METRICS_GATHER_FILE),
     ("growthStatsHistory", GROWTH_STATS_HISTORY_FILE),
     ("automationStrategy", AUTOMATION_STRATEGY_FILE),
+    # Phase 2D: job-state / YouTube / app-ops single-blob state -> SQLite
+    ("youtubePendingUpload", YOUTUBE_PENDING_UPLOAD_FILE),
+    ("youtubeCommentQueue", YOUTUBE_COMMENT_QUEUE_FILE),
+    ("youtubePinnedCommentVerified", YOUTUBE_PINNED_COMMENT_VERIFIED_FILE),
+    ("youtubeMetadataExperiments", YOUTUBE_METADATA_EXPERIMENTS_FILE),
+    ("chatgptChapterStatus", CHATGPT_CHAPTER_STATUS_FILE),
+    ("chatgptChapterResult", CHATGPT_CHAPTER_RESULT_FILE),
+    ("thumbnailTests", THUMBNAIL_TESTS_FILE),
+    ("googleAiImageUsage", GOOGLE_AI_IMAGE_USAGE_FILE),
+    ("patreonPendingDraft", PATREON_PENDING_DRAFT_FILE),
+    ("postingSchedule", SCHEDULE_FILE),
+    ("backgroundVideoUsage", BACKGROUND_VIDEO_USAGE_FILE),
+    ("clickupSync", CLICKUP_SYNC_FILE),
+    ("monetizationStatus", MONETIZATION_STATUS_FILE),
 )
 
 
@@ -6290,7 +6318,7 @@ def reconcile_approval_inbox_items() -> dict[str, Any]:
             changed = True
     if changed:
         queue["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        write_json_atomic(YOUTUBE_COMMENT_QUEUE_FILE, queue)
+        _phase2_save_blob("youtubeCommentQueue", YOUTUBE_COMMENT_QUEUE_FILE, queue)
     comments = load_comment_assistant()
     before = len(comments.get("comments", []))
     comments["comments"] = [
@@ -6652,7 +6680,7 @@ def clickup_create_task_in_list(list_id: str, payload: dict[str, Any]) -> dict[s
 
 
 def clickup_sync_state() -> dict[str, Any]:
-    data = read_json_safe(CLICKUP_SYNC_FILE)
+    data = _phase2_load_blob("clickupSync", CLICKUP_SYNC_FILE)
     if not isinstance(data, dict):
         data = {"schemaVersion": 1, "records": {}}
     data.setdefault("records", {})
@@ -6661,7 +6689,7 @@ def clickup_sync_state() -> dict[str, Any]:
 
 def save_clickup_sync_state(data: dict[str, Any]) -> None:
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(CLICKUP_SYNC_FILE, data)
+    _phase2_save_blob("clickupSync", CLICKUP_SYNC_FILE, data)
 
 
 def approval_item_record_id(kind: str, item: dict[str, Any]) -> str:
@@ -6933,7 +6961,7 @@ def google_ai_extract_image_data(response: dict[str, Any]) -> tuple[str, str]:
 def load_google_ai_image_usage() -> dict[str, Any]:
     today = time.strftime("%Y-%m-%d")
     minute = time.strftime("%Y-%m-%d %H:%M")
-    data = read_json_safe(GOOGLE_AI_IMAGE_USAGE_FILE)
+    data = _phase2_load_blob("googleAiImageUsage", GOOGLE_AI_IMAGE_USAGE_FILE)
     if not isinstance(data, dict):
         data = {"schemaVersion": 1}
     if data.get("date") != today:
@@ -6969,7 +6997,7 @@ def reserve_google_ai_image_quota(wait_for_slot: bool = False, max_wait_seconds:
             usage["dailyCount"] = daily_count + 1
             usage["minutes"][minute] = minute_count + 1
             usage["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-            write_json_atomic(GOOGLE_AI_IMAGE_USAGE_FILE, usage)
+            _phase2_save_blob("googleAiImageUsage", GOOGLE_AI_IMAGE_USAGE_FILE, usage)
             return {
                 "dailyCount": usage["dailyCount"],
                 "dailyLimit": daily_limit,
@@ -6995,7 +7023,7 @@ def refund_google_ai_image_quota(quota: dict[str, Any]) -> None:
     if minute and isinstance(usage.get("minutes"), dict) and int(usage["minutes"].get(minute) or 0) > 0:
         usage["minutes"][minute] = int(usage["minutes"].get(minute) or 0) - 1
     usage["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(GOOGLE_AI_IMAGE_USAGE_FILE, usage)
+    _phase2_save_blob("googleAiImageUsage", GOOGLE_AI_IMAGE_USAGE_FILE, usage)
 
 
 def create_google_ai_image(prompt: str, target: Path, *, orientation: str = "vertical") -> dict[str, Any]:
@@ -8899,7 +8927,7 @@ def clear_youtube_comment_inbox_item(comment_id: str) -> dict[str, Any]:
         item["dismissedAt"] = now
         item["updatedAt"] = now
         queue["updatedAt"] = now
-        write_json_atomic(YOUTUBE_COMMENT_QUEUE_FILE, queue)
+        _phase2_save_blob("youtubeCommentQueue", YOUTUBE_COMMENT_QUEUE_FILE, queue)
     return {"ok": True, "commentId": comment_id, "message": "YouTube comment item cleared from the approval inbox."}
 
 
@@ -9502,7 +9530,7 @@ def image_provider_readiness() -> dict[str, Any]:
     load_env_file()
     bank_counts = {abbr: len(image_bank_images(abbr)) for abbr in NOVEL_NAMES}
     openai_diag = openai_api_key_diagnostics()
-    google_usage = read_json_safe(GOOGLE_AI_IMAGE_USAGE_FILE)
+    google_usage = _phase2_load_blob("googleAiImageUsage", GOOGLE_AI_IMAGE_USAGE_FILE)
     if not isinstance(google_usage, dict):
         google_usage = {}
     return {
@@ -10423,7 +10451,7 @@ def thumbnail_test_plan() -> dict[str, Any]:
             }
         )
     payload = {"generatedAt": time.strftime("%Y-%m-%d %H:%M:%S"), "candidates": candidates}
-    write_json_atomic(THUMBNAIL_TESTS_FILE, payload)
+    _phase2_save_blob("thumbnailTests", THUMBNAIL_TESTS_FILE, payload)
     return {**payload, "file": str(THUMBNAIL_TESTS_FILE)}
 
 
@@ -11712,7 +11740,7 @@ def growth_automation_dashboard() -> dict[str, Any]:
         "providerStrategy": provider_strategy_status(),
         "imageLab": _phase2_load_blob("imageLab", IMAGE_LAB_FILE) or {"runs": []},
         "analyticsLab": read_json_safe(ANALYTICS_LAB_FILE) or {},
-        "thumbnailTests": read_json_safe(THUMBNAIL_TESTS_FILE) or {"candidates": []},
+        "thumbnailTests": _phase2_load_blob("thumbnailTests", THUMBNAIL_TESTS_FILE) or {"candidates": []},
         "pinnedAssets": read_json_safe(PINNED_ASSET_PLAN_FILE) or {"prompts": []},
         "predictivePlan": _phase2_load_blob("predictiveGrowthPlan", PREDICTIVE_GROWTH_PLAN_FILE) or {},
         "youtubeEndScreens": read_json_safe(YOUTUBE_END_SCREEN_PLAN_FILE) or {"targets": []},
@@ -18090,7 +18118,7 @@ def chatgpt_chapter_worker(job: dict[str, Any]) -> None:
             check=False,
             creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
         )
-        result = read_json_safe(CHATGPT_CHAPTER_RESULT_FILE)
+        result = _phase2_load_blob("chatgptChapterResult", CHATGPT_CHAPTER_RESULT_FILE)
         if not isinstance(result, dict) or str(result.get("jobId") or "") != str(job.get("jobId") or ""):
             result = {"ok": False, "error": run.stderr.strip() or "ChatGPT browser helper did not return a result."}
         state = {
@@ -18102,9 +18130,9 @@ def chatgpt_chapter_worker(job: dict[str, Any]) -> None:
             "stderr": run.stderr.strip(),
             "finishedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
-        write_json_atomic(CHATGPT_CHAPTER_STATUS_FILE, state)
+        _phase2_save_blob("chatgptChapterStatus", CHATGPT_CHAPTER_STATUS_FILE, state)
     except Exception as exc:
-        write_json_atomic(CHATGPT_CHAPTER_STATUS_FILE, {**job, "running": False, "ready": False, "error": str(exc), "finishedAt": time.strftime("%Y-%m-%d %H:%M:%S")})
+        _phase2_save_blob("chatgptChapterStatus", CHATGPT_CHAPTER_STATUS_FILE, {**job, "running": False, "ready": False, "error": str(exc), "finishedAt": time.strftime("%Y-%m-%d %H:%M:%S")})
     finally:
         if CHATGPT_CHAPTER_LOCK.locked():
             CHATGPT_CHAPTER_LOCK.release()
@@ -18139,7 +18167,7 @@ def start_chatgpt_chapter_writer(abbr: str, outline: str = "", continuity_notes:
             "startedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
             "message": "ChatGPT is writing the chapter in helper Chrome. You can keep using the Automation Tool.",
         }
-        write_json_atomic(CHATGPT_CHAPTER_STATUS_FILE, state)
+        _phase2_save_blob("chatgptChapterStatus", CHATGPT_CHAPTER_STATUS_FILE, state)
         CHATGPT_CHAPTER_THREAD = threading.Thread(target=chatgpt_chapter_worker, args=(state,), daemon=True, name="chatgpt-chapter-writer")
         CHATGPT_CHAPTER_THREAD.start()
         return {**state, "chromeMessage": chrome_message}
@@ -18149,7 +18177,7 @@ def start_chatgpt_chapter_writer(abbr: str, outline: str = "", continuity_notes:
 
 
 def chatgpt_chapter_writer_status() -> dict[str, Any]:
-    state = read_json_safe(CHATGPT_CHAPTER_STATUS_FILE)
+    state = _phase2_load_blob("chatgptChapterStatus", CHATGPT_CHAPTER_STATUS_FILE)
     if not isinstance(state, dict) or not state:
         return {"running": False, "ready": False, "message": "No ChatGPT website chapter is currently prepared."}
     return state
@@ -19204,7 +19232,7 @@ def sync_release_queue_artifact_dates(assignments: list[dict[str, Any]]) -> None
                 patreon_draft["royal_road_date"] = dates["royalRoadDate"]
             metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
-    pending = read_json_safe(PATREON_PENDING_DRAFT_FILE)
+    pending = _phase2_load_blob("patreonPendingDraft", PATREON_PENDING_DRAFT_FILE)
     if not isinstance(pending, dict):
         return
     pending_metadata = pending.get("metadata") if isinstance(pending.get("metadata"), dict) else {}
@@ -19227,7 +19255,7 @@ def sync_release_queue_artifact_dates(assignments: list[dict[str, Any]]) -> None
     pending["path_initiate_date"] = dates["pathInitiateDate"]
     pending["royal_road_date"] = dates["royalRoadDate"]
     pending["tier_schedule"] = [{"tier": (pending.get("tiers") or ["Inner Disciple"])[0], "date": publish_date}]
-    write_json_atomic(PATREON_PENDING_DRAFT_FILE, pending)
+    _phase2_save_blob("patreonPendingDraft", PATREON_PENDING_DRAFT_FILE, pending)
 
 
 def ensure_chapter_release_queue(days_ahead: int = 90) -> dict[str, Any]:
@@ -25575,7 +25603,7 @@ def build_patreon_draft(folder: str, *, ignore_existing: bool = False, tier_stag
         **payload,
     }
     pending["pinned_comment"] = queue_youtube_pinned_comment(pending)
-    write_json_atomic(PATREON_PENDING_DRAFT_FILE, pending)
+    _phase2_save_blob("patreonPendingDraft", PATREON_PENDING_DRAFT_FILE, pending)
     try:
         open_url_once("https://www.patreon.com/posts/new")
     except Exception:
@@ -25655,18 +25683,18 @@ def build_patreon_draft(folder: str, *, ignore_existing: bool = False, tier_stag
 
 
 def patreon_helper_latest() -> dict[str, Any]:
-    return {"draft": read_json_safe(PATREON_PENDING_DRAFT_FILE)}
+    return {"draft": _phase2_load_blob("patreonPendingDraft", PATREON_PENDING_DRAFT_FILE)}
 
 
 def patreon_helper_ack(draft_id: str, status: str = "filled") -> dict[str, Any]:
-    draft = read_json_safe(PATREON_PENDING_DRAFT_FILE)
+    draft = _phase2_load_blob("patreonPendingDraft", PATREON_PENDING_DRAFT_FILE)
     if not draft:
         return {"ok": False, "message": "No pending Patreon draft."}
     if str(draft.get("id")) != str(draft_id):
         return {"ok": False, "message": "Draft id did not match current pending draft."}
     draft["last_helper_status"] = status
     draft["last_helper_seen_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(PATREON_PENDING_DRAFT_FILE, draft)
+    _phase2_save_blob("patreonPendingDraft", PATREON_PENDING_DRAFT_FILE, draft)
     try:
         folder = Path(str(draft.get("folder") or "")).resolve()
         metadata = read_metadata(folder)
@@ -25681,7 +25709,7 @@ def patreon_helper_ack(draft_id: str, status: str = "filled") -> dict[str, Any]:
 
 
 def patreon_helper_media(draft_id: str) -> tuple[bytes, str, str]:
-    draft = read_json_safe(PATREON_PENDING_DRAFT_FILE)
+    draft = _phase2_load_blob("patreonPendingDraft", PATREON_PENDING_DRAFT_FILE)
     if not draft:
         raise RuntimeError("No pending Patreon draft.")
     if str(draft.get("id")) != str(draft_id):
@@ -26010,7 +26038,7 @@ def build_youtube_upload_draft(folder: str) -> dict[str, Any]:
             "chrome_debug_message": chrome_message,
         }
     )
-    write_json_atomic(YOUTUBE_PENDING_UPLOAD_FILE, pending)
+    _phase2_save_blob("youtubePendingUpload", YOUTUBE_PENDING_UPLOAD_FILE, pending)
     try:
         open_url_once("https://studio.youtube.com")
     except Exception:
@@ -26068,7 +26096,7 @@ def build_youtube_upload_draft(folder: str) -> dict[str, Any]:
 
 
 def youtube_helper_latest() -> dict[str, Any]:
-    return {"upload": read_json_safe(YOUTUBE_PENDING_UPLOAD_FILE)}
+    return {"upload": _phase2_load_blob("youtubePendingUpload", YOUTUBE_PENDING_UPLOAD_FILE)}
 
 
 def youtube_helper_ack(
@@ -26077,7 +26105,7 @@ def youtube_helper_ack(
     video_id: str = "",
     video_url: str = "",
 ) -> dict[str, Any]:
-    upload = read_json_safe(YOUTUBE_PENDING_UPLOAD_FILE)
+    upload = _phase2_load_blob("youtubePendingUpload", YOUTUBE_PENDING_UPLOAD_FILE)
     if not upload:
         return {"ok": False, "message": "No pending YouTube upload."}
     if str(upload.get("id")) != str(upload_id):
@@ -26088,7 +26116,7 @@ def youtube_helper_ack(
     if captured_comment:
         upload["youtube_video_id"] = captured_comment.get("videoId", "")
         upload["youtube_watch_url"] = captured_comment.get("watchUrl", "")
-    write_json_atomic(YOUTUBE_PENDING_UPLOAD_FILE, upload)
+    _phase2_save_blob("youtubePendingUpload", YOUTUBE_PENDING_UPLOAD_FILE, upload)
     try:
         folder = Path(str(upload.get("folder") or "")).resolve()
         metadata = read_metadata(folder)
@@ -26106,7 +26134,7 @@ def mark_youtube_upload_status(folder: str = "", upload_id: str = "", status: st
     status = str(status or "uploaded").strip().lower()
     if status not in {"uploaded", "scheduled", "published"}:
         raise RuntimeError("Use uploaded, scheduled, or published for YouTube status.")
-    pending = read_json_safe(YOUTUBE_PENDING_UPLOAD_FILE)
+    pending = _phase2_load_blob("youtubePendingUpload", YOUTUBE_PENDING_UPLOAD_FILE)
     folder_path = resolve_youtube_pack_folder(folder, include_campaigns=True) if folder else None
     if upload_id and pending and str(pending.get("id")) == str(upload_id):
         folder_path = Path(str(pending.get("folder") or "")).resolve()
@@ -26196,7 +26224,7 @@ def mark_youtube_upload_status(folder: str = "", upload_id: str = "", status: st
 
 
 def youtube_helper_media(upload_id: str) -> tuple[bytes, str, str]:
-    upload = read_json_safe(YOUTUBE_PENDING_UPLOAD_FILE)
+    upload = _phase2_load_blob("youtubePendingUpload", YOUTUBE_PENDING_UPLOAD_FILE)
     if not upload:
         raise RuntimeError("No pending YouTube upload.")
     if str(upload.get("id")) != str(upload_id):
@@ -26211,7 +26239,7 @@ def youtube_helper_media(upload_id: str) -> tuple[bytes, str, str]:
 
 
 def youtube_helper_thumbnail(upload_id: str) -> tuple[bytes, str, str]:
-    upload = read_json_safe(YOUTUBE_PENDING_UPLOAD_FILE)
+    upload = _phase2_load_blob("youtubePendingUpload", YOUTUBE_PENDING_UPLOAD_FILE)
     if not upload:
         raise RuntimeError("No pending YouTube upload.")
     if str(upload.get("id")) != str(upload_id):
@@ -28338,7 +28366,7 @@ def story_hook_metadata_variants(folder_value: str) -> dict[str, Any]:
             "hypothesis": "Tests direct comment prompts for engagement lift.",
         },
     ]
-    store = read_json_safe(YOUTUBE_METADATA_EXPERIMENTS_FILE) or {"runs": []}
+    store = _phase2_load_blob("youtubeMetadataExperiments", YOUTUBE_METADATA_EXPERIMENTS_FILE) or {"runs": []}
     run = {
         "runId": f"{folder.name}-{time.strftime('%Y%m%d-%H%M%S')}",
         "folder": str(folder),
@@ -28350,7 +28378,7 @@ def story_hook_metadata_variants(folder_value: str) -> dict[str, Any]:
     }
     store.setdefault("runs", []).append(run)
     store["runs"] = store["runs"][-100:]
-    write_json_atomic(YOUTUBE_METADATA_EXPERIMENTS_FILE, store)
+    _phase2_save_blob("youtubeMetadataExperiments", YOUTUBE_METADATA_EXPERIMENTS_FILE, store)
     return {"run": run, "file": str(YOUTUBE_METADATA_EXPERIMENTS_FILE), "message": "YouTube metadata variants created."}
 
 
@@ -30453,7 +30481,7 @@ def background_video_count() -> int:
 
 
 def load_background_video_usage() -> dict[str, Any]:
-    data = read_json_safe(BACKGROUND_VIDEO_USAGE_FILE)
+    data = _phase2_load_blob("backgroundVideoUsage", BACKGROUND_VIDEO_USAGE_FILE)
     if not isinstance(data, dict):
         data = {"videos": {}}
     data.setdefault("videos", {})
@@ -30462,7 +30490,7 @@ def load_background_video_usage() -> dict[str, Any]:
 
 def save_background_video_usage(data: dict[str, Any]) -> None:
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(BACKGROUND_VIDEO_USAGE_FILE, data)
+    _phase2_save_blob("backgroundVideoUsage", BACKGROUND_VIDEO_USAGE_FILE, data)
 
 
 def choose_background_videos(count: int | None = None, abbr: str = "", prompt: str = "") -> list[Path]:
