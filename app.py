@@ -29103,16 +29103,59 @@ def make_fallback_music_audio(duration=60):
         "-c:a", "aac", "-b:a", "96k", str(fallback)
     ], check=False)
     if run.returncode == 0 and media_ok(fallback, "a:0"):
-        print(f"Created non-silent fallback audio bed from {{source.name}} because narration engines were unavailable.")
+        print(f"Created non-silent fallback audio bed from {source.name} because narration engines were unavailable.")
         return fallback
     return None
+
+
+def make_chatterbox_audio():
+    """Local, free, MIT-licensed TTS via tools/chatterbox_gen.py in the isolated
+    .venv-chatterbox runtime. Optional zero-shot voice cloning if CHATTERBOX_REF_WAV
+    points at a reference wav you own/license. Returns the produced mp3/wav path or False.
+    NOTE: must run with PYTHONPATH/PYTHONHOME stripped so the Hermes-agent venv's
+    tokenizers (0.23.1) can't shadow .venv-chatterbox's (0.22.2)."""
+    venv_py = Path(__file__).resolve().parent / ".venv-chatterbox" / "Scripts" / "python.exe"
+    helper = Path(__file__).resolve().parent / "tools" / "chatterbox_gen.py"
+    if not venv_py.exists() or not helper.exists():
+        print("Chatterbox: venv or helper missing; skipping.")
+        return False
+    text_file = folder / "youtube-narration-source.txt"
+    text_file.write_text(narration_text, encoding="utf-8")
+    out_wav = folder / "youtube-voiceover-chatterbox.wav"
+    ref_wav = os.environ.get("CHATTERBOX_REF_WAV", "").strip()
+    cmd = [str(venv_py), str(helper), str(out_wav), str(text_file)]
+    if ref_wav and Path(ref_wav).exists():
+        cmd.append(str(ref_wav))
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTHONHOME", None)
+    run = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=600)
+    if run.returncode == 0 and out_wav.exists():
+        mp3 = folder / "youtube-voiceover-chatterbox.mp3"
+        ffmpeg_run = subprocess.run(
+            [ffmpeg_exe, "-hide_banner", "-loglevel", "error", "-y", "-i", str(out_wav),
+             "-c:a", "libmp3lame", "-b:a", "128k", str(mp3)],
+            capture_output=True, text=True)
+        if ffmpeg_run.returncode == 0 and mp3.exists():
+            print("Chatterbox TTS generated narration (mp3).")
+            return mp3
+        print("Chatterbox TTS generated wav but mp3 conversion failed; returning wav.")
+        return out_wav
+    print(f"Chatterbox TTS failed: {run.stderr.strip()[:200]}")
+    return False
+
 
 print("Creating narration...")
 audio_source = None
 try:
     audio_source = make_openai_audio()
 except Exception as exc:
-    print(f"OpenAI TTS failed: {{exc}}")
+    print(f"OpenAI TTS failed: {exc}")
+if not audio_source:
+    try:
+        audio_source = make_chatterbox_audio()
+    except Exception as exc:
+        print(f"Chatterbox TTS failed: {exc}")
 if not audio_source:
     try:
         audio_source = make_windows_audio()
