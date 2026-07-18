@@ -16086,9 +16086,16 @@ def make_weekend_social_post(abbr: str, day: str) -> dict[str, Any]:
                     _ag_tags = f"{_ag_tags} {_novel_tag}".strip()
                 _fb_body = _ag_cap + (f"\n\n{_ag_cta}" if _ag_cta else "")
                 _ig_body = _ag_cap + (f"\n\n{_ag_cta}" if _ag_cta else "")
+                # X: keep a real body (never collapse to tags-only). Trim cta first,
+                # then caption, to fit 280 — mirrors weekend_social_copy's X handling.
+                _x_full = f"{_ig_body}\n\n{_ag_tags}"
+                if len(_x_full) > 280:
+                    _x_full = f"{_ag_cap}\n\n{_ag_tags}"
+                if len(_x_full) > 280:
+                    _x_full = _ag_cap[:277].rsplit(" ", 1)[0].rstrip() + "...\n\n" + _ag_tags
                 copy = {
                     "instagram": f"{_ig_body}\n\n{_ag_tags}",
-                    "x": f"{_ig_body}\n\n{_ag_tags}" if len(f"{_ig_body}\n\n{_ag_tags}") <= 280 else f"{_ag_tags}",
+                    "x": _x_full,
                     "facebook": f"{_fb_body}\n\n{_ag_tags}",
                     "alt_text": copy.get("alt_text", f"Weekend promotional image for {_profile.get('name', abbr)}."),
                     "post_focus": copy.get("post_focus", ""),
