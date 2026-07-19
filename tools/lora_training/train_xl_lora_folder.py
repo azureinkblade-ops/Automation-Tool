@@ -352,9 +352,16 @@ def main():
                       weight_decay=1e-4, eps=1e-8)
 
     unet, optimizer, loader = accelerator.prepare(unet, optimizer, loader)
-    vae = vae.to(accelerator.device)
-    text_encoder_one = text_encoder_one.to(accelerator.device)
-    text_encoder_two = text_encoder_two.to(accelerator.device)
+    # Latents + text embeds are already precomputed and cached in FolderDataset, so
+    # the VAE and both text encoders are dead weight for the training loop. Free
+    # them off the GPU to give the UNet real VRAM headroom -- otherwise they pin
+    # ~5-6 GiB and the allocator thrashes (observed: ~175 MiB free -> 70-130 s/step
+    # at only 90W/320W, i.e. GPU starved). Freeing them restores GPU-bound steps.
+    del vae, text_encoder_one, text_encoder_two
+    import gc as _gc
+    _gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     # --- Resume setup (after prepare, so Accelerate can restore prepared state) ---
     starting_epoch = 0
