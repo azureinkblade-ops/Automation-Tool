@@ -67,6 +67,10 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _mono() -> float:
+    return time.monotonic()
+
+
 def load_manifest(path: str) -> dict:
     p = Path(path)
     if p.exists():
@@ -132,7 +136,9 @@ class FolderDataset(Dataset):
         # GPU (fp32) instead of every step. This is the missing optimization that made
         # the Jul-13 realistic run ~1.6s/step vs ~51s/step without it.
         self.cache = []
-        for img_path, cap_path in self.pairs:
+        _t0 = _mono()
+        _n = len(self.pairs)
+        for _i, (img_path, cap_path) in enumerate(self.pairs):
             image = Image.open(img_path).convert("RGB")
             if image.size != (self.size, self.size):
                 image = image.resize((self.size, self.size), Image.LANCZOS)
@@ -163,6 +169,13 @@ class FolderDataset(Dataset):
                 "hidden": hidden.squeeze(0),
                 "pooled": pooled.squeeze(0),
             })
+            # Progress logging so long precompute phases are observable.
+            if (_i + 1) % 25 == 0 or (_i + 1) == _n:
+                _el = _mono() - _t0
+                _rate = (_i + 1) / _el if _el > 0 else 0.0
+                _eta = (_n - (_i + 1)) / _rate if _rate > 0 else 0.0
+                print(f"[prep] {_i + 1}/{_n} samples encoded "
+                      f"({_rate:.2f}/s, elapsed {_el:.0f}s, eta {_eta:.0f}s)", flush=True)
 
     def __len__(self):
         return len(self.pairs)
@@ -368,6 +381,7 @@ def main():
               f"epochs_done={epoch_done})", flush=True)
 
     try:
+        _train_t0 = _mono()
         for epoch in range(starting_epoch, args.num_train_epochs):
             unet.train()
             for batch in loader:
@@ -408,7 +422,10 @@ def main():
                 global_step += 1
                 steps = global_step
                 if global_step % 10 == 0:
-                    print(f"[step {global_step}] loss={loss.item():.4f}", flush=True)
+                    _el = _mono() - _train_t0
+                    _rate = global_step / _el if _el > 0 else 0.0
+                    print(f"[step {global_step}] loss={loss.item():.4f} "
+                          f"({_rate:.3f} steps/s, {1/_rate:.1f}s/step)", flush=True)
                 if args.checkpointing_steps and global_step % args.checkpointing_steps == 0:
                     _save_checkpoint(epoch)
                 if max_steps and global_step >= max_steps:
