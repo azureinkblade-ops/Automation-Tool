@@ -115,7 +115,8 @@ def find_latest_checkpoint(output_dir: str):
 
 class FolderDataset(Dataset):
     def __init__(self, root, tokenizer_one, tokenizer_two, vae, text_encoder_one,
-                 text_encoder_two, device, size=1024, repeats=1, shuffle_tags=False):
+                 text_encoder_two, device, size=1024, repeats=1, shuffle_tags=False,
+                 cache_file=None):
         self.root = root
         self.tokenizer_one = tokenizer_one
         self.tokenizer_two = tokenizer_two
@@ -125,6 +126,10 @@ class FolderDataset(Dataset):
         self.device = device
         self.size = size
         self.shuffle_tags = shuffle_tags
+        self.repeats = repeats
+        if cache_file is None:
+            cache_file = os.path.join(root, ".latent_cache.pt")
+        self.cache_file = cache_file
         pairs = []
         for p in sorted(glob.glob(os.path.join(root, "*"))):
             if p.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
@@ -135,7 +140,12 @@ class FolderDataset(Dataset):
         # Latent + text-embed cache: encode every unique image/caption ONCE on the
         # GPU (fp32) instead of every step. This is the missing optimization that made
         # the Jul-13 realistic run ~1.6s/step vs ~51s/step without it.
+        # Disk cache: persist the encoded tensors so future launches skip the
+        # (slow) re-encode. Keyed by a signature of the dataset so a changed
+        # dataset forces a rebuild.
         self.cache = []
+        if self._try_load_cache():
+            return
         _t0 = _mono()
         _n = len(self.pairs)
         for _i, (img_path, cap_path) in enumerate(self.pairs):
@@ -165,9 +175,9 @@ class FolderDataset(Dataset):
                 pooled = enc2[0]
                 hidden = torch.cat([enc1.hidden_states[-2], enc2.hidden_states[-2]], dim=-1)
             self.cache.append({
-                "latents": latent.squeeze(0),
-                "hidden": hidden.squeeze(0),
-                "pooled": pooled.squeeze(0),
+                "latents": latent.squeeze(0).cpu(),
+                "hidden": hidden.squeeze(0).cpu(),
+                "pooled": pooled.squeeze(0).cpu(),
             })
             # Progress logging so long precompute phases are observable.
             if (_i + 1) % 25 == 0 or (_i + 1) == _n:
@@ -176,6 +186,59 @@ class FolderDataset(Dataset):
                 _eta = (_n - (_i + 1)) / _rate if _rate > 0 else 0.0
                 print(f"[prep] {_i + 1}/{_n} samples encoded "
                       f"({_rate:.2f}/s, elapsed {_el:.0f}s, eta {_eta:.0f}s)", flush=True)
+        self._save_cache()
+
+    def _cache_signature(self):
+        # Identifies the exact dataset the cache was built from. Includes caption
+        # contents (not just paths) so editing a caption forces a rebuild, and an
+        # image size/mtime proxy so replacing an image does too.
+        import hashlib
+        sig_pairs = []
+        for img_path, cap_path in self.pairs:
+            try:
+                cap_hash = hashlib.sha256(
+                    open(cap_path, "rb").read()).hexdigest()[:16]
+            except Exception:
+                cap_hash = "na"
+            try:
+                st = os.stat(img_path)
+                img_key = f"{st.st_size}:{int(st.st_mtime)}"
+            except Exception:
+                img_key = "na"
+            sig_pairs.append([os.path.basename(img_path), cap_hash, img_key])
+        return {
+            "pairs": sig_pairs,
+            "size": self.size,
+            "repeats": self.repeats,
+            "shuffle_tags": self.shuffle_tags,
+        }
+
+    def _try_load_cache(self) -> bool:
+        try:
+            if not os.path.exists(self.cache_file):
+                return False
+            blob = torch.load(self.cache_file, map_location="cpu", weights_only=False)
+            if blob.get("signature") != self._cache_signature():
+                print(f"[prep] cache signature mismatch -- rebuilding", flush=True)
+                return False
+            self.cache = blob["cache"]
+            print(f"[prep] LOADED latent cache ({len(self.cache)} samples) from "
+                  f"{os.path.basename(self.cache_file)} -- skipping re-encode", flush=True)
+            return True
+        except Exception as exc:
+            print(f"[prep] cache load failed ({exc}) -- rebuilding", flush=True)
+            return False
+
+    def _save_cache(self) -> None:
+        try:
+            blob = {"signature": self._cache_signature(), "cache": self.cache}
+            tmp = self.cache_file + ".tmp"
+            torch.save(blob, tmp)
+            os.replace(tmp, self.cache_file)
+            print(f"[prep] SAVED latent cache ({len(self.cache)} samples) to "
+                  f"{os.path.basename(self.cache_file)}", flush=True)
+        except Exception as exc:
+            print(f"[prep] WARNING could not save cache: {exc}", flush=True)
 
     def __len__(self):
         return len(self.pairs)
