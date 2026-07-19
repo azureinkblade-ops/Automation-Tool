@@ -16261,7 +16261,12 @@ def make_weekend_social_post(abbr: str, day: str) -> dict[str, Any]:
             image_target = _gen_target
     except Exception as _img_exc:
         print(f"[weekend] realistic image gen failed for {abbr} {day}, using stock: {_img_exc}", file=sys.stderr)
-    shutil.copy2(image_source, image_target)
+    # Only copy when falling back to the stock image. When generation succeeded,
+    # image_source == image_target == _gen_target (the file the generator subprocess
+    # just wrote); copying it onto itself on Windows raises WinError 32 because the
+    # subprocess may still hold the file handle. So skip the copy in that case.
+    if image_target != image_source:
+        shutil.copy2(image_source, image_target)
     copy = weekend_social_copy(abbr, day)
     # Optional Hermes agent post copy (dynamic, research-aware). Default OFF.
     # Flip ENABLE_AGENT_POSTS=1 to replace template prose with agent-generated copy.
