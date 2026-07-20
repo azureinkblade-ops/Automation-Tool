@@ -40687,22 +40687,6 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-        if parsed.path == "/api/review-packs":
-            query = urllib.parse.parse_qs(parsed.query)
-            abbr = (query.get("abbr", [""])[0] or None)
-            chapter = (query.get("chapter", [""])[0] or None)
-            self.send_json(chapter_review_packs(abbr, chapter))
-            return
-        if parsed.path == "/api/auto-fix-weak-images":
-            query = urllib.parse.parse_qs(parsed.query)
-            abbr = (query.get("abbr", [""])[0] or None)
-            chapter = (query.get("chapter", [""])[0] or None)
-            try:
-                self.send_json(auto_fix_weak_images(abbr, chapter))
-            except Exception as exc:
-                self.send_json({"ok": False, "error": str(exc)}, 400)
-            return
-
     def do_OPTIONS(self) -> None:
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
