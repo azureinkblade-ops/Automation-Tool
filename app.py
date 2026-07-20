@@ -29724,7 +29724,7 @@ def make_fallback_music_audio(duration=60):
         "-c:a", "aac", "-b:a", "96k", str(fallback)
     ], check=False)
     if run.returncode == 0 and media_ok(fallback, "a:0"):
-        print(f"Created non-silent fallback audio bed from {source.name} because narration engines were unavailable.")
+        print(f"Created non-silent fallback audio bed from {{source.name}} because narration engines were unavailable.")
         return fallback
     return None
 
@@ -29762,7 +29762,7 @@ def make_chatterbox_audio():
             return mp3
         print("Chatterbox TTS generated wav but mp3 conversion failed; returning wav.")
         return out_wav
-    print(f"Chatterbox TTS failed: {run.stderr.strip()[:200]}")
+    print(f"Chatterbox TTS failed: {{run.stderr.strip()[:200]}}")
     return False
 
 
@@ -29771,12 +29771,12 @@ audio_source = None
 try:
     audio_source = make_openai_audio()
 except Exception as exc:
-    print(f"OpenAI TTS failed: {exc}")
+    print(f"OpenAI TTS failed: {{exc}}")
 if not audio_source:
     try:
         audio_source = make_chatterbox_audio()
     except Exception as exc:
-        print(f"Chatterbox TTS failed: {exc}")
+        print(f"Chatterbox TTS failed: {{exc}}")
 if not audio_source:
     try:
         audio_source = make_windows_audio()
