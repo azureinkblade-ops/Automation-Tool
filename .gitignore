@@ -32,3 +32,44 @@ app-regression-dashboard.json
 
 # Dedicated GPU env for local Stable Diffusion (CUDA torch, isolated from app runtime)
 .venv-gpu/
+
+# --- Phase 3 (2026-07-19): retired JSON mirrors for the 34 Phase-2 blobs ---
+# These now live ONLY in SQLite (automation_state.db). Listed so an accidental
+# JSON re-write is ignored, not re-committed.
+/story-hook-video-status.json
+/image-lab.json
+/image-feedback.json
+/youtube-post-drafts.json
+/content_experiments.json
+/growth-control-center.json
+/growth-optimizer-plan.json
+/growth-weekly-report.json
+/weekly-growth-settings.json
+/predictive-growth-plan.json
+/instagram-growth-blueprint.json
+/creator-benchmarks.json
+/conversion-tracking.json
+/profile-conversion-audit.json
+/brand_brain.json
+/arc-campaigns.json
+/comment-assistant.json
+/comment-gather-results.json
+/metrics-gather-results.json
+/growth-stats-history.json
+/automation-strategy.json
+/youtube-upload-pending.json
+/youtube-comment-queue.json
+/youtube-pinned-comment-verified.json
+/youtube-metadata-experiments.json
+/chatgpt-chapter-status.json
+/chatgpt-chapter-result.json
+/thumbnail-tests.json
+/google-ai-image-usage.json
+/patreon-draft-pending.json
+/posting_schedule.json
+/background-video-usage.json
+/clickup-sync.json
+/monetization-status.json
+
+# Phase 3 insurance backup (JSON copies kept off-repo)
+/phase3-json-backup/

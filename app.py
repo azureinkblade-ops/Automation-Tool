@@ -2991,7 +2991,9 @@ def load_brand_brain() -> dict[str, Any]:
     for abbr in NOVEL_NAMES:
         profiles.setdefault(abbr, default_brand_profile(abbr))
     data["updatedAt"] = data.get("updatedAt") or time.strftime("%Y-%m-%d %H:%M:%S")
-    if not BRAND_BRAIN_FILE.exists():
+    # Phase 3: seed defaults into the DB (sole source of truth) only when the
+    # DB has no brandBrain yet -- NOT keyed on the retired JSON file existing.
+    if not data.get("_seeded") and not load_state_snapshot_from_database("brandBrain"):
         _phase2_save_blob("brandBrain", BRAND_BRAIN_FILE, data)
     return data
 
@@ -3050,40 +3052,37 @@ _PHASE2_BLOB_MAP: tuple[tuple[str, Any], ...] = (
 
 
 def _phase2_load_blob(key: str, json_file: Path, root: Any = None) -> Any:
+    # Phase 3: SQLite is the sole source of truth. The JSON mirror files have
+    # been retired (after a parity check proved DB == JSON for all 34 blobs).
+    # Reads go straight to the DB; no JSON fallback (that path was the soak-era
+    # safety net, now removed).
     snap = load_state_snapshot_from_database(key, root)
     if isinstance(snap, dict):
         snap.pop("_source", None)
         return snap
-    data = read_json_safe(json_file)
-    if isinstance(data, dict):
-        try:
-            mirror_state_snapshot_to_database(key, data)
-        except Exception as exc:
-            print(f"DB mirror failed for {key}: {exc}", file=sys.stderr)
-    return data
+    return None
 
 
 def _phase2_save_blob(key: str, json_file: Path, data: Any) -> None:
-    write_json_atomic(json_file, data)
+    # Phase 3: write ONLY to SQLite. The JSON mirror dual-write was retired
+    # after the soak period proved DB == JSON parity for all 34 blobs. Writing
+    # the JSON file here would recreate the retired mirrors.
     try:
         mirror_state_snapshot_to_database(key, data)
     except Exception as exc:
         print(f"DB mirror failed for {key}: {exc}", file=sys.stderr)
+        raise
 
 
 def migrate_phase2_state_to_db() -> None:
-    """One-time backfill: copy each Phase-2 JSON blob into the DB snapshot.
+    """Phase 3: no-op.
 
-    Idempotent (upsert by key). Call at startup so DB is authoritative before
-    any read. Safe to call repeatedly.
+    Historically this backfilled each Phase-2 JSON blob into the DB snapshot at
+    startup. After Phase 3 retired the JSON mirrors, the DB is the sole source
+    of truth and is initialized/seeded by automation_db.init_db(). This function
+    is kept (called at startup for compatibility) but does nothing, since there
+    are no JSON files left to backfill from.
     """
-    for key, json_file in _PHASE2_BLOB_MAP:
-        try:
-            data = read_json_safe(json_file)
-            if isinstance(data, dict):
-                mirror_state_snapshot_to_database(key, data)
-        except Exception as exc:
-            print(f"Phase 2 backfill failed for {key}: {exc}", file=sys.stderr)
 
 
 def load_content_experiments() -> dict[str, Any]:
@@ -9908,15 +9907,31 @@ def export_image_training_dataset(abbr: str = "", include_good: bool = True) -> 
     }
 
 
+def _feedback_blob_signature(blob: Any) -> str:
+    """Cheap cache-key signature for a feedback/lab blob.
+
+    Phase 3: blobs live in SQLite, not JSON files, so we can no longer key the
+    cache on file mtime/size. Use updatedAt + record count (a record append
+    changes the count and updatedAt), which invalidates the cache whenever the
+    blob is written.
+    """
+    if not isinstance(blob, dict):
+        return "none"
+    records = blob.get("records")
+    count = len(records) if isinstance(records, list) else 0
+    return f"{blob.get('updatedAt', '')}:{count}"
+
+
 def image_feedback_score_maps() -> tuple[dict[str, float], set[str]]:
-    cache_parts = []
-    for path in [IMAGE_LAB_FILE, IMAGE_FEEDBACK_FILE]:
-        try:
-            stat = path.stat()
-            cache_parts.append(f"{path.name}:{stat.st_mtime_ns}:{stat.st_size}")
-        except OSError:
-            cache_parts.append(f"{path.name}:missing")
-    cache_key = "|".join(cache_parts)
+    # Phase 3: the JSON mirror files are retired; the blobs live ONLY in SQLite.
+    # The cache key must therefore derive from the DB blob state (updatedAt /
+    # record count), NOT from the JSON file's stat() -- which is now always
+    # "missing" and would freeze the cache stale forever.
+    lab = _phase2_load_blob("imageLab", IMAGE_LAB_FILE)
+    feedback = _phase2_load_blob("imageFeedback", IMAGE_FEEDBACK_FILE)
+    lab_sig = _feedback_blob_signature(lab)
+    feedback_sig = _feedback_blob_signature(feedback)
+    cache_key = f"imageLab:{lab_sig}|imageFeedback:{feedback_sig}"
     if IMAGE_FEEDBACK_SCORE_CACHE.get("key") == cache_key:
         cached = IMAGE_FEEDBACK_SCORE_CACHE.get("value")
         if isinstance(cached, tuple):
@@ -9986,15 +10001,13 @@ def image_feedback_score_maps() -> tuple[dict[str, float], set[str]]:
 
 def image_feedback_training_summary(abbr: str = "") -> dict[str, Any]:
     abbr_filter = story_key(abbr)
-    try:
-        stat = IMAGE_FEEDBACK_FILE.stat()
-        cache_key = f"{abbr_filter}:{stat.st_mtime_ns}:{stat.st_size}"
-    except OSError:
-        cache_key = f"{abbr_filter}:missing"
+    feedback = _phase2_load_blob("imageFeedback", IMAGE_FEEDBACK_FILE)
+    # Phase 3: cache key derives from the DB blob signature, not the retired
+    # JSON file's stat() (which is always "missing" now and would freeze cache).
+    cache_key = f"{abbr_filter}:{_feedback_blob_signature(feedback)}"
     cached_value = IMAGE_FEEDBACK_TRAINING_CACHE.get(cache_key)
     if isinstance(cached_value, dict):
         return cached_value
-    feedback = _phase2_load_blob("imageFeedback", IMAGE_FEEDBACK_FILE)
     records = feedback.get("records", []) if isinstance(feedback, dict) and isinstance(feedback.get("records"), list) else []
     provider_counts: dict[str, dict[str, int]] = {}
     term_counts: dict[str, dict[str, int]] = {}

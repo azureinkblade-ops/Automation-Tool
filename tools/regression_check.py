@@ -612,7 +612,7 @@ def check_image_feedback_training_loop() -> list[dict[str, object]]:
         "packStatus": "manual_review_ready",
     }
     (folder / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    original_feedback = app.IMAGE_FEEDBACK_FILE.read_text(encoding="utf-8") if app.IMAGE_FEEDBACK_FILE.exists() else None
+    original_feedback = app.load_state_snapshot_from_database("imageFeedback")
     try:
         before = app.folder_quality_gate(str(folder), "instagram", full_duplicate_scan=False)
         app.record_image_feedback(image_path=image, action="approve", metadata={**metadata, "folder": str(folder), "qualityScore": 80}, note="Regression approved image at 80/100.")
@@ -633,13 +633,17 @@ def check_image_feedback_training_loop() -> list[dict[str, object]]:
         strategy = app.provider_strategy_status()
         checks.append(assert_result("provider_strategy_exposes_training", isinstance(strategy.get("training"), dict), "training section present"))
     finally:
-        if original_feedback is None:
-            try:
-                app.IMAGE_FEEDBACK_FILE.unlink()
-            except OSError:
-                pass
-        else:
-            app.IMAGE_FEEDBACK_FILE.write_text(original_feedback, encoding="utf-8")
+        # Phase 3: imageFeedback lives ONLY in SQLite. Restore the original blob
+        # from the DB snapshot (or clear it if none existed before the test),
+        # never the retired JSON mirror file.
+        try:
+            if original_feedback is None:
+                # No prior feedback: remove the test-written blob from the DB.
+                app.mirror_state_snapshot_to_database("imageFeedback", {})
+            else:
+                app.mirror_state_snapshot_to_database("imageFeedback", original_feedback)
+        except Exception as exc:
+            print(f"imageFeedback restore failed: {exc}", file=sys.stderr)
         shutil.rmtree(folder, ignore_errors=True)
     return checks
 
@@ -1834,46 +1838,27 @@ def check_db_source_of_truth() -> list[dict[str, object]]:
         try:
             db_snap = automation_db.load_state_snapshot(app.ROOT, state_key)
             db_ok = isinstance(db_snap, dict) and bool(db_snap)
-            json_exists = json_file.exists()
-            json_data = None
-            if json_exists:
-                try:
-                    json_data = json.loads(json_file.read_text(encoding="utf-8-sig"))
-                except Exception:
-                    json_data = None
-            if db_ok and json_data is not None:
-                db_compare = {k: v for k, v in db_snap.items() if k != "_source"}
-                json_compare = {k: v for k, v in json_data.items() if k != "_source"}
-                agree = json.dumps(db_compare, sort_keys=True, default=str) == json.dumps(json_compare, sort_keys=True, default=str)
-                checks.append(assert_result(
-                    f"{state_key}_db_matches_json",
-                    agree,
-                    f"DB snapshot disagrees with JSON mirror for '{state_key}' (stale-state risk).",
-                ))
-            elif json_exists and not db_ok:
-                checks.append(assert_result(
-                    f"{state_key}_db_not_stale_vs_json",
-                    True,
-                    f"'{state_key}': JSON present, DB not yet backfilled (startup backfill expected).",
-                ))
-            else:
-                checks.append(assert_result(
-                    f"{state_key}_db_or_json_present",
-                    True,
-                    f"'{state_key}': neither DB nor JSON present (fresh state).",
-                ))
-            # Static guard: every writer for this state must mirror to DB, i.e. no
-            # bare write_json_atomic(CONST, ...) should remain in app.py.
+            # Phase 3: SQLite is the sole source of truth. The JSON mirror files
+            # are retired, so the guard simply asserts the blob lives in the DB
+            # (non-empty) -- there is no JSON to compare against anymore.
+            checks.append(assert_result(
+                f"{state_key}_db_present",
+                db_ok,
+                f"DB snapshot for '{state_key}' is missing/empty after JSON retirement (data-loss risk).",
+            ))
+            # Static guard: every writer for this state must mirror to DB via
+            # _phase2_save_blob, i.e. no bare write_json_atomic(CONST, ...) may
+            # remain in app.py (that would recreate a retired JSON mirror).
             const_name = json_file.name.replace(".json", "").upper() + "_FILE"
             src = (ROOT / "app.py").read_text(encoding="utf-8", errors="replace")
             leaked = (f"write_json_atomic({const_name}," in src) or (f"write_json_atomic({const_name} ," in src)
             checks.append(assert_result(
                 f"{state_key}_writers_mirror_to_db",
                 not leaked,
-                f"No bare write_json_atomic({const_name}, ...) may remain; writers must use _phase2_save_blob.",
+                f"No bare write_json_atomic({const_name}, ...) may remain; writers must use _phase2_save_blob (DB-only).",
             ))
         except Exception as exc:
-            checks.append(result(f"{state_key}_db_matches_json", False, f"read error: {exc}"))
+            checks.append(result(f"{state_key}_db_present", False, f"read error: {exc}"))
 
     # --- 2c. Phase 2B: reads are DB-first (not JSON-first) ---
     # Isolated temp DB only (TEST_STATE_ROOT); never touches live state.
