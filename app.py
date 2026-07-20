@@ -34146,6 +34146,26 @@ File: ${escapeHtml(data.file || '')}</div>
       return parts.length ? `<p class="meta">${escapeHtml(parts.join(' | '))}</p>` : '';
     }
 
+    // §2 TTS UI hook: render an inline voiceover player for a post card.
+    // Reads the structured audio status written by attach_post_audio into
+    // metadata.json (carried on item._metadata.audio). Shows the player only
+    // when synthesis succeeded; a "Generating..." badge while pending; nothing
+    // when skipped/failed so the card stays clean.
+    function audioPlayer(item) {
+      const audio = item && item._metadata && item._metadata.audio;
+      if (!audio) return '';
+      if (audio.status === 'ready' && audio.url) {
+        const dur = audio.duration_seconds ? ` &middot; ${Number(audio.duration_seconds).toFixed(1)}s` : '';
+        const eng = audio.engine ? ` &middot; ${escapeHtml(audio.engine)}` : '';
+        return `<div class="audio-player"><span class="meta">Voiceover${eng}${dur}</span>`
+          + `<audio controls preload="none" src="${escapeHtml(audio.url)}"></audio></div>`;
+      }
+      if (audio.status === 'pending') {
+        return `<p class="meta">Voiceover: generating&hellip;</p>`;
+      }
+      return '';
+    }
+
     function renderApprovalInbox(data) {
       const replyCards = (items, allowContent = false) => (items || []).map(item => `
         <article class="review-card">
@@ -34222,6 +34242,7 @@ File: ${escapeHtml(data.file || '')}</div>
           <h3>${escapeHtml((item.platform || '').toUpperCase())}: ${escapeHtml(approvalLabel(item))}</h3>
           ${packMetaLine(item)}
           <p class="meta">Created ${escapeHtml(item.createdAt || '')}</p>
+          ${audioPlayer(item)}
           <button type="button" data-inbox-action="/api/social-post-preview" data-inbox-platform="${escapeHtml(item.platform || '')}" data-inbox-folder="${escapeHtml(item.folder || '')}">Prepare ${escapeHtml(item.platform || 'Post')}</button>
           <button class="secondary" type="button" data-pack-refresh="${escapeHtml(item.folder || '')}">Refresh Pack State</button>
           <button class="secondary" type="button" data-clear-inbox-item data-inbox-kind="manualSocial" data-inbox-platform="${escapeHtml(item.platform || '')}" data-inbox-folder="${escapeHtml(item.folder || '')}">Mark Done / Clear</button>
@@ -41014,13 +41035,34 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self.send_json({"error": str(exc)}, 404)
             return
+        if parsed.path == "/api/post-audio":
+            try:
+                import post_artifacts as pa
+                query = urllib.parse.parse_qs(parsed.query)
+                folder = query.get("folder", [""])[0]
+                content_hash = query.get("hash", [""])[0]
+                served = pa.post_audio_serve(folder, content_hash)
+                if served is None:
+                    self.send_json({"error": "audio not found or path unsafe"}, 404)
+                    return
+                data, mime = served
+                self.send_response(200)
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Disposition", 'inline; filename="voiceover.mp3"')
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            except Exception as exc:
+                self.send_json({"error": str(exc)}, 404)
+            return
         if parsed.path == "/api/recovery-log":
             self.send_json(load_recovery_log())
             return
         if parsed.path == "/api/brand-brain":
             self.send_json(load_brand_brain())
             return
-        if parsed.path == "/api/content-experiments":
+
             self.send_json(content_experiment_overview())
             return
         if parsed.path == "/api/monetization-dashboard":

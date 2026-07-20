@@ -357,7 +357,18 @@ def _convert_to_mp3(src: "os.PathLike | str", dst: "os.PathLike | str") -> None:
 
 
 def _local_url(folder: "os.PathLike | str", path: "os.PathLike | str") -> str:
-    from pathlib import Path
+    # The cached mp3 lives on local disk; the dashboard is served over http://,
+    # so a file:// URL is unplayable in-browser. Route through /api/post-audio
+    # (which enforces path confinement) using the content hash from the filename.
+    try:
+        from post_artifacts import post_audio_url
+        content_hash = Path(path).stem.split(".tmp", 1)[0]
+        url = post_audio_url(folder, content_hash)
+        if url:
+            return url
+    except Exception:
+        pass
+    # Fallback: raw file URI (used by non-browser consumers / tests).
     try:
         return Path(path).as_uri()
     except Exception:

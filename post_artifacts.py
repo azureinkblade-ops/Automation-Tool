@@ -23,6 +23,60 @@ def post_audio_relative_path(content_hash: str) -> str:
     return f".tts_cache/{content_hash}.mp3"
 
 
+def post_audio_url(folder: "str | Path", content_hash: str) -> str:
+    """HTTP URL the dashboard <audio> widget uses to stream the voiceover.
+
+    The cached file lives on local disk, so we route through the app's
+    /api/post-audio endpoint (a browser cannot play a file:// URL served from
+    an http:// origin). Resolves symlinks and enforces that the file stays
+    within the post folder; if it does not, returns an empty string so the UI
+    shows no player rather than a broken/unsafe link.
+    """
+    path = _resolve_audio_path(folder, content_hash)
+    if path is None:
+        return ""
+    from urllib.parse import quote
+    return (
+        "/api/post-audio?folder="
+        + quote(str(Path(folder)), safe="")
+        + "&hash="
+        + quote(content_hash, safe="")
+    )
+
+
+def _resolve_audio_path(folder: "str | Path", content_hash: str) -> "Path | None":
+    """Resolve the cached mp3 for a post, enforcing it stays under folder/.tts_cache.
+
+    Returns the resolved Path or None when the path is unsafe / missing.
+    """
+    if not content_hash or "/" in content_hash or "\\" in content_hash:
+        return None
+    folder = Path(folder)
+    candidate = (folder / ".tts_cache" / f"{content_hash}.mp3").resolve()
+    # Confine to the post folder (prevents path traversal via folder param).
+    try:
+        candidate.relative_to(folder.resolve())
+    except Exception:
+        return None
+    if candidate.exists() and candidate.is_file():
+        return candidate
+    return None
+
+
+def post_audio_serve(folder: "str | Path", content_hash: str) -> "tuple[bytes, str] | None":
+    """Read the cached voiceover bytes for an HTTP response.
+
+    Returns (data, mime) or None when missing/unsafe. Caller handles the 404.
+    """
+    path = _resolve_audio_path(folder, content_hash)
+    if path is None:
+        return None
+    try:
+        return path.read_bytes(), "audio/mpeg"
+    except Exception:
+        return None
+
+
 def apply_artifact_schema_version(metadata: dict[str, Any]) -> dict[str, Any]:
     """Stamp the schema version onto a post metadata dict if absent."""
     if "artifact_schema_version" not in metadata:
