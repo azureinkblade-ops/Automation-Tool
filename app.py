@@ -46,6 +46,9 @@ import approval_inbox
 import release_automation
 import buffer_publish
 import browser_publish
+# §2 TTS service (lazy-imports app inside functions, so safe at module load).
+from tts_service import generate_post_audio
+
 import youtube_pipeline
 import growth_analytics
 import social_stats_tracker
@@ -142,7 +145,21 @@ MANUAL_VIDEO_IMAGE_BANK_DIR = ROOT / "manual-video-image-bank"
 EXPERIMENT_OUTPUT_DIR = ROOT / "experiment-post-packs"
 LOCAL_IMAGE_GENERATOR_SCRIPT = ROOT / "local_image_generator.py"
 LORA_TRAINING_DIR = ROOT / "lora-training"
+
+# Feature flags for post-build improvements (2026-07-20 plan: voice variants, TTS, smart overlay).
+# Start §3 (smart overlay) and §1 (voice variants) ON; §2 (post audio) OFF until validated.
+ENABLE_SMART_OVERLAY_SELECTION = str(os.environ.get("ENABLE_SMART_OVERLAY_SELECTION", "true")).strip().lower() in ("1", "true", "yes", "on")
+ENABLE_NOVEL_VOICE_VARIANTS = str(os.environ.get("ENABLE_NOVEL_VOICE_VARIANTS", "true")).strip().lower() in ("1", "true", "yes", "on")
+ENABLE_POST_AUDIO = str(os.environ.get("ENABLE_POST_AUDIO", "false")).strip().lower() in ("1", "true", "yes", "on")
+# §2 TTS orchestration flags. GENERATE_POST_AUDIO gates the feature; POST_AUDIO_BLOCKING
+# controls whether audio synthesis blocks post creation (False = deferred/async-safe).
+GENERATE_POST_AUDIO = str(os.environ.get("GENERATE_POST_AUDIO", "false")).strip().lower() in ("1", "true", "yes", "on")
+POST_AUDIO_BLOCKING = str(os.environ.get("POST_AUDIO_BLOCKING", "false")).strip().lower() in ("1", "true", "yes", "on")
+# Artifact schema version for post payloads that gain audio/overlay structures (§4 migration safety).
+ARTIFACT_SCHEMA_VERSION = 2
+
 LORA_MODEL_DIR = ROOT / "loras"
+
 GITHUB_MEDIA_DIR = ROOT / "docs" / "media"
 PROMO_ROTATION_STATE_FILE = ROOT / "promo-image-rotation.json"
 BACKGROUND_VIDEO_USAGE_FILE = ROOT / "background-video-usage.json"
@@ -16219,6 +16236,49 @@ def weekend_social_copy(abbr: str, day: str) -> dict[str, str]:
     }
 
 
+def attach_post_audio(payload: dict[str, Any], abbr: str, text: str, folder: "Path") -> dict[str, Any]:
+    """Attach a generated voiceover to a post payload (2026-07-20 plan §2).
+
+    Gated by GENERATE_POST_AUDIO. When off, the payload keeps its existing
+    (or empty) audio field and the post is unaffected. On any failure the post
+    remains usable: status becomes 'failed'/'skipped' rather than raising.
+    Synthesis is non-blocking by default (POST_AUDIO_BLOCKING=False) so the
+    text post is never delayed by TTS; the audio status is merged into metadata.
+    """
+    import post_artifacts as pa
+    if not GENERATE_POST_AUDIO:
+        return payload
+    status = {
+        "status": "skipped", "path": "", "url": "", "engine": "",
+        "voice_id": "", "duration_seconds": 0.0, "cache_hit": False,
+        "content_hash": "", "error": "GENERATE_POST_AUDIO disabled",
+    }
+    if not POST_AUDIO_BLOCKING:
+        # Deferred/non-blocking: record 'pending' so the UI can show
+        # "Generating audio..." and a later pass fills it in.
+        payload = pa.attach_audio_status(payload, {
+            "status": "pending", "path": "", "url": "", "engine": "",
+            "voice_id": "", "duration_seconds": 0.0, "cache_hit": False,
+            "content_hash": "", "error": None,
+        })
+        # Best-effort synchronous generation now (non-blocking flag only means we
+        # must not fail the post); wrap so exceptions never escape.
+        try:
+            result = generate_post_audio(text, folder, abbr=abbr)
+            return pa.attach_audio_status(payload, result)
+        except Exception as exc:
+            return pa.attach_audio_status(payload, {
+                "status": "failed", "path": "", "url": "", "engine": "",
+                "voice_id": "", "duration_seconds": 0.0, "cache_hit": False,
+                "content_hash": "", "error": str(exc),
+            })
+    try:
+        result = generate_post_audio(text, folder, abbr=abbr)
+        return pa.attach_audio_status(payload, result)
+    except Exception as exc:
+        return pa.attach_audio_status(payload, {**status, "error": str(exc)})
+
+
 def make_weekend_social_post(abbr: str, day: str) -> dict[str, Any]:
     day = day if day in {"Saturday", "Sunday"} else "Saturday"
     matches = [
@@ -16307,6 +16367,11 @@ def make_weekend_social_post(abbr: str, day: str) -> dict[str, Any]:
         "folder": str(folder),
         "image": str(image_target),
     }
+    # §2 TTS: attach a voiceover to the post record (non-blocking; post stays
+    # usable if audio generation fails). Uses the Instagram caption as the
+    # narration source with hashtags removed.
+    _narration = re.sub(r"#\w+", "", copy.get("instagram", "")).strip()
+    payload = attach_post_audio(payload, abbr, _narration, folder)
     (folder / "instagram.txt").write_text(copy["instagram"].strip() + "\n", encoding="utf-8")
     (folder / "x.txt").write_text(copy["x"].strip() + "\n", encoding="utf-8")
     (folder / "facebook.txt").write_text(copy["facebook"].strip() + "\n", encoding="utf-8")
@@ -31260,12 +31325,176 @@ print(f"Done. Output folder: {{folder}}")
     (folder / "video-text.txt").write_text(f"{title}\n\n" + "\n".join(overlays) + "\n", encoding="utf-8")
 
 
+def _overlay_candidate_clauses(phrases):
+    """Stage 1: extract complete candidate clauses from source phrases.
+
+    Splits on sentence boundaries, semicolons, colons, em dashes, and
+    dialogue boundaries; also keeps independent comma clauses. Does NOT
+    pre-clip to a character limit before scoring.
+    """
+    import re as _re
+    clauses = []
+    for phrase in phrases or []:
+        if not phrase:
+            continue
+        text = str(phrase)
+        text = text.replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
+        text = text.replace("\u2013", "-").replace("\u2014", "-")
+        for part in _re.split(r'(?<=[.!?])\s+|(?<=[:;])\s+|(?<=[\u2014-])', text):
+            part = part.strip().strip('"').strip("'").strip()
+            if not part:
+                continue
+            sub = _re.split(r',\s+(?=[A-Z])', part)
+            if len(sub) > 1 and len(sub[0].split()) <= 14:
+                clauses.append(sub[0].strip())
+                clauses.extend(s.strip() for s in sub[1:] if s.strip())
+            else:
+                clauses.append(part)
+    seen = set()
+    out = []
+    for c in clauses:
+        c = _re.sub(r'\s+', ' ', c).strip()
+        if c and c.lower() not in seen:
+            seen.add(c.lower())
+            out.append(c)
+    return out
+
+
+_STOP_WORDS_FINAL = {
+    "a", "an", "the", "and", "or", "but", "because", "which", "that", "this",
+    "these", "those", "of", "in", "on", "at", "to", "for", "with", "from",
+    "by", "as", "is", "was", "were", "are", "be", "been", "being", "has",
+    "have", "had", "do", "does", "did", "will", "would", "can", "could",
+    "should", "may", "might", "his", "her", "its", "their", "my", "your",
+    "our", "whose", "than", "into", "onto", "upon", "over", "under", "about",
+}
+_POSITIVE_LEXICON = {
+    "betray", "betrayal", "traitor", "threat", "threaten", "reveal", "revealed",
+    "revelation", "choice", "choose", "sacrifice", "sacrificed", "power", "ascend",
+    "ascension", "forge", "burn", "burned", "kill", "killed", "die", "died",
+    "dead", "war", "battle", "secret", "hidden", "erase", "erased", "echo",
+    "nexus", "signal", "system", "abandon", "abandoned", "curse", "bless",
+    "break", "broke", "shatter", "shattered", "claim", "claimed", "steal",
+    "stole", "truth", "lie", "lied", "fall", "fell", "rise", "rose", "command",
+    "demand", "refuse", "refused", "remember", "forgot", "lost", "lose",
+}
+
+
+def _overlay_score(clause, title=None):
+    """Stage 2: score a candidate clause for structural fit + promotional value."""
+    import re as _re
+    words = clause.split()
+    n = len(words)
+    if n < 3 or n > 18:
+        return None, {}
+    last = words[-1].strip(".,;:!?\"'").lower()
+    first = words[0].strip("\"'(").lower()
+    reasons = {}
+    score = 0.0
+    length_fit = 1.0 - abs(n - 9) / 12.0
+    score += max(0.0, length_fit)
+    if last in _STOP_WORDS_FINAL or first in {"and", "but", "because", "which"}:
+        score -= 3.0
+        reasons["dangling_penalty"] = True
+    else:
+        score += 1.0
+        reasons["clean_edges"] = True
+    low = clause.lower()
+    hits = sum(1 for kw in _POSITIVE_LEXICON if kw in low)
+    score += min(hits, 4) * 0.8
+    if hits:
+        reasons["emotional_action_hits"] = hits
+    if _re.search(r'\b(it|they|that)\b', low) and not _re.search(r'\b(it|they|that) (was|were|is|had|did|would|could|had been|was a|was the)\b', low):
+        score -= 1.5
+        reasons["vague_pronoun"] = True
+    if _re.search(r'\b[A-Z][a-z]{3,}\b', clause):
+        score += 0.5
+    if clause.endswith("?") or clause.endswith("!"):
+        score += 0.6
+        reasons["question_or_command"] = True
+    if title and clause.lower().strip() == title.lower().strip():
+        score -= 4.0
+        reasons["duplicate_title"] = True
+    score = round(score, 2)
+    if score < 1.0:
+        return None, reasons
+    return score, reasons
+
+
+def select_overlay_quote(phrases, limit=42, max_lines=2, title=None,
+                         measure_text=None, font=None, font_size=None):
+    """Two-stage overlay selection with provenance.
+
+    Returns a dict with chosen text + metadata. When no candidate meets the
+    quality threshold, returns an empty overlay (allowed by spec) rather than
+    forcing a clipped fragment. `measure_text` (optional, renderer.measure_text)
+    enables font-metric-aware rejection past `max_lines`; otherwise a documented
+    character-limit approximation is used.
+    """
+    import textwrap as _tw
+    clauses = _overlay_candidate_clauses(phrases)
+    scored = []
+    for idx, clause in enumerate(clauses):
+        s, reasons = _overlay_score(clause, title=title)
+        if s is None:
+            continue
+        scored.append((s, idx, clause, reasons))
+    scored.sort(key=lambda t: t[0], reverse=True)
+    used_texts = set()
+    for score, idx, clause, reasons in scored:
+        text = clause.upper()
+        # Authoritative gate: the candidate must wrap to <= max_lines at the
+        # renderer's width WITHOUT truncation (no silent clipping).
+        wrapped_full = _tw.wrap(text, width=20, break_long_words=False,
+                                break_on_hyphens=False)
+        if not wrapped_full or len(wrapped_full) > max_lines:
+            continue
+        if measure_text is not None and font is not None and font_size:
+            # Font-metric confirmation when a renderer callback is supplied.
+            try:
+                if any(len(str(measure_text(line, font, font_size))) > 20 for line in wrapped_full):
+                    continue
+            except Exception:
+                pass
+        if text.lower() in used_texts:
+            continue
+        used_texts.add(text.lower())
+        return {
+            "text": "\n".join(wrapped_full),
+            "source_phrase": phrases[idx] if idx < len(phrases) else "",
+            "source_index": idx,
+            "score": score,
+            "was_clipped": False,
+            "selection_reason": reasons.get("selection_reason", "best_score"),
+        }
+    return {
+        "text": "",
+        "source_phrase": "",
+        "source_index": -1,
+        "score": 0.0,
+        "was_clipped": False,
+        "selection_reason": "no_qualifying_candidate",
+    }
+
+
 def escape_drawtext(value: str) -> str:
     value = value.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
     return value.replace("\n", "\\n")
 
 
+
 def reel_overlay_text(value: str, limit: int = 42) -> str:
+    if ENABLE_SMART_OVERLAY_SELECTION and value and "\n" not in value:
+        try:
+            result = select_overlay_quote([value], limit=limit)
+            if result.get("text"):
+                return result["text"]
+            # No qualifying candidate fit the overlay box. Roll back to the
+            # safe legacy wrapper (clips sensibly, avoids trailing stop words)
+            # rather than leaving the image with no overlay.
+        except Exception:
+            # Unexpected failure -> also use the legacy wrapper.
+            pass
     value = value.replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
     value = value.replace("\u2013", "-").replace("\u2014", "-")
     value = re.sub(r"\s+", " ", value).strip()

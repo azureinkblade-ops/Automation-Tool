@@ -28,6 +28,14 @@ import app_config as config
 NOVEL_NAMES = config.NOVEL_NAMES
 LINKTREE_URL = config.LINKTREE_URL
 PATREON_URL = config.PATREON_URL
+
+# Feature flag (mirrors app.ENABLE_NOVEL_VOICE_VARIANTS). promo_copy is a pure
+# module and cannot import app, so the flag is defined locally with the same
+# env var + default. Rollback: when False, focused_social_cta uses only the
+# generic templates regardless of NOVEL_VOICE_VARIANTS.
+ENABLE_NOVEL_VOICE_VARIANTS = str(
+    __import__("os").environ.get("ENABLE_NOVEL_VOICE_VARIANTS", "true")
+).strip().lower() in ("1", "true", "yes", "on")
 YOUTUBE_SOCIAL_URL = config.YOUTUBE_SOCIAL_URL
 TIKTOK_URL = config.TIKTOK_URL
 INSTAGRAM_URL = config.INSTAGRAM_URL
@@ -474,6 +482,217 @@ def dynamic_cta_goal(abbr: str, focus: str, context: str = "", *, rotation_next=
     return variants[rotation_next(key, len(variants))]
 
 
+# Generic CTA variants (fallback when a novel has no voice-specific variant).
+# Authored as format templates: {hub} fills the linktree URL, {name} the novel name.
+GENERIC_CTA_VARIANTS = {
+    "start_reading": [
+        "Start {name} here: {hub}",
+        "New to {name}? Begin reading here: {hub}",
+        "Pick up {name} from the hub: {hub}",
+    ],
+    "read_ahead": [
+        "Read ahead and catch the public chapters here: {hub}",
+        "Early access, public chapters, and updates are all here: {hub}",
+        "Want the next chapter sooner? Start here: {hub}",
+    ],
+    "watch_listen": [
+        "Watch or listen to chapter releases here: {hub}",
+        "Prefer video chapters and shorts? Find them here: {hub}",
+        "Read, watch, or listen from one hub: {hub}",
+    ],
+    "follow_next": [
+        "Follow for the next chapter drop: {hub}",
+        "Do not miss the next update. Follow here: {hub}",
+        "Follow the release trail here: {hub}",
+    ],
+    "comment_question": [
+        "Tell me what you think, then read more here: {hub}",
+        "Drop your prediction and continue here: {hub}",
+        "Which choice would you make? Continue here: {hub}",
+    ],
+    "catch_up": [
+        "Catch up before the next arc lands: {hub}",
+        "Start from chapter one or jump into the latest updates: {hub}",
+        "Weekend catch-up starts here: {hub}",
+    ],
+    "support_release": [
+        "Support the release schedule and read more here: {hub}",
+        "Help keep the chapters coming and read ahead here: {hub}",
+        "Support Azure Inkblade and find every series here: {hub}",
+    ],
+    "subscribe": [
+        "Subscribe, read, and watch from the Azure Inkblade hub: {hub}",
+        "Follow the videos and chapters here: {hub}",
+        "Keep the next chapter in your feed: {hub}",
+    ],
+    "author_resources": [
+        "Readers can start the novels, and writers can find author tools here: {hub}",
+        "Stories, videos, and author resources are all here: {hub}",
+        "Read the novels or check out the author resources here: {hub}",
+    ],
+}
+
+# Per-novel voice variants (2026-07-20 plan §1). Each novel speaks in its own
+# voice (EN: LitRPG cyberpunk / Nexus; HA: urban cultivation / ascension;
+# SF: undercity soul-forge / iron; HP: classical xianxia / path). Complete
+# phrases only -- never assembled from interchangeable fragments. Keyed by
+# normalized abbr (story_key) then CTA goal. {hub} = linktree URL.
+NOVEL_VOICE_VARIANTS = {
+    "EN": {
+        "start_reading": [
+            "Enter the Nexus and uncover what the system erased: {hub}",
+            "The next echo is already waiting inside the Nexus: {hub}",
+        ],
+        "read_ahead": [
+            "Patch into the early build and read ahead from the hub: {hub}",
+            "The interface is open. Slip into the next node here: {hub}",
+        ],
+        "watch_listen": [
+            "Watch the chapter render as a video, or listen to the echo here: {hub}",
+            "The signal goes live in audio and video from the hub: {hub}",
+        ],
+        "follow_next": [
+            "Follow the trail before the next system update ships: {hub}",
+            "Stay logged in for the next Nexus drop: {hub}",
+        ],
+        "comment_question": [
+            "Was that a system failure, or was the Nexus warning him?",
+            "Which would you trust first: the interface or the echo behind it?",
+        ],
+        "catch_up": [
+            "Recompile the early arcs before the next chapter locks: {hub}",
+            "Catch up on every erased node from the hub: {hub}",
+        ],
+        "support_release": [
+            "Keep the servers online and read the next build here: {hub}",
+            "Support the release and the system stays one step ahead: {hub}",
+        ],
+        "subscribe": [
+            "Subscribe and the Nexus pings you on every drop: {hub}",
+            "Lock the feed so no echo slips past: {hub}",
+        ],
+        "author_resources": [
+            "Readers enter the Nexus; writers find their own tools here: {hub}",
+            "Stories, signals, and author resources all route through the hub: {hub}",
+        ],
+    },
+    "HA": {
+        "start_reading": [
+            "Step onto the ascension path and claim your first meridian: {hub}",
+            "The heavens opened a door. Walk through it here: {hub}",
+        ],
+        "read_ahead": [
+            "Cultivate ahead of the tribulation from the sect hub: {hub}",
+            "Gather qi for the next realm and read ahead here: {hub}",
+        ],
+        "watch_listen": [
+            "Watch the Dao unfold in video, or hear it chanted from the hub: {hub}",
+            "The ascension plays in audio and vision from the hub: {hub}",
+        ],
+        "follow_next": [
+            "Follow the cultivator before the next heavenly trial: {hub}",
+            "Stay sworn to the path for the next breakthrough: {hub}",
+        ],
+        "comment_question": [
+            "Would you surrender your meridian to ascend?",
+            "Which tribulation would you fear most: the heavens, or the sect?",
+        ],
+        "catch_up": [
+            "Rebuild your foundation before the next ascent: {hub}",
+            "Catch up on every realm from the sect hub: {hub}",
+        ],
+        "support_release": [
+            "Feed the cultivator's qi and read the next chapter here: {hub}",
+            "Support the release so the path stays open: {hub}",
+        ],
+        "subscribe": [
+            "Subscribe and the heavens announce each new realm: {hub}",
+            "Bind the feed to your core for every ascension: {hub}",
+        ],
+        "author_resources": [
+            "Disciples read the Dao; masters find their craft here: {hub}",
+            "Cultivation, lore, and author resources gather at the hub: {hub}",
+        ],
+    },
+    "SF": {
+        "start_reading": [
+            "Descend to the undercity forge and hear the iron sing: {hub}",
+            "The choir of souls is calling. Answer it here: {hub}",
+        ],
+        "read_ahead": [
+            "Forge ahead of the next ember from the workshop hub: {hub}",
+            "Temper your blade and read the early chapters here: {hub}",
+        ],
+        "watch_listen": [
+            "Watch the anvil ring in video, or hear the soul-choir here: {hub}",
+            "The forge plays in audio and fire from the hub: {hub}",
+        ],
+        "follow_next": [
+            "Follow the smith before the next ember dies: {hub}",
+            "Stay at the anvil for the next molten drop: {hub}",
+        ],
+        "comment_question": [
+            "Would you trade your soul to finish the blade?",
+            "Which would you forge first: the weapon, or the wielder?",
+        ],
+        "catch_up": [
+            "Rekindle the cold forge before the next song: {hub}",
+            "Catch up on every ember from the workshop hub: {hub}",
+        ],
+        "support_release": [
+            "Feed the furnace and read the next chapter here: {hub}",
+            "Support the release so the iron keeps singing: {hub}",
+        ],
+        "subscribe": [
+            "Subscribe and the choir belts every new chapter: {hub}",
+            "Bind the feed to your anvil for each drop: {hub}",
+        ],
+        "author_resources": [
+            "Readers enter the forge; smiths find their craft here: {hub}",
+            "Blades, souls, and author resources ring from the hub: {hub}",
+        ],
+    },
+    "HP": {
+        "start_reading": [
+            "Take the hundredfold path and multiply your first step: {hub}",
+            "The jade gate has opened. Walk the path here: {hub}",
+        ],
+        "read_ahead": [
+            "Cultivate ahead of the next tribulation from the sect hub: {hub}",
+            "Gather immortal qi and read ahead here: {hub}",
+        ],
+        "watch_listen": [
+            "Watch the Dao bloom in video, or hear the mountain here: {hub}",
+            "The path plays in audio and stillness from the hub: {hub}",
+        ],
+        "follow_next": [
+            "Follow the wanderer before the next immortal trial: {hub}",
+            "Stay on the path for the next breakthrough: {hub}",
+        ],
+        "comment_question": [
+            "Would you climb the mountain, or become the mountain?",
+            "Which tribulation would you face first: the sect, or the self?",
+        ],
+        "catch_up": [
+            "Rebuild your foundation before the next ascent: {hub}",
+            "Catch up on every realm from the sect hub: {hub}",
+        ],
+        "support_release": [
+            "Sustain the cultivator's qi and read the next chapter here: {hub}",
+            "Support the release so the path stays open: {hub}",
+        ],
+        "subscribe": [
+            "Subscribe and the sect announces each new realm: {hub}",
+            "Bind the feed to your core for every ascent: {hub}",
+        ],
+        "author_resources": [
+            "Disciples walk the path; authors find their craft here: {hub}",
+            "Immortal lore and author resources gather at the hub: {hub}",
+        ],
+    },
+}
+
+
 def focused_social_cta(abbr: str, focus: str, context: str = "", platform: str = "", *,
                         rotation_next=_in_memory_rotation_next) -> str:
     focus = normalize_post_copy_mode(focus)
@@ -481,57 +700,23 @@ def focused_social_cta(abbr: str, focus: str, context: str = "", platform: str =
     goal = dynamic_cta_goal(abbr, focus, context or platform, rotation_next=rotation_next)
     hub = linktree_url()
     name = profile["name"]
-    variants = {
-        "start_reading": [
-            f"Start {name} here: {hub}",
-            f"New to {name}? Begin reading here: {hub}",
-            f"Pick up {name} from the hub: {hub}",
-        ],
-        "read_ahead": [
-            f"Read ahead and catch the public chapters here: {hub}",
-            f"Early access, public chapters, and updates are all here: {hub}",
-            f"Want the next chapter sooner? Start here: {hub}",
-        ],
-        "watch_listen": [
-            f"Watch or listen to chapter releases here: {hub}",
-            f"Prefer video chapters and shorts? Find them here: {hub}",
-            f"Read, watch, or listen from one hub: {hub}",
-        ],
-        "follow_next": [
-            f"Follow for the next chapter drop: {hub}",
-            f"Do not miss the next update. Follow here: {hub}",
-            f"Follow the release trail here: {hub}",
-        ],
-        "comment_question": [
-            f"Tell me what you think, then read more here: {hub}",
-            f"Drop your prediction and continue here: {hub}",
-            f"Which choice would you make? Continue here: {hub}",
-        ],
-        "catch_up": [
-            f"Catch up before the next arc lands: {hub}",
-            f"Start from chapter one or jump into the latest updates: {hub}",
-            f"Weekend catch-up starts here: {hub}",
-        ],
-        "support_release": [
-            f"Support the release schedule and read more here: {hub}",
-            f"Help keep the chapters coming and read ahead here: {hub}",
-            f"Support Azure Inkblade and find every series here: {hub}",
-        ],
-        "subscribe": [
-            f"Subscribe, read, and watch from the Azure Inkblade hub: {hub}",
-            f"Follow the videos and chapters here: {hub}",
-            f"Keep the next chapter in your feed: {hub}",
-        ],
-        "author_resources": [
-            f"Readers can start the novels, and writers can find author tools here: {hub}",
-            f"Stories, videos, and author resources are all here: {hub}",
-            f"Read the novels or check out the author resources here: {hub}",
-        ],
-    }.get(goal, [])
+    # Per-novel voice variants (2026-07-20 plan §1): complete phrases in each
+    # novel's voice, keyed by normalized abbr then CTA goal. Falls back to the
+    # generic variants when the flag is off, a novel has no variant for the
+    # requested goal, or the voice layer is unavailable -- so the CTA INTENT
+    # (goal) stays separate from the VOICE layer.
+    abbr_key = story_key(abbr)
+    if ENABLE_NOVEL_VOICE_VARIANTS:
+        variants = NOVEL_VOICE_VARIANTS.get(abbr_key, {}).get(goal) or GENERIC_CTA_VARIANTS.get(goal, [])
+    else:
+        variants = GENERIC_CTA_VARIANTS.get(goal, [])
     if not variants:
         return audience_hub_line(abbr)
-    key = f"CTA_TEXT_{context}_{platform}_{story_key(abbr)}_{focus}_{goal}".upper()
-    return variants[rotation_next(key, len(variants))]
+    key = f"CTA_TEXT_{context}_{platform}_{abbr_key}_{focus}_{goal}".upper()
+    return variants[rotation_next(key, len(variants))].format(hub=hub, name=name)
+
+
+
 
 
 def engagement_prompt_line(abbr: str, style: str, context: str = "", *,
