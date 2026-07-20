@@ -507,10 +507,32 @@ def main():
                 break
 
         # save final LoRA
+        # NOTE: use save_lora_adapter (not the legacy save_attn_procs) because
+        # this script attaches LoRA via unet.add_adapter(LoraConfig). save_attn_procs
+        # expects the old AttnProcs attach style and silently writes a 0-byte file.
         unet = accelerator.unwrap_model(unet)
         final_path = Path(args.output_dir) / "pytorch_lora_weights.safetensors"
-        unet.save_attn_procs(str(final_path))
-        print(f"[done] saved LoRA -> {final_path}", flush=True)
+        _tmp_dir = Path(args.output_dir) / ".final_adapter_tmp"
+        _tmp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            unet.save_lora_adapter(
+                save_directory=str(_tmp_dir),
+                adapter_name="default",
+                safe_serialization=True,
+                weight_name="pytorch_lora_weights.safetensors",
+            )
+            _written = _tmp_dir / "pytorch_lora_weights.safetensors"
+            if not _written.exists() or _written.stat().st_size == 0:
+                raise RuntimeError("save_lora_adapter produced an empty weights file")
+            # atomic-ish replace of the final path
+            if final_path.exists():
+                final_path.unlink()
+            _written.replace(final_path)
+        finally:
+            shutil.rmtree(_tmp_dir, ignore_errors=True)
+        if not final_path.exists() or final_path.stat().st_size == 0:
+            raise RuntimeError("final LoRA weights missing or empty after save")
+        print(f"[done] saved LoRA -> {final_path} ({final_path.stat().st_size} bytes)", flush=True)
         manifest.update({
             "status": "done",
             "stage": "complete",
