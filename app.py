@@ -14871,11 +14871,14 @@ def write_animated_reel_builder_script(
     target_duration: int,
     draw_overlays: bool = True,
     deep: bool = False,
+    narration: Path | None = None,
 ) -> Path:
     sound = Path(sound).resolve()
     if not sound.is_file() or sound.suffix.lower() not in AUDIO_EXTENSIONS:
         raise RuntimeError("A valid audio file is required before building a TikTok/Reel video.")
     ffmpeg_exe = find_ffmpeg_executable()
+    narration_ref = Path(narration).resolve() if narration and Path(narration).exists() else None
+    narration_name = narration_ref.name if narration_ref else ""
     script = folder / "make_tiktok_video.py"
     slide_duration = max(5 if not deep else 7, math.ceil(target_duration / max(1, len(images))))
     script.write_text(
@@ -14891,6 +14894,7 @@ images = {[Path(image).name for image in images]!r}
 overlays = {overlays!r}
 draw_overlays = {bool(draw_overlays)!r}
 sound = folder / {sound.name!r}
+narration_audio = folder / {narration_name!r} if {('True' if narration_ref else 'False')} else None
 ffmpeg_exe = {ffmpeg_exe!r}
 output = folder / "tiktok-video.mp4"
 silent_output = folder / "tiktok-video-silent.mp4"
@@ -15032,11 +15036,23 @@ def render_with_moviepy():
     video = concatenate_videoclips(clips, method="compose")
     if sound.exists():
         audio_path = normalize_audio_if_wav(sound)
-        audio = AudioFileClip(str(audio_path))
-        if audio.duration < target_duration:
-            audio = audio.with_effects([AudioLoop(duration=target_duration)])
-        audio = audio.with_duration(target_duration)
-        video = video.with_audio(audio)
+        music = AudioFileClip(str(audio_path))
+        if music.duration < target_duration:
+            music = music.with_effects([AudioLoop(duration=target_duration)])
+        music = music.with_duration(target_duration)
+        # Narration (if any) plays at full volume on top of ducked music for clarity.
+        if narration_audio and Path(narration_audio).exists():
+            try:
+                narration = AudioFileClip(str(narration_audio)).with_duration(target_duration)
+                if music.duration < narration.duration:
+                    music = music.with_duration(narration.duration)
+                    target_duration = int(narration.duration)
+                video = video.with_audio(CompositeAudioClip([narration, music.volumex(0.22)]))
+            except Exception as audio_exc:
+                print(f"Narration mix failed, using music only: {{audio_exc}}")
+                video = video.with_audio(music)
+        else:
+            video = video.with_audio(music)
     video = video.with_duration(target_duration)
     video.write_videofile(str(output), fps=30, codec="libx264", audio_codec="aac", bitrate="5000k", audio_bitrate="160k", preset="medium", threads=4, logger=None)
 
@@ -15072,6 +15088,15 @@ def render_with_ffmpeg_fallback():
     concat.write_text("\\n".join([f"file '{{clip}}'" for clip in clips]) + "\\n", encoding="utf-8")
     subprocess.run([ffmpeg_exe, "-y", "-f", "concat", "-safe", "0", "-i", str(concat), "-c:v", "libx264", "-pix_fmt", "yuv420p", str(silent_output)], check=False)
     subprocess.run([ffmpeg_exe, "-y", "-i", str(silent_output), "-stream_loop", "-1", "-i", str(sound), "-t", str(target_duration), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-af", "volume=0.46,afade=t=in:st=0:d=1,afade=t=out:st=" + str(max(0, target_duration - 3)) + ":d=3", "-shortest", "-movflags", "+faststart", str(output)], check=False)
+    # Narration (if present) mixed over ducked music for a voiced reel.
+    if narration_audio and Path(narration_audio).exists():
+        narrated = folder / "tiktok-video-narrated.mp4"
+        music_duck = folder / "tiktok-music-ducked.m4a"
+        subprocess.run([ffmpeg_exe, "-y", "-i", str(sound), "-t", str(target_duration), "-af", "volume=0.22,afade=t=in:st=0:d=1,afade=t=out:st=" + str(max(0, target_duration - 3)) + ":d=3", "-c:a", "aac", "-b:a", "128k", str(music_duck)], check=False)
+        subprocess.run([ffmpeg_exe, "-y", "-i", str(output), "-i", str(narration_audio), "-i", str(music_duck) if music_duck.exists() else str(sound), "-map", "0:v:0", "-map", "1:a:0", "-map", "2:a:0", "-c:v", "copy", "-filter_complex", "[1:a][2:a]amix=inputs=2:duration=first:dropout_transition=0[a]", "-map", "[a]", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(narrated)], check=False)
+        if narrated.exists() and narrated.stat().st_size > 1024:
+            import shutil as _shutil
+            _shutil.move(str(narrated), str(output))
 
 try:
     render_with_moviepy()
@@ -15303,7 +15328,25 @@ def repair_deep_tiktok_metadata(folder: Path, metadata: dict[str, Any] | None = 
     return metadata
 
 
-def write_deep_tiktok_video_helper(folder: Path, images: list[str], sound: Path, overlays: list[str], draw_overlays: bool = True) -> Path:
+def generate_deep_tiktok_narration(folder: Path, abbr: str, caption: str) -> Path | None:
+    """Local-first TTS narration for the deep TikTok (Chatterbox -> Windows -> SAPI -> OpenAI).
+
+    Fail-soft: returns None on any failure so the pack still builds with music only.
+    """
+    try:
+        import tts_service
+        narration_text = caption.strip().split("\n\n")[0].strip()
+        if not narration_text:
+            return None
+        result = tts_service.generate_post_audio(narration_text, folder, abbr=abbr)
+        if result.get("status") == "ready" and result.get("path") and Path(result["path"]).exists():
+            target = folder / "tiktok-narration.mp3"
+            shutil.copy2(result["path"], target)
+            return target
+        print(f"[deep-tiktok-narration] TTS unavailable ({result.get('status')}); music only.", file=sys.stderr)
+    except Exception as exc:
+        print(f"[deep-tiktok-narration] failed: {exc}", file=sys.stderr)
+    return None
     return write_animated_reel_builder_script(
         folder,
         images,
@@ -15312,6 +15355,7 @@ def write_deep_tiktok_video_helper(folder: Path, images: list[str], sound: Path,
         target_duration=68,
         draw_overlays=draw_overlays,
         deep=True,
+        narration=narration,
     )
 
 
@@ -15849,6 +15893,9 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
     sound_target = folder / sound_source.name
     shutil.copy2(sound_source, sound_target)
 
+    # Voiceover narration over ducked music (local-first TTS; fail-soft to music-only).
+    narration_target = generate_deep_tiktok_narration(folder, abbr, caption)
+
     payload = {
         "kind": "deep_tiktok",
         "abbr": abbr,
@@ -15863,6 +15910,7 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
         "image_sources": sources,
         "image_prompts": image_prompts,
         "sound": str(sound_target),
+        "narration": str(narration_target) if narration_target else "",
         "caption": caption,
         "description": caption,
         "hashtags": ag_tags,
@@ -15879,7 +15927,7 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
     (folder / "tiktok-title.txt").write_text(tiktok_title + "\n", encoding="utf-8")
     (folder / "sound.txt").write_text(str(sound_target) + "\n", encoding="utf-8")
     (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    write_deep_tiktok_video_helper(folder, images, sound_target, overlays)
+    write_deep_tiktok_video_helper(folder, images, sound_target, overlays, narration=narration_target)
     build = run_generated_video_builder(folder, "make_tiktok_video.py", "tiktok-video.mp4", timeout=900)
     payload["video_build"] = build
     video = folder / "tiktok-video.mp4"
@@ -28909,6 +28957,79 @@ def youtube_metadata_from_text(chapter_title: str, chapter_text: str, abbr: str 
     return {"title": fallback_title[:90], "description": description, "tags": "web novel, audiobook, serial fiction"}
 
 
+def generate_youtube_generated_background(abbr: str, title: str, teaser: str) -> Path | None:
+    """Generate realistic YT background keyframes via the local SDXL pipeline (azink_real)
+    and Ken-Burns them into a single wide background clip. Fail-soft -> None.
+
+    Used when YOUTUBE_USE_GENERATED_BACKGROUNDS is enabled, so chapter full videos use
+    on-brand art (matching the deep TikToks) instead of generic stock loops.
+    """
+    try:
+        if not local_stable_diffusion_status().get("ready"):
+            print("[yt-bg] local SD not ready; skipping generated backgrounds.", file=sys.stderr)
+            return None
+        novel = NOVEL_NAMES.get(abbr, abbr)
+        folder = Path(YOUTUBE_OUTPUT_DIR) / f"_generated_bg_{story_key(abbr)}_{int(time.time())}"
+        folder.mkdir(parents=True, exist_ok=True)
+        sub = clean_teaser_text(teaser, 200, max_words=28)
+        scene_prompts = [
+            f"cinematic wide fantasy key art for {novel}: {sub}, atmospheric environment, dramatic lighting, photorealistic, highly detailed, no text, no typography",
+            f"epic establishing shot of the world of {novel}: {sub}, sweeping landscape, volumetric light, photorealistic, film still, no text",
+            f"moody character environment from {novel}: {sub}, immersive scene, rich color grading, photorealistic, no text",
+        ]
+        segments: list[Path] = []
+        segment_seconds = int(os.environ.get("YOUTUBE_GENERATED_BG_SEGMENT", "12"))
+        for index, p in enumerate(scene_prompts, start=1):
+            target = folder / f"bg-keyframe-{index}.png"
+            create_local_stable_diffusion_image(p, target, orientation="horizontal", seed=random.randint(1, 2_000_000_000))
+            if not target.exists():
+                continue
+            seg = folder / f"bg-segment-{index}.mp4"
+            draw = (
+                "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,"
+                "zoompan=z='min(zoom+0.0008,1.06)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                f"d={segment_seconds * 30}:s=1920x1080:fps=30,"
+                "setsar=1,setdar=16/9"
+            )
+            run = subprocess.run([find_ffmpeg_executable(), "-y", "-loop", "1", "-i", str(target),
+                                  "-t", str(segment_seconds), "-vf", draw, "-r", "30", "-an",
+                                  "-pix_fmt", "yuv420p", str(seg)], check=False)
+            if run.returncode == 0 and seg.exists():
+                segments.append(seg)
+        if not segments:
+            return None
+        concat = folder / "bg-concat.txt"
+        concat.write_text("\n".join([f"file '{seg}'" for seg in segments]) + "\n", encoding="utf-8")
+        out = folder / "youtube-generated-background.mp4"
+        run = subprocess.run([find_ffmpeg_executable(), "-y", "-f", "concat", "-safe", "0",
+                              "-i", str(concat), "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                              "-movflags", "+faststart", str(out)], check=False)
+        return out if run.returncode == 0 and out.exists() else None
+    except Exception as exc:
+        print(f"[yt-bg] generated background failed: {exc}", file=sys.stderr)
+        return None
+
+
+def youtube_use_generated_backgrounds() -> bool:
+    return str(os.environ.get("YOUTUBE_USE_GENERATED_BACKGROUNDS", "0")).strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def select_youtube_backgrounds(abbr: str, chapter_text: str, count: int | None = None) -> list[Path]:
+    """Background-clip selection for YT full videos.
+
+    When YOUTUBE_USE_GENERATED_BACKGROUNDS is enabled, generate on-brand SDXL
+    keyframes (Ken-Burns'd) and use that single clip; otherwise fall back to the
+    curated/stock background bank (unchanged behavior).
+    """
+    novel = NOVEL_NAMES.get(abbr, abbr)
+    teaser = clean_teaser_text(chapter_text, 180, max_words=28)
+    if youtube_use_generated_backgrounds():
+        gen = generate_youtube_generated_background(abbr, novel, teaser)
+        if gen and gen.exists():
+            return [gen]
+    return choose_background_videos(count or background_video_count(), abbr, f"{novel} {teaser}")
+
+
 def build_youtube_from_text(chapter_title: str, chapter_text: str, abbr: str = "", chapter_number: str | int = "") -> dict[str, Any]:
     if not chapter_text.strip():
         raise RuntimeError("Chapter text is required.")
@@ -28927,10 +29048,10 @@ def build_youtube_from_text(chapter_title: str, chapter_text: str, abbr: str = "
             chapter=chapter_id,
             details={"hash": hash_value},
         )
-        backgrounds = choose_background_videos(
-            background_video_count(),
+        backgrounds = select_youtube_backgrounds(
             abbr,
-            f"{metadata['title']} {clean_teaser_text(chapter_text, 180, max_words=28)}",
+            chapter_text,
+            background_video_count(),
         )
         write_youtube_text_video_script(folder, metadata["title"], chapter_text, backgrounds)
         thumbnail = build_youtube_thumbnail(folder, metadata["title"], abbr)
@@ -28969,10 +29090,10 @@ def build_youtube_from_text(chapter_title: str, chapter_text: str, abbr: str = "
     (folder / "youtube-title.txt").write_text(metadata["title"].strip() + "\n", encoding="utf-8")
     (folder / "youtube-description.txt").write_text(metadata["description"].strip() + "\n", encoding="utf-8")
     (folder / "youtube-tags.txt").write_text(metadata["tags"].strip() + "\n", encoding="utf-8")
-    backgrounds = choose_background_videos(
-        background_video_count(),
+    backgrounds = select_youtube_backgrounds(
         abbr,
-        f"{metadata['title']} {clean_teaser_text(chapter_text, 180, max_words=28)}",
+        chapter_text,
+        background_video_count(),
     )
     write_youtube_text_video_script(folder, metadata["title"], chapter_text, backgrounds)
     thumbnail = build_youtube_thumbnail(folder, metadata["title"], abbr)
