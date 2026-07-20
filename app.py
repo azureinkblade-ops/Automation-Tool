@@ -14555,18 +14555,43 @@ def instagram_reel_caption(novel: str, chapter: str) -> str:
 def youtube_shorts_metadata(novel: str, chapter: str) -> dict[str, str]:
     profile = social_profile(novel)
     chapter_text = f" Chapter {chapter}" if chapter else ""
+    abbr = story_key(novel) or next((k for k, v in NOVEL_NAMES.items() if v.lower() == str(novel).lower()), "")
     title = f"{profile['name']}{chapter_text} Promo #Shorts"
+    hook = youtube_shorts_hook(abbr)
     destination = short_destination_copy(novel, chapter, source="youtube-shorts")
+    # Lead with the proven hard hook (same pattern-interrupt that wins on TikTok) so the
+    # Short's caption hooks in the feed and reinforces the frame-1 video opener. Plain
+    # novel name is included for YouTube search indexing (viewers search book names).
     description = "\n".join(
         [
-            f"{profile['emoji']} {profile['name']}{chapter_text} short promo.",
+            hook,
+            f"{profile['emoji']} {profile['name']}{chapter_text}.",
             destination["hook"],
             destination["links"],
             "",
-            f"#Shorts {profile['hashtags']}",
+            f"#Shorts #ShortsFeed {profile['name']} {profile['hashtags']}",
         ]
     )
     return {"title": title[:90], "description": description}
+
+
+# Proven YouTube-Shorts hook format. These mirror the top-performing TikTok teasers
+# ("Stop here if you like fantasy where one bad choice changes the whole arc...") that
+# dominated the creator's Top Posts. YouTube Shorts retention was collapsing (92.7% skip)
+# on the generic chapter-teaser openers, so Shorts now open with a hard pattern-interrupt
+# hook instead of a slow chapter line. (2026-07-20, plan B.)
+SHORT_HOOK_TEMPLATES = {
+    "EN": "Stop here if you like cyberpunk fantasy where one bad choice rewrites reality.",
+    "HA": "Stop here if you like cultivation where one bad choice changes the whole arc.",
+    "SF": "Stop here if you like undercity fantasy where one forged choice changes everything.",
+    "HP": "Stop here if you like xianxia where one small choice multiplies a hundredfold.",
+}
+
+
+def youtube_shorts_hook(abbr: str) -> str:
+    """Hard pattern-interrupt opener for YouTube Shorts (frame-1 hook)."""
+    abbr = story_key(abbr)
+    return SHORT_HOOK_TEMPLATES.get(abbr, "Stop here if you like fantasy where one bad choice changes the whole arc.")
 
 
 def tiktok_chapter_teaser_overlays(
@@ -14576,6 +14601,7 @@ def tiktok_chapter_teaser_overlays(
     *,
     chapter_text: str = "",
     fallback_text: str = "",
+    platform: str = "tiktok",
 ) -> list[str]:
     abbr = story_key(abbr)
     novel = novel or NOVEL_NAMES.get(abbr, abbr)
@@ -14600,6 +14626,10 @@ def tiktok_chapter_teaser_overlays(
     ]
     while len(candidates) < 3:
         candidates.append(fallback_bits[len(candidates)])
+    # Lead every Short/Reel with the proven hard hook (frame-1 pattern-interrupt).
+    # This is the creator's top-performing TikTok format, and it directly fights the
+    # YouTube Shorts 92.7% skip rate that the slow chapter-teaser openers produced.
+    candidates = [reel_overlay_text(youtube_shorts_hook(abbr), limit=48)] + candidates[:2]
     final = reel_overlay_text(f"READ {novel} ON ROYAL ROAD", limit=58)
     return candidates[:3] + [final]
 
