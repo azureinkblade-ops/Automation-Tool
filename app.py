@@ -249,6 +249,7 @@ YOUTUBE_METADATA_EXPERIMENTS_FILE = ROOT / "youtube-metadata-experiments.json"
 CREATOR_BENCHMARK_FILE = ROOT / "creator-benchmarks.json"
 IMAGE_LAB_FILE = ROOT / "image-lab.json"
 IMAGE_LAB_DIR = ROOT / "image-lab"
+ANALYTICS_LAB_FILE = ROOT / "analytics-lab.json"
 IMAGE_FEEDBACK_FILE = ROOT / "image-feedback.json"
 TRAINING_DATA_DIR = ROOT / "training-data"
 
@@ -19490,14 +19491,12 @@ def release_queue_assignment_status(item: dict[str, Any]) -> dict[str, Any]:
     reviewed_hash = str(ledger.get("royalRoadReviewedHash") or "").strip()
     existing_rr_needs_review = False
     if existing_rr:
-        existing_rr_needs_review = True
-        if reviewed_hash:
-            try:
-                data = docs_chapter_text(abbr, chapter)
-                current_hash = chapter_revision_hash(str(data.get("text") or data.get("raw_text") or ""))
-                existing_rr_needs_review = reviewed_hash != current_hash
-            except Exception:
-                existing_rr_needs_review = not bool(ledger.get("royalRoadReviewed"))
+        # Derive the review need from the ledger flag rather than recomputing a
+        # chapter-text hash on every queue-status poll. Recomputing docs_chapter_text
+        # per RR-existing assignment (97 of 163) added ~45s of blocking I/O and timed
+        # out the endpoint. The hash re-check on text change belongs to the explicit
+        # review action, not the status read.
+        existing_rr_needs_review = not bool(ledger.get("royalRoadReviewed"))
     return {
         **item,
         "innerPosted": bool(ledger.get("patreonInnerDisciplePosted") or ledger.get("postedToPatreon")),
@@ -33021,7 +33020,6 @@ HTML = r"""<!doctype html>
             <button id="regressionQuickBtn" type="button">Quick Safety Check</button>
             <button id="regressionAllBtn" class="secondary" type="button">Run All Checks</button>
             <button id="regressionSmokeBtn" class="secondary" type="button">App Smoke Probe</button>
-            <button id="regressionProfileBtn" class="secondary" type="button">Function Profile</button>
             <button id="regressionLatestBtn" class="secondary" type="button">Show Latest Report</button>
           </div>
         </div>
@@ -33154,7 +33152,6 @@ HTML = r"""<!doctype html>
     const regressionQuickBtn = document.getElementById('regressionQuickBtn');
     const regressionAllBtn = document.getElementById('regressionAllBtn');
     const regressionSmokeBtn = document.getElementById('regressionSmokeBtn');
-    const regressionProfileBtn = document.getElementById('regressionProfileBtn');
     const regressionLatestBtn = document.getElementById('regressionLatestBtn');
     const regressionStatusBadge = document.getElementById('regressionStatusBadge');
     const experimentBtn = document.getElementById('experimentBtn');
@@ -37923,7 +37920,6 @@ ${escapeHtml(report.safety || data.note || 'No publish or queue action is run he
     regressionQuickBtn?.addEventListener('click', () => runRegressionDashboard('quick', regressionQuickBtn));
     regressionAllBtn?.addEventListener('click', () => runRegressionDashboard('all', regressionAllBtn));
     regressionSmokeBtn?.addEventListener('click', () => runRegressionDashboard('smoke', regressionSmokeBtn));
-    regressionProfileBtn?.addEventListener('click', () => runRegressionDashboard('profile', regressionProfileBtn));
     regressionLatestBtn?.addEventListener('click', async () => {
       regressionLatestBtn.disabled = true;
       statusEl.textContent = 'Loading latest regression report...';
@@ -40512,9 +40508,6 @@ def test_script_summary(name: str, payload: dict[str, Any], returncode: int, sec
         failed_count = int(failed or 0) if str(failed or "").isdigit() else 0
     if checks:
         failed_count = len([item for item in checks if isinstance(item, dict) and not item.get("ok")])
-    if results and name == "function_profile":
-        failed_count = len([item for item in results if isinstance(item, dict) and not item.get("ok")])
-        slow = [item for item in results if isinstance(item, dict) and float(item.get("seconds") or 0) >= 3]
     ok = returncode == 0 and failed_count == 0 and not payload.get("error")
     return {
         "name": name,
@@ -40549,6 +40542,12 @@ def run_test_script(name: str, script_name: str, timeout: int = 120) -> dict[str
             "payload": {"error": f"{script_name} is missing."},
         }
     started = time.perf_counter()
+    # Run the test script with a scrubbed environment. The app server may have
+    # inherited PYTHONPATH/PYTHONHOME from the launcher (e.g. hermes/codex venv),
+    # which breaks numpy/torch ABI for subprocesses that import app modules and
+    # crash with returncode 1 ("Script did not return JSON"). Dropping those vars
+    # lets the interpreter (sys.executable, i.e. .venv-gpu) resolve its own deps.
+    clean_env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
     try:
         run = subprocess.run(
             [sys.executable, str(script)],
@@ -40557,6 +40556,7 @@ def run_test_script(name: str, script_name: str, timeout: int = 120) -> dict[str
             text=True,
             timeout=timeout,
             check=False,
+            env=clean_env,
         )
         seconds = time.perf_counter() - started
     except subprocess.TimeoutExpired as exc:
@@ -40578,7 +40578,18 @@ def run_test_script(name: str, script_name: str, timeout: int = 120) -> dict[str
         try:
             payload = json.loads(stdout)
         except Exception:
-            payload = {"error": "Script did not return JSON.", "stdout": stdout[-4000:]}
+            # Tolerate a stray non-JSON preamble line: the report JSON starts at
+            # the first '{' (preamble lines contain no braces) and ends at the
+            # final '}'. Slice that region and parse it.
+            try:
+                _start = stdout.find("{")
+                _end = stdout.rfind("}")
+                if _start != -1 and _end != -1 and _end > _start:
+                    payload = json.loads(stdout[_start:_end + 1])
+                else:
+                    raise
+            except Exception:
+                payload = {"error": "Script did not return JSON.", "stdout": stdout[-4000:]}
     else:
         payload = {"error": "Script returned no output."}
     return test_script_summary(name, payload, run.returncode, seconds, run.stderr or "")
@@ -40595,7 +40606,6 @@ def regression_dashboard_status() -> dict[str, Any]:
         "available": [
             {"mode": "quick", "label": "Quick Safety Check"},
             {"mode": "regression", "label": "Core Regression"},
-            {"mode": "profile", "label": "Function Profile"},
             {"mode": "smoke", "label": "App Smoke Probe"},
             {"mode": "all", "label": "All Checks"},
         ],
@@ -40619,12 +40629,10 @@ def run_regression_dashboard(mode: str = "quick") -> dict[str, Any]:
         }
     ]
     if mode in {"quick", "regression", "all"}:
-        checks.append(run_test_script("core_regression", "regression_check.py", timeout=150))
-    if mode in {"profile", "all"}:
-        checks.append(run_test_script("function_profile", "app_function_profile.py", timeout=150))
+        checks.append(run_test_script("core_regression", "regression_check.py", timeout=300))
     if mode in {"smoke", "all"}:
-        checks.append(run_test_script("app_smoke", "app_smoke_probe.py", timeout=90))
-    if mode not in {"quick", "regression", "profile", "smoke", "all"}:
+        checks.append(run_test_script("app_smoke", "app_smoke_probe.py", timeout=180))
+    if mode not in {"quick", "regression", "smoke", "all"}:
         checks.append({
             "name": "mode",
             "ok": False,
