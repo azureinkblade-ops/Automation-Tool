@@ -14529,9 +14529,12 @@ def tiktok_caption(novel: str, chapter: str) -> str:
     hashtags = rotated_hashtags(novel, f"{novel}-{chapter}", chapter_text=chapter, limit=9)
     # Engagement question drives comments/shares (TikTok had 0 comments/0 shares).
     question = platform_engagement_prompt_line(story_key(novel), "short_reel", "tiktok", context=f"caption-{chapter}")
+    # Plain novel name in the body for TikTok search indexing (viewers search book
+    # names like 'soul forged novel', 'avure ink', 'Eternalnexus').
     return "\n".join(
         [
             f"{profile['emoji']} {short_platform_intro(novel, chapter, 'tiktok')}",
+            f"This is {profile['name']}.",
             destination["hook"],
             destination["links"],
             "",
@@ -14550,6 +14553,7 @@ def instagram_reel_caption(novel: str, chapter: str) -> str:
     return "\n".join(
         [
             f"{profile['emoji']} {short_platform_intro(novel, chapter, 'instagram-reel')}",
+            f"This is {profile['name']}.",
             destination["hook"],
             destination["links"],
             "",
