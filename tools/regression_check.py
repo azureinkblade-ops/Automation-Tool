@@ -1731,69 +1731,54 @@ def check_db_source_of_truth() -> list[dict[str, object]]:
     ))
 
     # --- 2. Non-destructive live validation (read-only) ---
-    # approval cleared: every key in the JSON mirror must also exist in the DB.
+    # approval cleared: the DB (sole store) must load cleanly and yield a
+    # dict of cleared items. (JSON mirror retired in Phase 1.)
     try:
-        live_json = app.load_approval_cleared_state()
-        json_items = live_json.get("items") if isinstance(live_json.get("items"), dict) else {}
         db_state = automation_db.load_approval_cleared_state(app.ROOT)
         db_items = db_state.get("items") if isinstance(db_state.get("items"), dict) else {}
-        missing = [k for k in json_items if k not in db_items]
         checks.append(assert_result(
-            "approval_cleared_db_matches_json_mirror",
-            not missing,
-            f"DB missing {len(missing)} cleared keys present in JSON mirror (stale-approval risk).",
-            json_count=len(json_items), db_count=len(db_items), missing=missing[:5],
+            "approval_cleared_db_loads",
+            isinstance(db_state, dict) and isinstance(db_items, dict),
+            f"approval_cleared DB failed to load as expected (items={len(db_items)}).",
+            db_count=len(db_items),
         ))
     except Exception as exc:
-        checks.append(result("approval_cleared_db_matches_json_mirror", False, f"read error: {exc}"))
+        checks.append(result("approval_cleared_db_loads", False, f"read error: {exc}"))
 
-    # promo rotation + youtube daily: DB snapshot agrees with live JSON
-    # (catches stale divergence). Read-only: never writes live state.
+    # promo rotation + youtube daily: JSON mirror retired (Phase 1 retirement).
+    # Guard: the JSON file must be gone, and the DB (state_snapshots kv) must
+    # load via the app loader. Read-only: never writes live state.
     for state_key, loader, json_file in (
-        ("promoRotation", lambda: automation_db.load_state_snapshot(app.ROOT, "promoRotation"), app.PROMO_ROTATION_STATE_FILE),
-        ("youtubeDailyStatus", lambda: automation_db.load_state_snapshot(app.ROOT, "youtubeDailyStatus"), app.YOUTUBE_DAILY_STATUS_FILE),
+        ("promoRotation", lambda: app.load_promo_rotation_state(), app.PROMO_ROTATION_STATE_FILE),
+        ("youtubeDailyStatus", lambda: app.read_youtube_daily_status(), app.YOUTUBE_DAILY_STATUS_FILE),
     ):
         try:
-            db_snap = loader()
-            db_ok = isinstance(db_snap, dict) and bool(db_snap)
             json_exists = json_file.exists()
             if json_exists:
-                try:
-                    json_data = json.loads(json_file.read_text(encoding="utf-8-sig"))
-                except Exception:
-                    json_data = None
-            else:
-                json_data = None
-            if db_ok and json_data is not None:
-                # Both present: they must agree (no stale divergence).
-                # load_state_snapshot injects a "_source": "sqlite" key; that same
-                # key can leak into the JSON mirror when a loaded dict is re-saved.
-                # Strip it from BOTH sides before comparing (it is not real state).
-                db_compare = {k: v for k, v in db_snap.items() if k != "_source"}
-                json_compare = {k: v for k, v in json_data.items() if k != "_source"}
-                agree = json.dumps(db_compare, sort_keys=True, default=str) == json.dumps(json_compare, sort_keys=True, default=str)
+                # JSON mirror should have been deleted. Flag it so the soak
+                # confirms retirement, but don't crash on a leftover file.
                 checks.append(assert_result(
-                    f"{state_key}_db_matches_json",
-                    agree,
-                    f"DB snapshot disagrees with JSON mirror for '{state_key}' (stale-state risk).",
-                ))
-            elif json_exists and not db_ok:
-                # JSON exists but DB empty: not yet backfilled. The loaders
-                # backfill on read, so this is not a hard failure, but flag it
-                # as a warning-level check so a soak can confirm seeding.
-                checks.append(assert_result(
-                    f"{state_key}_db_not_stale_vs_json",
-                    True,
-                    f"'{state_key}': JSON present, DB not yet backfilled (lazy backfill on read).",
+                    f"{state_key}_json_mirror_retired",
+                    False,
+                    f"'{state_key}': JSON mirror still present at {json_file.name} (should be deleted).",
                 ))
             else:
                 checks.append(assert_result(
-                    f"{state_key}_db_or_json_present",
+                    f"{state_key}_json_mirror_retired",
                     True,
-                    f"'{state_key}': neither DB nor JSON present (fresh state).",
+                    f"'{state_key}': JSON mirror retired.",
                 ))
+            # DB must load without error (the loader reads the kv).
+            db_snap = loader()
+            db_ok = isinstance(db_snap, dict)
+            checks.append(assert_result(
+                f"{state_key}_db_loads",
+                db_ok,
+                f"'{state_key}': DB (state_snapshots kv) failed to load via app loader." if not db_ok else
+                f"'{state_key}': DB source-of-truth loads cleanly.",
+            ))
         except Exception as exc:
-            checks.append(result(f"{state_key}_db_matches_json", False, f"read error: {exc}"))
+            checks.append(result(f"{state_key}_db_loads", False, f"read error: {exc}"))
 
     # --- 2b. Phase 2 single-blob state: SQLite source-of-truth (DB agrees with JSON) ---
     # Keys mirror app._PHASE2_BLOB_MAP. Read-only: never writes live state.

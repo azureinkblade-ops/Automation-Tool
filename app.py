@@ -433,7 +433,9 @@ def database_available() -> bool:
 def read_json_safe(*args, **kwargs):
     return promo_copy.read_json_safe(*args, **kwargs)
 def load_recovery_log() -> dict[str, Any]:
-    data = read_json_safe(RECOVERY_LOG_FILE)
+    # Phase 3/Phase-1-retirement: SQLite (state_snapshots kv) is the source of
+    # truth. The JSON mirror is retired.
+    data = load_state_snapshot_from_database("recoveryLog")
     if not isinstance(data, dict):
         data = {"events": [], "updatedAt": ""}
     data.setdefault("events", [])
@@ -443,7 +445,10 @@ def load_recovery_log() -> dict[str, Any]:
 def save_recovery_log(data: dict[str, Any]) -> None:
     data.setdefault("events", [])
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(RECOVERY_LOG_FILE, data)
+    # Persist the assembled list to SQLite (kv) as the sole store. The per-event
+    # DB table insert (mirror_recovery_event_to_database) is kept as a bonus
+    # structured audit trail.
+    mirror_state_snapshot_to_database("recoveryLog", data)
 
 
 def recovery_retry_path(error_type: str) -> str:
@@ -2853,20 +2858,14 @@ def with_instagram_links(*args, **kwargs):
 def rotation_next(key: str, count: int) -> int:
     if count <= 0:
         return 0
-    state: dict[str, Any] = {}
-    if PROMO_ROTATION_STATE_FILE.exists():
-        try:
-            state = json.loads(PROMO_ROTATION_STATE_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            state = {}
+    # Phase 1 retirement: promo rotation lives in SQLite (state_snapshots kv).
+    state: dict[str, Any] = load_state_snapshot_from_database("promoRotation") or {}
+    if not isinstance(state, dict):
+        state = {}
     index = int(state.get(key, -1)) + 1
     state[key] = index % count
-    PROMO_ROTATION_STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
-    try:
-        mirror_state_snapshot_to_database("promoRotation", state)
-    except Exception as exc:
-        print(f"Database mirror failed for promo rotation: {exc}", file=sys.stderr)
-    return state[key]
+    mirror_state_snapshot_to_database("promoRotation", state)
+    return index % count
 
 
 def rotating_post_focus(*args, **kwargs):
@@ -8437,22 +8436,20 @@ def clickup_append_performance_notes_field(task_id: str, note: str) -> dict[str,
 
 
 def load_post_records() -> dict[str, Any]:
+    # Phase 1 retirement: SQLite (post_records table) is the sole source of truth.
     try:
         data = automation_db.load_post_records(ROOT)
         if isinstance(data, dict) and isinstance(data.get("records"), dict) and data["records"]:
             return data
     except Exception as exc:
         print(f"Database read failed for post records: {exc}", file=sys.stderr)
-    data = read_json_safe(POST_RECORDS_FILE)
-    if not isinstance(data, dict):
-        data = {"schemaVersion": 1, "records": {}}
+    data = {"schemaVersion": 1, "records": {}}
     data.setdefault("records", {})
     return data
 
 
 def save_post_records(data: dict[str, Any]) -> None:
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(POST_RECORDS_FILE, data)
     for record in (data.get("records") or {}).values() if isinstance(data.get("records"), dict) else []:
         if isinstance(record, dict):
             mirror_post_record_to_database(record)
@@ -14108,27 +14105,15 @@ def archive_generated_promo_image(source: Path, abbr: str = "", title: str = "",
 
 
 def load_promo_rotation_state() -> dict[str, Any]:
-    # SQLite-first (state_snapshots kv), JSON fallback for back-compat.
+    # SQLite (state_snapshots kv) is the sole source of truth. The JSON mirror
+    # is retired (Phase 1 retirement).
     data = load_state_snapshot_from_database("promoRotation")
     if isinstance(data, dict) and data:
         return data
-    if PROMO_ROTATION_STATE_FILE.exists():
-        try:
-            data = json.loads(PROMO_ROTATION_STATE_FILE.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                # Backfill the DB so subsequent reads are DB-sourced.
-                try:
-                    mirror_state_snapshot_to_database("promoRotation", data)
-                except Exception as exc:
-                    print(f"Database backfill failed for promo rotation: {exc}", file=sys.stderr)
-                return data
-        except Exception:
-            return {}
     return {}
 
 
 def save_promo_rotation_state(state: dict[str, Any]) -> None:
-    PROMO_ROTATION_STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
     try:
         mirror_state_snapshot_to_database("promoRotation", state)
     except Exception as exc:
@@ -14436,12 +14421,10 @@ def choose_rotating_weekly_promo_audio() -> Path | None:
     if not sounds:
         return None
     keys = [str(path.resolve()) for path in sounds]
-    state: dict[str, Any] = {}
-    if PROMO_ROTATION_STATE_FILE.exists():
-        try:
-            state = json.loads(PROMO_ROTATION_STATE_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            state = {}
+    # Phase 1 retirement: promo rotation lives in SQLite (state_snapshots kv).
+    state: dict[str, Any] = load_state_snapshot_from_database("promoRotation") or {}
+    if not isinstance(state, dict):
+        state = {}
     pool_key = "WEEKLY_AUDIO"
     used = [key for key in state.get(pool_key, []) if key in keys]
     available = [key for key in keys if key not in used]
@@ -14451,7 +14434,6 @@ def choose_rotating_weekly_promo_audio() -> Path | None:
     choice = random.choice(available)
     used.append(choice)
     state[pool_key] = used
-    PROMO_ROTATION_STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
     try:
         mirror_state_snapshot_to_database("promoRotation", state)
     except Exception as exc:
@@ -16171,16 +16153,13 @@ def rotating_weekend_hook(abbr: str, day: str) -> str:
         f"{profile['emoji']} New worlds, rising stakes, and serial fantasy momentum: start {profile['name']} today.",
         f"{profile['emoji']} Add {profile['name']} to the weekend reading queue.",
     ]
-    state: dict[str, Any] = {}
-    if PROMO_ROTATION_STATE_FILE.exists():
-        try:
-            state = json.loads(PROMO_ROTATION_STATE_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            state = {}
+    # Phase 1 retirement: promo rotation lives in SQLite (state_snapshots kv).
+    state: dict[str, Any] = load_state_snapshot_from_database("promoRotation") or {}
+    if not isinstance(state, dict):
+        state = {}
     key = f"WEEKEND_COPY_{abbr}_{day}".upper()
     index = int(state.get(key, -1)) + 1
     state[key] = index % len(variants)
-    PROMO_ROTATION_STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
     try:
         mirror_state_snapshot_to_database("promoRotation", state)
     except Exception as exc:
@@ -16360,26 +16339,17 @@ def load_release_status() -> dict[str, Any]:
             return data
     except Exception as exc:
         print(f"Database read failed for release status: {exc}", file=sys.stderr)
-    if not RELEASE_STATUS_FILE.exists():
-        return {"chapters": {}}
-    try:
-        data = json.loads(RELEASE_STATUS_FILE.read_text(encoding="utf-8-sig"))
-    except Exception:
-        return {"chapters": {}}
-    data.setdefault("chapters", {})
-    return data
+    return {"chapters": {}}
 
 
 def save_release_status(data: dict[str, Any]) -> None:
     data.setdefault("chapters", {})
-    write_json_atomic(RELEASE_STATUS_FILE, data)
     mirror_release_status_to_database(data)
 
 
 def load_chapter_path_state() -> dict[str, Any]:
+    # Phase 1 retirement: SQLite (state_snapshots kv) is the sole source of truth.
     data = load_state_snapshot_from_database("chapterPath")
-    if not isinstance(data, dict):
-        data = read_json_safe(CHAPTER_PATH_FILE)
     if not isinstance(data, dict):
         data = {"schemaVersion": 1, "active": False, "nextChapter": 17, "chaptersPerNovelPerWeek": 5, "novels": {}}
     data.setdefault("schemaVersion", 1)
@@ -16399,7 +16369,6 @@ def load_chapter_path_state() -> dict[str, Any]:
 
 def save_chapter_path_state(data: dict[str, Any]) -> None:
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(CHAPTER_PATH_FILE, data)
     mirror_state_snapshot_to_database("chapterPath", data)
 
 
@@ -16580,11 +16549,18 @@ def set_release_upload_path(
         release_upload[abbr] = entry
     save_release_status(status)
     backup = ""
-    if reset_queue and CHAPTER_RELEASE_QUEUE_FILE.exists():
+    if reset_queue:
+        # Phase 1 retirement: the queue lives in SQLite. Back up its current
+        # content to a timestamped JSON file for audit, then reset in DB.
         timestamp = time.strftime("%Y%m%d-%H%M%S")
-        backup_path = CHAPTER_RELEASE_QUEUE_FILE.with_name(f"{CHAPTER_RELEASE_QUEUE_FILE.stem}.backup-upload-path-{timestamp}{CHAPTER_RELEASE_QUEUE_FILE.suffix}")
+        backup_path = CHAPTER_RELEASE_QUEUE_FILE.with_name(
+            f"{CHAPTER_RELEASE_QUEUE_FILE.stem}.backup-upload-path-{timestamp}{CHAPTER_RELEASE_QUEUE_FILE.suffix}"
+        )
         try:
-            backup_path.write_text(CHAPTER_RELEASE_QUEUE_FILE.read_text(encoding="utf-8-sig"), encoding="utf-8")
+            backup_path.write_text(
+                json.dumps(load_chapter_release_queue(), indent=2, default=str),
+                encoding="utf-8",
+            )
             backup = str(backup_path)
         except Exception:
             backup = ""
@@ -17460,10 +17436,19 @@ def apply_chapter_path_state(next_chapter: int = 17, start_date: str = "", *, re
 
     if reset_queue:
         backup = {}
-        if CHAPTER_RELEASE_QUEUE_FILE.exists():
-            backup_path = CHAPTER_RELEASE_QUEUE_FILE.with_name(f"chapter-release-queue.backup-{time.strftime('%Y%m%d-%H%M%S')}.json")
-            shutil.copy2(CHAPTER_RELEASE_QUEUE_FILE, backup_path)
+        # Phase 1 retirement: queue lives in SQLite. Back up current DB content
+        # to a timestamped JSON file for audit, then reset in DB.
+        backup_path = CHAPTER_RELEASE_QUEUE_FILE.with_name(
+            f"chapter-release-queue.backup-{time.strftime('%Y%m%d-%H%M%S')}.json"
+        )
+        try:
+            backup_path.write_text(
+                json.dumps(load_chapter_release_queue(), indent=2, default=str),
+                encoding="utf-8",
+            )
             backup["queueBackup"] = str(backup_path)
+        except Exception:
+            backup = {}
         save_chapter_release_queue({"schemaVersion": 1, "rotationIndex": 0, "assignments": [], "errors": [], "scheduleMode": "chapter-path-reset"})
     else:
         backup = {}
@@ -19195,9 +19180,8 @@ def release_plan_for_chapter(abbr: str, chapter: int | str) -> dict[str, Any]:
 
 
 def load_chapter_release_queue() -> dict[str, Any]:
+    # Phase 1 retirement: SQLite (state_snapshots kv) is the sole source of truth.
     data = load_state_snapshot_from_database("chapterReleaseQueue")
-    if not isinstance(data, dict):
-        data = read_json_safe(CHAPTER_RELEASE_QUEUE_FILE)
     if not isinstance(data, dict):
         data = {"schemaVersion": 1, "rotationIndex": 0, "assignments": [], "errors": []}
     data.setdefault("schemaVersion", 1)
@@ -19209,7 +19193,6 @@ def load_chapter_release_queue() -> dict[str, Any]:
 
 def save_chapter_release_queue(data: dict[str, Any]) -> None:
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(CHAPTER_RELEASE_QUEUE_FILE, data)
     mirror_state_snapshot_to_database("chapterReleaseQueue", data)
 
 
@@ -28810,13 +28793,13 @@ def youtube_daily_candidates() -> list[dict[str, Any]]:
 
 
 def read_youtube_daily_status(refresh: bool = False) -> dict[str, Any]:
-    # SQLite-first (state_snapshots kv), JSON fallback for back-compat.
+    # Phase 1 retirement: SQLite (state_snapshots kv) is the sole source of truth.
     cached = load_state_snapshot_from_database("youtubeDailyStatus")
     if isinstance(cached, dict) and cached.get("items"):
         # Recompute the dynamic parts but keep persisted running/finished/ready/errors.
         cached["createdNotUploaded"] = youtube_created_not_uploaded()
         return cached
-    if not YOUTUBE_DAILY_STATUS_FILE.exists():
+    if not (isinstance(cached, dict) and cached):
         data = {
             "running": False,
             "startedAt": "",
@@ -28832,10 +28815,7 @@ def read_youtube_daily_status(refresh: bool = False) -> dict[str, Any]:
         except Exception as exc:
             print(f"Database backfill failed for youtube daily status: {exc}", file=sys.stderr)
         return data
-    try:
-        data = json.loads(YOUTUBE_DAILY_STATUS_FILE.read_text(encoding="utf-8-sig"))
-    except Exception:
-        data = {}
+    data = dict(cached)
     data.setdefault("running", False)
     data.setdefault("items", [])
     data.setdefault("ready", [])
@@ -28869,7 +28849,7 @@ def read_youtube_daily_status(refresh: bool = False) -> dict[str, Any]:
 
 
 def write_youtube_daily_status(data: dict[str, Any]) -> None:
-    write_json_atomic(YOUTUBE_DAILY_STATUS_FILE, data)
+    # Phase 1 retirement: SQLite (state_snapshots kv) is the sole store.
     try:
         mirror_state_snapshot_to_database("youtubeDailyStatus", data)
     except Exception as exc:

@@ -139,28 +139,20 @@ def mirror_state_snapshot_to_database(key: str, payload: dict[str, Any]) -> None
 # --- chapter ledger (dual-store core) ---
 
 def load_chapter_ledger() -> dict[str, Any]:
+    # Phase 1 retirement: SQLite (chapter_ledger table) is the sole source of truth.
     try:
         data = automation_db.load_chapter_ledger(ROOT)
         if isinstance(data, dict) and isinstance(data.get("chapters"), dict) and data["chapters"]:
             return data
     except Exception as exc:
         print(f"Database read failed for chapter ledger: {exc}", file=sys.stderr)
-    if not CHAPTER_LEDGER_FILE.exists():
-        return {"schemaVersion": 1, "chapters": {}, "updatedAt": ""}
-    try:
-        data = json.loads(CHAPTER_LEDGER_FILE.read_text(encoding="utf-8-sig"))
-    except Exception:
-        return {"schemaVersion": 1, "chapters": {}, "updatedAt": ""}
-    data.setdefault("schemaVersion", 1)
-    data.setdefault("chapters", {})
-    return data
+    return {"schemaVersion": 1, "chapters": {}, "updatedAt": ""}
 
 
 def save_chapter_ledger(data: dict[str, Any]) -> None:
     data.setdefault("schemaVersion", 1)
     data.setdefault("chapters", {})
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(CHAPTER_LEDGER_FILE, data)
     for entry in data.get("chapters", {}).values() if isinstance(data.get("chapters"), dict) else []:
         if isinstance(entry, dict):
             mirror_chapter_ledger_to_database(entry)

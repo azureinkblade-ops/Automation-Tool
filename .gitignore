@@ -73,3 +73,4 @@ app-regression-dashboard.json
 
 # Phase 3 insurance backup (JSON copies kept off-repo)
 /phase3-json-backup/
+  phase1-json-backup/

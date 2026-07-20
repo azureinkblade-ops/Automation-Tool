@@ -97,24 +97,21 @@ def _get(collab: dict[str, Any], name: str):
 # --- approval-cleared state (dual-store: JSON mirror + SQLite) ---
 
 def load_approval_cleared_state() -> dict[str, Any]:
+    # Phase 1 retirement: SQLite (approval_cleared table) is the sole source of truth.
     try:
         data = automation_db.load_approval_cleared_state(ROOT)
         if isinstance(data, dict) and isinstance(data.get("items"), dict) and data["items"]:
             return data
     except Exception as exc:
         print(f"Database read failed for approval cleared state: {exc}", file=sys.stderr)
-    data = read_json_safe(APPROVAL_INBOX_CLEARED_FILE)
-    if not isinstance(data, dict):
-        data = {"schemaVersion": 1, "items": {}}
+    data = {"schemaVersion": 1, "items": {}}
     data.setdefault("items", {})
     return data
 
 
 def save_approval_cleared_state(data: dict[str, Any]) -> None:
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(APPROVAL_INBOX_CLEARED_FILE, data)
-    # Mirror every cleared item into SQLite so the DB is never stale
-    # (the read path is DB-first; without this, cleared items could reappear).
+    # Mirror every cleared item into SQLite (sole store). The read path is DB-first.
     items = data.get("items") if isinstance(data.get("items"), dict) else {}
     for key, record in items.items():
         if isinstance(record, dict):
