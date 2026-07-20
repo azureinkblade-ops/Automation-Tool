@@ -14527,11 +14527,15 @@ def tiktok_caption(novel: str, chapter: str) -> str:
     profile = social_profile(novel)
     destination = short_destination_copy(novel, chapter, source="tiktok")
     hashtags = rotated_hashtags(novel, f"{novel}-{chapter}", chapter_text=chapter, limit=9)
+    # Engagement question drives comments/shares (TikTok had 0 comments/0 shares).
+    question = platform_engagement_prompt_line(story_key(novel), "short_reel", "tiktok", context=f"caption-{chapter}")
     return "\n".join(
         [
             f"{profile['emoji']} {short_platform_intro(novel, chapter, 'tiktok')}",
             destination["hook"],
             destination["links"],
+            "",
+            question,
             "",
             hashtags,
         ]
@@ -14541,11 +14545,15 @@ def tiktok_caption(novel: str, chapter: str) -> str:
 def instagram_reel_caption(novel: str, chapter: str) -> str:
     profile = social_profile(novel)
     destination = short_destination_copy(novel, chapter, source="instagram-reel")
+    # Engagement question for IG too (saves/comments loop).
+    question = platform_engagement_prompt_line(story_key(novel), "short_reel", "instagram", context=f"caption-{chapter}")
     return "\n".join(
         [
             f"{profile['emoji']} {short_platform_intro(novel, chapter, 'instagram-reel')}",
             destination["hook"],
             destination["links"],
+            "",
+            question,
             "",
             profile["hashtags"],
         ]
