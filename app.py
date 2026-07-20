@@ -15784,6 +15784,19 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
     sources.append("rotating-novel-card")
 
     hook = sub_themes[0]
+    # Full per-novel discoverability hashtag set (BookTok/FantasyBooks/RoyalRoad/etc.),
+    # rotated by prompt so repeated builds surface different tag orderings for reach.
+    _profile = social_profile(abbr)
+    seed = f"{abbr}-nh{prompt_index}-{run_id}"
+    # Curated base set only (no prompt-derived keyword tags -- those produce junk like
+    # "#Discovers"). rotated_hashtags rotates the ordering per seed for freshness.
+    novel_tags = rotated_hashtags(abbr, seed, "", limit=14) or _profile.get("hashtags", "#AzureInkblade")
+    # Guarantee the two anchor tags are always present.
+    for _anchor in ("#AzureInkblade", "#TikTokBooks"):
+        if _anchor.lower() not in novel_tags.lower():
+            novel_tags = f"{novel_tags} {_anchor}".strip()
+    rr_link = royal_road_url_for_story(abbr) or linktree_url()
+
     agent = None
     if str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"}:
         try:
@@ -15792,23 +15805,33 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
         except Exception as exc:
             print(f"[deep-tiktok-novel] agent post writer failed: {exc}", file=sys.stderr)
     if agent and agent.get("caption"):
-        caption = str(agent["caption"]).strip()
-        ag_tags = " ".join(str(t) for t in (agent.get("hashtags") or []) if str(t).strip())
-        if "#AzureInkblade" not in ag_tags:
-            ag_tags = f"#AzureInkblade {ag_tags}".strip()
-        _profile = social_profile(abbr)
-        _novel_tag = next((t for t in re.findall(r"#\w+", _profile.get("hashtags", "")) if t.lower() != "#azureinkblade"), "")
-        if _novel_tag and _novel_tag not in ag_tags:
-            ag_tags = f"{ag_tags} {_novel_tag}".strip()
+        body = str(agent["caption"]).strip()
+        cta = str(agent.get("cta") or "").strip()
+        # Merge agent hashtags into the full discoverability set (dedupe, keep order).
+        ag_seen = {t.lower() for t in re.findall(r"#\w+", novel_tags)}
+        for t in re.findall(r"#\w+", " ".join(str(x) for x in (agent.get("hashtags") or []))):
+            if t.lower() not in ag_seen:
+                novel_tags = f"{novel_tags} {t}".strip()
+                ag_seen.add(t.lower())
         tiktok_title = str(agent.get("tiktok_title") or agent.get("title") or f"{novel}: {prompt[:48]}").strip()
         ag_overlays = agent.get("overlays") or agent.get("video_overlays") or agent.get("moments") or []
         if isinstance(ag_overlays, str):
             ag_overlays = [line.strip() for line in ag_overlays.splitlines() if line.strip()]
     else:
-        caption = f"{novel}: {prompt} Read {novel} on Royal Road. #AzureInkblade"
-        ag_tags = "#AzureInkblade"
+        body = f"{novel}: {prompt}"
+        cta = f"Read {novel} free on Royal Road."
         tiktok_title = f"{novel}: {prompt[:48]}"
         ag_overlays = []
+
+    # Rich multi-line description: hook/teaser, CTA + link, then the full tag block.
+    caption = "\n\n".join(
+        part for part in [
+            body,
+            f"{cta}\n👉 {rr_link}" if cta else f"👉 {rr_link}",
+            novel_tags,
+        ] if part and part.strip()
+    ).strip()
+    ag_tags = novel_tags
 
     if ag_overlays and len(ag_overlays) >= 2:
         overlays = [reel_overlay_text(str(line), limit=58) for line in ag_overlays[:8]]
