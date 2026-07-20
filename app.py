@@ -29064,6 +29064,11 @@ def build_youtube_from_text(chapter_title: str, chapter_text: str, abbr: str = "
     if not chapter_text.strip():
         raise RuntimeError("Chapter text is required.")
     metadata = youtube_metadata_from_text(chapter_title, chapter_text, abbr)
+    # Plan #1: curiosity-gap CTR title/thumbnail when enabled (fail-soft to base title).
+    if youtube_use_ctr_hooks() and chapter_number:
+        ctr_title = youtube_ctr_title(abbr, chapter_number, metadata.get("title", ""))
+        if ctr_title:
+            metadata["title"] = ctr_title
     chapter_id = normalize_chapter_id(chapter_title, chapter_number)
     hash_value = content_hash(chapter_text)
     folder = stable_chapter_folder(YOUTUBE_OUTPUT_DIR, "youtube", metadata["title"], abbr, chapter_id)
@@ -29084,7 +29089,7 @@ def build_youtube_from_text(chapter_title: str, chapter_text: str, abbr: str = "
             background_video_count(),
         )
         write_youtube_text_video_script(folder, metadata["title"], chapter_text, backgrounds)
-        thumbnail = build_youtube_thumbnail(folder, metadata["title"], abbr)
+        thumbnail = build_youtube_thumbnail(folder, metadata["title"], abbr, override_text=youtube_ctr_thumbnail_text(abbr, chapter_number) if youtube_use_ctr_hooks() and chapter_number else "")
         reused.update(
             {
                 **metadata,
@@ -29126,7 +29131,7 @@ def build_youtube_from_text(chapter_title: str, chapter_text: str, abbr: str = "
         background_video_count(),
     )
     write_youtube_text_video_script(folder, metadata["title"], chapter_text, backgrounds)
-    thumbnail = build_youtube_thumbnail(folder, metadata["title"], abbr)
+    thumbnail = build_youtube_thumbnail(folder, metadata["title"], abbr, override_text=youtube_ctr_thumbnail_text(abbr, chapter_number) if youtube_use_ctr_hooks() and chapter_number else "")
     result = {
         **metadata,
         "abbr": abbr.upper().strip(),
@@ -31969,6 +31974,46 @@ def youtube_thumbnail_text(value: str, abbr: str = "", limit: int = 76) -> str:
     return "\n".join(lines) if lines else title
 
 
+# Curiosity-gap hooks for YouTube full-video titles/thumbnails (plan #1, 2026-07-20).
+# These create an open loop ("what glitch? what rule?") instead of the flat
+# "Novel Chapter N: <title>" that produced 0% CTR on some chapters. Novel-voiced,
+# not spammy clickbait. Used only when YOUTUBE_USE_CTR_HOOKS is enabled.
+YOUTUBE_CTR_HOOK_TEMPLATES = {
+    "EN": "He Found the Glitch Everyone Was Told to Fear",
+    "HA": "He Broke the One Rule the Sect Forbade",
+    "SF": "The Forge Remembered a Name He Tried to Forget",
+    "HP": "One Step Unlocked a Path That Should Not Exist",
+}
+
+
+def youtube_use_ctr_hooks() -> bool:
+    return str(os.environ.get("YOUTUBE_USE_CTR_HOOKS", "0")).strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def youtube_ctr_title(abbr: str, chapter: str | int, base_title: str = "") -> str:
+    """Curiosity-gap YouTube title: '<hook> | <Novel> Ch.N'."""
+    abbr = story_key(abbr)
+    novel = NOVEL_NAMES.get(abbr, abbr)
+    hook = YOUTUBE_CTR_HOOK_TEMPLATES.get(abbr, "One Choice Changed Everything")
+    chapter_label = str(chapter).strip()
+    title = f"{hook} | {novel} Ch.{chapter_label}"
+    if base_title and len(base_title) <= 90 and base_title not in title:
+        # keep the source chapter title as a secondary line for search/context
+        title = f"{title} - {clean_youtube_chapter_title(base_title, abbr)[:60]}"
+    return title[:95]
+
+
+def youtube_ctr_thumbnail_text(abbr: str, chapter: str | int, base_title: str = "") -> str:
+    """Two-line thumbnail: big curiosity hook + small chapter tag."""
+    abbr = story_key(abbr)
+    hook = YOUTUBE_CTR_HOOK_TEMPLATES.get(abbr, "One Choice Changed Everything")
+    hook = re.sub(r"\s+", " ", hook).strip().upper()
+    chapter_label = str(chapter).strip()
+    lines = textwrap.wrap(hook, width=20, max_lines=3, placeholder="...", break_long_words=False)
+    lines.append(f"CHAPTER {chapter_label}")
+    return "\n".join(lines)
+
+
 def story_hook_thumbnail_prompt(title: str, story_text: str, abbr: str = "", angle: str = "") -> str:
     novel = NOVEL_NAMES.get(story_key(abbr), "Azure Inkblade")
     visual_text = story_hook_visual_source_text(story_text)
@@ -32318,7 +32363,7 @@ def find_youtube_thumbnail_base(post_folder: Path, abbr: str = "") -> Path | Non
     return None
 
 
-def build_youtube_thumbnail(post_folder: Path, title: str, abbr: str = "", preferred_base: str | Path | None = None) -> dict[str, Any]:
+def build_youtube_thumbnail(post_folder: Path, title: str, abbr: str = "", preferred_base: str | Path | None = None, override_text: str = "") -> dict[str, Any]:
     post_folder = post_folder.resolve()
     preferred = Path(str(preferred_base)).resolve() if preferred_base else None
     base = preferred if preferred and preferred.exists() and preferred.is_file() and preferred.suffix.lower() in IMAGE_EXTENSIONS else find_youtube_thumbnail_base(post_folder, abbr)
@@ -32331,7 +32376,7 @@ def build_youtube_thumbnail(post_folder: Path, title: str, abbr: str = "", prefe
             source_copy.write_bytes(base.read_bytes())
         except Exception:
             source_copy = base
-    overlay = youtube_thumbnail_text(title, abbr).replace("\\n", "\n")
+    overlay = (override_text or youtube_thumbnail_text(title, abbr)).replace("\\n", "\n")
     overlay_file = post_folder / "youtube-thumbnail-text.txt"
     overlay_file.write_text(overlay, encoding="utf-8")
     ffmpeg_exe = find_ffmpeg_executable()
