@@ -15381,7 +15381,109 @@ def deep_tiktok_eligible_chapters(abbr: str, used: set[int]) -> list[int]:
     )
 
 
+# Per-novel highlight prompt bank for the 60-75s "novel highlight" TikTok (2026-07-20
+# redesign). No chapter is chosen -- we highlight the novel itself, rotating through
+# these prompts so each build is different. Each prompt drives NEW realistic diffusers
+# images (azink_real track) and feeds the Hermes agent post writer for the pack copy.
+DEEP_TIKTOK_NOVEL_PROMPTS = {
+    "EN": [
+        "The Nexus awakens inside a dead server farm; a lone runner discovers the system is rewriting reality one echo at a time.",
+        "A glitching city where memories are currency; the protagonist trades a forgotten name for one more hour of power.",
+        "The interface offers a forbidden upgrade; taking it means erasing everyone who ever knew your real name.",
+        "A silent antagonist encoded as a smiling avatar hunts the runner through mirrored data-temples.",
+        "The Nexus speaks in the voice of someone the runner lost; trusting it is the only way out.",
+    ],
+    "HA": [
+        "A dying cultivator inherits a broken ascension sigil and one season to master it before the sect exiles him.",
+        "The heavens open a single door; every rival wants the same meridian, and only one can pass.",
+        "A forbidden technique lets her hear the qi of the dying; the cost is hearing her own heart stop.",
+        "The sect's golden library burns; a disciple must carry a single scroll of truth through the ash.",
+        "A courtyard trial where the weak are forgotten by the Formation itself unless they carve their name in lightning.",
+    ],
+    "SF": [
+        "Beneath the undercity, a soul-forge sings; the smith who listens too long begins to forget his own face.",
+        "A choir of trapped souls powers the city's shields; freeing one means dooming the rest.",
+        "An apprentice forges a blade that remembers every life it has cut, and it refuses to be quiet.",
+        "The iron throne of the old empire wakes; the smith must decide whether to melt it or wear it.",
+        "A flooded foundry where the dead communicate through hammer-strikes on the water's skin.",
+    ],
+    "HP": [
+        "A mortal finds a path that multiplies each step a hundredfold; the first stride already echoes across the mountain.",
+        "The sect opens its immortal gate to one outsider; the trial is to forget everything they love.",
+        "A jade scroll reveals a forbidden realm; reading it halves the reader's remaining lifespan.",
+        "A quiet disciple out-thinks a dynasty of swordsmen using only stillness and one falling leaf.",
+        "The mountain itself tests the worthy; those who climb without fear are never seen again.",
+    ],
+}
+
+
+def select_deep_tiktok_novel() -> dict[str, Any]:
+    """Novel-only selection for the 60-75s TikTok (redesign): always available.
+
+    Unlike select_random_deep_tiktok_chapter, this never requires an eligible
+    public chapter. It rotates novels (remainingNovels) and, within a novel,
+    rotates through DEEP_TIKTOK_NOVEL_PROMPTS indices (usedPrompts) so each
+    build highlights a different theme and produces different files.
+    """
+    with DEEP_TIKTOK_ROTATION_LOCK:
+        state = load_deep_tiktok_rotation()
+        pending = state.get("pending")
+        if isinstance(pending, dict) and str(pending.get("selectedAt", "")).strip():
+            try:
+                age_h = (time.time() - time.mktime(time.strptime(pending["selectedAt"], "%Y-%m-%d %H:%M:%S"))) / 3600
+            except Exception:
+                age_h = 0.0
+            if age_h >= 1.0:
+                state["pending"] = None
+                save_deep_tiktok_rotation(state)
+                pending = None
+        if isinstance(pending, dict):
+            raise RuntimeError("A 60-75 second TikTok selection is already being built. Wait for it to finish before starting another.")
+        remaining = [story_key(str(v)) for v in state.get("remainingNovels", [])]
+        remaining = [a for a in remaining if a in {"EN", "HA", "SF", "HP"}]
+        if not remaining:
+            remaining = ["EN", "HA", "SF", "HP"]
+            state["cycle"] = max(1, int(state.get("cycle") or 1)) + 1
+        used_prompts = {story_key(str(k)): list(v) for k, v in (state.get("usedPrompts") or {}).items()}
+        # Prefer a novel with an unused prompt; else any remaining novel.
+        chosen = None
+        for abbr in remaining:
+            prompts = DEEP_TIKTOK_NOVEL_PROMPTS.get(abbr, [])
+            used = set(used_prompts.get(abbr, []))
+            if len(prompts) > len(used):
+                chosen = abbr
+                break
+        if not chosen:
+            chosen = random.choice(remaining)
+            used_prompts.setdefault(chosen, [])
+        prompts = DEEP_TIKTOK_NOVEL_PROMPTS.get(chosen, [])
+        used = set(used_prompts.get(chosen, []))
+        available = [i for i in range(len(prompts)) if i not in used]
+        prompt_index = random.choice(available) if available else random.randrange(len(prompts))
+        used.add(prompt_index)
+        used_prompts[chosen] = sorted(used)
+        if len(used_prompts[chosen]) >= len(prompts):
+            # This novel's prompts exhausted this cycle -> drop from remaining.
+            remaining = [a for a in remaining if a != chosen]
+        selection = {
+            "abbr": chosen,
+            "novel": NOVEL_NAMES.get(chosen, chosen),
+            "chapter": "",
+            "promptIndex": prompt_index,
+            "prompt": prompts[prompt_index],
+            "cycle": int(state.get("cycle") or 1),
+            "selectedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "mode": "novel_highlight",
+        }
+        state["remainingNovels"] = remaining
+        state["usedPrompts"] = used_prompts
+        state["pending"] = selection
+        save_deep_tiktok_rotation(state)
+        return selection
+
+
 def select_random_deep_tiktok_chapter() -> dict[str, Any]:
+
     with DEEP_TIKTOK_ROTATION_LOCK:
         state = load_deep_tiktok_rotation()
         # Self-heal: a "pending" selection that was never completed (app crash,
@@ -15448,11 +15550,14 @@ def complete_random_deep_tiktok_selection(selection: dict[str, Any], success: bo
         if error:
             event["error"] = error
         if success:
-            used = state["usedChapters"].setdefault(abbr, [])
-            if chapter not in used:
-                used.append(chapter)
-                used.sort()
-            state["remainingNovels"] = [value for value in state.get("remainingNovels", []) if story_key(str(value)) != abbr]
+            # Novel-only builds (redesign) carry chapter="" and instead rotate
+            # prompts via usedPrompts; only record a used chapter when one exists.
+            if str(selection.get("chapter") or "").strip():
+                used = state["usedChapters"].setdefault(abbr, [])
+                if chapter not in used:
+                    used.append(chapter)
+                    used.sort()
+                state["remainingNovels"] = [value for value in state.get("remainingNovels", []) if story_key(str(value)) != abbr]
         state.setdefault("history", []).append(event)
         state["pending"] = None
         save_deep_tiktok_rotation(state)
@@ -15460,11 +15565,11 @@ def complete_random_deep_tiktok_selection(selection: dict[str, Any], success: bo
 
 
 def make_random_deep_tiktok_pack(force_new_images: bool = True, style: str = "main-posts") -> dict[str, Any]:
-    selection = select_random_deep_tiktok_chapter()
+    selection = select_deep_tiktok_novel()
     try:
-        payload = make_deep_tiktok_pack(
+        payload = make_deep_tiktok_novel_pack(
             str(selection["abbr"]),
-            str(selection["chapter"]),
+            int(selection["promptIndex"]),
             force_new_images=force_new_images,
             style=style,
         )
@@ -15478,7 +15583,7 @@ def make_random_deep_tiktok_pack(force_new_images: bool = True, style: str = "ma
             **selection,
             "usedChapterRecorded": success,
             "remainingNovels": state.get("remainingNovels", []),
-            "usedChapters": state.get("usedChapters", {}).get(selection["abbr"], []),
+            "usedPrompts": state.get("usedPrompts", {}).get(selection["abbr"], []),
         }
         metadata_path = Path(str(payload.get("folder") or "")) / "metadata.json"
         if metadata_path.exists():
@@ -15610,6 +15715,155 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
                 "deepTikTokDuration": payload["duration"],
             },
         )
+    (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    if not payload["quality_gate"].get("ok"):
+        return payload
+    return auto_publish_generated_media(folder, payload)
+
+
+def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: bool = True, style: str = "main-posts") -> dict[str, Any]:
+    """Novel-only 60-75s TikTok builder (2026-07-20 redesign).
+
+    Highlights a novel (no chapter) from DEEP_TIKTOK_NOVEL_PROMPTS[prompt_index].
+    Generates NEW realistic diffusers images (azink_real track) for each of the
+    8 scenes, and lets the Hermes agent post writer produce the whole pack copy
+    (caption, title, overlay text). Falls back to curated copy if the agent is
+    off/unavailable so the build never breaks. Rotation of prompt_index makes
+    every run highlight a different theme and produce different files.
+    """
+    pack_track = style if style in LORA_STYLE_TRACKS else "main-posts"
+    abbr = story_key(abbr)
+    prompts = DEEP_TIKTOK_NOVEL_PROMPTS.get(abbr, [])
+    if not prompts:
+        raise RuntimeError(f"No highlight prompts configured for {abbr}.")
+    prompt_index = int(prompt_index) % len(prompts)
+    prompt = prompts[prompt_index]
+    novel = NOVEL_NAMES.get(abbr, abbr)
+    run_id = time.strftime("%Y%m%d-%H%M%S")
+    folder = TIKTOK_OUTPUT_DIR / f"{abbr.lower()}-nh{prompt_index}-{run_id}-deep"
+    reset_generated_folder(folder)
+
+    sub_themes = [
+        "establishing world shot", "the protagonist in motion", "a tense confrontation",
+        "an intimate emotional beat", "a startling revelation", "a dangerous environment",
+        "a quiet character moment", "a haunting closing image",
+    ]
+    images: list[str] = []
+    sources: list[str] = []
+    image_prompts: list[str] = []
+    used_hashes: set[str] = set()
+    scene_count = 8
+    for index in range(1, scene_count + 1):
+        target = folder / f"deep-scene-{index}.png"
+        sub = sub_themes[(index - 1) % len(sub_themes)]
+        base_prompt = (
+            f"Realistic cinematic fantasy promotional image for the web novel {novel}. "
+            f"Theme: {prompt}. Scene focus: {sub}. "
+            f"Detailed setting, dramatic readable composition, strong lighting, photorealistic, "
+            f"no text, no typography, no logo."
+        )
+        baked = enhance_local_sd_prompt(base_prompt, orientation="vertical", lora_track="azink_real")
+        seed = (prompt_index * 1000 + index * 7 + int(time.time()) % 1000) % (2 ** 31)
+        try:
+            create_local_stable_diffusion_image(baked, target, orientation="vertical", seed=seed)
+            fingerprint = image_file_fingerprint(target)
+            if fingerprint in used_hashes:
+                raise RuntimeError("Generated image duplicated an earlier scene.")
+            used_hashes.add(fingerprint)
+            source = "diffusers-azink_real"
+        except Exception as exc:
+            print(f"[deep-tiktok-novel] realistic image failed for {abbr} scene {index}: {exc}", file=sys.stderr)
+            source = create_unique_prompt_fallback_image(
+                baked, target, index, abbr, used_hashes=used_hashes, allow_banked=False, fresh=True
+            )
+        images.append(str(target))
+        sources.append(source)
+        image_prompts.append(baked)
+        archive_generated_promo_image(target, abbr, novel, f"deep-tiktok-novel-{index}")
+    images.append(prepare_tiktok_outro_image(folder, abbr, novel, "", style=pack_track))
+    sources.append("rotating-novel-card")
+
+    hook = sub_themes[0]
+    agent = None
+    if str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"}:
+        try:
+            from tools.agent_post_writer import generate_post_copy as _agent_gen
+            agent = _agent_gen(abbr, novel, "", prompt, {"prompt": prompt, "mode": "novel_highlight"})
+        except Exception as exc:
+            print(f"[deep-tiktok-novel] agent post writer failed: {exc}", file=sys.stderr)
+    if agent and agent.get("caption"):
+        caption = str(agent["caption"]).strip()
+        ag_tags = " ".join(str(t) for t in (agent.get("hashtags") or []) if str(t).strip())
+        if "#AzureInkblade" not in ag_tags:
+            ag_tags = f"#AzureInkblade {ag_tags}".strip()
+        _profile = social_profile(abbr)
+        _novel_tag = next((t for t in re.findall(r"#\w+", _profile.get("hashtags", "")) if t.lower() != "#azureinkblade"), "")
+        if _novel_tag and _novel_tag not in ag_tags:
+            ag_tags = f"{ag_tags} {_novel_tag}".strip()
+        tiktok_title = str(agent.get("tiktok_title") or agent.get("title") or f"{novel}: {prompt[:48]}").strip()
+        ag_overlays = agent.get("overlays") or agent.get("video_overlays") or agent.get("moments") or []
+        if isinstance(ag_overlays, str):
+            ag_overlays = [line.strip() for line in ag_overlays.splitlines() if line.strip()]
+    else:
+        caption = f"{novel}: {prompt} Read {novel} on Royal Road. #AzureInkblade"
+        ag_tags = "#AzureInkblade"
+        tiktok_title = f"{novel}: {prompt[:48]}"
+        ag_overlays = []
+
+    if ag_overlays and len(ag_overlays) >= 2:
+        overlays = [reel_overlay_text(str(line), limit=58) for line in ag_overlays[:8]]
+    else:
+        overlays = [reel_overlay_text(f"{novel}: {sub}", limit=58) for sub in sub_themes[:8]]
+    overlays.append(reel_overlay_text(f"READ {novel} ON ROYAL ROAD", limit=62))
+    hook_line = overlays[0].replace("\n", " ") if overlays else f"A deeper look at {novel}"
+
+    sound_source = choose_rotating_weekly_promo_audio()
+    if not sound_source:
+        sounds = [Path(item["path"]) for item in list_tiktok_assets().get("sounds", []) if Path(item["path"]).exists()]
+        sound_source = random.choice(sounds) if sounds else None
+    if not sound_source or not sound_source.exists():
+        raise RuntimeError("No promo audio is available for the deep TikTok video.")
+    sound_target = folder / sound_source.name
+    shutil.copy2(sound_source, sound_target)
+
+    payload = {
+        "kind": "deep_tiktok",
+        "abbr": abbr,
+        "novel": novel,
+        "chapter": "",
+        "mode": "novel_highlight",
+        "prompt_index": prompt_index,
+        "prompt": prompt,
+        "pack_track": pack_track,
+        "title": novel,
+        "images": images,
+        "image_sources": sources,
+        "image_prompts": image_prompts,
+        "sound": str(sound_target),
+        "caption": caption,
+        "description": caption,
+        "hashtags": ag_tags,
+        "tiktok_title": tiktok_title,
+        "video_overlays": overlays,
+        "duration_target": 68,
+        "platforms": ["tiktok"],
+        "folder": str(folder),
+        "youtube_shorts_disabled": True,
+        "youtube_shorts_reason": "Deep chapter TikToks are reserved for TikTok growth testing.",
+    }
+    (folder / "caption.txt").write_text(caption + "\n", encoding="utf-8")
+    (folder / "description.txt").write_text(caption + "\n", encoding="utf-8")
+    (folder / "tiktok-title.txt").write_text(tiktok_title + "\n", encoding="utf-8")
+    (folder / "sound.txt").write_text(str(sound_target) + "\n", encoding="utf-8")
+    (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    write_deep_tiktok_video_helper(folder, images, sound_target, overlays)
+    build = run_generated_video_builder(folder, "make_tiktok_video.py", "tiktok-video.mp4", timeout=900)
+    payload["video_build"] = build
+    video = folder / "tiktok-video.mp4"
+    payload["video"] = str(video) if video.exists() else ""
+    payload["duration"] = media_duration_seconds(video) if video.exists() else 0.0
+    (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    payload["quality_gate"] = folder_quality_gate(str(folder), "tiktok")
     (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     if not payload["quality_gate"].get("ok"):
         return payload
