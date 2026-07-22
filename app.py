@@ -18991,6 +18991,11 @@ def build_story_hook_video_files(title: str, story_text: str, abbr: str = "", an
         raise RuntimeError("Story hook text is required.")
     metadata = youtube_metadata_from_text(title, story_text, abbr)
     metadata["title"] = clean_youtube_chapter_title(title or metadata["title"], abbr) or metadata["title"]
+    # Plan #1: curiosity-gap CTR title when enabled (story-hooks have no chapter#).
+    if youtube_use_ctr_hooks():
+        ctr_title = youtube_ctr_title(abbr, "", metadata.get("title", ""))
+        if ctr_title:
+            metadata["title"] = ctr_title
     if metadata_extra:
         metadata["tags"] = str(metadata_extra.get("tags") or metadata.get("tags") or "")
     metadata["description"] = story_hook_youtube_description(
@@ -19010,10 +19015,10 @@ def build_story_hook_video_files(title: str, story_text: str, abbr: str = "", an
     (folder / "youtube-title.txt").write_text(metadata["title"].strip() + "\n", encoding="utf-8")
     (folder / "youtube-description.txt").write_text(metadata["description"].strip() + "\n", encoding="utf-8")
     (folder / "youtube-tags.txt").write_text(metadata["tags"].strip() + "\n", encoding="utf-8")
-    backgrounds = choose_background_videos(background_video_count(), abbr, f"{metadata['title']} {angle} {clean_teaser_text(story_text, 180, max_words=28)}")
+    backgrounds = select_youtube_backgrounds(abbr, story_text, background_video_count())
     write_youtube_text_video_script(folder, metadata["title"], story_text, backgrounds)
     custom_thumbnail = build_story_hook_thumbnail_base(folder, metadata["title"], story_text, abbr, angle)
-    thumbnail = build_youtube_thumbnail(folder, metadata["title"], abbr)
+    thumbnail = build_youtube_thumbnail(folder, metadata["title"], abbr, override_text=youtube_ctr_thumbnail_text(abbr, "") if youtube_use_ctr_hooks() else "")
     result = {
         **metadata,
         "kind": "story_hook_video",
@@ -32003,26 +32008,34 @@ def youtube_use_ctr_hooks() -> bool:
 
 
 def youtube_ctr_title(abbr: str, chapter: str | int, base_title: str = "") -> str:
-    """Curiosity-gap YouTube title: '<hook> | <Novel> Ch.N'."""
+    """Curiosity-gap YouTube title: '<hook> | <Novel> [Ch.N]'.
+
+    Omits the chapter label when chapter is empty (story-hook videos are not
+    chapter-numbered).
+    """
     abbr = story_key(abbr)
     novel = NOVEL_NAMES.get(abbr, abbr)
     hook = YOUTUBE_CTR_HOOK_TEMPLATES.get(abbr, "One Choice Changed Everything")
     chapter_label = str(chapter).strip()
-    title = f"{hook} | {novel} Ch.{chapter_label}"
+    title = f"{hook} | {novel}" + (f" Ch.{chapter_label}" if chapter_label else "")
     if base_title and len(base_title) <= 90 and base_title not in title:
-        # keep the source chapter title as a secondary line for search/context
+        # keep the source title as a secondary line for search/context
         title = f"{title} - {clean_youtube_chapter_title(base_title, abbr)[:60]}"
     return title[:95]
 
 
 def youtube_ctr_thumbnail_text(abbr: str, chapter: str | int, base_title: str = "") -> str:
-    """Two-line thumbnail: big curiosity hook + small chapter tag."""
+    """Two-line thumbnail: big curiosity hook + small chapter tag.
+
+    Omits the CHAPTER line when chapter is empty (story-hook videos).
+    """
     abbr = story_key(abbr)
     hook = YOUTUBE_CTR_HOOK_TEMPLATES.get(abbr, "One Choice Changed Everything")
     hook = re.sub(r"\s+", " ", hook).strip().upper()
     chapter_label = str(chapter).strip()
     lines = textwrap.wrap(hook, width=20, max_lines=3, placeholder="...", break_long_words=False)
-    lines.append(f"CHAPTER {chapter_label}")
+    if chapter_label:
+        lines.append(f"CHAPTER {chapter_label}")
     return "\n".join(lines)
 
 
@@ -32244,7 +32257,7 @@ def rebuild_story_hook_thumbnail(folder_value: str, force: bool = True) -> dict[
                 record["error"] = str(exc)
             rejected_records.append(record)
     art = build_story_hook_thumbnail_base(folder, title, story_text, abbr, angle, force=force, rejected_hashes=rejected_hashes)
-    thumbnail = build_youtube_thumbnail(folder, title, abbr, preferred_base=art.get("image") or folder / "story-hook-thumbnail-base.png")
+    thumbnail = build_youtube_thumbnail(folder, title, abbr, preferred_base=art.get("image") or folder / "story-hook-thumbnail-base.png", override_text=youtube_ctr_thumbnail_text(abbr, "") if youtube_use_ctr_hooks() else "")
     deleted = metadata.get("deleted_thumbnails") if isinstance(metadata.get("deleted_thumbnails"), list) else []
     deleted.extend(rejected_records)
     metadata.update(
