@@ -14937,6 +14937,7 @@ import math
 import subprocess
 import wave
 import audioop
+import random
 # PIL is only needed by the MoviePy renderer; the FFmpeg fallback (the renderer
 # used in practice) does not need it. Import lazily/guarded so a broken PIL
 # install does not crash the whole script before the FFmpeg path can run.
@@ -14955,6 +14956,16 @@ ffmpeg_exe = {ffmpeg_exe!r}
 output = folder / "tiktok-video.mp4"
 silent_output = folder / "tiktok-video-silent.mp4"
 target_duration = {int(target_duration)}
+cta_duration = 3
+CTA_VARIANTS = [
+    "Like & Subscribe for more updates!",
+    "Enjoyed this? Like & Subscribe for new drops!",
+    "Don't miss the next one - Like & Subscribe!",
+    "Like and subscribe for further updates!",
+    "If you liked this, smash Like & hit Subscribe!",
+]
+cta_text = random.choice(CTA_VARIANTS)
+target_duration = target_duration + cta_duration
 slide_duration = {slide_duration}
 deep_mode = {bool(deep)!r}
 
@@ -15139,6 +15150,32 @@ def render_with_ffmpeg_fallback():
         subprocess.run([ffmpeg_exe, "-y", "-loop", "1", "-i", str(source), "-t", str(slide_duration), "-vf", draw, "-r", "30", "-an", "-pix_fmt", "yuv420p", str(clip)], check=False)
         if clip.exists():
             clips.append(clip)
+    # CTA outro slide (Like & Subscribe) -- held/drifting frame from the last
+    # image, darkened, with the CTA text centered. Appended as a fixed-length
+    # outro so the concat + music/narration (keyed to target_duration,
+    # which was bumped by cta_duration) cover it automatically.
+    try:
+        last_src = folder / clean_images[-1]
+        cta_clip = folder / "tiktok-cta.mp4"
+        cta_draw = (
+            "scale=1200:2134:force_original_aspect_ratio=increase,crop=1200:2134,"
+            "zoompan=z='min(zoom+0.0004,1.05)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+            f"d={{cta_duration * 30}}:s=1080x1920:fps=30,"
+            "eq=brightness=-0.28,"
+            "fade=t=in:st=0:d=0.35,"
+            "drawtext=fontfile='C\\\\:/Windows/Fonts/impact.ttf':"
+            "text='" + drawtext_escape(cta_text) + "':"
+            "fontcolor=white:fontsize=72:line_spacing=14:"
+            "borderw=6:bordercolor=black@0.85:"
+            "x=(w-text_w)/2:y=(h-text_h)/2"
+        )
+        subprocess.run([ffmpeg_exe, "-y", "-loop", "1", "-i", str(last_src), "-t", str(cta_duration), "-vf", cta_draw, "-r", "30", "-an", "-pix_fmt", "yuv420p", str(cta_clip)], check=False)
+        if cta_clip.exists():
+            clips.append(cta_clip)
+        else:
+            print(f"CTA slide not created; continuing without it.")
+    except Exception as cta_exc:
+        print(f"CTA slide skipped: {{cta_exc}}")
     if not clips:
         raise SystemExit("ffmpeg did not create any TikTok/Reel slides.")
     concat = folder / "tiktok-slides.txt"
