@@ -76,6 +76,7 @@ REQUIRED_COLLABORATORS = [
     "tiktok_chapter_teaser_overlays",  # pure: overlay list
     "write_tiktok_video_helper", # side-effect: ffmpeg video
     "generate_deep_tiktok_narration",  # side-effect: local-first TTS voiceover (fail-soft)
+    "tiktok_narration_text",  # pure: derives a speakable narration sentence from the caption
     "reset_generated_folder",    # side-effect: clears folder
     "list_daily_promo_images",   # pure: reads promo image manifest
     "social_post_folder",        # pure: build output path
@@ -234,7 +235,7 @@ def make_tiktok_pack(
     (folder / "youtube-shorts-description.txt").write_text(shorts["description"] + "\n", encoding="utf-8")
     (folder / "sound.txt").write_text(str(sound_target) + "\n", encoding="utf-8")
     (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    narration_src = overlays[0].replace("\n", " ").strip() if overlays else ""
+    narration_src = _get(collab, "tiktok_narration_text")({"caption": caption}, overlays) if caption else (overlays[0].replace("\n", " ").strip() if overlays else "")
     narration_file = _get(collab, "generate_deep_tiktok_narration")(folder, abbr, narration_src) if narration_src else None
     _get(collab, "write_tiktok_video_helper")(folder, copied_images, sound_target, overlays=overlays, narration=narration_file)
     try:

@@ -7275,27 +7275,26 @@ def _probe_local_sd_dependencies() -> tuple[dict[str, bool], bool, str]:
     dependencies = dict(default_deps)
     cuda_available = False
     gpu_name = ""
-    probe_path = None
+    # Run the probe inline via `python -c` so no temp .py file is ever written.
+    # (Writing a probe file into ROOT previously orphaned hundreds of
+    # hermes-sd-probe-*.py when the server was killed mid-probe before cleanup.)
+    probe_src = (
+        "import importlib.util as u,json\n"
+        "mods=['torch','diffusers','transformers','PIL']\n"
+        "deps={m:(u.find_spec(m) is not None) for m in mods}\n"
+        "cuda=False;gpu=''\n"
+        "try:\n"
+        " import torch\n"
+        " cuda=torch.cuda.is_available()\n"
+        " gpu=torch.cuda.get_device_name(0) if cuda else ''\n"
+        "except Exception:\n"
+        " pass\n"
+        "print(json.dumps({'deps':deps,'cuda':cuda,'gpu':gpu}))\n"
+    )
     try:
-        import tempfile
-        probe_path = Path(tempfile.mkstemp(prefix="hermes-sd-probe-", suffix=".py", dir=str(ROOT))[1])
-        probe_path.write_text(
-            "import importlib.util as u,json\n"
-            "mods=['torch','diffusers','transformers','PIL']\n"
-            "deps={m:(u.find_spec(m) is not None) for m in mods}\n"
-            "cuda=False;gpu=''\n"
-            "try:\n"
-            " import torch\n"
-            " cuda=torch.cuda.is_available()\n"
-            " gpu=torch.cuda.get_device_name(0) if cuda else ''\n"
-            "except Exception:\n"
-            " pass\n"
-            "print(json.dumps({'deps':deps,'cuda':cuda,'gpu':gpu}))\n",
-            encoding="utf-8",
-        )
         env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
         completed = subprocess.run(
-            [interp, str(probe_path)],
+            [interp, "-c", probe_src],
             capture_output=True, text=True, timeout=60, env=env,
         )
         if completed.returncode == 0 and completed.stdout.strip():
@@ -7307,12 +7306,6 @@ def _probe_local_sd_dependencies() -> tuple[dict[str, bool], bool, str]:
             _SD_PROBE_CACHE.update({"key": interp, "at": now, "deps": dependencies, "cuda": cuda_available, "gpu": gpu_name})
     except Exception:
         dependencies = dict(default_deps)
-    finally:
-        if probe_path is not None:
-            try:
-                probe_path.unlink(missing_ok=True)
-            except Exception:
-                pass
     return dependencies, cuda_available, gpu_name
 
 
@@ -14860,7 +14853,7 @@ def rebuild_normal_tiktok_video_from_metadata(target: Path, metadata: dict[str, 
     if len(overlays) < len(images):
         overlays = tiktok_chapter_teaser_overlays(abbr, chapter, novel, fallback_text=str(metadata.get("caption") or metadata.get("visual_prompt") or ""))
     # Voiceover narration over ducked music (local-first TTS; fail-soft to music-only).
-    narration_text = (overlays[0].replace("\n", " ").strip() if overlays else "") or str(metadata.get("caption") or metadata.get("visual_prompt") or "").strip()
+    narration_text = tiktok_narration_text(metadata, overlays)
     narration_target = generate_deep_tiktok_narration(target, abbr, narration_text) if narration_text else None
     write_tiktok_video_helper(target, images[:4], sound, overlays=overlays[:4], narration=narration_target)
     build = run_generated_video_builder(target, "make_tiktok_video.py", "tiktok-video.mp4", timeout=900)
@@ -14927,7 +14920,13 @@ import math
 import subprocess
 import wave
 import audioop
-from PIL import Image
+# PIL is only needed by the MoviePy renderer; the FFmpeg fallback (the renderer
+# used in practice) does not need it. Import lazily/guarded so a broken PIL
+# install does not crash the whole script before the FFmpeg path can run.
+try:
+    from PIL import Image
+except Exception:
+    Image = None
 
 folder = Path(__file__).resolve().parent
 images = {[Path(image).name for image in images]!r}
@@ -15080,13 +15079,14 @@ def render_with_moviepy():
         if music.duration < target_duration:
             music = music.with_effects([AudioLoop(duration=target_duration)])
         music = music.with_duration(target_duration)
-        # Narration (if any) plays at full volume on top of ducked music for clarity.
+        # Narration (if any) plays at natural length on top of ducked music.
+        # NOTE: keep narration at its real duration -- do NOT stretch it to
+        # target_duration (that slows the speech). The composite audio length
+        # is set by `music` (looped to target_duration), so the video stays
+        # target_duration long with the voiceover playing once at the start.
         if narration_audio and Path(narration_audio).exists():
             try:
-                narration = AudioFileClip(str(narration_audio)).with_duration(target_duration)
-                if music.duration < narration.duration:
-                    music = music.with_duration(narration.duration)
-                    target_duration = int(narration.duration)
+                narration = AudioFileClip(str(narration_audio))
                 video = video.with_audio(CompositeAudioClip([narration, music.volumex(0.22)]))
             except Exception as audio_exc:
                 print(f"Narration mix failed, using music only: {{audio_exc}}")
@@ -15133,7 +15133,7 @@ def render_with_ffmpeg_fallback():
         narrated = folder / "tiktok-video-narrated.mp4"
         music_duck = folder / "tiktok-music-ducked.m4a"
         subprocess.run([ffmpeg_exe, "-y", "-i", str(sound), "-t", str(target_duration), "-af", "volume=0.22,afade=t=in:st=0:d=1,afade=t=out:st=" + str(max(0, target_duration - 3)) + ":d=3", "-c:a", "aac", "-b:a", "128k", str(music_duck)], check=False)
-        subprocess.run([ffmpeg_exe, "-y", "-i", str(output), "-i", str(narration_audio), "-i", str(music_duck) if music_duck.exists() else str(sound), "-map", "0:v:0", "-map", "1:a:0", "-map", "2:a:0", "-c:v", "copy", "-filter_complex", "[1:a][2:a]amix=inputs=2:duration=first:dropout_transition=0[a]", "-map", "[a]", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(narrated)], check=False)
+        subprocess.run([ffmpeg_exe, "-y", "-i", str(output), "-i", str(narration_audio), "-i", str(music_duck) if music_duck.exists() else str(sound), "-map", "0:v:0", "-map", "1:a:0", "-map", "2:a:0", "-c:v", "copy", "-filter_complex", "[1:a][2:a]amix=inputs=2:duration=longest:dropout_transition=0[a]", "-map", "[a]", "-c:a", "aac", "-b:a", "192k", "-t", str(target_duration), "-movflags", "+faststart", str(narrated)], check=False)
         if narrated.exists() and narrated.stat().st_size > 1024:
             import shutil as _shutil
             _shutil.move(str(narrated), str(output))
@@ -15388,6 +15388,39 @@ def generate_deep_tiktok_narration(folder: Path, abbr: str, caption: str) -> Pat
     except Exception as exc:
         print(f"[deep-tiktok-narration] failed: {exc}", file=sys.stderr)
     return None
+
+
+def tiktok_narration_text(metadata: dict[str, Any] | None, overlays: list[str] | None = None) -> str:
+    """Natural, speakable sentence for the short's voiceover.
+
+    The on-screen overlay sticker (overlays[0]) is uppercase marketing shorthand
+    like "STOP HERE IF YOU LIKE CULTIVATION..." -- NOT speakable. Use the post
+    caption's first natural sentence(s) instead (emoji/newlines stripped).
+    Falls back to the overlay only if no caption is available.
+    """
+    meta = metadata or {}
+    caption = str(meta.get("caption") or meta.get("tiktok") or "").strip()
+    if caption:
+        # Drop emoji / leading symbols, collapse whitespace, take first 2 sentences.
+        import unicodedata
+        cleaned = "".join(ch for ch in caption if not unicodedata.category(ch).startswith("So"))
+        cleaned = " ".join(cleaned.split())
+        parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", cleaned) if p.strip()]
+        spoken = " ".join(parts[:2])
+        if spoken:
+            return spoken
+    if overlays:
+        return overlays[0].replace("\n", " ").strip()
+    return ""
+
+
+def write_deep_tiktok_video_helper(
+    folder: Path,
+    images: list[str],
+    sound: Path,
+    overlays: list[str] | None = None,
+    narration: Path | None = None,
+) -> None:
     return write_animated_reel_builder_script(
         folder,
         images,
