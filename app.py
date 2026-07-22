@@ -2002,20 +2002,15 @@ def tracked_url(*args, **kwargs):
 def track_copy_links(*args, **kwargs):
     return promo_copy.track_copy_links(*args, **kwargs)
 def youtube_links_block(story: str = "") -> str:
-    links = []
+    # Lead with Linktree as the single hub (all links + next-chapter hub), keep the
+    # read link (Royal Road) and the support link (Patreon). Drop the self-referential
+    # YouTube/TikTok/X links -- they are noise on a YouTube video and bury the hub.
+    lines = [f"All links & next chapters: {linktree_url()}"]
     royal_road_url = royal_road_url_for_story(story)
     if royal_road_url:
-        links.append(f"Royal Road: {royal_road_url}")
-    links.extend(
-        [
-            f"All Azure Inkblade links: {linktree_url()}",
-            f"Patreon: {PATREON_URL}",
-            f"YouTube: {YOUTUBE_SOCIAL_URL}",
-            f"TikTok: {TIKTOK_URL}",
-            f"X: {X_URL}",
-        ]
-    )
-    return "\n".join(links)
+        lines.append(f"Read {NOVEL_NAMES.get(story_key(story), 'this web novel')} free on Royal Road: {royal_road_url}")
+    lines.append(f"Support the release schedule on Patreon: {PATREON_URL}")
+    return "\n".join(lines)
 
 
 def youtube_midroll_narration(chapter_text: str) -> str:
@@ -28601,7 +28596,6 @@ def youtube_description_from_text(chapter_title: str, chapter_text: str, abbr: s
     return (
         f"{hook}\n\n"
         f"Listen to {title}, a full chapter narration from {novel}.\n\n"
-        "Read and follow Azure Inkblade:\n"
         f"{youtube_links_block(abbr or novel)}"
         f"{tag_line}"
     ).strip()
