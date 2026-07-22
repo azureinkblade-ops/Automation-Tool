@@ -15133,7 +15133,7 @@ def render_with_ffmpeg_fallback():
         narrated = folder / "tiktok-video-narrated.mp4"
         music_duck = folder / "tiktok-music-ducked.m4a"
         subprocess.run([ffmpeg_exe, "-y", "-i", str(sound), "-t", str(target_duration), "-af", "volume=0.22,afade=t=in:st=0:d=1,afade=t=out:st=" + str(max(0, target_duration - 3)) + ":d=3", "-c:a", "aac", "-b:a", "128k", str(music_duck)], check=False)
-        subprocess.run([ffmpeg_exe, "-y", "-i", str(output), "-i", str(narration_audio), "-i", str(music_duck) if music_duck.exists() else str(sound), "-map", "0:v:0", "-map", "1:a:0", "-map", "2:a:0", "-c:v", "copy", "-filter_complex", "[1:a][2:a]amix=inputs=2:duration=longest:dropout_transition=0[a]", "-map", "[a]", "-c:a", "aac", "-b:a", "192k", "-t", str(target_duration), "-movflags", "+faststart", str(narrated)], check=False)
+        subprocess.run([ffmpeg_exe, "-y", "-i", str(output), "-i", str(narration_audio), "-i", str(music_duck) if music_duck.exists() else str(sound), "-map", "0:v:0", "-filter_complex", "[1:a][2:a]amix=inputs=2:duration=longest:dropout_transition=0[a]", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-t", str(target_duration), "-movflags", "+faststart", str(narrated)], check=False)
         if narrated.exists() and narrated.stat().st_size > 1024:
             import shutil as _shutil
             _shutil.move(str(narrated), str(output))
