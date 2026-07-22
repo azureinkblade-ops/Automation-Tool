@@ -75,6 +75,7 @@ REQUIRED_COLLABORATORS = [
     "prepare_tiktok_outro_image",# side-effect: writes outro image
     "tiktok_chapter_teaser_overlays",  # pure: overlay list
     "write_tiktok_video_helper", # side-effect: ffmpeg video
+    "generate_deep_tiktok_narration",  # side-effect: local-first TTS voiceover (fail-soft)
     "reset_generated_folder",    # side-effect: clears folder
     "list_daily_promo_images",   # pure: reads promo image manifest
     "social_post_folder",        # pure: build output path
@@ -88,6 +89,21 @@ REQUIRED_COLLABORATORS = [
 
 def _default_collaborators() -> dict[str, Any]:
     return {name: _stub_raise(name) for name in REQUIRED_COLLABORATORS}
+
+
+# Module-global collaborator registry. app.py populates this once via set_collaborators()
+# at startup; the public fns fall back to it when no per-call collaborators are passed.
+_COLLAB: dict[str, Any] = _default_collaborators()
+
+
+def set_collaborators(collab: dict[str, Any]) -> None:
+    """Wire the real app.py functions (and data) into this module. Call once at startup."""
+    global _COLLAB
+    _COLLAB = dict(collab)
+
+
+def get_collaborators() -> dict[str, Any]:
+    return dict(_COLLAB)
 
 
 def _get(collab: dict[str, Any], name: str):
@@ -107,7 +123,7 @@ def make_tiktok_pack(
     *,
     collaborators: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    collab = collaborators or _default_collaborators()
+    collab = collaborators if collaborators is not None else _COLLAB
     # Single-style lock (Workstream E): pick ONE track for the whole pack. Default main-posts;
     # caller may request realistic-posts / comic-style. We filter the asset group to that track and
     # regenerate if we don't have >=3 on-style images, so the video never mixes styles.
@@ -158,7 +174,9 @@ def make_tiktok_pack(
         reused["video_overlays"] = overlays
         reused["pack_track"] = pack_track
         if len(image_files) >= 3 and sound_path and sound_path.exists():
-            _get(collab, "write_tiktok_video_helper")(folder, image_files[:4], sound_path, overlays=overlays)
+            narration_src = overlays[0].replace("\n", " ").strip() if overlays else ""
+            narration_file = _get(collab, "generate_deep_tiktok_narration")(folder, abbr, narration_src) if narration_src else None
+            _get(collab, "write_tiktok_video_helper")(folder, image_files[:4], sound_path, overlays=overlays, narration=narration_file)
         (folder / "metadata.json").write_text(json.dumps(reused, indent=2), encoding="utf-8")
         try:
             _get(collab, "update_chapter_ledger")(
@@ -216,7 +234,9 @@ def make_tiktok_pack(
     (folder / "youtube-shorts-description.txt").write_text(shorts["description"] + "\n", encoding="utf-8")
     (folder / "sound.txt").write_text(str(sound_target) + "\n", encoding="utf-8")
     (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    _get(collab, "write_tiktok_video_helper")(folder, copied_images, sound_target, overlays=overlays)
+    narration_src = overlays[0].replace("\n", " ").strip() if overlays else ""
+    narration_file = _get(collab, "generate_deep_tiktok_narration")(folder, abbr, narration_src) if narration_src else None
+    _get(collab, "write_tiktok_video_helper")(folder, copied_images, sound_target, overlays=overlays, narration=narration_file)
     try:
         _get(collab, "update_chapter_ledger")(
             abbr,
@@ -244,7 +264,7 @@ def make_social_post(
     *,
     collaborators: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    collab = collaborators or _default_collaborators()
+    collab = collaborators if collaborators is not None else _COLLAB
     matches = [
         item
         for item in _get(collab, "list_daily_promo_images")()
@@ -355,7 +375,7 @@ def make_social_post(
 
 def build_week_social_posts(use_openai: bool = False, days: list[str] | None = None,
                             *, collaborators: dict[str, Any] | None = None) -> dict[str, Any]:
-    collab = collaborators or _default_collaborators()
+    collab = collaborators if collaborators is not None else _COLLAB
     selected_days = days or ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
     posts: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []

@@ -14859,7 +14859,10 @@ def rebuild_normal_tiktok_video_from_metadata(target: Path, metadata: dict[str, 
     overlays = list(metadata.get("video_overlays") or [])
     if len(overlays) < len(images):
         overlays = tiktok_chapter_teaser_overlays(abbr, chapter, novel, fallback_text=str(metadata.get("caption") or metadata.get("visual_prompt") or ""))
-    write_tiktok_video_helper(target, images[:4], sound, overlays=overlays[:4])
+    # Voiceover narration over ducked music (local-first TTS; fail-soft to music-only).
+    narration_text = (overlays[0].replace("\n", " ").strip() if overlays else "") or str(metadata.get("caption") or metadata.get("visual_prompt") or "").strip()
+    narration_target = generate_deep_tiktok_narration(target, abbr, narration_text) if narration_text else None
+    write_tiktok_video_helper(target, images[:4], sound, overlays=overlays[:4], narration=narration_target)
     build = run_generated_video_builder(target, "make_tiktok_video.py", "tiktok-video.mp4", timeout=900)
     video = target / "tiktok-video.mp4"
     metadata["sound"] = str(sound)
@@ -15150,7 +15153,7 @@ print(f"TikTok video target: {{output}}")
     return script
 
 
-def write_tiktok_video_helper(folder: Path, images: list[str], sound: Path, overlays: list[str] | None = None) -> None:
+def write_tiktok_video_helper(folder: Path, images: list[str], sound: Path, overlays: list[str] | None = None, narration: Path | None = None) -> None:
     overlay_values = overlays or ["", "", "", ""]
     write_animated_reel_builder_script(
         folder,
@@ -15160,6 +15163,7 @@ def write_tiktok_video_helper(folder: Path, images: list[str], sound: Path, over
         target_duration=20,
         draw_overlays=True,
         deep=False,
+        narration=narration,
     )
 
 
