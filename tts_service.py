@@ -96,8 +96,17 @@ def _validate_audio(path: "os.PathLike | str", min_bytes: int = 1024) -> float:
     if not p.exists() or p.stat().st_size < min_bytes:
         raise TTSGenerationError(f"audio missing or too small: {p}")
     app = _app()
-    if not app.media_ok(p, "a:0"):
-        raise TTSGenerationError(f"audio failed decode check: {p}")
+    # Decode check via ffprobe: probe the file for a valid audio stream. If it
+    # can't decode, ffprobe exits non-zero -> raise. This replaced the old
+    # app.media_ok() call, which no longer exists in app.py.
+    ffprobe = str(Path(str(app.find_ffmpeg_executable())).with_name("ffprobe.exe"))
+    probe = subprocess.run(
+        [ffprobe, "-v", "error", "-show_entries", "stream=codec_type",
+         "-of", "csv=p=0", str(p)],
+        capture_output=True, text=True, check=False,
+    )
+    if probe.returncode != 0 or "audio" not in probe.stdout.lower():
+        raise TTSGenerationError(f"audio failed decode check: {p} ({probe.stderr.strip()[:160]})")
     duration = _probe_duration(app, p)
     if duration <= 0:
         raise TTSGenerationError(f"audio duration not positive: {p}")
