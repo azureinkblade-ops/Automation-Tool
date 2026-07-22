@@ -5852,7 +5852,14 @@ def rebuild_deep_tiktok_video_from_metadata(target: Path, metadata: dict[str, An
         bool(metadata.get("browser_images_have_text"))
         or str(metadata.get("overlay_mode") or "").strip().lower() == "image_embedded_text"
     )
-    write_deep_tiktok_video_helper(target, images, sound, overlays[: len(images)], draw_overlays=draw_overlays)
+    narration_target = generate_deep_tiktok_narration(
+        target, story_key(str(metadata.get("abbr") or "")),
+        tiktok_narration_text(metadata, overlays),
+    ) if metadata.get("caption") else None
+    write_deep_tiktok_video_helper(
+        target, images, sound, overlays[: len(images)], draw_overlays=draw_overlays,
+        narration=narration_target,
+    )
     build = run_generated_video_builder(target, "make_tiktok_video.py", "tiktok-video.mp4", timeout=900)
     metadata["video_build"] = build
     metadata["video"] = str(target / "tiktok-video.mp4") if (target / "tiktok-video.mp4").exists() else ""
@@ -15832,6 +15839,10 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
     overlays.append(reel_overlay_text(f"READ {novel} ON ROYAL ROAD", limit=62))
     hook = overlays[0].replace("\n", " ") if overlays else f"A deeper look at {novel}"
     caption = deep_tiktok_caption(abbr, chapter, title, hook)
+    # Voice the long/deep TikTok with the natural caption sentence (NOT the
+    # overlay sticker). Fail-soft: if TTS is unavailable the video still
+    # builds with music only.
+    narration_target = generate_deep_tiktok_narration(folder, abbr, tiktok_narration_text({"caption": caption}, overlays)) if caption else None
     tiktok_title = deep_tiktok_title(abbr, chapter, title)
     sound_source = choose_rotating_weekly_promo_audio()
     if not sound_source:
@@ -15868,7 +15879,7 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
     (folder / "tiktok-title.txt").write_text(tiktok_title + "\n", encoding="utf-8")
     (folder / "sound.txt").write_text(str(sound_target) + "\n", encoding="utf-8")
     (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    write_deep_tiktok_video_helper(folder, images, sound_target, overlays)
+    write_deep_tiktok_video_helper(folder, images, sound_target, overlays, narration=narration_target)
     build = run_generated_video_builder(folder, "make_tiktok_video.py", "tiktok-video.mp4", timeout=900)
     payload["video_build"] = build
     payload["video"] = str(video) if video.exists() else ""
