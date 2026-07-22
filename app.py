@@ -14965,11 +14965,11 @@ silent_output = folder / "tiktok-video-silent.mp4"
 target_duration = {int(target_duration)}
 cta_duration = 3
 CTA_VARIANTS = [
-    "Like & Subscribe for more updates!",
-    "Enjoyed this? Like & Subscribe for new drops!",
-    "Don't miss the next one - Like & Subscribe!",
-    "Like and subscribe for further updates!",
-    "If you liked this, smash Like & hit Subscribe!",
+    "Like & Subscribe!",
+    "Subscribe for more!",
+    "Like & follow for more!",
+    "Hit Subscribe, more soon!",
+    "Like & Subscribe for more!",
 ]
 cta_text = random.choice(CTA_VARIANTS)
 target_duration = target_duration + cta_duration
@@ -15172,7 +15172,7 @@ def render_with_ffmpeg_fallback():
             "fade=t=in:st=0:d=0.35,"
             "drawtext=fontfile='C\\\\:/Windows/Fonts/impact.ttf':"
             "text='" + drawtext_escape(cta_text) + "':"
-            "fontcolor=white:fontsize=72:line_spacing=14:"
+            "fontcolor=white:fontsize=60:line_spacing=14:"
             "borderw=6:bordercolor=black@0.85:"
             "x=(w-text_w)/2:y=(h-text_h)/2"
         )
