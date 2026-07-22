@@ -29,6 +29,23 @@ from pathlib import Path
 from typing import Any
 import xml.etree.ElementTree as ET
 
+# --- Self-healing environment scrub (fixes leaked Hermes-agent venv) ---
+# The Hermes terminal environment prepends its own venv
+# (.../hermes-agent/venv/Lib/site-packages) onto sys.path and exports
+# PYTHONPATH/PYTHONHOME. That SHADOWS this project's own .venv-gpu libs
+# (numpy/PIL) with Hermes's incompatible ones, breaking image/video work.
+# Strip the leak at import time so every launch (with or without the
+# `env -u PYTHONPATH -u PYTHONHOME` prefix) is safe, and so subprocess
+# video builds inherit a clean environment.
+import sys as _sys
+import os as _os
+_HERMES_LEAK = ("hermes-agent", "hermes_agent")
+_sys.path = [p for p in _sys.path if not any(_k in p.replace("\\", "/").lower() for _k in _HERMES_LEAK)]
+for _var in ("PYTHONPATH", "PYTHONHOME"):
+    _val = _os.environ.get(_var, "")
+    if _val and any(_k in _val.replace("\\", "/").lower() for _k in _HERMES_LEAK):
+        _os.environ.pop(_var, None)
+
 try:
     from dotenv import load_dotenv
 except Exception:  # pragma: no cover - optional runtime helper
