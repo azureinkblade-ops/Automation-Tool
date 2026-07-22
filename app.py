@@ -15127,13 +15127,13 @@ def render_with_ffmpeg_fallback():
     concat = folder / "tiktok-slides.txt"
     concat.write_text("\\n".join([f"file '{{clip}}'" for clip in clips]) + "\\n", encoding="utf-8")
     subprocess.run([ffmpeg_exe, "-y", "-f", "concat", "-safe", "0", "-i", str(concat), "-c:v", "libx264", "-pix_fmt", "yuv420p", str(silent_output)], check=False)
-    subprocess.run([ffmpeg_exe, "-y", "-i", str(silent_output), "-stream_loop", "-1", "-i", str(sound), "-t", str(target_duration), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-af", "volume=0.46,afade=t=in:st=0:d=1,afade=t=out:st=" + str(max(0, target_duration - 3)) + ":d=3", "-shortest", "-movflags", "+faststart", str(output)], check=False)
+    subprocess.run([ffmpeg_exe, "-y", "-i", str(silent_output), "-stream_loop", "-1", "-i", str(sound), "-t", str(target_duration), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-af", "volume=0.46,afade=t=in:st=0:d=1,afade=t=out:st=" + str(max(0, target_duration - 3)) + ":d=3", "-shortest", "-movflags", "+faststart", str(output)], check=False)
     # Narration (if present) mixed over ducked music for a voiced reel.
     if narration_audio and Path(narration_audio).exists():
         narrated = folder / "tiktok-video-narrated.mp4"
         music_duck = folder / "tiktok-music-ducked.m4a"
         subprocess.run([ffmpeg_exe, "-y", "-i", str(sound), "-t", str(target_duration), "-af", "volume=0.22,afade=t=in:st=0:d=1,afade=t=out:st=" + str(max(0, target_duration - 3)) + ":d=3", "-c:a", "aac", "-b:a", "128k", str(music_duck)], check=False)
-        subprocess.run([ffmpeg_exe, "-y", "-i", str(output), "-i", str(narration_audio), "-i", str(music_duck) if music_duck.exists() else str(sound), "-map", "0:v:0", "-filter_complex", "[1:a][2:a]amix=inputs=2:duration=longest:dropout_transition=0[a]", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-t", str(target_duration), "-movflags", "+faststart", str(narrated)], check=False)
+        subprocess.run([ffmpeg_exe, "-y", "-i", str(output), "-i", str(narration_audio), "-i", str(music_duck) if music_duck.exists() else str(sound), "-map", "0:v:0", "-filter_complex", "[1:a][2:a]amix=inputs=2:duration=longest:dropout_transition=0[a]", "-map", "[a]", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-t", str(target_duration), "-movflags", "+faststart", str(narrated)], check=False)
         if narrated.exists() and narrated.stat().st_size > 1024:
             import shutil as _shutil
             _shutil.move(str(narrated), str(output))
