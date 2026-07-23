@@ -60,6 +60,18 @@ def main() -> int:
     except Exception as exc:
         failures.append(f"bootstrap raised: {exc}")
 
+    # enforcement: retired bootstrap keys must not be re-registered
+    try:
+        from storage.retired_state import RETIRED_BOOTSTRAP_KEYS
+
+        leaked = RETIRED_BOOTSTRAP_KEYS & set(_app.database_state_files().keys())
+        if leaked:
+            failures.append(f"database_state_files re-registered retired keys: {sorted(leaked)}")
+        else:
+            print("[ok] database_state_files excludes retired bootstrap keys")
+    except Exception as exc:
+        failures.append(f"retirement enforcement check raised: {exc}")
+
     with automation_db.connect(ROOT) as conn:
         lab = conn.execute("SELECT 1 FROM state_snapshots WHERE state_key='analyticsLab'").fetchone()
         if not lab:

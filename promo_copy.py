@@ -65,6 +65,19 @@ STORY_VISUAL_WORDS = {
 # --- pure I/O helpers (no app import) ---
 
 def read_json_safe(path: Path) -> Any | None:
+    # Phase-3 retirement enforcement: a retired root JSON mirror must never be
+    # treated as a live source. Fail safe to None and warn instead of reading.
+    from storage.retired_state import warn_if_retired_read
+
+    if warn_if_retired_read(path):
+        import sys
+
+        print(
+            f"[retirement] blocked read of retired Phase-3 JSON mirror: {path}. "
+            f"State is sourced from SQLite.",
+            file=sys.stderr,
+        )
+        return None
     if not path.exists():
         return None
     try:

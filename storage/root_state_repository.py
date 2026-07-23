@@ -44,6 +44,7 @@ KEYS = {
     "pinnedContentPlan": "pinnedContentPlan",
     "pinnedProfileAssets": "pinnedProfileAssets",
     "analyticsLab": "analyticsLab",
+    "youtubeCommentQueue": "youtubeCommentQueue",
     "youtubeEndScreenPlan": "youtubeEndScreenPlan",
     "youtubeEndScreenState": "youtubeEndScreenState",
     "appRegressionDashboard": "appRegressionDashboard",

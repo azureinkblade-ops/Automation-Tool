@@ -444,7 +444,9 @@ def json_write_lock(*args, **kwargs):
 def write_json_atomic(*args, **kwargs):
     return release_state.write_json_atomic(*args, **kwargs)
 def database_state_files() -> dict[str, Path]:
-    return {
+    from storage.retired_state import RETIRED_BOOTSTRAP_KEYS
+
+    files = {
         "postRecords": POST_RECORDS_FILE,
         "chapterLedger": CHAPTER_LEDGER_FILE,
         "approvalCleared": APPROVAL_INBOX_CLEARED_FILE,
@@ -490,6 +492,16 @@ def database_state_files() -> dict[str, Path]:
         # sourced from SQLite (release_status table / state_snapshots) and their
         # root JSON mirrors are dead and quarantined.
     }
+    # Enforcement: block re-registration of retired bootstrap keys. If any
+    # retired key is re-added here, startup must fail loudly rather than
+    # silently re-import a dead mirror.
+    leaked = RETIRED_BOOTSTRAP_KEYS & set(files.keys())
+    if leaked:
+        raise RuntimeError(
+            f"database_state_files() re-registered retired Phase-3 keys: {sorted(leaked)}. "
+            f"These are SQLite-backed; do not restore their JSON bootstrap."
+        )
+    return files
 
 
 def ensure_state_database() -> dict[str, Any]:
@@ -497,7 +509,20 @@ def ensure_state_database() -> dict[str, Any]:
 
 
 def bootstrap_state_database_from_json() -> dict[str, Any]:
-    return automation_db.bootstrap_from_json_files(ROOT, database_state_files())
+    from storage.retired_state import RETIRED_BOOTSTRAP_KEYS
+
+    files = database_state_files()
+    # Enforcement: block re-registration of retired bootstrap keys. This runs
+    # here (not only inside database_state_files) so any caller-supplied map is
+    # also validated, and a monkeypatched map cannot silently re-introduce a
+    # dead mirror.
+    leaked = RETIRED_BOOTSTRAP_KEYS & set(files.keys())
+    if leaked:
+        raise RuntimeError(
+            f"bootstrap received retired Phase-3 keys: {sorted(leaked)}. "
+            f"These are SQLite-backed; do not restore their JSON bootstrap."
+        )
+    return automation_db.bootstrap_from_json_files(ROOT, files)
 
 
 def mirror_post_record_to_database(*args, **kwargs):

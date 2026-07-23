@@ -88,3 +88,32 @@ obsolete chapter-context scratch (reclassify to quarantine if unused).
 2. Group C cron-context: confirm which are live before converting.
 3. `app-regression-dashboard.json` is written by the regression runner — confirm
    the runner is pointed at the new DB path or kept as a file.
+
+## Phase-3 retirement outcome (2026-07-23, commits 23e159b / b829f36 / <commit3> / <commit4>)
+- Commits 1-2 retired all Group A root JSON to SQLite (state_snapshots +
+  release_status table), lazy-loaded the 3 large blobs, replaced filesystem
+  `file` API responses with typed SQLite references
+  (`{"file":null,"storage":"sqlite","resource":"state_snapshots","state_key":...}`;
+  release_status uses `resource:"release_status"`).
+- Commit 3 added retirement enforcement: `storage/retired_state.py` registry +
+  guards in `release_state.write_json_atomic` (raises on retired write),
+  `promo_copy.read_json_safe` (fails safe to None + warns), and
+  `database_state_files()`/`bootstrap_state_database_from_json()` re-registration
+  guards. `tests/test_phase3_enforcement.py` (14 tests) covers write-block,
+  read-fail-safe, no re-registration, typed responses, lazy-load-during-bootstrap,
+  stale-JSON-vs-newer-DB bootstrap regression, and no-runtime-recreation.
+  `tools/verify_phase3_retirement.py` is the CI gate (DB health, bootstrap,
+  enforcement, large-blob homes, optional --enforce-no-mirrors).
+
+### Known test failures EXCLUDED from the Phase-3 acceptance gate (documented, NOT fixed in Commit 3)
+These are pre-existing and unrelated to Phase-3 storage; left as-is per directive.
+1. `tests/test_promo_copy.py::test_build_platform_posts_*` (3 asserts): caption
+   text + campaign name drift (`weekly_general_promo` vs `catch_up_archive`).
+   Post-copy generation logic, untouched by Phase 3. Owner: promo-copy feature.
+2. `tests/test_release_state.py` harness defect: references
+   `chapter_ledger.json` in a temp dir that the test setup does not create
+   (FileNotFoundError). Test-harness bug, not a code regression. `release_state`
+   itself is already SQLite-only (verified: load/save go to chapter_ledger /
+   release_status tables).
+
+Do NOT "fix" these inside Commit 3; they are tracked separately.

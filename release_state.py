@@ -63,6 +63,10 @@ def json_write_lock(path: Path) -> threading.RLock:
 
 
 def write_json_atomic(path: Path, payload: Any, attempts: int = 8) -> None:
+    # Phase-3 retirement enforcement: never write a retired root JSON mirror.
+    from storage.retired_state import assert_not_retired_write
+
+    assert_not_retired_write(path)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     encoded = json.dumps(payload, indent=2)
