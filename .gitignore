@@ -82,3 +82,7 @@ hermes-sd-probe-*.py
 /runtime/
 runtime/
 
+# SC-7: reversible quarantine for confirmed-dead JSON (restore via tools/restore_trash_json.py)
+/_trash-json/
+_trash-json/
+
