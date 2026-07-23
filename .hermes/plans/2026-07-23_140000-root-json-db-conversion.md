@@ -89,7 +89,7 @@ obsolete chapter-context scratch (reclassify to quarantine if unused).
 3. `app-regression-dashboard.json` is written by the regression runner — confirm
    the runner is pointed at the new DB path or kept as a file.
 
-## Phase-3 retirement outcome (2026-07-23, commits 23e159b / b829f36 / <commit3> / <commit4>)
+## Phase-3 retirement outcome (2026-07-23, commits 23e159b / b829f36 / de20557 / <commit4>)
 - Commits 1-2 retired all Group A root JSON to SQLite (state_snapshots +
   release_status table), lazy-loaded the 3 large blobs, replaced filesystem
   `file` API responses with typed SQLite references
@@ -104,6 +104,32 @@ obsolete chapter-context scratch (reclassify to quarantine if unused).
   stale-JSON-vs-newer-DB bootstrap regression, and no-runtime-recreation.
   `tools/verify_phase3_retirement.py` is the CI gate (DB health, bootstrap,
   enforcement, large-blob homes, optional --enforce-no-mirrors).
+
+### Commit 4: quarantine (done)
+- `tools/quarantine_retired_json.py` moves the 11 retired mirrors to
+  `_trash-json/2026-07-23-phase3-retirement/` behind a gate:
+  * snapshot-backed: canonical_json_hash(file) == canonical_json_hash(
+    state_snapshots.payload_json) required before move;
+  * release_status.json: semantic validation (deterministic export ordered by
+    stable PK, stable identifiers, row count, required fields, deterministic
+    relational export hash) — envelope differences tolerated;
+  * release-automation-state.json: dead_fossil (resource null, parity_required
+    false) but still records SHA-256/size/timestamps.
+- 6 mirrors were frozen-stale vs a newer DB (soak markers / regenerated
+  payloads). Since SQLite is the sole source of truth, they were losslessly
+  re-synced from the DB (`--resync-from-db`) so canonical parity held, then
+  moved. 5 others matched parity directly. Manifest records original path,
+  SHA-256, size, mtimes, DB state key, DB payload hash / relational export
+  hash, reason, and commit id.
+- `_trash-json/` is gitignored (reversible, like SC-7).
+
+### Final cold-start acceptance (GREEN)
+- 0 retired mirrors at root; verify_phase3_retirement.py --enforce-no-mirrors PASS.
+- 64 storage + enforcement tests pass.
+- Cold-start server: SQLite read+write exercised; 0 mirrors recreated.
+- DB quick_check=ok, foreign_key_check=ok.
+- Schedule reads/writes exclusively through schedule_repository (verified via
+  real API save + direct SQLite reload before quarantine, then restored).
 
 ### Known test failures EXCLUDED from the Phase-3 acceptance gate (documented, NOT fixed in Commit 3)
 These are pre-existing and unrelated to Phase-3 storage; left as-is per directive.
