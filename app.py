@@ -41732,26 +41732,21 @@ def run_test_script(name: str, script_name: str, timeout: int = 120) -> dict[str
             "payload": {"error": f"{script_name} timed out after {timeout}s."},
         }
     payload: dict[str, Any] = {}
-    stdout = (run.stdout or "").strip()
-    if stdout:
-        try:
-            payload = json.loads(stdout)
-        except Exception:
-            # Tolerate a stray non-JSON preamble line: the report JSON starts at
-            # the first '{' (preamble lines contain no braces) and ends at the
-            # final '}'. Slice that region and parse it.
-            try:
-                _start = stdout.find("{")
-                _end = stdout.rfind("}")
-                if _start != -1 and _end != -1 and _end > _start:
-                    payload = json.loads(stdout[_start:_end + 1])
-                else:
-                    raise
-            except Exception:
-                payload = {"error": "Script did not return JSON.", "stdout": stdout[-4000:]}
+    full_stdout = run.stdout or ""
+    full_stderr = run.stderr or ""
+    if full_stdout.strip() or full_stderr.strip():
+        # Parse from the COMPLETE captured stream, never a truncated window.
+        # Display truncation is handled separately below for the human preview.
+        from tools.regression_parser import parse_regression_output
+        payload = parse_regression_output(full_stdout, full_stderr)
     else:
         payload = {"error": "Script returned no output."}
-    return test_script_summary(name, payload, run.returncode, seconds, run.stderr or "")
+    summary = test_script_summary(name, payload, run.returncode, seconds, full_stderr)
+    # Human-facing preview only: cap stdout/stderr at 4000 chars. The parser
+    # and the stored regression result consume the untruncated text above.
+    summary["display_stdout"] = (full_stdout or "")[-4000:]
+    summary["display_stderr"] = (full_stderr or "")[-4000:]
+    return summary
 
 
 def regression_dashboard_status() -> dict[str, Any]:
