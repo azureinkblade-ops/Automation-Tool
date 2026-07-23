@@ -107,6 +107,20 @@ def create_database_metadata_up(conn: sqlite3.Connection) -> None:
     )
 
 
+def add_analytics_provenance_up(conn: sqlite3.Connection) -> None:
+    """SC-6: add raw-source provenance to social_stats_daily.
+
+    Idempotent ALTER: only adds the column if it is absent, so the migration
+    is safe to re-run regardless of ledger state. The column is nullable.
+    """
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(social_stats_daily)").fetchall()}
+    if "raw_source_hash" not in cols:
+        conn.execute(
+            "ALTER TABLE social_stats_daily ADD COLUMN raw_source_hash TEXT"
+        )
+
+
+
 def build_migrations() -> Dict[str, Migration]:
     """Return the registered migration set.
 
@@ -135,6 +149,13 @@ def build_migrations() -> Dict[str, Migration]:
         "Add database identity and migration timestamps",
         create_database_metadata_up,
         "create_database_metadata_up",
+    )
+    _register_migration(
+        migrations,
+        "004_analytics_provenance",
+        "SC-6: add raw_source_hash provenance column to social_stats_daily",
+        add_analytics_provenance_up,
+        "add_analytics_provenance_up",
     )
     return migrations
 

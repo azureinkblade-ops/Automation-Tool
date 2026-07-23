@@ -166,6 +166,22 @@ def migrate_runtime_files() -> None:
                 shutil.move(str(old_path), str(new_path))
             except OSError as exc:
                 print(f"[runtime-migrate] failed {old_path.name}: {exc}", file=sys.stderr)
+
+
+def _apply_pending_migrations() -> None:
+    """SC-2/SC-6: apply any pending ledger migrations at startup.
+
+    Idempotent and fail-soft: a migration error prints to stderr but does not
+    prevent the server from booting. The analytics helper also has a defensive
+    ALTER fallback so the schema is correct even if this step is skipped.
+    """
+    try:
+        from storage import migrations as _mig
+        applied = _mig.apply_migrations(ROOT)
+        if applied:
+            print(f"[migrations] applied {len(applied)}: {applied}")
+    except Exception as exc:  # never block boot on migration issues
+        print(f"[migrations] skipped: {exc}", file=sys.stderr)
 APP_PROCESS_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
 APP_SOURCE_MTIME_AT_START = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(Path(__file__).resolve().stat().st_mtime))
 OUTPUT_DIR = ROOT / "campaigns"
@@ -4076,6 +4092,14 @@ def _gather_experiment_metrics_with_playwright(apply_matches: bool = True, open_
     }
     payload["conversionTracking"] = update_conversion_tracking(normalized_results)
     _phase2_save_blob("metricsGatherResults", METRICS_GATHER_FILE, {**raw, "normalized": normalized_results, "applied": applied})
+    # SC-6: persist normalized results into the durable analytics table with
+    # raw-source provenance. The JSON file remains transient (SC-5); this is the
+    # queryable, append-friendly home for historical social stats.
+    try:
+        import automation_db as _adb
+        _adb.record_social_stats_from_gather(ROOT, normalized_results, raw)
+    except Exception as exc:  # analytics persistence must never break the gather
+        print(f"[sc6] social_stats upsert skipped: {exc}", file=sys.stderr)
     return payload
 
 
@@ -43500,6 +43524,7 @@ def main() -> None:
     ensure_assets()
     ensure_state_database()
     migrate_runtime_files()
+    _apply_pending_migrations()
     start_automatic_metrics_worker()
     start_automatic_comment_worker()
     start_daily_social_stats_worker()

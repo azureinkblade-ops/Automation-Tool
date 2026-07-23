@@ -1757,6 +1757,63 @@ def save_social_stats_daily(
             conn.commit()
 
 
+def record_social_stats_from_gather(
+    root: Path,
+    normalized_results: list[dict[str, Any]],
+    raw_payload: Any = None,
+) -> int:
+    """SC-6: normalize metrics-gather output into social_stats_daily.
+
+    One upsert per (platform, channel, collected_date), keyed identically to
+    save_social_stats_daily (same stat_id). Stores a raw-source provenance hash
+    (sha256 over the normalized payload) so a row can be traced back to the
+    exact gather run that produced it. Idempotent: re-running with the same
+    payload overwrites in place.
+    """
+    if not normalized_results:
+        return 0
+    raw_hash = None
+    if raw_payload is not None:
+        try:
+            raw_hash = hashlib.sha256(
+                json.dumps(raw_payload, sort_keys=True, default=str).encode("utf-8")
+            ).hexdigest()
+        except Exception:
+            raw_hash = None
+    now = utc_now_text()
+    written = 0
+    with _LOCK:
+        with connect(root) as conn:
+            # Ensure the SC-6 provenance column exists even if migration 004
+            # has not been applied yet (defensive; migration is idempotent).
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(social_stats_daily)").fetchall()}
+            if "raw_source_hash" not in cols:
+                conn.execute("ALTER TABLE social_stats_daily ADD COLUMN raw_source_hash TEXT")
+            for item in normalized_results:
+                platform = str(item.get("platform") or "unknown").lower()
+                channel = str(item.get("channel") or item.get("url") or platform)
+                collected_date = str(item.get("collected_date") or item.get("gatheredAt") or now)[:10]
+                stat_id = stable_id("social", platform, channel, collected_date)
+                metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
+                conn.execute(
+                    """
+                    INSERT INTO social_stats_daily(
+                        stat_id, platform, channel, collected_date, metrics_json, created_at, raw_source_hash
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(stat_id) DO UPDATE SET
+                        metrics_json=excluded.metrics_json,
+                        created_at=excluded.created_at,
+                        raw_source_hash=excluded.raw_source_hash
+                    """,
+                    (stat_id, platform, channel, collected_date, dumps_json(metrics), now, raw_hash),
+                )
+                written += 1
+            conn.commit()
+    return written
+
+
+
 def load_social_stats_daily(root: Path, collected_date: str) -> list[dict[str, Any]]:
     init_db(root)
     with _LOCK:
