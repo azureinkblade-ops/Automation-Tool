@@ -7255,6 +7255,90 @@ def enhance_local_sd_prompt(prompt: str, *, orientation: str = "vertical", lora_
     return prompt
 
 
+# ============================================================================
+# AIVSB Reasoning Layer - DORMANT integration boundary (Phase B)
+# ----------------------------------------------------------------------------
+# Flag:  AIVSB_REASONING_ENABLED  (default "0" = disabled)
+# This function is intentionally NOT called by any live generation path yet
+# (Phase C is not enabled). It exists so the reasoning layer can be opted in
+# later without restructuring. When disabled it returns None and the caller
+# keeps the legacy prompt unchanged (byte-for-byte where practical).
+#
+# Robustness contract:
+#   - Import failure / missing Bible / ComposerError -> returns None (never raises).
+#   - No GPU libraries imported (the reasoning package uses only PyYAML).
+#   - Does not restart the server, touch _LOCAL_SD_GPU_LOCK, or write state.
+#   - Structured log line records enabled / skipped / failed.
+# ============================================================================
+def compose_aivsb_scene_prompt(
+    novel: str,
+    beat: str,
+    character: str,
+    *,
+    platform: str = "youtube_short",
+    asset_type: str = "chapter_still",
+    orientation: str = "vertical",
+    legacy_prompt: str = "",
+) -> dict | None:
+    """Return a ComposedScenePrompt dict (or None) from the AIVSB reasoning layer.
+
+    Returns None when:
+      - the feature flag is off,
+      - the reasoning package or Bible is unavailable,
+      - the SceneRequest/SceneDecision is invalid (ComposerError).
+    The caller should fall back to legacy_prompt when None is returned.
+    """
+    enabled = os.environ.get("AIVSB_REASONING_ENABLED", "0").strip().lower()
+    if enabled in ("", "0", "false", "no", "off"):
+        print("[aivsb-reasoning] skipped: AIVSB_REASONING_ENABLED is off (default)")
+        return None
+
+    # Resolve the reasoning package (sibling of this app, NOT co-located).
+    aivsb_reasoning = (
+        ROOT.parent
+        / "Inkblade Author Studio"
+        / "scripts"
+        / "aivsb"
+        / "reasoning"
+    )
+    if not aivsb_reasoning.exists():
+        print(f"[aivsb-reasoning] failed: reasoning package not found at {aivsb_reasoning}")
+        return None
+
+    try:
+        if str(aivsb_reasoning) not in sys.path:
+            sys.path.insert(0, str(aivsb_reasoning))
+        from director_engine import direct_scene
+        from prompt_composer import compose_prompt, ComposerError
+        from scene_request import SceneRequest
+    except Exception as exc:  # import or dependency failure
+        print(f"[aivsb-reasoning] failed: cannot import reasoning layer ({exc})")
+        return None
+
+    try:
+        scene = direct_scene(novel, beat, character)
+        req = SceneRequest(
+            novel_id=novel,
+            character_ids=(character,),
+            platform=platform,
+            asset_type=asset_type,
+            orientation=orientation,
+        )
+        result = compose_prompt(scene, req)
+        print(
+            f"[aivsb-reasoning] enabled: composed for {novel}/{beat}/{character} "
+            f"lora={result.lora_track} source={result.lora_source} "
+            f"rules={len(result.applied_rule_ids)}"
+        )
+        return result.to_dict()
+    except ComposerError as exc:
+        print(f"[aivsb-reasoning] failed: composer rejected request ({exc})")
+        return None
+    except Exception as exc:  # defensive: never break legacy image production
+        print(f"[aivsb-reasoning] failed: unexpected error ({exc})")
+        return None
+
+
 def local_sd_python() -> Path:
     """Resolve the Python interpreter used to run the local Stable Diffusion / diffusers
     generator. Kept separate from the app's main interpreter so the heavy GPU stack
@@ -15481,6 +15565,7 @@ def write_deep_tiktok_video_helper(
     sound: Path,
     overlays: list[str] | None = None,
     narration: Path | None = None,
+    draw_overlays: bool = True,
 ) -> None:
     return write_animated_reel_builder_script(
         folder,
