@@ -2132,7 +2132,7 @@ def youtube_pinned_comment_text(metadata: dict[str, Any]) -> str:
 
 
 def load_youtube_comment_queue() -> dict[str, Any]:
-    data = _phase2_load_blob("youtubeCommentQueue", YOUTUBE_COMMENT_QUEUE_FILE)
+    data = _phase2_load_blob("youtubeCommentQueue")
     if not isinstance(data, dict):
         data = {"schemaVersion": 1, "items": []}
     if not isinstance(data.get("items"), list):
@@ -2209,7 +2209,7 @@ def youtube_comment_capture_video(upload_id: str, video_id: str = "", video_url:
             item["status"] = "waiting_public"
         item["updatedAt"] = now
         queue["updatedAt"] = now
-        _phase2_save_blob("youtubeCommentQueue", YOUTUBE_COMMENT_QUEUE_FILE, queue)
+        _phase2_save_blob("youtubeCommentQueue", data=queue)
         return dict(item)
 
 
@@ -2232,7 +2232,7 @@ def youtube_comment_mark_release(folder: Path, upload_id: str, status: str) -> d
             )
         item["updatedAt"] = now
         queue["updatedAt"] = now
-        _phase2_save_blob("youtubeCommentQueue", YOUTUBE_COMMENT_QUEUE_FILE, queue)
+        _phase2_save_blob("youtubeCommentQueue", data=queue)
         return dict(item)
 
 
@@ -2279,7 +2279,7 @@ def youtube_comment_helper_start_backfill() -> dict[str, Any]:
                 reset += 1
         if reset:
             queue["updatedAt"] = now
-            _phase2_save_blob("youtubeCommentQueue", YOUTUBE_COMMENT_QUEUE_FILE, queue)
+            _phase2_save_blob("youtubeCommentQueue", data=queue)
     pending = youtube_comment_helper_pending()
     item = pending.get("item")
     launched = False
@@ -2555,7 +2555,7 @@ def youtube_comment_helper_ack(comment_id: str, status: str, error: str = "") ->
             item["pinnedAt"] = now
             mark_youtube_comment_verified_pinned(item)
         queue["updatedAt"] = now
-        _phase2_save_blob("youtubeCommentQueue", YOUTUBE_COMMENT_QUEUE_FILE, queue)
+        _phase2_save_blob("youtubeCommentQueue", data=queue)
     try:
         folder = Path(str(item.get("folder") or "")).resolve()
         metadata = read_metadata(folder)
@@ -3141,11 +3141,12 @@ _PHASE2_BLOB_MAP: tuple[tuple[str, Any], ...] = (
 )
 
 
-def _phase2_load_blob(key: str, json_file: Path, root: Any = None) -> Any:
+def _phase2_load_blob(key: str, json_file: Path | None = None, root: Any = None) -> Any:
     # Phase 3: SQLite is the sole source of truth. The JSON mirror files have
     # been retired (after a parity check proved DB == JSON for all 34 blobs).
     # Reads go straight to the DB; no JSON fallback (that path was the soak-era
-    # safety net, now removed).
+    # safety net, now removed). The json_file argument is retained only for
+    # backward-compatible call sites and is never read.
     snap = load_state_snapshot_from_database(key, root)
     if isinstance(snap, dict):
         snap.pop("_source", None)
@@ -3153,10 +3154,14 @@ def _phase2_load_blob(key: str, json_file: Path, root: Any = None) -> Any:
     return None
 
 
-def _phase2_save_blob(key: str, json_file: Path, data: Any) -> None:
+def _phase2_save_blob(key: str, json_file: Path | None = None, data: Any = None) -> None:
     # Phase 3: write ONLY to SQLite. The JSON mirror dual-write was retired
     # after the soak period proved DB == JSON parity for all 34 blobs. Writing
-    # the JSON file here would recreate the retired mirrors.
+    # the JSON file here would recreate the retired mirrors. The json_file
+    # argument is retained only for backward-compatible call sites and is
+    # never written.
+    if data is None:
+        return
     try:
         mirror_state_snapshot_to_database(key, data)
     except Exception as exc:
@@ -6422,7 +6427,7 @@ def reconcile_approval_inbox_items() -> dict[str, Any]:
             changed = True
     if changed:
         queue["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        _phase2_save_blob("youtubeCommentQueue", YOUTUBE_COMMENT_QUEUE_FILE, queue)
+        _phase2_save_blob("youtubeCommentQueue", data=queue)
     comments = load_comment_assistant()
     before = len(comments.get("comments", []))
     comments["comments"] = [
@@ -7806,7 +7811,7 @@ def youtube_video_stats_bulk(video_ids: list[str]) -> list[dict[str, Any]]:
 
 
 def load_youtube_end_screen_state() -> dict[str, Any]:
-    data = read_json_safe(YOUTUBE_END_SCREEN_STATE_FILE)
+    data = rsr.load(ROOT, "youtubeEndScreenState", default={})
     return data if isinstance(data, dict) else {"schemaVersion": 1, "videos": {}}
 
 
@@ -9106,7 +9111,7 @@ def clear_youtube_comment_inbox_item(comment_id: str) -> dict[str, Any]:
         item["dismissedAt"] = now
         item["updatedAt"] = now
         queue["updatedAt"] = now
-        _phase2_save_blob("youtubeCommentQueue", YOUTUBE_COMMENT_QUEUE_FILE, queue)
+        _phase2_save_blob("youtubeCommentQueue", data=queue)
     return {"ok": True, "commentId": comment_id, "message": "YouTube comment item cleared from the approval inbox."}
 
 
@@ -9456,8 +9461,14 @@ def pinned_content_plan() -> dict[str, Any]:
         "rotationRule": "Each platform chooses pinned profile posts from measured candidates for that platform, weighted by views, follower gains, engagement, completion, and experiment score.",
         "file": str(PINNED_CONTENT_PLAN_FILE),
     }
-    write_json_atomic(PINNED_CONTENT_PLAN_FILE, result)
-    return result
+    rsr.save(ROOT, "pinnedContentPlan", result)
+    return {
+        **result,
+        "file": None,
+        "storage": "sqlite",
+        "resource": "state_snapshots",
+        "state_key": "pinnedContentPlan",
+    }
 
 
 def comment_content_ideas() -> list[dict[str, Any]]:
@@ -10650,7 +10661,7 @@ def thumbnail_test_plan() -> dict[str, Any]:
 
 def pinned_profile_asset_plan() -> dict[str, Any]:
     pinned = pinned_content_plan()
-    existing = read_json_safe(PINNED_ASSET_PLAN_FILE)
+    existing = rsr.load(ROOT, "pinnedProfileAssets", default={})
     existing_by_id = {
         str(item.get("id") or ""): item
         for item in (existing.get("prompts", []) if isinstance(existing, dict) and isinstance(existing.get("prompts"), list) else [])
@@ -10698,8 +10709,14 @@ def pinned_profile_asset_plan() -> dict[str, Any]:
                 }
             )
     payload = {"generatedAt": time.strftime("%Y-%m-%d %H:%M:%S"), "prompts": prompts, "pinned": pinned}
-    write_json_atomic(PINNED_ASSET_PLAN_FILE, payload)
-    return {**payload, "file": str(PINNED_ASSET_PLAN_FILE)}
+    rsr.save(ROOT, "pinnedProfileAssets", payload)
+    return {
+        **payload,
+        "file": None,
+        "storage": "sqlite",
+        "resource": "state_snapshots",
+        "state_key": "pinnedProfileAssets",
+    }
 
 
 def pinned_asset_platform_size(platform: str) -> tuple[int, int]:
@@ -10818,7 +10835,7 @@ def create_pinned_asset_image(asset: dict[str, Any], target: Path) -> None:
 
 
 def build_pinned_profile_asset(asset_id: str) -> dict[str, Any]:
-    data = read_json_safe(PINNED_ASSET_PLAN_FILE)
+    data = rsr.load(ROOT, "pinnedProfileAssets", default={})
     if not isinstance(data, dict) or not isinstance(data.get("prompts"), list):
         data = pinned_profile_asset_plan()
     asset = next((item for item in data.get("prompts", []) if str(item.get("id") or "") == str(asset_id)), None)
@@ -10865,8 +10882,8 @@ def build_pinned_profile_asset(asset_id: str) -> dict[str, Any]:
         }
     )
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(PINNED_ASSET_PLAN_FILE, data)
-    return {"ok": True, "asset": asset, "folder": str(folder), "image": str(image), "caption": caption, "instructions": instructions, "file": str(PINNED_ASSET_PLAN_FILE)}
+    rsr.save(ROOT, "pinnedProfileAssets", data)
+    return {"ok": True, "asset": asset, "folder": str(folder), "image": str(image), "caption": caption, "instructions": instructions, "file": None, "storage": "sqlite", "resource": "state_snapshots", "state_key": "pinnedProfileAssets"}
 
 
 def pinned_asset_pin_capability(platform: str) -> dict[str, str]:
@@ -11072,7 +11089,7 @@ async function openFacebookComposer(page) {{
 
 
 def prepare_pinned_profile_asset_pin(asset_id: str) -> dict[str, Any]:
-    data = read_json_safe(PINNED_ASSET_PLAN_FILE)
+    data = rsr.load(ROOT, "pinnedProfileAssets", default={})
     if not isinstance(data, dict) or not isinstance(data.get("prompts"), list):
         data = pinned_profile_asset_plan()
     asset = next((item for item in data.get("prompts", []) if str(item.get("id") or "") == str(asset_id)), None)
@@ -11080,7 +11097,7 @@ def prepare_pinned_profile_asset_pin(asset_id: str) -> dict[str, Any]:
         raise RuntimeError("Pinned asset was not found.")
     if not asset.get("image") or not Path(str(asset.get("image"))).exists():
         built = build_pinned_profile_asset(asset_id)
-        data = read_json_safe(PINNED_ASSET_PLAN_FILE)
+        data = rsr.load(ROOT, "pinnedProfileAssets", default={})
         asset = next((item for item in data.get("prompts", []) if str(item.get("id") or "") == str(asset_id)), built.get("asset"))
     folder = Path(str(asset.get("folder") or (PINNED_ASSET_OUTPUT_DIR / str(asset_id)))).resolve()
     if not str(folder).startswith(str(PINNED_ASSET_OUTPUT_DIR.resolve())):
@@ -11120,7 +11137,7 @@ def prepare_pinned_profile_asset_pin(asset_id: str) -> dict[str, Any]:
         }
     )
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(PINNED_ASSET_PLAN_FILE, data)
+    rsr.save(ROOT, "pinnedProfileAssets", data)
     return {
         "ok": launched,
         "asset": asset,
@@ -11134,7 +11151,7 @@ def prepare_pinned_profile_asset_pin(asset_id: str) -> dict[str, Any]:
 
 
 def mark_pinned_asset_applied(asset_id: str, status: str = "planned") -> dict[str, Any]:
-    data = read_json_safe(PINNED_ASSET_PLAN_FILE)
+    data = rsr.load(ROOT, "pinnedProfileAssets", default={})
     if not isinstance(data, dict):
         data = pinned_profile_asset_plan()
     status = str(status or "planned").strip().lower()
@@ -11146,8 +11163,8 @@ def mark_pinned_asset_applied(asset_id: str, status: str = "planned") -> dict[st
     asset["status"] = status
     asset[f"{status}At"] = time.strftime("%Y-%m-%d %H:%M:%S")
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(PINNED_ASSET_PLAN_FILE, data)
-    return {"ok": True, "asset": asset, "plan": data, "file": str(PINNED_ASSET_PLAN_FILE)}
+    rsr.save(ROOT, "pinnedProfileAssets", data)
+    return {"ok": True, "asset": asset, "plan": data, "file": None, "storage": "sqlite", "resource": "state_snapshots", "state_key": "pinnedProfileAssets"}
 
 
 def analytics_lab_dashboard() -> dict[str, Any]:
@@ -11169,8 +11186,14 @@ def analytics_lab_dashboard() -> dict[str, Any]:
         "conversions": conversions if isinstance(conversions, dict) else {"platforms": {}, "snapshots": []},
         "profileAudit": profile_conversion_audit(),
     }
-    write_json_atomic(ANALYTICS_LAB_FILE, result)
-    return {**result, "file": str(ANALYTICS_LAB_FILE)}
+    rsr.save(ROOT, "analyticsLab", result)
+    return {
+        **result,
+        "file": None,
+        "storage": "sqlite",
+        "resource": "state_snapshots",
+        "state_key": "analyticsLab",
+    }
 
 
 def youtube_end_screen_plan(metadata: dict[str, Any], duration: float = 0.0, next_video: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -11213,7 +11236,7 @@ def youtube_end_screen_plan(metadata: dict[str, Any], duration: float = 0.0, nex
 
 
 def load_youtube_end_screen_state() -> dict[str, Any]:
-    data = read_json_safe(YOUTUBE_END_SCREEN_STATE_FILE)
+    data = rsr.load(ROOT, "youtubeEndScreenState", default={})
     if not isinstance(data, dict):
         data = {"schemaVersion": 1, "videos": {}}
     if not isinstance(data.get("videos"), dict):
@@ -11223,7 +11246,7 @@ def load_youtube_end_screen_state() -> dict[str, Any]:
 
 def save_youtube_end_screen_state(data: dict[str, Any]) -> None:
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(YOUTUBE_END_SCREEN_STATE_FILE, data)
+    rsr.save(ROOT, "youtubeEndScreenState", data)
 
 
 def youtube_end_screen_excluded_ids(retry_after_hours: int = 24) -> set[str]:
@@ -11401,11 +11424,15 @@ def youtube_end_screen_targets(limit: int = 80, refresh_scan: bool = False) -> d
         "targets": targets,
         "skipped": skipped[:120],
         "stateFile": str(YOUTUBE_END_SCREEN_STATE_FILE),
-        "excludedCount": len(excluded_ids),
-        "file": str(YOUTUBE_END_SCREEN_PLAN_FILE),
+        "stateFile": None,
+        "file": None,
+        "storage": "sqlite",
+        "resource": "state_snapshots",
+        "state_key": "youtubeEndScreenPlan",
+        "state_key_state": "youtubeEndScreenState",
         "message": f"Prepared {len(targets)} old YouTube video(s) for end-screen backfill; skipped {len(excluded_ids)} already attempted/saved video(s).",
     }
-    write_json_atomic(YOUTUBE_END_SCREEN_PLAN_FILE, payload)
+    rsr.save(ROOT, "youtubeEndScreenPlan", payload)
     return payload
 
 
@@ -11737,7 +11764,7 @@ def predictive_growth_recommendations() -> dict[str, Any]:
         if numeric_metric(item.get("avgScore")) < 0.5 or not numeric_metric(item.get("experiments"))
     ]
     ready_full_youtube = youtube_created_not_uploaded()
-    end_screen_plan = read_json_safe(YOUTUBE_END_SCREEN_PLAN_FILE)
+    end_screen_plan = rsr.load(ROOT, "youtubeEndScreenPlan", default={})
     end_screen_count = len(end_screen_plan.get("targets", [])) if isinstance(end_screen_plan, dict) and isinstance(end_screen_plan.get("targets"), list) else 0
     actions = []
     primary = str(dashboard.get("primaryPlatform") or "tiktok")
@@ -11932,11 +11959,11 @@ def growth_automation_dashboard() -> dict[str, Any]:
         "generatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
         "providerStrategy": provider_strategy_status(),
         "imageLab": _phase2_load_blob("imageLab", IMAGE_LAB_FILE) or {"runs": []},
-        "analyticsLab": read_json_safe(ANALYTICS_LAB_FILE) or {},
+        "analyticsLab": rsr.load(ROOT, "analyticsLab", default={}) or {},
         "thumbnailTests": _phase2_load_blob("thumbnailTests", THUMBNAIL_TESTS_FILE) or {"candidates": []},
-        "pinnedAssets": read_json_safe(PINNED_ASSET_PLAN_FILE) or {"prompts": []},
+        "pinnedAssets": rsr.load(ROOT, "pinnedProfileAssets", default={"prompts": []}),
         "predictivePlan": _phase2_load_blob("predictiveGrowthPlan", PREDICTIVE_GROWTH_PLAN_FILE) or {},
-        "youtubeEndScreens": read_json_safe(YOUTUBE_END_SCREEN_PLAN_FILE) or {"targets": []},
+        "youtubeEndScreens": rsr.load(ROOT, "youtubeEndScreenPlan", default={"targets": []}),
         "novelStrategy": novel_level_strategy(),
         "quota": quota_usage_summary(),
         "resurfacing": resurfacing_and_repost_candidates(),
@@ -41703,13 +41730,16 @@ def run_test_script(name: str, script_name: str, timeout: int = 120) -> dict[str
 
 
 def regression_dashboard_status() -> dict[str, Any]:
-    latest = read_json_safe(APP_TEST_REPORT_FILE)
+    latest = rsr.load(ROOT, "appRegressionDashboard", default={})
     if not isinstance(latest, dict):
         latest = {}
     return {
         "ok": True,
         "latest": latest,
-        "reportFile": str(APP_TEST_REPORT_FILE),
+        "file": None,
+        "storage": "sqlite",
+        "resource": "state_snapshots",
+        "state_key": "appRegressionDashboard",
         "available": [
             {"mode": "quick", "label": "Quick Safety Check"},
             {"mode": "regression", "label": "Core Regression"},
@@ -41763,10 +41793,13 @@ def run_regression_dashboard(mode: str = "quick") -> dict[str, Any]:
         "failedCount": len(failed),
         "slowCount": len(slow),
         "checks": checks,
-        "reportFile": str(APP_TEST_REPORT_FILE),
+        "file": None,
+        "storage": "sqlite",
+        "resource": "state_snapshots",
+        "state_key": "appRegressionDashboard",
         "safety": "No publish, queue, or browser-post action is run by this screen.",
     }
-    write_json_atomic(APP_TEST_REPORT_FILE, report)
+    rsr.save(ROOT, "appRegressionDashboard", report)
     return report
 
 
