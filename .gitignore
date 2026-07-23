@@ -74,3 +74,11 @@ app-regression-dashboard.json
 # Phase 3 insurance backup (JSON copies kept off-repo)
 /phase3-json-backup/
   phase1-json-backup/
+
+# Orphaned SD dependency-probe temp files (see app.py inline probe fix)
+hermes-sd-probe-*.py
+
+# SC-5: runtime operational files relocated out of the repo root
+/runtime/
+runtime/
+

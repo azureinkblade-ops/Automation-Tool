@@ -126,6 +126,46 @@ ALLOW_EXTERNAL_IMAGE_FALLBACK = str(os.environ.get("ALLOW_EXTERNAL_IMAGE_FALLBAC
 
 
 ROOT = Path(__file__).resolve().parent
+
+# SC-5: runtime operational files live outside the repo root so changing
+# runtime JSON never pollutes the repository. Subdirectories are created at
+# startup by migrate_runtime_files().
+RUNTIME_DIR = ROOT / "runtime"
+RUNTIME_JOBS_DIR = RUNTIME_DIR / "jobs"
+RUNTIME_REPORTS_DIR = RUNTIME_DIR / "reports"
+RUNTIME_CACHE_DIR = RUNTIME_DIR / "cache"
+# SC-5 relocated operational report (was root-level duplicate-cleanup-report.json).
+DUPLICATE_CLEANUP_REPORT_FILE = RUNTIME_REPORTS_DIR / "duplicate-cleanup-report.json"
+
+
+def migrate_runtime_files() -> None:
+    """SC-5: one-time move of relocated operational JSON from repo root to runtime/.
+
+    After the constants above were repointed to runtime/, any file still sitting
+    at the old repo-root location is migrated (moved) to its new path so the
+    running server keeps its data and the old root file becomes a stale artifact
+    (quarantined by SC-7). Idempotent: safe to call on every boot.
+    """
+    RUNTIME_JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    RUNTIME_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    RUNTIME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    legacy_map = {
+        ROOT / "metrics-gather-results.json": METRICS_GATHER_FILE,
+        ROOT / "comment-gather-results.json": COMMENT_GATHER_RAW_FILE,
+        ROOT / "comment-reply-result.json": COMMENT_REPLY_RESULT_FILE,
+        ROOT / "youtube-audience-fix-results.json": YOUTUBE_AUDIENCE_FIX_FILE,
+        ROOT / "youtube-comment-pin-results.json": YOUTUBE_COMMENT_PIN_RESULT_FILE,
+        ROOT / "youtube-end-screen-results.json": YOUTUBE_END_SCREEN_RESULT_FILE,
+        ROOT / "duplicate-cleanup-report.json": DUPLICATE_CLEANUP_REPORT_FILE,
+        ROOT / "youtube-library-scan.json": YOUTUBE_LIBRARY_SCAN_FILE,
+    }
+    for old_path, new_path in legacy_map.items():
+        if old_path.exists() and not new_path.exists():
+            try:
+                shutil.move(str(old_path), str(new_path))
+            except OSError as exc:
+                print(f"[runtime-migrate] failed {old_path.name}: {exc}", file=sys.stderr)
 APP_PROCESS_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
 APP_SOURCE_MTIME_AT_START = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(Path(__file__).resolve().stat().st_mtime))
 OUTPUT_DIR = ROOT / "campaigns"
@@ -260,7 +300,7 @@ RELEASE_AUTOMATION_PAUSE = threading.Event()
 CONTINUITY_DIR = ROOT / "continuity"
 CONTENT_EXPERIMENTS_FILE = ROOT / "content_experiments.json"
 BRAND_BRAIN_FILE = ROOT / "brand_brain.json"
-METRICS_GATHER_FILE = ROOT / "metrics-gather-results.json"
+METRICS_GATHER_FILE = RUNTIME_JOBS_DIR / "metrics-gather-results.json"
 GROWTH_STATS_HISTORY_FILE = ROOT / "growth-stats-history.json"
 AUTO_METRICS_STATE_FILE = ROOT / "automatic-metrics-state.json"
 GROWTH_WEEKLY_REPORT_FILE = ROOT / "growth-weekly-report.json"
@@ -268,9 +308,10 @@ GROWTH_OPTIMIZER_FILE = ROOT / "growth-optimizer-plan.json"
 INSTAGRAM_GROWTH_BLUEPRINT_FILE = ROOT / "instagram-growth-blueprint.json"
 GROWTH_CONTROL_CENTER_FILE = ROOT / "growth-control-center.json"
 COMMENT_ASSISTANT_FILE = ROOT / "comment-assistant.json"
-COMMENT_GATHER_RAW_FILE = ROOT / "comment-gather-results.json"
+COMMENT_GATHER_RAW_FILE = RUNTIME_JOBS_DIR / "comment-gather-results.json"
 COMMENT_GATHER_SCRIPT_FILE = ROOT / "gather-comments-playwright.js"
 COMMENT_REPLY_SCRIPT_FILE = ROOT / "prepare-comment-reply-playwright.js"
+COMMENT_REPLY_RESULT_FILE = RUNTIME_JOBS_DIR / "comment-reply-result.json"
 CHATGPT_CHAPTER_SCRIPT_FILE = ROOT / "create-chapter-chatgpt-playwright.js"
 CHATGPT_CHAPTER_RESULT_FILE = ROOT / "chatgpt-chapter-result.json"
 CHATGPT_CHAPTER_STATUS_FILE = ROOT / "chatgpt-chapter-status.json"
@@ -319,15 +360,15 @@ PATREON_PENDING_DRAFT_FILE = ROOT / "patreon-draft-pending.json"
 YOUTUBE_PENDING_UPLOAD_FILE = ROOT / "youtube-upload-pending.json"
 YOUTUBE_COMMENT_QUEUE_FILE = ROOT / "youtube-comment-queue.json"
 YOUTUBE_PINNED_COMMENT_VERIFIED_FILE = ROOT / "youtube-pinned-comment-verified.json"
-YOUTUBE_LIBRARY_SCAN_FILE = ROOT / "youtube-library-scan.json"
+YOUTUBE_LIBRARY_SCAN_FILE = RUNTIME_CACHE_DIR / "youtube-library-scan.json"
 YOUTUBE_LIBRARY_SCAN_SCRIPT_FILE = ROOT / "scan-youtube-library-playwright.js"
-YOUTUBE_AUDIENCE_FIX_FILE = ROOT / "youtube-audience-fix-results.json"
+YOUTUBE_AUDIENCE_FIX_FILE = RUNTIME_JOBS_DIR / "youtube-audience-fix-results.json"
 YOUTUBE_AUDIENCE_FIX_SCRIPT_FILE = ROOT / "fix-youtube-audience-playwright.js"
 YOUTUBE_COMMENT_PIN_SCRIPT_FILE = ROOT / "pin-youtube-comments-playwright.js"
-YOUTUBE_COMMENT_PIN_RESULT_FILE = ROOT / "youtube-comment-pin-results.json"
+YOUTUBE_COMMENT_PIN_RESULT_FILE = RUNTIME_JOBS_DIR / "youtube-comment-pin-results.json"
 YOUTUBE_END_SCREEN_PLAN_FILE = ROOT / "youtube-end-screen-plan.json"
 YOUTUBE_END_SCREEN_SCRIPT_FILE = ROOT / "apply-youtube-end-screens-playwright.js"
-YOUTUBE_END_SCREEN_RESULT_FILE = ROOT / "youtube-end-screen-results.json"
+YOUTUBE_END_SCREEN_RESULT_FILE = RUNTIME_JOBS_DIR / "youtube-end-screen-results.json"
 YOUTUBE_END_SCREEN_STATE_FILE = ROOT / "youtube-end-screen-state.json"
 ROYAL_ROAD_GROWTH_FILE = ROOT / "royal-road-growth-tools.json"
 DEEP_TIKTOK_ROTATION_FILE = ROOT / "deep-tiktok-rotation.json"
@@ -5532,7 +5573,7 @@ const itemType = {json.dumps(item_type)};
 const sourceUrl = {json.dumps(str(comment.get('sourceUrl') or ''))};
 const snippet = {json.dumps(snippet)};
 const reply = {json.dumps(reply)};
-const outputPath = {json.dumps(str(ROOT / 'comment-reply-result.json'))};
+const outputPath = {json.dumps(str(COMMENT_REPLY_RESULT_FILE))};
 
 function hostForPlatform(value) {{
   return {{ youtube: 'studio.youtube.com', tiktok: 'tiktok.com', meta: 'business.facebook.com', x: 'x.com', patreon: 'patreon.com', royalroad: 'royalroad.com' }}[value] || '';
@@ -5608,7 +5649,7 @@ def prepare_comment_reply(comment_id: str, reply: str = "") -> dict[str, Any]:
         timeout=90,
         check=False,
     )
-    result = read_json_safe(ROOT / "comment-reply-result.json")
+    result = read_json_safe(COMMENT_REPLY_RESULT_FILE)
     if not isinstance(result, dict):
         result = {"ok": False, "error": run.stderr.strip() or "The browser helper did not return a result."}
     generated_reply = draft_comment_reply(
@@ -24297,7 +24338,7 @@ def cleanup_duplicate_generated_media(apply: bool = False, remote: bool = False)
         "remoteRemoved": remote_removed,
         "errors": errors,
     }
-    (ROOT / "duplicate-cleanup-report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    DUPLICATE_CLEANUP_REPORT_FILE.write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report
 
 
@@ -43458,6 +43499,7 @@ def main() -> None:
     wire_extracted_modules()
     ensure_assets()
     ensure_state_database()
+    migrate_runtime_files()
     start_automatic_metrics_worker()
     start_automatic_comment_worker()
     start_daily_social_stats_worker()
