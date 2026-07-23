@@ -2159,6 +2159,12 @@ def bootstrap_from_json_files(root: Path, files: dict[str, Path]) -> dict[str, A
     imported = {"postRecords": 0, "chapterLedger": 0, "releaseStatus": 0, "approvalCleared": 0, "recoveryEvents": 0, "stateSnapshots": 0}
 
     def read_json(path: Path) -> Any:
+        # Guard against empty/falsy paths (Path("") normalizes to ".") which
+        # would resolve to cwd and either read the wrong file or raise on
+        # permission. A missing key in the file map yields Path("") -> skip.
+        norm = str(path).strip().rstrip("/\\")
+        if not norm or norm in (".", ".."):
+            return None
         if not path.exists():
             return None
         return json.loads(path.read_text(encoding="utf-8-sig"))

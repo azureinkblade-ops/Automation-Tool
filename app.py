@@ -447,7 +447,6 @@ def database_state_files() -> dict[str, Path]:
     return {
         "postRecords": POST_RECORDS_FILE,
         "chapterLedger": CHAPTER_LEDGER_FILE,
-        "releaseStatus": RELEASE_STATUS_FILE,
         "approvalCleared": APPROVAL_INBOX_CLEARED_FILE,
         "recoveryLog": RECOVERY_LOG_FILE,
         "chapterPath": CHAPTER_PATH_FILE,
@@ -465,7 +464,6 @@ def database_state_files() -> dict[str, Path]:
         "weeklyGrowthSettings": WEEKLY_GROWTH_SETTINGS_FILE,
         "predictiveGrowthPlan": PREDICTIVE_GROWTH_PLAN_FILE,
         "instagramGrowthBlueprint": INSTAGRAM_GROWTH_BLUEPRINT_FILE,
-        "creatorBenchmarks": CREATOR_BENCHMARK_FILE,
         "conversionTracking": CONVERSION_TRACKING_FILE,
         "profileConversionAudit": PROFILE_AUDIT_FILE,
         "brandBrain": BRAND_BRAIN_FILE,
@@ -477,7 +475,6 @@ def database_state_files() -> dict[str, Path]:
         "automationStrategy": AUTOMATION_STRATEGY_FILE,
         # Phase 2D: job-state / YouTube / app-ops
         "youtubePendingUpload": YOUTUBE_PENDING_UPLOAD_FILE,
-        "youtubeCommentQueue": YOUTUBE_COMMENT_QUEUE_FILE,
         "youtubePinnedCommentVerified": YOUTUBE_PINNED_COMMENT_VERIFIED_FILE,
         "youtubeMetadataExperiments": YOUTUBE_METADATA_EXPERIMENTS_FILE,
         "chatgptChapterStatus": CHATGPT_CHAPTER_STATUS_FILE,
@@ -488,6 +485,10 @@ def database_state_files() -> dict[str, Path]:
         "backgroundVideoUsage": BACKGROUND_VIDEO_USAGE_FILE,
         "clickupSync": CLICKUP_SYNC_FILE,
         "monetizationStatus": MONETIZATION_STATUS_FILE,
+        # NOTE: releaseStatus, creatorBenchmarks, youtubeCommentQueue were removed
+        # from the JSON bootstrap (Phase-3 retirement, 2026-07-23). They are
+        # sourced from SQLite (release_status table / state_snapshots) and their
+        # root JSON mirrors are dead and quarantined.
     }
 
 
