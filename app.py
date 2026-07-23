@@ -30259,19 +30259,64 @@ def make_chapter_image_prompts(title: str, chapter: str, phrases: list[str], nov
     beats = visual_sentences(chapter, 3, novel or title)
     keywords = ", ".join(chapter_keywords(title, chapter, 8))
     prompts: list[str] = []
+    # Phase C (flag-gated): optionally compose each chapter still through the
+    # AIVSB reasoning layer. When AIVSB_REASONING_ENABLED is off (default) or
+    # the reasoning layer is unavailable/rejects the request, compose_aivsb_scene_prompt
+    # returns None and we fall through to the legacy prompt unchanged. No LoRA
+    # behavior, server restart, or _LOCAL_SD_GPU_LOCK interaction here.
+    aivsb_enabled = os.environ.get("AIVSB_REASONING_ENABLED", "0").strip().lower() not in ("", "0", "false", "no", "off")
+    aivsb_meta: list[dict] = []  # populated only when a composed prompt is used
     for index in range(3):
         phrase = phrases[index] if index < len(phrases) else title
         beat = clean_teaser_text(beats[index], 140, max_words=24) if index < len(beats) else phrase
-        context = f"{novel}, {title}".strip(", ")
-        prompts.append(
-            "Vertical 9:16 cinematic fantasy web novel cover art, no text or typography. "
-            f"Story context: {context}. "
-            f"Teaser text to visually match: {phrase}. "
-            f"Scene must clearly depict the teaser with concrete visible elements: {beat}. "
-            f"Visual motifs: {keywords}. "
-            "Dramatic lighting, detailed environment, strong focal subject, social media promo composition. "
-            "Avoid generic landscapes unless the teaser explicitly calls for a landscape."
-        )
+        composed: dict | None = None
+        if aivsb_enabled:
+            try:
+                # Call sites pass the novel abbreviation uppercased (EN/HA/SF/HP);
+                # the composer validates lowercase ids, so normalize only for the
+                # reasoning call. The legacy prompt below keeps the original case.
+                novel_id = (novel or title).strip().lower()
+                composed = compose_aivsb_scene_prompt(
+                    novel_id,
+                    beat,
+                    "",  # chapter still has no specific character yet (pre-Phase-A)
+                    platform="youtube_short",
+                    asset_type="chapter_still",
+                    orientation="vertical",
+                    legacy_prompt="",
+                )
+            except Exception as _exc:  # defensive: never break legacy image production
+                print(f"[aivsb-reasoning] failed: unexpected error in chapter path ({_exc})")
+                composed = None
+        if composed and isinstance(composed, dict) and composed.get("prompt"):
+            prompts.append(str(composed["prompt"]).strip())
+            aivsb_meta.append({
+                "bible_version": composed.get("bible_version", ""),
+                "applied_rule_ids": list(composed.get("applied_rule_ids", []) or []),
+                "lora_track": composed.get("lora_track", ""),
+                "lora_source": composed.get("lora_source", ""),
+                "warnings": list(composed.get("warnings", []) or []),
+                "negative_prompt": composed.get("negative_prompt", ""),
+                "index": index,
+            })
+            print(
+                f"[aivsb-reasoning] enabled: chapter still {index} composed "
+                f"for {novel or title} bible={composed.get('bible_version', '?')} "
+                f"rules={len(composed.get('applied_rule_ids', []) or [])}"
+            )
+        else:
+            if aivsb_enabled:
+                print(f"[aivsb-reasoning] failed: fell back to legacy for chapter still {index}")
+            context = f"{novel}, {title}".strip(", ")
+            prompts.append(
+                "Vertical 9:16 cinematic fantasy web novel cover art, no text or typography. "
+                f"Story context: {context}. "
+                f"Teaser text to visually match: {phrase}. "
+                f"Scene must clearly depict the teaser with concrete visible elements: {beat}. "
+                f"Visual motifs: {keywords}. "
+                "Dramatic lighting, detailed environment, strong focal subject, social media promo composition. "
+                "Avoid generic landscapes unless the teaser explicitly calls for a landscape."
+            )
     return prompts
 
 
