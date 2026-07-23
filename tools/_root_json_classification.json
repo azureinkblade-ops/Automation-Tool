@@ -1,0 +1,674 @@
+[
+  {
+    "name": "_test_sunday_gen.png.local-sd.json",
+    "size": 1277,
+    "valid_json": true,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "al.json",
+    "size": 594999,
+    "valid_json": true,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "analytics-lab.json",
+    "size": 891232,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": true
+  },
+  {
+    "name": "app-function-profile.json",
+    "size": 2544,
+    "valid_json": true,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "app-regression-dashboard.json",
+    "size": 22464,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": true
+  },
+  {
+    "name": "app-smoke-report.json",
+    "size": 8086,
+    "valid_json": true,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "automatic-metrics-state.json",
+    "size": 600,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": true
+  },
+  {
+    "name": "automation-server-launch.json",
+    "size": 5525,
+    "valid_json": true,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "chapter-release-queue.backup-20260703-083505.json",
+    "size": 80501,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": false
+  },
+  {
+    "name": "chapter-release-queue.backup-20260703-083549.json",
+    "size": 1016,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": false
+  },
+  {
+    "name": "chapter-release-queue.backup-20260703-083702.json",
+    "size": 75548,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": false
+  },
+  {
+    "name": "chapter-release-queue.backup-20260703-083920.json",
+    "size": 80912,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": false
+  },
+  {
+    "name": "chapter-release-queue.backup-20260703-084540.json",
+    "size": 89500,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": false
+  },
+  {
+    "name": "chapter-release-queue.backup-20260703-084748.json",
+    "size": 1016,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": false
+  },
+  {
+    "name": "chapter-release-queue.backup-upload-path-20260706-122019.json",
+    "size": 141374,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": false
+  },
+  {
+    "name": "chapter-release-queue.backup-upload-path-20260706-125833.json",
+    "size": 72491,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": false
+  },
+  {
+    "name": "chapter-release-queue.backup-upload-path-20260706-131456.json",
+    "size": 76410,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": false
+  },
+  {
+    "name": "chapter-release-queue.backup-upload-path-20260706-132015.json",
+    "size": 76410,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": false
+  },
+  {
+    "name": "chapter-release-queue.backup-upload-path-20260706-133545.json",
+    "size": 76410,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": false
+  },
+  {
+    "name": "chapter-release-queue.backup-upload-path-20260706-134246.json",
+    "size": 137905,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": false
+  },
+  {
+    "name": "chapter-release-queue.backup-upload-path-20260706-142829.json",
+    "size": 76410,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": false
+  },
+  {
+    "name": "chapter-release-queue.backup-upload-path-20260706-142903.json",
+    "size": 75252,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": false
+  },
+  {
+    "name": "creator-benchmarks-playwright-results.json",
+    "size": 15341,
+    "valid_json": true,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": true
+  },
+  {
+    "name": "cron-EN-context.json",
+    "size": 2615,
+    "valid_json": true,
+    "bucket": "5-cron-context",
+    "disposition": "hold",
+    "app_referenced": false
+  },
+  {
+    "name": "cron-EN-prior.json",
+    "size": 41040,
+    "valid_json": true,
+    "bucket": "5-cron-context",
+    "disposition": "hold",
+    "app_referenced": false
+  },
+  {
+    "name": "cron-EN-prior.pretty.json",
+    "size": 41095,
+    "valid_json": true,
+    "bucket": "5-cron-context",
+    "disposition": "hold",
+    "app_referenced": false
+  },
+  {
+    "name": "en_121.json",
+    "size": 34416,
+    "valid_json": true,
+    "bucket": "2-chapter-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "en_122_import.json",
+    "size": 18169,
+    "valid_json": true,
+    "bucket": "2-chapter-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "en_122_result.json",
+    "size": 21575,
+    "valid_json": true,
+    "bucket": "2-chapter-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "en_ch120.json",
+    "size": 65122,
+    "valid_json": true,
+    "bucket": "2-chapter-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "en_ch121_import.json",
+    "size": 17135,
+    "valid_json": true,
+    "bucket": "2-chapter-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "en_ch121_result.json",
+    "size": 31012,
+    "valid_json": true,
+    "bucket": "2-chapter-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "en_context.json",
+    "size": 2700,
+    "valid_json": true,
+    "bucket": "5-cron-context",
+    "disposition": "hold",
+    "app_referenced": false
+  },
+  {
+    "name": "en_ctx.json",
+    "size": 2606,
+    "valid_json": true,
+    "bucket": "5-cron-context",
+    "disposition": "hold",
+    "app_referenced": false
+  },
+  {
+    "name": "ha_80.json",
+    "size": 55393,
+    "valid_json": true,
+    "bucket": "2-chapter-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "ha_81_import.json",
+    "size": 17420,
+    "valid_json": true,
+    "bucket": "2-chapter-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "ha_81_result.json",
+    "size": 21137,
+    "valid_json": true,
+    "bucket": "2-chapter-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "ha_ctx.json",
+    "size": 2693,
+    "valid_json": true,
+    "bucket": "5-cron-context",
+    "disposition": "hold",
+    "app_referenced": false
+  },
+  {
+    "name": "hp_140.json",
+    "size": 59797,
+    "valid_json": true,
+    "bucket": "2-chapter-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "hp_141_import.json",
+    "size": 17836,
+    "valid_json": true,
+    "bucket": "2-chapter-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "hp_141_result.json",
+    "size": 22483,
+    "valid_json": true,
+    "bucket": "2-chapter-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "hp_ctx.json",
+    "size": 2434,
+    "valid_json": true,
+    "bucket": "5-cron-context",
+    "disposition": "hold",
+    "app_referenced": false
+  },
+  {
+    "name": "manual-posts-playwright-result.json",
+    "size": 1458,
+    "valid_json": true,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": true
+  },
+  {
+    "name": "patreon-path-current-probe.json",
+    "size": 733527,
+    "valid_json": true,
+    "bucket": "4-probe-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "patreon-path-probe.json",
+    "size": 617598,
+    "valid_json": true,
+    "bucket": "4-probe-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "pinned-content-plan.json",
+    "size": 12135,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": true
+  },
+  {
+    "name": "pinned-profile-assets.json",
+    "size": 30313,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": true
+  },
+  {
+    "name": "q0.json",
+    "size": 219662,
+    "valid_json": true,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "q1.json",
+    "size": 219662,
+    "valid_json": true,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "reg_api_final.json",
+    "size": 50706,
+    "valid_json": true,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "reg_api_final2.json",
+    "size": 7769,
+    "valid_json": true,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "reg_api_v3.json",
+    "size": 7767,
+    "valid_json": true,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "reg_api_v4.json",
+    "size": 50831,
+    "valid_json": true,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "reg_out.json",
+    "size": 58613,
+    "valid_json": false,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "reg_q3.json",
+    "size": 50669,
+    "valid_json": true,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "reg_quick.json",
+    "size": 50754,
+    "valid_json": true,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "reg_quick2.json",
+    "size": 50555,
+    "valid_json": true,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "reg_smoke.json",
+    "size": 8830,
+    "valid_json": true,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "reg_tmp14.json",
+    "size": 57005,
+    "valid_json": false,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "reg_tmp15.json",
+    "size": 58947,
+    "valid_json": false,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "reg_tmp16.json",
+    "size": 58604,
+    "valid_json": false,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "regression-report.json",
+    "size": 58064,
+    "valid_json": true,
+    "bucket": "3-regression-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "release-automation-state.json",
+    "size": 1189,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": true
+  },
+  {
+    "name": "release-browser-probe.json",
+    "size": 116400,
+    "valid_json": true,
+    "bucket": "4-probe-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "release_status.json",
+    "size": 148199,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": true
+  },
+  {
+    "name": "royal-road-current-pages.json",
+    "size": 1246515,
+    "valid_json": true,
+    "bucket": "4-probe-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "royal-road-growth-tools.json",
+    "size": 1997,
+    "valid_json": true,
+    "bucket": "4-probe-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": true
+  },
+  {
+    "name": "royal-road-new-probe.json",
+    "size": 331302,
+    "valid_json": true,
+    "bucket": "4-probe-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "royal-road-probe.json",
+    "size": 198123,
+    "valid_json": true,
+    "bucket": "4-probe-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "royal-road-sf-dashboard-page4.json",
+    "size": 1246382,
+    "valid_json": true,
+    "bucket": "4-probe-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "royal-road-sf-dashboard.json",
+    "size": 684882,
+    "valid_json": true,
+    "bucket": "4-probe-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "royal-road-sf-dashboard2.json",
+    "size": 692549,
+    "valid_json": true,
+    "bucket": "4-probe-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "royal-road-sf-dashboard3.json",
+    "size": 819528,
+    "valid_json": true,
+    "bucket": "4-probe-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "royal-road-sf-dashboard4.json",
+    "size": 1158320,
+    "valid_json": true,
+    "bucket": "4-probe-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "royal-road-sf-drafts-rows.json",
+    "size": 1456225,
+    "valid_json": true,
+    "bucket": "4-probe-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "royal-road-sf-drafts.json",
+    "size": 1352287,
+    "valid_json": true,
+    "bucket": "4-probe-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "sf_116.json",
+    "size": 53534,
+    "valid_json": true,
+    "bucket": "2-chapter-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "sf_117_import.json",
+    "size": 17252,
+    "valid_json": true,
+    "bucket": "2-chapter-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "sf_117_result.json",
+    "size": 21375,
+    "valid_json": true,
+    "bucket": "2-chapter-scratch-quarantine",
+    "disposition": "quarantine",
+    "app_referenced": false
+  },
+  {
+    "name": "sf_ctx.json",
+    "size": 2605,
+    "valid_json": true,
+    "bucket": "5-cron-context",
+    "disposition": "hold",
+    "app_referenced": false
+  },
+  {
+    "name": "story-hook-chatgpt-result.json",
+    "size": 11381,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": true
+  },
+  {
+    "name": "youtube-comment-queue.json",
+    "size": 162519,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": true
+  },
+  {
+    "name": "youtube-end-screen-plan.json",
+    "size": 17128,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": true
+  },
+  {
+    "name": "youtube-end-screen-state.json",
+    "size": 30018,
+    "valid_json": true,
+    "bucket": "1-active-keep",
+    "disposition": "keep",
+    "app_referenced": true
+  }
+]
