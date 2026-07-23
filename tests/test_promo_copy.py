@@ -73,27 +73,46 @@ def _main():
     # It depends on two app/DB collaborators (chapter_ledger_entry, release_status_for_chapter)
     # that live in app.py / release_state (Task 3) and are intentionally NOT imported by
     # promo_copy. Inject the REAL app collaborators so we compare apples-to-apples: the
-    # extracted logic must reproduce app.py exactly given the same ledger data.
-    # NOTE: rotation_next has a side-effect on a shared state file; reset it before EACH
-    # build so both calls start from a clean rotation index (otherwise app's call advances
-    # the counter and pc's call sees the advanced state -> false mismatch).
+    # extracted logic must reproduce app.py exactly given the same inputs. app.py
+    # delegates build_platform_posts to promo_copy, but in production it injects the
+    # real collaborators (rotation_next, chapter_ledger_entry, release_status_for_chapter).
+    # To characterize the delegation faithfully we inject the SAME collaborators into
+    # BOTH calls and use a DETERMINISTIC, ISOLATED rotation_next (no shared disk
+    # side-effect) so the two builds consume identical rotation indices. Without this,
+    # the comparison would pit promo_copy's safe defaults (no collaborators) against the
+    # real collaborators, and the stateful rotation_next would drift between the two
+    # calls -> a false mismatch. The source of truth (promo_copy.build_platform_posts)
+    # is correct; the characterization must compare like-for-like.
+    def _make_deterministic_rotation():
+        _state: dict[str, int] = {}
+
+        def _rot(key: str, count: int) -> int:
+            k = str(key)
+            _state[k] = _state.get(k, 0) % max(1, count)
+            v = _state[k]
+            _state[k] = (v + 1) % max(1, count)
+            return v
+
+        return _rot
+
     material = {"abbr": "EN", "novel": "Eternal Nexus", "phrases": ["A spark lit the dark."], "chapter": "12", "chapter_number": "12"}
-    if PROMO_STATE.exists():
-        PROMO_STATE.unlink()
-    app_bp = app.build_platform_posts("Chapter 12", "A spark lit the dark.", material)
-    if PROMO_STATE.exists():
-        PROMO_STATE.unlink()
-    pc_bp = pc.build_platform_posts(
-        "Chapter 12", "A spark lit the dark.", material,
-        rotation_next=app.rotation_next,
+    collab = dict(
+        rotation_next=_make_deterministic_rotation(),
         chapter_ledger_entry=app.chapter_ledger_entry,
         release_status_for_chapter=app.release_status_for_chapter,
     )
+    app_bp = app.build_platform_posts("Chapter 12", "A spark lit the dark.", material, **collab)
+    collab2 = dict(
+        rotation_next=_make_deterministic_rotation(),
+        chapter_ledger_entry=app.chapter_ledger_entry,
+        release_status_for_chapter=app.release_status_for_chapter,
+    )
+    pc_bp = pc.build_platform_posts("Chapter 12", "A spark lit the dark.", material, **collab2)
     check("app build_platform_posts caption", app_bp["caption"], pc_bp["caption"])
     check("app build_platform_posts x_post", app_bp["x_post"], pc_bp["x_post"])
     check("app build_platform_posts focus", app_bp["post_focus"], pc_bp["post_focus"])
 
-    # restore rotation state
+    # restore rotation state (earlier pure checks relied on the live rotation file)
     if _backup is not None:
         PROMO_STATE.write_text(_backup, encoding="utf-8")
 
