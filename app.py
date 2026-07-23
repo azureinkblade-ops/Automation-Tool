@@ -54,6 +54,10 @@ except Exception:  # pragma: no cover - optional runtime helper
 import automation_db
 import growth_scheduler
 import release_planner
+# SC-3/SC-4 cutover: SQLite-backed repositories for posting schedule and
+# deep-tiktok rotation. These modules never import app at load time.
+from storage import schedule_repository as sr
+from storage import feature_state_repository as fsr
 
 # --- Phase 1 extracted subsystem modules (Task 8 inversion wiring) ---
 import promo_copy
@@ -423,7 +427,6 @@ def database_state_files() -> dict[str, Path]:
         "thumbnailTests": THUMBNAIL_TESTS_FILE,
         "googleAiImageUsage": GOOGLE_AI_IMAGE_USAGE_FILE,
         "patreonPendingDraft": PATREON_PENDING_DRAFT_FILE,
-        "postingSchedule": SCHEDULE_FILE,
         "backgroundVideoUsage": BACKGROUND_VIDEO_USAGE_FILE,
         "clickupSync": CLICKUP_SYNC_FILE,
         "monetizationStatus": MONETIZATION_STATUS_FILE,
@@ -3073,7 +3076,6 @@ _PHASE2_BLOB_MAP: tuple[tuple[str, Any], ...] = (
     ("thumbnailTests", THUMBNAIL_TESTS_FILE),
     ("googleAiImageUsage", GOOGLE_AI_IMAGE_USAGE_FILE),
     ("patreonPendingDraft", PATREON_PENDING_DRAFT_FILE),
-    ("postingSchedule", SCHEDULE_FILE),
     ("backgroundVideoUsage", BACKGROUND_VIDEO_USAGE_FILE),
     ("clickupSync", CLICKUP_SYNC_FILE),
     ("monetizationStatus", MONETIZATION_STATUS_FILE),
@@ -13384,6 +13386,29 @@ def iso_today() -> date:
 
 
 def ensure_schedule_file() -> dict[str, Any]:
+    # SC-3 cutover: SQLite (state_snapshots.postingSchedule) is the source of
+    # truth. Fail-soft to the legacy JSON if the DB read fails, so the live app
+    # never breaks if the database is unavailable.
+    try:
+        stored = sr.load(ROOT)
+        if stored is not None:
+            config = stored.payload
+        else:
+            config = sr.create_default()
+            sr.save(ROOT, config)
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        print(f"[schedule] SQLite load failed, falling back to JSON: {exc}", file=sys.stderr)
+        return _ensure_schedule_file_from_json()
+
+    config.setdefault("patreonEarlyAccessDays", [14, 7])
+    config.setdefault("chapterReleaseTime", "09:00")
+    for novel in config.get("novels", []):
+        novel.setdefault("currentRoyalRoadChapter", max(0, int(novel.get("nextChapter", 1)) - 1))
+        novel.setdefault("nextRoyalRoadDate", novel.get("startDate", iso_today().isoformat()))
+    return config
+
+
+def _ensure_schedule_file_from_json() -> dict[str, Any]:
     if SCHEDULE_FILE.exists():
         config = json.loads(SCHEDULE_FILE.read_text(encoding="utf-8"))
         config.setdefault("patreonEarlyAccessDays", [14, 7])
@@ -15580,10 +15605,15 @@ def write_deep_tiktok_video_helper(
 
 
 def load_deep_tiktok_rotation() -> dict[str, Any]:
-    fresh_state = not DEEP_TIKTOK_ROTATION_FILE.exists()
-    data = read_json_safe(DEEP_TIKTOK_ROTATION_FILE)
-    if not isinstance(data, dict):
-        data = {}
+    # SC-4 cutover: SQLite (state_snapshots.deepTikTokRotation) is the source of
+    # truth. The chapter-ledger merge stays app-side; only JSON I/O moved to fsr.
+    try:
+        stored = fsr.load(ROOT)
+        fresh_state = stored.version == 0
+        data = stored.payload
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        print(f"[deeptiktok] SQLite load failed, falling back to JSON: {exc}", file=sys.stderr)
+        return _load_deep_tiktok_rotation_from_json()
     data.setdefault("schemaVersion", 1)
     data.setdefault("cycle", 1)
     data.setdefault("remainingNovels", [])
@@ -15613,10 +15643,44 @@ def load_deep_tiktok_rotation() -> dict[str, Any]:
     return data
 
 
+def _load_deep_tiktok_rotation_from_json() -> dict[str, Any]:
+    data = read_json_safe(DEEP_TIKTOK_ROTATION_FILE)
+    if not isinstance(data, dict):
+        data = {}
+    data.setdefault("schemaVersion", 1)
+    data.setdefault("cycle", 1)
+    data.setdefault("remainingNovels", [])
+    data.setdefault("usedChapters", {abbr: [] for abbr in ["EN", "HA", "SF", "HP"]})
+    data.setdefault("history", [])
+    data.setdefault("pending", None)
+    for abbr in ["EN", "HA", "SF", "HP"]:
+        values = data["usedChapters"].setdefault(abbr, [])
+        data["usedChapters"][abbr] = sorted({int(value) for value in values if str(value).lstrip("-").isdigit()})
+    ledger = load_chapter_ledger()
+    previously_built_novels: set[str] = set()
+    for entry in ledger.get("chapters", {}).values():
+        if not isinstance(entry, dict) or not entry.get("deepTikTokBuilt"):
+            continue
+        abbr = story_key(str(entry.get("abbr") or ""))
+        try:
+            chapter_number = int(entry.get("chapter"))
+        except (TypeError, ValueError):
+            continue
+        if abbr in data["usedChapters"] and chapter_number not in data["usedChapters"][abbr]:
+            data["usedChapters"][abbr].append(chapter_number)
+            data["usedChapters"][abbr].sort()
+        if abbr:
+            previously_built_novels.add(abbr)
+    if not DEEP_TIKTOK_ROTATION_FILE.exists() and previously_built_novels and len(previously_built_novels) < 4:
+        data["remainingNovels"] = [abbr for abbr in ["EN", "HA", "SF", "HP"] if abbr not in previously_built_novels]
+    return data
+
+
 def save_deep_tiktok_rotation(data: dict[str, Any]) -> None:
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
     data["history"] = list(data.get("history") or [])[-500:]
-    write_json_atomic(DEEP_TIKTOK_ROTATION_FILE, data)
+    # SC-4 cutover: persist to SQLite (state_snapshots.deepTikTokRotation).
+    fsr.save(ROOT, data)
 
 
 def deep_tiktok_public_chapter_cap(abbr: str) -> int:
@@ -18033,7 +18097,8 @@ def apply_chapter_path_state(next_chapter: int = 17, start_date: str = "", *, re
         novel["nextRoyalRoadDate"] = start.isoformat()
         novel["startDate"] = start.isoformat()
         novel["releaseDays"] = CHAPTER_RELEASE_DAYS
-    SCHEDULE_FILE.write_text(json.dumps(schedule, indent=2), encoding="utf-8")
+    # SC-3 cutover: persist to SQLite (state_snapshots.postingSchedule).
+    sr.save(ROOT, schedule)
 
     status = load_release_status()
     next_selections = status.setdefault("nextSelections", {})
