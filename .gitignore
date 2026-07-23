@@ -78,6 +78,8 @@ app-regression-dashboard.json
 # SC-8 rotating backups + pre-restore safety snapshots (large binaries, local-only)
 migration-backups/rotating/
 migration-backups/pre-restore/
+# SC-8 scheduled health-gate + backup run logs (local-only, verbose history)
+migration-backups/sc8-logs/
 # Phase-3 final/pre-repoint/soak backups are also local DB copies (off-repo)
 migration-backups/*.sqlite
 
