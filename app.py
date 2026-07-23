@@ -58,6 +58,7 @@ import release_planner
 # deep-tiktok rotation. These modules never import app at load time.
 from storage import schedule_repository as sr
 from storage import feature_state_repository as fsr
+from storage import root_state_repository as rsr
 
 # --- Phase 1 extracted subsystem modules (Task 8 inversion wiring) ---
 import promo_copy
@@ -12058,7 +12059,7 @@ def start_automatic_comment_worker() -> None:
 
 
 def load_automatic_metrics_state() -> dict[str, Any]:
-    data = read_json_safe(AUTO_METRICS_STATE_FILE)
+    data = rsr.load(ROOT, "automaticMetricsState", default={}, fallback_file=AUTO_METRICS_STATE_FILE)
     if not isinstance(data, dict):
         data = {}
     data.setdefault("enabled", AUTO_METRICS_ENABLED)
@@ -12070,7 +12071,7 @@ def load_automatic_metrics_state() -> dict[str, Any]:
 
 def save_automatic_metrics_state(data: dict[str, Any]) -> None:
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    write_json_atomic(AUTO_METRICS_STATE_FILE, data)
+    rsr.save(ROOT, "automaticMetricsState", data, fallback_file=AUTO_METRICS_STATE_FILE)
 
 
 def experiment_timestamp(value: Any) -> datetime | None:
@@ -19394,12 +19395,13 @@ def story_hook_video_worker(job: dict[str, Any]) -> None:
             if not hermes_result or not hermes_result.get("ok"):
                 # Fall back to the ChatGPT/CDP path so capability is never lost.
                 _run_chatgpt_story_hook(job)
-            result = read_json_safe(STORY_HOOK_RESULT_FILE)
+            result = rsr.load(ROOT, "storyHookChatgptResult", default={}, fallback_file=STORY_HOOK_RESULT_FILE)
         else:
             _run_chatgpt_story_hook(job)
-            result = read_json_safe(STORY_HOOK_RESULT_FILE)
+            result = rsr.load(ROOT, "storyHookChatgptResult", default={}, fallback_file=STORY_HOOK_RESULT_FILE)
         if not isinstance(result, dict) or str(result.get("jobId") or "") != str(job.get("jobId") or ""):
             result = {"ok": False, "error": "Story hook helper did not return a result."}
+        rsr.save(ROOT, "storyHookChatgptResult", result, fallback_file=STORY_HOOK_RESULT_FILE)
         state = {**job, **result, "running": False, "ready": False, "finishedAt": time.strftime("%Y-%m-%d %H:%M:%S")}
         if result.get("ok") and result.get("storyText"):
             parsed = parse_story_hook_output(str(result.get("storyText") or ""), job)
