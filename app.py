@@ -955,6 +955,13 @@ def image_quality_gate_for_metadata(folder: Path, metadata: dict[str, Any]) -> d
     }
     source_text = " ".join([str(metadata.get("image_source") or "")] + [str(item) for item in metadata.get("image_sources", []) or []]).lower()
     source_entries = [str(metadata.get("image_source") or "")] + [str(item) for item in metadata.get("image_sources", []) or []]
+    # Stock/third-party photo exclusion policy (2026-07-25): images whose OWN recorded
+    # source is a stock/third-party photo service are excluded with the lowest possible
+    # score (0) and flagged excluded=True so downstream selectors drop them outright.
+    STOCK_SOURCE_TOKENS = (
+        "pixabay", "pexels", "unsplash", "shutterstock", "gettyimages",
+        "getty images", "adobe stock", "stock.adobe.com", "freepik", "depositphotos",
+    )
     approved_images = {
         str(Path(str(item)).resolve()).lower()
         for item in metadata.get("approved_images", []) or []
@@ -981,6 +988,25 @@ def image_quality_gate_for_metadata(folder: Path, metadata: dict[str, Any]) -> d
         searchable = " ".join([image.stem, image.parent.name]).lower().replace("-", " ").replace("_", " ")
         source_for_image = str(source_entries[index] if index < len(source_entries) else source_text).lower()
         source_searchable = " ".join([source_for_image, searchable])
+        # Per-image stock check uses THIS image's own recorded source only, never the
+        # whole-pack source, so a mixed pack does not mislabel Diffusers images.
+        per_image_source = source_entries[index] if index < len(source_entries) else ""
+        is_stock_source = any(tok in per_image_source.lower() for tok in STOCK_SOURCE_TOKENS)
+        if is_stock_source:
+            score = 0
+            reasons.append("excluded: stock/third-party photo source (policy)")
+            items.append({
+                "image": str(image),
+                "score": score,
+                "reasons": reasons,
+                "source": source_for_image,
+                "excluded": True,
+            })
+            errors.append(
+                f"Image quality is weak ({score}/100): {image.name}. "
+                f"Stock source excluded by policy; regenerate or manually approve."
+            )
+            continue
         manually_approved = resolved in approved_images or image.name.lower() in approved_names
         if manually_approved:
             score += 34
