@@ -16327,7 +16327,11 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
     if ag_overlays and len(ag_overlays) >= 2:
         overlays = [reel_overlay_text(str(line), limit=58) for line in ag_overlays[:8]]
     else:
-        overlays = [reel_overlay_text(f"{novel}: {sub}", limit=58) for sub in sub_themes[:8]]
+        # Fallback: scene-beat descriptors only. Overlay text must describe the
+        # scene/story beat, never repeat the source novel name. The previous
+        # f"{novel}: {sub}" form produced "NOVEL: establishing world shot" x8
+        # whenever the agent was off (the default), which is the reported bug.
+        overlays = [reel_overlay_text(sub, limit=58) for sub in sub_themes[:8] if sub and str(sub).strip()]
     overlays.append(reel_overlay_text(f"READ {novel} ON ROYAL ROAD", limit=62))
     hook_line = overlays[0].replace("\n", " ") if overlays else f"A deeper look at {novel}"
 
