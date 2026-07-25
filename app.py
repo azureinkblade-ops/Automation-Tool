@@ -961,6 +961,7 @@ def image_quality_gate_for_metadata(folder: Path, metadata: dict[str, Any]) -> d
     STOCK_SOURCE_TOKENS = (
         "pixabay", "pexels", "unsplash", "shutterstock", "gettyimages",
         "getty images", "adobe stock", "stock.adobe.com", "freepik", "depositphotos",
+        "canva",
     )
     approved_images = {
         str(Path(str(item)).resolve()).lower()
