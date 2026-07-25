@@ -42115,6 +42115,12 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/creator-benchmarks":
             self.send_json(creator_benchmark_dashboard())
             return
+        if parsed.path == "/api/content-experiments":
+            try:
+                self.send_json(content_experiment_overview())
+            except Exception as exc:
+                self.send_json({"error": str(exc)}, 500)
+            return
         if parsed.path == "/api/provider-strategy":
             self.send_json(provider_strategy_status())
             return
