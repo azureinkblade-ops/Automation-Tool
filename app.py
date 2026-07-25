@@ -3351,7 +3351,27 @@ def structured_chapter_package_fallback(
         "chapter_number": chapter_number,
         "phrases": list(hook_map.values()),
     }
-    posts = build_platform_posts(title, body, material)
+    # Optional Hermes agent post copy (dynamic, research-aware). Default OFF.
+    # Flip ENABLE_AGENT_POSTS=1 to replace template prose with agent-generated copy.
+    # Any failure returns None -> build_platform_posts uses the template engine (fail-soft).
+    agent_copy = None
+    if str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"} and abbr:
+        try:
+            from tools.agent_post_writer import generate_post_copy as _agent_gen
+            _agent_hook = " ".join(str(p) for p in material.get("phrases", [])[:3]).strip()
+            agent_copy = _agent_gen(
+                abbr,
+                title,
+                str(material.get("chapter", chapter_number) or chapter_number),
+                _agent_hook,
+                material,
+            )
+        except Exception as _agent_exc:  # never let the agent block a post build
+            agent_copy = None
+            material.setdefault("warnings", []).append(
+                f"agent_post_writer skipped: {_agent_exc}"
+            )
+    posts = build_platform_posts(title, body, material, agent_copy=agent_copy)
     image_prompts = make_chapter_image_prompts(title, body, list(hook_map.values())[:3], novel)[:5]
     hooks = [
         {
@@ -9338,7 +9358,27 @@ def build_resurfacing_post(abbr: str, chapter: int | str, reason: str = "back_ca
     folder = SOCIAL_OUTPUT_DIR / f"resurface-{abbr.lower()}-{chapter_number}-{time.strftime('%Y%m%d')}"
     reset_generated_folder(folder)
     material = {"abbr": abbr, "novel": NOVEL_NAMES.get(abbr, abbr), "chapter": str(chapter_number), "phrases": [hook]}
-    copy = build_platform_posts(title, text, material, "catch_up_archive")
+    # Optional Hermes agent post copy (dynamic, research-aware). Default OFF.
+    # Flip ENABLE_AGENT_POSTS=1 to replace template prose with agent-generated copy.
+    # Any failure returns None -> build_platform_posts uses the template engine (fail-soft).
+    agent_copy = None
+    if str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"} and abbr:
+        try:
+            from tools.agent_post_writer import generate_post_copy as _agent_gen
+            _agent_hook = " ".join(str(p) for p in material.get("phrases", [])[:3]).strip()
+            agent_copy = _agent_gen(
+                abbr,
+                title,
+                str(material.get("chapter", chapter_number) or chapter_number),
+                _agent_hook,
+                material,
+            )
+        except Exception as _agent_exc:  # never let the agent block a post build
+            agent_copy = None
+            material.setdefault("warnings", []).append(
+                f"agent_post_writer skipped: {_agent_exc}"
+            )
+    copy = build_platform_posts(title, text, material, "catch_up_archive", agent_copy=agent_copy)
     image = folder / f"{abbr}_{chapter_number}_resurface.png"
     image_source = create_fresh_social_image_from_caption(
         image,
