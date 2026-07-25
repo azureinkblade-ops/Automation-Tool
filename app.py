@@ -7428,9 +7428,18 @@ def compose_aivsb_scene_prompt(
         print(f"[aivsb-reasoning] failed: reasoning package not found at {aivsb_reasoning}")
         return None
 
+    # The aivsb package uses flat sibling imports: `reasoning`, `retrieval`,
+    # and bare `from models import` (retrieval/models.py) all resolve as
+    # top-level modules. Adding only `aivsb/reasoning` was insufficient and
+    # caused "No module named 'retrieval'/'models'" -> silent fallback to the
+    # legacy prompt. Register the three path roots the package expects.
+    aivsb_root = aivsb_reasoning.parent  # scripts/aivsb
+    aivsb_retrieval = aivsb_root / "retrieval"
+    for entry in (str(aivsb_reasoning), str(aivsb_retrieval), str(aivsb_root)):
+        if entry not in sys.path:
+            sys.path.insert(0, entry)
+
     try:
-        if str(aivsb_reasoning) not in sys.path:
-            sys.path.insert(0, str(aivsb_reasoning))
         from director_engine import direct_scene
         from prompt_composer import compose_prompt, ComposerError
         from scene_request import SceneRequest
