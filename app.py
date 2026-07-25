@@ -1040,9 +1040,6 @@ def image_quality_gate_for_metadata(folder: Path, metadata: dict[str, Any]) -> d
         elif "google_ai" in source_text or "google-ai" in source_text:
             score += 14
             reasons.append("fresh Gemini image source")
-        elif "pixabay" in source_text:
-            score -= 12
-            reasons.append("stock fallback source")
         elif "bank:" in source_text or "banked" in source_text:
             score -= 8
             reasons.append("banked image source")
