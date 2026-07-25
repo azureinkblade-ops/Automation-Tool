@@ -335,6 +335,10 @@ CHATGPT_CHAPTER_STATUS_FILE = ROOT / "chatgpt-chapter-status.json"
 STORY_HOOK_SCRIPT_FILE = ROOT / "create-story-hook-chatgpt-playwright.js"
 STORY_HOOK_RESULT_FILE = ROOT / "story-hook-chatgpt-result.json"
 STORY_HOOK_STATUS_FILE = ROOT / "story-hook-video-status.json"
+# Drop point for Hermes-authored story-hook JSON. When ENABLE_AGENT_STORY_HOOKS=1,
+# process_story_hook_inbox() builds a video pack + renders the MP4 from each file here.
+# This is the bridge for "Hermes is the story-hook creator" (external JSON -> app.py builder).
+STORY_HOOK_INBOX_DIR = ROOT / "story-hook-inbox"
 BROWSER_IMAGE_ASSIST_FILE = ROOT / "browser-image-assist.json"
 BROWSER_IMAGE_ASSIST_SCRIPT_FILE = ROOT / "browser-image-assist-playwright.js"
 GROWTH_AUTOMATION_FILE = ROOT / "growth-automation.json"
@@ -19449,6 +19453,82 @@ def build_story_hook_video_files(title: str, story_text: str, abbr: str = "", an
     }
     (folder / "metadata.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     return result
+
+
+def build_story_hook_from_agent(payload: dict[str, Any] | str) -> dict[str, Any]:
+    """Build a story-hook video pack from a Hermes-authored JSON payload.
+
+    Mirrors the parsing the ChatGPT worker does, but consumes an external
+    agent payload instead of driving generation. Input shape matches the
+    post-differentiation / story-hook agent contract:
+      title, story (or script/body), relatedNovel (-> abbr), hookAngle, tags.
+    Returns the build_story_hook_video_files result (includes the pack folder).
+    """
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    if not isinstance(payload, dict):
+        raise RuntimeError("Story-hook agent payload must be a JSON object.")
+    title = str(payload.get("title") or payload.get("chapter_title") or "").strip()
+    story = str(
+        payload.get("story") or payload.get("script") or payload.get("body") or ""
+    ).strip()
+    if not title or len(story.split()) < 80:
+        raise RuntimeError("Story-hook payload needs a title and a story of at least 80 words.")
+    abbr = story_key(str(payload.get("relatedNovel") or payload.get("relatedNovel") or payload.get("abbr") or ""))
+    angle = str(payload.get("hookAngle") or payload.get("hook_angle") or payload.get("angle") or "")
+    tags = payload.get("tags") or []
+    if isinstance(tags, str):
+        tags = [t.strip() for t in tags.replace(",", " ").split() if t.strip()]
+    return build_story_hook_video_files(title, story, abbr, angle, {"tags": ", ".join(str(t) for t in tags)})
+
+
+def process_story_hook_inbox() -> dict[str, Any]:
+    """Consume Hermes-authored story-hook JSON dropped in STORY_HOOK_INBOX_DIR.
+
+    Env-gated by ENABLE_AGENT_STORY_HOOKS (default off). For each JSON: parse,
+    build the video pack, render the MP4 via the existing builder script, and
+    record status to STORY_HOOK_STATUS_FILE (JSON, per the migration boundary).
+    Fail-soft: one bad file never blocks the others. Processed files are moved
+    to a processed/ subdir so they are not rebuilt on the next scan.
+    """
+    if str(os.environ.get("ENABLE_AGENT_STORY_HOOKS", "0")).strip().lower() in {"", "0", "false", "no", "off"}:
+        return {"enabled": False, "processed": [], "message": "ENABLE_AGENT_STORY_HOOKS is off."}
+    STORY_HOOK_INBOX_DIR.mkdir(parents=True, exist_ok=True)
+    processed_dir = STORY_HOOK_INBOX_DIR / "processed"
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    results: list[dict[str, Any]] = []
+    for item in sorted(STORY_HOOK_INBOX_DIR.glob("*.json")):
+        if item.parent == processed_dir:
+            continue
+        entry: dict[str, Any] = {"file": str(item), "ok": False}
+        try:
+            payload = json.loads(item.read_text(encoding="utf-8", errors="replace"))
+            pack = build_story_hook_from_agent(payload)
+            folder = Path(str(pack.get("folder") or ""))
+            if folder and folder.exists():
+                try:
+                    build = run_generated_video_builder(folder, "build_youtube_video.py", "youtube-video.mp4", timeout=1200)
+                    entry["build"] = build
+                except Exception as exc:
+                    entry["render_error"] = str(exc)
+                entry["folder"] = str(folder)
+                entry["ok"] = True
+            item.replace(processed_dir / item.name)
+        except Exception as exc:
+            entry["error"] = str(exc)
+        results.append(entry)
+    state = {
+        "running": False,
+        "ready": any(r.get("ok") for r in results),
+        "source": "hermes_inbox",
+        "results": results,
+        "finishedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    try:
+        _phase2_save_blob("storyHookStatus", STORY_HOOK_STATUS_FILE, state)
+    except Exception:
+        pass
+    return {"enabled": True, "processed": results}
 
 
 def _run_chatgpt_story_hook(job: dict[str, Any]) -> None:
@@ -42122,6 +42202,12 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/content-experiments":
             try:
                 self.send_json(content_experiment_overview())
+            except Exception as exc:
+                self.send_json({"error": str(exc)}, 500)
+            return
+        if parsed.path == "/api/story-hook-inbox-build":
+            try:
+                self.send_json(process_story_hook_inbox())
             except Exception as exc:
                 self.send_json({"error": str(exc)}, 500)
             return
