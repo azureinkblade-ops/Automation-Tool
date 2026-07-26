@@ -44,6 +44,15 @@ NOVEL_STYLE_FILE = {
     "sf": "sf.yaml",
 }
 
+# Per-novel genre label (from the Visual Creative Director novel identities).
+# Used as the prompt opener so HP's "cultivation" wording never leaks into EN/SF/HA.
+NOVEL_GENRE_LABEL = {
+    "hp": "xianxia cultivation fantasy illustration",
+    "en": "cyberpunk mystic fantasy illustration",
+    "sf": "ashpunk industrial fantasy illustration",
+    "ha": "system fantasy illustration",
+}
+
 # Visual Creative Director skill: negative constraints that protect canon.
 # Mirrors the skill's "AI Image Risks" + per-character forbidden changes.
 CANON_NEGATIVE_CONSTRAINTS = [
@@ -213,20 +222,29 @@ def match_location(scene_text: str, locations: List[Dict[str, Any]], novel: str)
 
 # --- Package builder -------------------------------------------------------
 
-def _appearance_lock(profile: Dict[str, Any]) -> Dict[str, Any]:
+def _appearance_lock(profile: Dict[str, Any], warnings: Optional[List[str]] = None) -> Dict[str, Any]:
     """Flatten Bible appearance/clothing/weapon into a Director lock dict.
 
     Note: in the Bible YAML, body_type/age/height live UNDER `appearance:`,
     while clothing/weapons are top-level. Read both locations defensively.
+
+    Any malformed or contradictory canon entry is recorded in `warnings`
+    (explicit diagnostics) rather than silently dropped, so a prompt that LOOKS
+    clean is never hiding an incomplete character lock.
     """
-    ap = profile.get("appearance") or {}
-    hair = ap.get("hair") or {}
-    eyes = ap.get("eyes") or {}
+    name = str(profile.get("name") or "?")
 
     def _as_str(v: Any) -> str:
         # Bible YAML can contain malformed entries (e.g. an unquoted value with
-        # parens parsed as a nested dict). Never crash; stringify safely.
+        # parens parsed as a nested dict). Never crash; stringify safely AND
+        # record the defect in warnings.
         if isinstance(v, dict):
+            if warnings is not None:
+                warnings.append(
+                    f"canon malformed entry for '{name}': YAML parsed "
+                    f"{v!r} as a mapping (likely an unquoted value with "
+                    f"parentheses); coerced to a string."
+                )
             return " ".join(f"{k} {val}" for k, val in v.items())
         return str(v or "").replace("_", " ").strip()
 
@@ -234,6 +252,25 @@ def _appearance_lock(profile: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(v, list):
             return [_as_str(v)] if v else []
         return [_as_str(item) for item in v]
+
+    ap = profile.get("appearance") or {}
+    hair = ap.get("hair") or {}
+    eyes = ap.get("eyes") or {}
+
+    clothing = _as_list(profile.get("clothing", []) or [])
+    weapons = _as_list(profile.get("weapons", []) or [])
+
+    # Detect a weapon list that mixes a positive weapon with a "no weapon"
+    # chapter exception -> contradictory canon. Record, do not silently pick.
+    _NEG = ("no weapon", "carries no", "missing weapon", "unarmed")
+    has_positive_weapon = any(w and not any(b in w.lower() for b in _NEG) for w in weapons)
+    has_negation = any(any(b in w.lower() for b in _NEG) for w in weapons)
+    if has_positive_weapon and has_negation and warnings is not None:
+        warnings.append(
+            f"canon contradiction for '{name}': weapon list mixes a positive "
+            f"weapon with a 'no weapon' exception (likely a chapter-specific "
+            f"note); lock keeps only positive descriptors, verify canonical default."
+        )
 
     lock = {
         "name": profile.get("name"),
@@ -243,26 +280,37 @@ def _appearance_lock(profile: Dict[str, Any]) -> Dict[str, Any]:
         "body_type": _as_str(ap.get("body_type") or profile.get("body_type")),
         "age": _as_str(ap.get("age") or profile.get("age")),
         "height": _as_str(ap.get("height") or profile.get("height")),
-        "clothing": _as_list(profile.get("clothing", []) or []),
-        "weapons": _as_list(profile.get("weapons", []) or []),
+        "clothing": clothing,
+        "weapons": weapons,
         "magic_style": _as_str(profile.get("magic_style")),
         "lighting_preference": _as_str(profile.get("lighting_preference")),
     }
+    # Incomplete-lock warning: if the visible identity fields are all empty, the
+    # character may be unrecognizable even though the prompt looks clean.
+    identity = (lock["hair"], lock["eyes"], lock["body_type"], " ".join(lock["clothing"]))
+    if warnings is not None and not any(identity):
+        warnings.append(
+            f"canon incomplete for '{name}': no hair/eyes/body/clothing resolved; "
+            f"character lock may be insufficient for consistent generation."
+        )
     return lock
 
 
-def _character_lock_tokens(lock: Dict[str, Any]) -> List[str]:
+def _character_lock_tokens(
+    lock: Dict[str, Any],
+    name: str = "",
+    warnings: Optional[List[str]] = None,
+) -> List[str]:
     """Human-readable appearance tokens for prompt assembly.
 
     Editorial noise (parenthetical notes, per-chapter provenance, negation
-    annotations like "carries NO weapon at Ch140") is stripped so malformed or
-    over-annotated Bible data degrades gracefully instead of contaminating
-    prompts. Only positive visual descriptors survive.
+    annotations like "carries NO weapon at Ch140") is stripped AND recorded in
+    `warnings` so the filter is explicit, not silent. Only positive visual
+    descriptors survive.
     """
-    # tokens that describe a fact but NOT a usable visual attribute
     _NON_VISUAL = (
         "no weapon", "note", "accept", "dropped", "sdxl", "staff",
-        "ch140", "chapter", "missing", "unknown",
+        "ch140", "chapter", "missing", "unknown", "carries no", "unarmed",
     )
 
     def keep(token: str) -> bool:
@@ -270,6 +318,11 @@ def _character_lock_tokens(lock: Dict[str, Any]) -> List[str]:
         if not t:
             return False
         if any(bad in t for bad in _NON_VISUAL):
+            if warnings is not None:
+                warnings.append(
+                    f"canon filtered '{token}' from '{name}' lock: non-visual / "
+                    f"chapter-exception annotation, not a usable appearance descriptor."
+                )
             return False
         return True
 
@@ -354,25 +407,31 @@ def _assemble_image_prompts(
     shots: List[Dict[str, Any]],
     location: Optional[Dict[str, Any]],
     palette: Dict[str, Any],
+    warnings: Optional[List[str]] = None,
 ) -> List[str]:
     """One Bible-enriched prompt string per shot. The existing generator consumes
     this list exactly like the legacy `image_prompts` list."""
     char_tokens = []
     for c in characters:
-        char_tokens.extend(_character_lock_tokens(_appearance_lock(c)))
+        char_tokens.extend(_character_lock_tokens(_appearance_lock(c, warnings), name=c.get("name", ""), warnings=warnings))
     char_line = ", ".join(dict.fromkeys(char_tokens)) if char_tokens else "the protagonist"
     env_line = ""
     if location:
         env_bits = [str(location.get("name", ""))]
         if location.get("architecture"):
-            env_bits.append(str(location["architecture"]).replace("_", " "))
+            arch = str(location["architecture"]).replace("_", " ")
+            if "n/a" not in arch and "none" not in arch.lower():
+                env_bits.append(arch)
         if location.get("weather"):
-            env_bits.append(str(location["weather"]).replace("_", " "))
-        env_line = ", ".join(env_bits)
+            weather = str(location["weather"]).replace("_", " ")
+            if "n/a" not in weather and "none" not in weather.lower():
+                env_bits.append(weather)
+        env_line = ", ".join(b for b in env_bits if b)
     palette_hint = _palette_phrase(palette)
     prompts: List[str] = []
+    genre = NOVEL_GENRE_LABEL.get(str(novel).lower(), "fantasy illustration")
     for shot in shots:
-        parts = [f"Cultivation fantasy illustration, vertical 9:16."]
+        parts = [f"{genre}, vertical 9:16."]
         parts.append(f"Scene: {scene_text}.")
         if char_line:
             parts.append(f"Subject: {char_line}.")
@@ -405,14 +464,17 @@ def build_visual_scene_package(
     locations = load_locations()
     palette = load_novel_palette(novel)
 
+    warnings: List[str] = []
     char_names = extract_character_names(scene_text, profiles)
     chars = [profiles[n] for n in char_names if n in profiles]
     location = match_location(scene_text, locations, novel)
 
-    character_locks = [_appearance_lock(c) for c in chars]
+    character_locks = [_appearance_lock(c, warnings) for c in chars]
     shots = _build_shot_plan(novel, chars, location)
     negative = _negative_prompt(chars[0]) if chars else list(CANON_NEGATIVE_CONSTRAINTS)
-    image_prompts = _assemble_image_prompts(novel, chapter, scene_text, chars, shots, location, palette)
+    image_prompts = _assemble_image_prompts(
+        novel, chapter, scene_text, chars, shots, location, palette, warnings=warnings
+    )
 
     return {
         "novel": novel,
@@ -429,6 +491,9 @@ def build_visual_scene_package(
         },
         "image_prompts": image_prompts,
         "negative_prompt": negative,
+        # explicit diagnostics: malformed/contradictory canon is surfaced, never
+        # silently dropped (prerequisite for integration review).
+        "canon_warnings": warnings,
         # compatibility shim: downstream metadata.json expects these names
         "image_sources": [],
     }
