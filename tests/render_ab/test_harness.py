@@ -219,7 +219,9 @@ def test_localsd_backend_invokes_generator_when_ready(monkeypatch_tmp=None):
         out = _P(cmd[cmd.index("--output") + 1])
         out.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 2048)
         meta = _P(cmd[cmd.index("--metadata") + 1])
-        meta.write_text(_json.dumps({"model": "models/sdxl-base", "seed": 1}), encoding="utf-8")
+        # Echo the requested seed back so the control check sees no mismatch.
+        req_seed = cmd[cmd.index("--seed") + 1]
+        meta.write_text(_json.dumps({"model": "models/sdxl-base", "seed": int(req_seed)}), encoding="utf-8")
         return _CP()
 
     orig = (appmod.local_stable_diffusion_status, appmod.local_sd_python,

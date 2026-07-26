@@ -50,12 +50,50 @@ SCENE = (
 )
 
 
+# Paired-control fields that must be IDENTICAL between legacy[i] and director[i]
+# (the only legitimate difference is the prompt). Surfaced so the run is accepted
+# only after confirming the control actually held.
+_CONTROL_FIELDS = [
+    ("model", "SDXL base checkpoint"),
+    ("refinerModel", "refiner"),
+    ("loraPath", "LoRA path"),
+    ("loraScale", "LoRA weight"),
+    ("scheduler", "scheduler"),
+    ("steps", "steps"),
+    ("guidanceScale", "guidance scale"),
+    ("size", "width and height"),
+    ("negativePrompt", "negative prompt"),
+    ("requestedSeed", "seed"),
+]
+
+
+def _paired_control_check(ab: dict) -> dict:
+    rows = []
+    for i in range(min(len(ab["legacy"]), len(ab["director"]))):
+        lt = ab["legacy"][i].get("trace_meta") or {}
+        dt = ab["director"][i].get("trace_meta") or {}
+        pair = {"index": i, "fields": {}}
+        for key, label in _CONTROL_FIELDS:
+            lv, dv = lt.get(key), dt.get(key)
+            pair["fields"][label] = {"legacy": lv, "director": dv, "match": lv == dv}
+        rows.append(pair)
+    # enhanced-prompt treatment is structural (both pass through enhance_local_sd_prompt);
+    # record whether both were treated (non-empty enhancement) without asserting equality
+    # since the prompt content legitimately differs by design.
+    return {"pairs": rows, "all_matched": all(
+        f["match"] for p in rows for f in p["fields"].values())}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(ROOT / "tests" / "render_ab" / "output"))
     ap.add_argument("--backend", choices=["local-sd", "openai"], default="local-sd")
     ap.add_argument("--scene-id", default="hp_liang_review")
+    ap.add_argument("--seeds", default="184732,582941,917364",
+                    help="Three predetermined seeds (establishing, character, action), reused across both sets.")
     args = ap.parse_args()
+
+    seeds = tuple(int(s) for s in args.seeds.split(",") if s.strip())
 
     if args.backend == "openai":
         if not os.environ.get("ENABLE_EXTERNAL_AI") == "1":
@@ -78,7 +116,7 @@ def main():
     title, chapter, phrases, novel = SCENE
     prompts = H.capture_prompts(title, chapter, phrases, novel, appmod)
     out_root = Path(args.out)
-    ab = H.run_ab(args.scene_id, prompts["legacy"], prompts["director"], backend, out_root)
+    ab = H.run_ab(args.scene_id, prompts["legacy"], prompts["director"], backend, out_root, seeds=seeds)
 
     failures = []
     for kind in ("legacy", "director"):
@@ -91,15 +129,26 @@ def main():
                 failures.append(f"[{kind} {i}] TEXT RENDERED INSIDE IMAGE")
             if r["duplicate_of"]:
                 failures.append(f"[{kind} {i}] DUPLICATE of {r['duplicate_of']}")
+            tm = r.get("trace_meta") or {}
+            if tm.get("seedMismatch"):
+                failures.append(f"[{kind} {i}] SEED MISMATCH: requested {tm.get('requestedSeed')} "
+                                f"but generator reported {tm.get('effectiveSeed')} (control broken)")
+            # paired-control: each legacy[i]/director[i] must share the same requested seed
+            if kind == "director" and i < len(ab["legacy"]):
+                lt = ab["legacy"][i].get("trace_meta") or {}
+                if lt.get("requestedSeed") != tm.get("requestedSeed"):
+                    failures.append(f"[pair {i}] SEED NOT PAIRED: legacy={lt.get('requestedSeed')} "
+                                    f"director={tm.get('requestedSeed')}")
 
     manifest = {
         "scene_id": args.scene_id,
         "engine": args.backend,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "control": "single variable = prompt; same engine/model/LoRA/size/quality for both sets",
+        "control": "single variable = prompt; same engine/model/LoRA/size/quality/seed for each paired set",
         "prompts": prompts,
         "ab": ab,
         "failures": failures,
+        "control_check": _paired_control_check(ab),
     }
     H.write_manifest(out_root / "manifest.json", manifest)
     legacy_score = H.build_score(

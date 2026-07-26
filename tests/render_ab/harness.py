@@ -70,7 +70,7 @@ class RenderResult:
 
 
 class RenderBackend(Protocol):
-    def render(self, prompt: str, out_path: Path) -> RenderResult:
+    def render(self, prompt: str, out_path: Path, index: int = 0) -> RenderResult:
         ...
 
 
@@ -82,7 +82,7 @@ class MockBackend:
     provider: str = "mock-local"
     model: str = "mock-model"
 
-    def render(self, prompt: str, out_path: Path) -> RenderResult:
+    def render(self, prompt: str, out_path: Path, index: int = 0) -> RenderResult:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         # minimal valid 1x1 PNG (stdlib only)
         png = (
@@ -128,9 +128,9 @@ class LocalSDAppBackend:
     app_module: Any
     orientation: str = "vertical"
     quality_mode: str = ""
-    seed: int = 0
+    seeds: tuple = (184732, 582941, 917364)  # per-position seeds: establishing, character, action
 
-    def render(self, prompt: str, out_path: Path) -> RenderResult:
+    def render(self, prompt: str, out_path: Path, index: int = 0) -> RenderResult:
         import random as _random
         import subprocess as _subprocess
         from datetime import datetime as _dt
@@ -159,7 +159,10 @@ class LocalSDAppBackend:
             "LOCAL_SD_NEGATIVE_PROMPT",
             "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
         )
-        seed = self.seed or _random.randint(1, 2_147_483_000)
+        # Experimental control: the SAME predetermined seed is reused for the
+        # corresponding legacy/director pair (index) so the only variable is the
+        # prompt. A fresh random seed per render would confound the comparison.
+        seed = self.seeds[index] if 0 <= index < len(self.seeds) else (self.seeds[0] if self.seeds else _random.randint(1, 2_147_483_000))
         command = [
             str(app.local_sd_python()),
             str(app.LOCAL_IMAGE_GENERATOR_SCRIPT),
@@ -201,14 +204,25 @@ class LocalSDAppBackend:
                     meta = __import__("json").loads(meta_path.read_text(encoding="utf-8"))
                 except Exception:
                     meta = {}
+            # Verify the generator actually honored the requested seed (control check).
+            gen_seed = meta.get("seed")
+            seed_mismatch = gen_seed is not None and int(gen_seed) != int(seed)
             trace = {
                 "provider": "local_stable_diffusion",
                 "model": str(status.get("model") or meta.get("model", "")),
+                "refinerModel": str(status.get("refinerModel") or meta.get("refinerModel", "")),
                 "loraTrack": lora_track,
                 "loraPath": str(lora_path) if lora_path else "",
-                "seed": seed,
+                "loraScale": os.environ.get("LOCAL_SD_LORA_SCALE", "0.75") if lora_path else "",
+                "requestedSeed": seed,
+                "effectiveSeed": gen_seed,
+                "seedMismatch": seed_mismatch,
                 "size": f"{width}x{height}",
                 "orientation": self.orientation,
+                "scheduler": str(status.get("scheduler") or meta.get("scheduler", "")),
+                "steps": os.environ.get("LOCAL_SD_STEPS", "0") or meta.get("steps", ""),
+                "guidanceScale": os.environ.get("LOCAL_SD_GUIDANCE_SCALE", "0") or meta.get("guidanceScale", ""),
+                "negativePrompt": negative,
                 "startedAt": started,
                 "promptUsed": prompt,
                 "enhancedPrompt": enhanced,
@@ -279,7 +293,7 @@ class RecordedBackend:
     results: List[RenderResult]
     _i: int = 0
 
-    def render(self, prompt: str, out_path: Path) -> RenderResult:
+    def render(self, prompt: str, out_path: Path, index: int = 0) -> RenderResult:
         # Recorded results already carry their own path; we copy the file into
         # the harness output dir so outputs live in legacy/ and visual-director/.
         res = self.results[self._i]
@@ -329,10 +343,12 @@ def capture_prompts(title: str, chapter: str, phrases: List[str], novel: str,
 # A/B run
 # --------------------------------------------------------------------------
 def run_ab(scene_id: str, legacy_prompts: List[str], director_prompts: List[str],
-           backend: RenderBackend, out_root: Path) -> Dict[str, Any]:
+           backend: RenderBackend, out_root: Path,
+           seeds: tuple = (184732, 582941, 917364)) -> Dict[str, Any]:
     """Generate 6 images (3 legacy + 3 director) via backend. Returns a structured
-    result with per-image RenderResult data. Never reuses cached assets
-    (backend is responsible for cached=False)."""
+    result with per-image RenderResult data. The SAME seed is applied to the
+    corresponding legacy[i] and director[i] pair (sole variable = prompt). Never
+    reuses cached assets (backend is responsible for cached=False)."""
     out_root = Path(out_root)
     legacy_dir = out_root / "legacy"
     director_dir = out_root / "visual-director"
@@ -341,16 +357,22 @@ def run_ab(scene_id: str, legacy_prompts: List[str], director_prompts: List[str]
 
     legacy_results = []
     for i, p in enumerate(legacy_prompts):
-        r = backend.render(p, legacy_dir / f"legacy_{i}.png")
+        r = backend.render(p, legacy_dir / f"legacy_{i}.png", index=i)
         legacy_results.append(asdict(r))
     director_results = []
     for i, p in enumerate(director_prompts):
-        r = backend.render(p, director_dir / f"director_{i}.png")
+        r = backend.render(p, director_dir / f"director_{i}.png", index=i)
         director_results.append(asdict(r))
 
     return {
         "scene_id": scene_id,
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "seeds": list(seeds[:3]),
+        "seed_assignment": {
+            "legacy_0 / director_0 (establishing)": seeds[0] if len(seeds) > 0 else None,
+            "legacy_1 / director_1 (character)": seeds[1] if len(seeds) > 1 else None,
+            "legacy_2 / director_2 (action)": seeds[2] if len(seeds) > 2 else None,
+        },
         "legacy": legacy_results,
         "director": director_results,
     }
