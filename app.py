@@ -30601,6 +30601,41 @@ def make_chapter_image_prompts(title: str, chapter: str, phrases: list[str], nov
     beats = visual_sentences(chapter, 3, novel or title)
     keywords = ", ".join(chapter_keywords(title, chapter, 8))
     prompts: list[str] = []
+
+    # --- Visual Director (Slice 1, env-gated, DEFAULT OFF) ---
+    # When VISUAL_DIRECTOR_ENABLED is truthy, build a canon-locked
+    # VisualScenePackage and return its image_prompts instead of the generic
+    # legacy string. Every failure mode (missing Bible path, import error,
+    # empty/malformed package, insufficient prompt count, non-string items)
+    # fails SOFT to the legacy loop below, so production image generation is
+    # never broken by this path. AIVSB, retrieval, providers, metadata schema,
+    # and video consumers are untouched. Scope: integration into the existing
+    # prompt path only.
+    vd_enabled = os.environ.get("VISUAL_DIRECTOR_ENABLED", "").strip().lower() not in ("", "0", "false", "no", "off")
+    vd_prompts: list[str] | None = None
+    if vd_enabled:
+        try:
+            from visual_director import BIBLE_DIR, build_visual_scene_package
+            if not BIBLE_DIR.exists():
+                print(f"[visual-director] Bible path missing ({BIBLE_DIR}); falling back to legacy prompts")
+            else:
+                novel_id = (novel or title).strip().lower()
+                scene_text = " | ".join(p for p in phrases if p) or (chapter[:400] if chapter else title)
+                pkg = build_visual_scene_package(novel_id, "", scene_text)
+                out = pkg.get("image_prompts")
+                if isinstance(out, list) and len(out) >= 3 and all(isinstance(x, str) and x.strip() for x in out):
+                    vd_prompts = [str(x).strip() for x in out[:3]]
+                    for _w in (pkg.get("canon_warnings", []) or []):
+                        print(f"[visual-director] canon_warning: {_w}")
+                    print(f"[visual-director] enabled: returned {len(vd_prompts)} canon-locked prompts for {novel or title}")
+                else:
+                    print("[visual-director] rejected package (empty/malformed prompts); falling back to legacy")
+        except Exception as _exc:  # defensive: never break legacy image production
+            print(f"[visual-director] failed: unexpected error ({_exc}); falling back to legacy")
+            vd_prompts = None
+    if vd_prompts is not None:
+        return vd_prompts
+
     # Phase C (flag-gated): optionally compose each chapter still through the
     # AIVSB reasoning layer. When AIVSB_REASONING_ENABLED is off (default) or
     # the reasoning layer is unavailable/rejects the request, compose_aivsb_scene_prompt
