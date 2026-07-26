@@ -717,9 +717,10 @@ def _assemble_image_prompts(
         env_bits = [str(location.get("name", ""))]
         if location.get("architecture"):
             arch = str(location["architecture"]).replace("_", " ")
-            # Strip banner references from architecture: banners are emitted as
-            # a dedicated clean phrase under Setting (user finding #5), and the
-            # location's 'jade hall, red banners' would otherwise leak pseudo-text.
+            # Strip banner references from architecture: banners are NOT emitted
+            # positively (Slice A.3: a positive banner cue gives SDXL a strong
+            # surface to invent pseudo-calligraphy; the global negative already
+            # discourages text). Keep only the structural architecture.
             arch = ", ".join(b for b in arch.split(",") if "banner" not in b.lower())
             if "n/a" not in arch and "none" not in arch.lower() and arch.strip():
                 env_bits.append(arch)
@@ -729,25 +730,26 @@ def _assemble_image_prompts(
     prompts: List[str] = []
     genre = NOVEL_GENRE_LABEL.get(str(novel).lower(), "fantasy illustration")
     for shot in shots:
-        # Banners live under Setting as PLAIN CLOTH with no invented writing
-        # (user finding #5: positive banner cues beat the global text-negative).
-        # The raw banner tokens (from character placement / location) are only
-        # used to DECIDE banners are present; we emit one clean phrase, never the
-        # raw tokens, to avoid leaking pseudo-text like 'red banners nearby'.
-        setting_bits = [env_line] if env_line else []
-        if shot.get("banner_line", ""):
-            setting_bits.append("plain weathered red cloth banners, no writing, no symbols, no calligraphy")
-        setting_line = ", ".join(b for b in setting_bits if b)
+        # Slice A.3 field ORDER (user-directed, evidence from Run 3):
+        #   Objective -> Action -> Setting -> Environment State -> Character
+        #   -> Camera -> Lighting -> Power -> Emotion -> Palette -> Consistency
+        # Action sits IMMEDIATELY after the objective so SDXL cannot ignore the
+        # event (Run 3 shot 3 produced a standing hero instead of the kneel/
+        # formation beat). Setting + Environment State outrank Character so the
+        # scene anchor beats identity drift (Run 3 shots 0/2 drifted outdoors).
+        # Banners are deliberately absent from the positive prompt.
         parts = [f"{genre}, vertical 9:16."]
         if shot.get("narrative_objective"):
             parts.append(f"Narrative Objective: {shot['narrative_objective']}.")
-        parts.append(f"Character Identity: {identity_block}.")
         if shot.get("action"):
             parts.append(f"Action: {shot['action']}.")
+        setting_bits = [env_line] if env_line else []
+        setting_line = ", ".join(b for b in setting_bits if b)
         if setting_line:
             parts.append(f"Setting: {setting_line}.")
         if shot.get("environment_state"):
             parts.append(f"Environment State: {shot['environment_state']}.")
+        parts.append(f"Character Identity: {identity_block}.")
         parts.append(f"Camera: {shot.get('camera', 'wide cinematic')}.")
         if shot.get("lighting"):
             parts.append(f"Lighting: {shot['lighting']}.")
