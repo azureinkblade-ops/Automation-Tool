@@ -53,6 +53,51 @@ NOVEL_GENRE_LABEL = {
     "ha": "system fantasy illustration",
 }
 
+# Reusable narrative-objective / camera / power vocabulary (Slice A). These are
+# novel-agnostic visual primitives the Director composes per shot. Kept short
+# and precise on purpose: the A/B showed structured > verbose.
+SHOT_TAXONOMY = [
+    "establishing", "environment", "travel", "character",
+    "dialogue", "combat", "artifact", "reaction", "climax",
+]
+CAMERA_VOCAB = [
+    "wide low-angle environmental shot", "over-the-shoulder tracking shot",
+    "low-angle hero shot", "top-down reveal", "extreme close-up",
+    "wide environmental reveal",
+]
+POWER_VOCAB = [
+    "faint qi threads", "dormant formation lines", "jade mist",
+    "sword aura", "pressure distortion", "spiritual motes",
+]
+
+# Canonical weapon normalization. The Bible YAML (frozen AIVSB repo) lists
+# "silver_edged_weapon" under BOTH clothing and weapons, which the Director
+# previously emitted twice ("silver edged weapon, silver edged"). We normalize
+# to a single canonical bladed-weapon phrase here WITHOUT editing the frozen
+# Bible data. The duplicate in liang.yaml is flagged separately for Bible
+# hygiene (a different repo/authorization).
+_WEAPON_CANON = {
+    "silver edged weapon": "silver-edged sword",
+    "silver edged": "silver-edged sword",
+    "silver_edged_weapon": "silver-edged sword",
+    "silver edged sword": "silver-edged sword",
+}
+
+# Abstract age literals the Bible uses that are not renderable; map to a
+# concrete descriptor the generator can act on.
+_AGE_CANON = {
+    "reborn_adult": "young adult",
+    "young_adult": "young adult",
+    "young adult": "young adult",
+}
+
+# Derive character gender from scene-text pronouns (canon YAML has no gender
+# field). Used to lock identity and prevent the A/B-observed gender flip.
+_GENDER_PRONOUNS = {
+    "he": "male", "him": "male", "his": "male", "himself": "male",
+    "she": "female", "her": "female", "hers": "female", "herself": "female",
+}
+
 # Visual Creative Director skill: negative constraints that protect canon.
 # Mirrors the skill's "AI Image Risks" + per-character forbidden changes.
 CANON_NEGATIVE_CONSTRAINTS = [
@@ -296,27 +341,87 @@ def _appearance_lock(profile: Dict[str, Any], warnings: Optional[List[str]] = No
     return lock
 
 
+def _canon_weapon(token: str) -> str:
+    """Normalize a weapon descriptor to a single canonical bladed-weapon phrase.
+
+    Handles the frozen Bible YAML's malformed entries:
+      - 'silver_edged_weapon' (clothing) and 'silver_edged' (weapons) ->
+        'silver-edged sword' (was emitting the duplicate
+        'silver edged weapon, silver edged')
+      - 'Soulblade_at_side (NOTE: ...)' and 'Soulblade (Eclipse Soulblade
+        blueprint)' -> 'Soulblade' (was leaking parenthetical noise + dup)
+    We normalize WITHOUT editing the frozen Bible data; the YAML duplication is
+    flagged separately for Bible hygiene.
+    """
+    t = _clean_canon_token(token).strip().lower()
+    # exact known mappings first
+    if t in _WEAPON_CANON:
+        return _WEAPON_CANON[t]
+    # generic: strip parenthetical leftovers, keep the base weapon noun + a
+    # short leading modifier, so 'soulblade at side' and
+    # 'soulblade eclipse soulblade blueprint' both collapse to 'Soulblade'.
+    words = [w for w in re.split(r"[\s,]+", t) if w]
+    if not words:
+        return token
+    # find the first word that looks like a weapon noun
+    _WEAPON_NOUNS = ("soulblade", "sword", "jian", "blade", "bow", "staff",
+                     "spear", "fan", "horn", "axe", "saber", "sabre")
+    base = None
+    for w in words:
+        if w in _WEAPON_NOUNS:
+            base = w
+            break
+    if base is None:
+        # not a recognized weapon noun; keep first two words as-is
+        return " ".join(words[:2])
+    # 'silver edged' style -> silver-edged sword
+    if "silver" in words and base in ("edged",):
+        return "silver-edged sword"
+    if base == "soulblade":
+        return "Soulblade"
+    # default: a short '<modifier> <noun>' form
+    idx = words.index(base)
+    modifier = words[idx - 1] if idx > 0 and words[idx - 1] not in _WEAPON_NOUNS else ""
+    return (modifier + " " + base).strip() if modifier else base
+
+
+def _derive_gender(scene_text: str) -> str:
+    """Infer character gender from scene-text pronouns (canon YAML has none).
+
+    Returns 'male' / 'female' / '' (unknown). Used to lock identity and prevent
+    the A/B-observed gender flip within a sequence.
+    """
+    words = re.findall(r"[a-z]+", str(scene_text or "").lower())
+    for w in words:
+        if w in _GENDER_PRONOUNS:
+            return _GENDER_PRONOUNS[w]
+    return ""
+
+
 def _character_lock_tokens(
     lock: Dict[str, Any],
     name: str = "",
     warnings: Optional[List[str]] = None,
+    scene_text: str = "",
 ) -> List[str]:
     """Human-readable appearance tokens for prompt assembly.
 
     Editorial noise (parenthetical notes, per-chapter provenance, negation
-    annotations like "carries NO weapon at Ch140") is stripped AND recorded in
-    `warnings` so the filter is explicit, not silent. Only positive visual
-    descriptors survive.
+    annotations like 'carries NO weapon at Ch140') is stripped AND recorded in
+    warnings so the filter is explicit, not silent. Only positive visual
+    descriptors survive. Weapon descriptors are canonicalized + deduped.
     """
     _NON_VISUAL = (
         "no weapon", "note", "accept", "dropped", "sdxl", "staff",
         "ch140", "chapter", "missing", "unknown", "carries no", "unarmed",
+        "none physical", "(qi based)", "n/a", "none",
     )
 
     def keep(token: str) -> bool:
         t = token.lower()
         if not t:
             return False
+        # drop tokens that merely carry non-visual / chapter-exception noise
         if any(bad in t for bad in _NON_VISUAL):
             if warnings is not None:
                 warnings.append(
@@ -331,18 +436,27 @@ def _character_lock_tokens(
         raw.append(f"{_clean_canon_token(lock['hair'])} hair")
     if lock.get("eyes"):
         raw.append(f"{_clean_canon_token(lock['eyes'])} eyes")
-    # age literals like "reborn_adult"/"young_adult" are abstract; convey the
+    # age literals like reborn_adult / young_adult are abstract; convey the
     # concrete body_type instead so the generator gets a usable signal.
     if lock.get("body_type") and "unknown" not in lock["body_type"]:
         raw.append(_clean_canon_token(lock["body_type"]))
+    if lock.get("age") and "unknown" not in lock["age"]:
+        canon_age = _AGE_CANON.get(lock["age"].strip().lower())
+        if canon_age:
+            raw.append(canon_age)
     for c in lock.get("clothing", []):
         cleaned = _clean_canon_token(c)
+        # clothing may itself name a weapon (e.g. 'silver_edged_weapon'); route
+        # it through the same canonicalizer so it dedups with the weapons list.
+        if "weapon" in cleaned.lower() or "sword" in cleaned.lower() or "blade" in cleaned.lower():
+            cleaned = _canon_weapon(c)
         if cleaned:
             raw.append(cleaned)
     for w in lock.get("weapons", []):
         cleaned = _clean_canon_token(w)
         if cleaned:
-            raw.append(cleaned)
+            # canonicalize weapons (collapses the Bible duplicated silver token)
+            raw.append(_canon_weapon(w))
     # dedupe (case-insensitive) while preserving order
     seen: set[str] = set()
     tokens: List[str] = []
@@ -354,38 +468,99 @@ def _character_lock_tokens(
     return tokens
 
 
-def _build_shot_plan(novel: str, characters: List[Dict[str, Any]], location: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _build_shot_plan(
+    novel: str,
+    characters: List[Dict[str, Any]],
+    location: Optional[Dict[str, Any]],
+    shots_text: Optional[List[str]] = None,
+    scene_text: str = "",
+) -> List[Dict[str, Any]]:
     """Three-shot cinematic plan per the user's brief + Visual Creative Director
-    priority (character identity > emotion > story moment > composition > style)."""
+    priority (character identity > emotion > story moment > composition > style).
+
+    Slice A: each shot now carries its OWN narrative objective (not the shared
+    scene_text repeated 3x), a pose/action, explicit camera direction, emotion,
+    and an ENVIRONMENT STATE block derived from the matched location's
+    damage_state / weather / ambient_particles (so SDXL images the *condition*
+    of the place, not just its name). This directly attacks the A/B findings:
+    scene repetition, static descriptors, and 'beautiful but wrong location'.
+    """
     primary = characters[0] if characters else {}
     primary_name = primary.get("name") or "the protagonist"
     env_name = location.get("name") if location else f"the {novel.upper()} setting"
     lighting = location.get("lighting") if location else primary.get("lighting_preference") or ""
     magic = primary.get("magic_style") or location.get("magic_effects") or ""
 
-    shots = [
-        {
-            "type": "establishing",
-            "camera": "wide cinematic",
-            "purpose": "where are we / what is happening",
-            "environment": env_name,
-            "lighting": str(lighting).replace("_", " "),
-        },
-        {
-            "type": "character",
-            "camera": "close portrait",
-            "purpose": "who matters / what emotion",
-            "subject": primary_name,
-            "emotion": "controlled resolve",
-            "lighting": str(primary.get("lighting_preference") or "").replace("_", " ") or (str(location.get("lighting") or "") if location else ""),
-        },
-        {
-            "type": "action",
-            "camera": "low angle",
-            "purpose": "why should the viewer care",
-            "effect": str(magic).replace("_", " "),
-        },
+    gender = _derive_gender(scene_text) if scene_text else (
+        _derive_gender(primary.get("notes", "")) if isinstance(primary, dict) else ""
+    )
+
+    # Environment STATE: location tells SDXL WHERE; state tells SDXL WHAT
+    # HAPPENED THERE. Build from the matched location's damage/weather/particle
+    # fields so a 'ruined' site renders ruined, not pristine.
+    state_bits: List[str] = []
+    if location:
+        def _skip(v: str) -> bool:
+            vl = v.lower()
+            return vl in ("intact", "n/a", "none", "") or "n/a" in vl or "none" in vl
+        dmg = str(location.get("damage_state", "")).replace("_", " ").strip()
+        if dmg and not _skip(dmg):
+            state_bits.append(dmg)
+        weather = str(location.get("weather", "")).replace("_", " ").strip()
+        if weather and not _skip(weather):
+            state_bits.append(weather)
+        for key in ("fog_density", "ambient_particles"):
+            v = str(location.get(key, "")).replace("_", " ").strip()
+            if v and not _skip(v):
+                state_bits.append(v)
+    env_state = ", ".join(dict.fromkeys(state_bits)) if state_bits else ""
+
+    # Per-image narrative objectives. If caller passes shots_text (the exact
+    # per-image beats from the app), use them. Otherwise narrate a generic
+    # arrival / ascent / climax arc so the three frames progress. The fallback
+    # is novel-agnostic (uses the matched character + location) so non-HP
+    # novels do not get HP-specific "sect ruins / jade altar" wording.
+    if shots_text and len(shots_text) >= 3:
+        objectives = [s.strip() for s in shots_text[:3]]
+    else:
+        place = env_name or f"the {novel.upper()} setting"
+        objectives = [
+            f"Establish {primary_name} arriving at {place}",
+            f"Show {primary_name} advancing deeper into {place}",
+            f"Reveal the hidden power as the moment turns",
+        ]
+
+    # Pose / action per shot (SDXL responds strongly to explicit pose).
+    poses = [
+        "standing at the entrance, looking upward at ancient formations",
+        "climbing broken stone stairs, one hand resting near the weapon",
+        "kneeling before the altar as silver qi flows through dormant lines",
     ]
+    # Camera language (expanded taxonomy from the user's brief).
+    cameras = [
+        "wide low-angle environmental shot",
+        "over-the-shoulder tracking shot",
+        "low-angle hero shot",
+    ]
+    emotions = ["awe and uncertainty", "determination", "discovery"]
+    shot_types = ["establishing", "travel", "climax"]
+
+    shots = []
+    for i in range(3):
+        shots.append({
+            "type": shot_types[i],
+            "camera": cameras[i],
+            "purpose": objectives[i],
+            "narrative_objective": objectives[i],
+            "subject": primary_name,
+            "gender": gender,
+            "action": poses[i],
+            "emotion": emotions[i],
+            "environment": env_name,
+            "environment_state": env_state,
+            "lighting": str(lighting).replace("_", " "),
+            "effect": str(magic).replace("_", " "),
+        })
     return shots
 
 
@@ -410,11 +585,46 @@ def _assemble_image_prompts(
     warnings: Optional[List[str]] = None,
 ) -> List[str]:
     """One Bible-enriched prompt string per shot. The existing generator consumes
-    this list exactly like the legacy `image_prompts` list."""
+    this list exactly like the legacy `image_prompts` list.
+
+    Slice A structure (precise, not verbose; per the user's brief):
+      <genre>, vertical 9:16.
+      Narrative Objective: <per-image objective>
+      Character Identity: <permanent block: name, gender, age, build, hair,
+                           face, clothing, weapon, aura>
+      Action: <pose/action>
+      Setting: <location name>
+      Environment State: <condition of the place>
+      Camera: <explicit direction>
+      Lighting: <...>
+      Power: <magic effect>
+      Emotion: <...>
+      Consistent character design, canon-accurate.
+    """
     char_tokens = []
     for c in characters:
-        char_tokens.extend(_character_lock_tokens(_appearance_lock(c, warnings), name=c.get("name", ""), warnings=warnings))
+        char_tokens.extend(_character_lock_tokens(
+            _appearance_lock(c, warnings), name=c.get("name", ""), warnings=warnings,
+            scene_text=scene_text,
+        ))
     char_line = ", ".join(dict.fromkeys(char_tokens)) if char_tokens else "the protagonist"
+
+    # Permanent character-identity block (appears in EVERY image so SDXL keeps
+    # the same person across the sequence). Built from canon + derived gender.
+    primary = characters[0] if characters else {}
+    gender = shots[0].get("gender", "") if shots else ""
+    age_canon = _AGE_CANON.get(str(primary.get("age", "")).strip().lower(), "young adult") if isinstance(primary, dict) else "young adult"
+    body = _clean_canon_token(primary.get("body_type") or "") if isinstance(primary, dict) else ""
+    identity_bits = [f"Name: {primary.get('name', 'the protagonist')}"]
+    if gender:
+        identity_bits.append(f"Gender: {gender}")
+    identity_bits.append(f"Age: {age_canon}")
+    if body:
+        identity_bits.append(f"Build: {body}")
+    # hair / clothing / weapon from the locked tokens
+    identity_bits.append(f"Appearance: {char_line}")
+    identity_block = "; ".join(identity_bits)
+
     env_line = ""
     if location:
         env_bits = [str(location.get("name", ""))]
@@ -422,26 +632,29 @@ def _assemble_image_prompts(
             arch = str(location["architecture"]).replace("_", " ")
             if "n/a" not in arch and "none" not in arch.lower():
                 env_bits.append(arch)
-        if location.get("weather"):
-            weather = str(location["weather"]).replace("_", " ")
-            if "n/a" not in weather and "none" not in weather.lower():
-                env_bits.append(weather)
         env_line = ", ".join(b for b in env_bits if b)
+
     palette_hint = _palette_phrase(palette)
     prompts: List[str] = []
     genre = NOVEL_GENRE_LABEL.get(str(novel).lower(), "fantasy illustration")
     for shot in shots:
         parts = [f"{genre}, vertical 9:16."]
-        parts.append(f"Scene: {scene_text}.")
-        if char_line:
-            parts.append(f"Subject: {char_line}.")
+        if shot.get("narrative_objective"):
+            parts.append(f"Narrative Objective: {shot['narrative_objective']}.")
+        parts.append(f"Character Identity: {identity_block}.")
+        if shot.get("action"):
+            parts.append(f"Action: {shot['action']}.")
         if env_line:
             parts.append(f"Setting: {env_line}.")
-        parts.append(f"Shot: {shot['type']} ({shot['camera']}).")
+        if shot.get("environment_state"):
+            parts.append(f"Environment State: {shot['environment_state']}.")
+        parts.append(f"Camera: {shot.get('camera', 'wide cinematic')}.")
         if shot.get("lighting"):
             parts.append(f"Lighting: {shot['lighting']}.")
         if shot.get("effect"):
             parts.append(f"Power: {shot['effect']}.")
+        if shot.get("emotion"):
+            parts.append(f"Emotion: {shot['emotion']}.")
         if palette_hint:
             parts.append(f"Palette: {palette_hint}.")
         parts.append("Consistent character design, canon-accurate.")
@@ -453,10 +666,13 @@ def build_visual_scene_package(
     novel: str,
     chapter: str,
     scene_text: str,
+    shots_text: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Slice 1 entry point.
 
     Input:  novel abbreviation, chapter label, free-text scene description.
+            Optional shots_text: the EXACT per-image narrative beats (so each
+            shot gets its own objective instead of the whole scene repeated).
     Output: VisualScenePackage with character_locks, shot_plan,
             negative_prompt, and image_prompts (ready for metadata.json).
     """
@@ -470,7 +686,7 @@ def build_visual_scene_package(
     location = match_location(scene_text, locations, novel)
 
     character_locks = [_appearance_lock(c, warnings) for c in chars]
-    shots = _build_shot_plan(novel, chars, location)
+    shots = _build_shot_plan(novel, chars, location, shots_text=shots_text, scene_text=scene_text)
     negative = _negative_prompt(chars[0]) if chars else list(CANON_NEGATIVE_CONSTRAINTS)
     image_prompts = _assemble_image_prompts(
         novel, chapter, scene_text, chars, shots, location, palette, warnings=warnings
@@ -480,6 +696,7 @@ def build_visual_scene_package(
         "novel": novel,
         "chapter": chapter,
         "scene_summary": scene_text,
+        "shots_text": shots_text or [],
         "characters": chars,
         "character_locks": character_locks,
         "environment": location or {"novel": novel, "palette_ref": palette.get("color_grading", "")},

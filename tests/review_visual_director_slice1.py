@@ -126,26 +126,42 @@ def judge_scene(result: dict) -> dict:
         for l in locks
     )
 
-    # 2. Shot usefulness: 3 distinct roles (establishing/character/action).
+    # 2. Shot usefulness: 3 distinct roles with distinct narrative objectives
+    #    (establishing / travel / climax) and distinct cameras.
     roles = [s["type"] for s in pkg["shots"]]
-    shot_useful = roles == ["establishing", "character", "action"]
+    objectives = [s.get("narrative_objective", "") for s in pkg["shots"]]
+    cameras = [s.get("camera", "") for s in pkg["shots"]]
+    shot_useful = (
+        roles == ["establishing", "travel", "climax"]
+        and len(set(objectives)) == 3
+        and len(set(cameras)) == 3
+    )
 
-    # 3. Visual hierarchy: each prompt names a clear subject + setting + shot.
+    # 3. Visual hierarchy: each prompt names a clear character-identity block,
+    #    a camera direction, and a setting/environment-state.
     hierarchy_ok = all(
-        ("Subject:" in p) and ("Shot:" in p) and ("Setting:" in p or "Scene:" in p)
+        ("Character Identity:" in p) and ("Camera:" in p)
+        and ("Setting:" in p or "Environment State:" in p)
         for p in vd
     )
 
-    # 4. Mobile suitability: vertical 9:16 declared; prompts short enough to be
-    #    art-directed (no wall of text). Check vertical + length.
+    # 4. Mobile suitability: vertical 9:16 declared; prompts art-directed and
+    #    not a wall of text. The Slice A structure adds a few precise fields
+    #    (Character Identity / Action / Environment State / Camera / Emotion),
+    #    so a realistic ceiling is ~800 chars; the old <600 was calibrated for
+    #    the 3-field Slice 1 prompt and is no longer appropriate.
     mobile_ok = all(
-        ("9:16" in p or "vertical" in p.lower()) and len(p) < 600 for p in vd
+        ("9:16" in p or "vertical" in p.lower()) and len(p) < 800 for p in vd
     )
 
     # 4b. No editorial/YAML noise: scan the ACTUAL prompts (not the diagnostics
     #     container). A prompt fails if it carries parenthetical notes, 'n/a',
-    #     'None', 'unknown', or malformed-canon fragments.
-    noise_markers = ("note", "n/a", "none (", "(interior)", "unknown", " at ch")
+    #     'None', 'unknown', malformed-canon fragments, or a duplicated weapon
+    #     token ("silver edged weapon, silver-edged sword").
+    noise_markers = (
+        "note", "n/a", "none (", "(interior)", "unknown", " at ch",
+        "none physical", "(qi based)", "silver edged weapon, silver-edged sword",
+    )
     no_noise = not any(any(m in p.lower() for m in noise_markers) for p in vd)
 
     # 5. Coherent sequence: the 3 prompts differ in camera/purpose (not 3 copies).

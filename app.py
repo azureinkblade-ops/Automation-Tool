@@ -30619,8 +30619,12 @@ def make_chapter_image_prompts(title: str, chapter: str, phrases: list[str], nov
                 print(f"[visual-director] Bible path missing ({BIBLE_DIR}); falling back to legacy prompts")
             else:
                 novel_id = (novel or title).strip().lower()
+                # Slice A: pass the per-image beats as shots_text so each
+                # generated prompt gets its OWN narrative objective instead of
+                # the whole scene_text repeated 3x (the A/B repetition defect).
                 scene_text = " | ".join(p for p in phrases if p) or (chapter[:400] if chapter else title)
-                pkg = build_visual_scene_package(novel_id, "", scene_text)
+                shots_text = [p for p in phrases if p] or [scene_text]
+                pkg = build_visual_scene_package(novel_id, "", scene_text, shots_text=shots_text)
                 out = pkg.get("image_prompts")
                 if isinstance(out, list) and len(out) >= 3 and all(isinstance(x, str) and x.strip() for x in out):
                     vd_prompts = [str(x).strip() for x in out[:3]]

@@ -75,13 +75,19 @@ def test_3_shot_quality():
     shots = pkg["shots"]
     assert len(shots) == 3, f"expected 3 shots, got {len(shots)}"
     types = [s["type"] for s in shots]
-    assert types == ["establishing", "character", "action"], f"unexpected shot order: {types}"
+    assert types == ["establishing", "travel", "climax"], f"unexpected shot order: {types}"
     for shot in shots:
         assert shot.get("camera"), "shot missing camera direction"
-        assert shot.get("purpose"), "shot missing story purpose"
+        assert shot.get("narrative_objective"), "shot missing narrative objective"
+        assert shot.get("action"), "shot missing pose/action"
+        assert shot.get("emotion"), "shot missing emotion"
+        assert "environment_state" in shot, "shot missing environment state"
     assert len(pkg["image_prompts"]) == 3, "image_prompts count mismatch"
     # shots should differ from each other (not 3 copies)
     assert len(set(pkg["image_prompts"])) == 3, "shots are duplicates"
+    # every prompt must carry the permanent character-identity block
+    for prompt in pkg["image_prompts"]:
+        assert "Character Identity:" in prompt, "prompt missing permanent identity block"
     print("PASS Test 3: shot quality")
 
 
