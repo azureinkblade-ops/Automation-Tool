@@ -1,0 +1,574 @@
+{
+  "scene_id": "hp_liang_review",
+  "engine": "local-sd",
+  "generated_at": "2026-07-26T13:33:06.610725+00:00",
+  "control": "single variable = prompt; same engine/model/LoRA/size/quality/seed for each paired set",
+  "prompts": {
+    "legacy": [
+      "Vertical 9:16 cinematic fantasy web novel cover art, no text or typography. Story context: hp, The Hundredfold Path. Teaser text to visually match: Liang enters the ruined sect hall. Scene must clearly depict the teaser with concrete visible elements: Liang enters the ruined sect hall. Visual motifs: hundredfold, path, text. Dramatic lighting, detailed environment, strong focal subject, social media promo composition. Avoid generic landscapes unless the teaser explicitly calls for a landscape.",
+      "Vertical 9:16 cinematic fantasy web novel cover art, no text or typography. Story context: hp, The Hundredfold Path. Teaser text to visually match: He climbs the broken stair toward the jade altar. Scene must clearly depict the teaser with concrete visible elements: He climbs the broken stair toward the jade altar. Visual motifs: hundredfold, path, text. Dramatic lighting, detailed environment, strong focal subject, social media promo composition. Avoid generic landscapes unless the teaser explicitly calls for a landscape.",
+      "Vertical 9:16 cinematic fantasy web novel cover art, no text or typography. Story context: hp, The Hundredfold Path. Teaser text to visually match: Silver light wakes the dormant formation. Scene must clearly depict the teaser with concrete visible elements: Silver light wakes the dormant formation. Visual motifs: hundredfold, path, text. Dramatic lighting, detailed environment, strong focal subject, social media promo composition. Avoid generic landscapes unless the teaser explicitly calls for a landscape."
+    ],
+    "director": [
+      "xianxia cultivation fantasy illustration, vertical 9:16. Narrative Objective: Liang enters the ruined sect hall. Character Identity: Name: Liang; Gender: male; Age: young adult; Appearance: dark topknot hair, calm eyes, cultivator lean, jade sect robes, red banners nearby, silver-edged sword. Action: standing at the entrance, looking upward at ancient formations. Setting: Mountain sect courtyard, jade hall, red banners. Environment State: ancient, ordered, mist, mist layers, falling leaves, qi motes. Camera: wide low-angle environmental shot. Lighting: golden hour, frost rim. Power: ember at core silver glow frost mountain qi. Emotion: awe and uncertainty. Consistent character design, canon-accurate.",
+      "xianxia cultivation fantasy illustration, vertical 9:16. Narrative Objective: He climbs the broken stair toward the jade altar. Character Identity: Name: Liang; Gender: male; Age: young adult; Appearance: dark topknot hair, calm eyes, cultivator lean, jade sect robes, red banners nearby, silver-edged sword. Action: climbing broken stone stairs, one hand resting near the weapon. Setting: Mountain sect courtyard, jade hall, red banners. Environment State: ancient, ordered, mist, mist layers, falling leaves, qi motes. Camera: over-the-shoulder tracking shot. Lighting: golden hour, frost rim. Power: ember at core silver glow frost mountain qi. Emotion: determination. Consistent character design, canon-accurate.",
+      "xianxia cultivation fantasy illustration, vertical 9:16. Narrative Objective: Silver light wakes the dormant formation. Character Identity: Name: Liang; Gender: male; Age: young adult; Appearance: dark topknot hair, calm eyes, cultivator lean, jade sect robes, red banners nearby, silver-edged sword. Action: kneeling before the altar as silver qi flows through dormant lines. Setting: Mountain sect courtyard, jade hall, red banners. Environment State: ancient, ordered, mist, mist layers, falling leaves, qi motes. Camera: low-angle hero shot. Lighting: golden hour, frost rim. Power: ember at core silver glow frost mountain qi. Emotion: discovery. Consistent character design, canon-accurate."
+    ]
+  },
+  "ab": {
+    "scene_id": "hp_liang_review",
+    "generated_at": "2026-07-26T13:33:06.610725+00:00",
+    "seeds": [
+      184732,
+      582941,
+      917364
+    ],
+    "seed_assignment": {
+      "legacy_0 / director_0 (establishing)": 184732,
+      "legacy_1 / director_1 (character)": 582941,
+      "legacy_2 / director_2 (action)": 917364
+    },
+    "legacy": [
+      {
+        "provider": "local_stable_diffusion",
+        "model": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+        "path": "C:\\Users\\David\\Documents\\Automation tool\\tests\\render_ab\\output\\legacy\\legacy_0.png",
+        "ok": true,
+        "error": "",
+        "cached": false,
+        "text_in_image": false,
+        "duplicate_of": "",
+        "prompt": "Vertical 9:16 cinematic fantasy web novel cover art, no text or typography. Story context: hp, The Hundredfold Path. Teaser text to visually match: Liang enters the ruined sect hall. Scene must clearly depict the teaser with concrete visible elements: Liang enters the ruined sect hall. Visual motifs: hundredfold, path, text. Dramatic lighting, detailed environment, strong focal subject, social media promo composition. Avoid generic landscapes unless the teaser explicitly calls for a landscape.",
+        "trace_meta": {
+          "provider": "local_stable_diffusion",
+          "model": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+          "refinerModel": "",
+          "loraTrack": "main-posts",
+          "loraPath": "C:\\Users\\David\\Documents\\Automation tool\\loras\\main-posts\\pytorch_lora_weights.safetensors",
+          "loraScale": "0.75",
+          "requestedSeed": 184732,
+          "effectiveSeed": 184732,
+          "seedMismatch": false,
+          "size": "768x1344",
+          "orientation": "vertical",
+          "scheduler": "dpm",
+          "steps": "0",
+          "guidanceScale": "0",
+          "negativePrompt": "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
+          "startedAt": "2026-07-26T13:30:42.865537+00:00",
+          "promptUsed": "Vertical 9:16 cinematic fantasy web novel cover art, no text or typography. Story context: hp, The Hundredfold Path. Teaser text to visually match: Liang enters the ruined sect hall. Scene must clearly depict the teaser with concrete visible elements: Liang enters the ruined sect hall. Visual motifs: hundredfold, path, text. Dramatic lighting, detailed environment, strong focal subject, social media promo composition. Avoid generic landscapes unless the teaser explicitly calls for a landscape.",
+          "enhancedPrompt": "Vertical 9:16 cinematic fantasy web novel cover art, no text or typography. Story context: hp, The Hundredfold Path. Teaser text to visually match: Liang enters the ruined sect hall. Scene must clearly depict the teaser with concrete visible elements: Liang enters the ruined sect hall. Visual motifs: hundredfold, path, text. Dramatic lighting, detailed environment, strong focal subject, social media promo composition. Avoid generic landscapes unless the teaser explicitly calls for a landscape.. azink_main, Azure Inkblade chapter promo art, strong web novel cover composition, high-impact social media framing, vertical 9:16 web novel promotional illustration, modern manhwa and anime-influenced fantasy art, clear focal character or story object, dramatic lighting, readable composition, strong foreground and background separation, chapter-specific scene, not a generic landscape, high detail, polished digital painting",
+          "generatorMetadata": {
+            "provider": "local_stable_diffusion",
+            "model": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+            "refinerModel": "",
+            "refinerUsed": false,
+            "qualityMode": "premium",
+            "scheduler": "dpm",
+            "device": "cuda",
+            "xformers": false,
+            "width": 768,
+            "height": 1344,
+            "steps": 40,
+            "guidanceScale": 7.0,
+            "inputImage": "",
+            "strength": 0,
+            "seed": 184732,
+            "loraPath": "C:\\Users\\David\\Documents\\Automation tool\\loras\\main-posts\\pytorch_lora_weights.safetensors",
+            "loraLoaded": true,
+            "loraScale": 0.75,
+            "loraError": "",
+            "seconds": 17.56,
+            "prompt": "Vertical 9:16 cinematic fantasy web novel cover art, no text or typography. Story context: hp, The Hundredfold Path. Teaser text to visually match: Liang enters the ruined sect hall. Scene must clearly depict the teaser with concrete visible elements: Liang enters the ruined sect hall. Visual motifs: hundredfold, path, text. Dramatic lighting, detailed environment, strong focal subject, social media promo composition. Avoid generic landscapes unless the teaser explicitly calls for a landscape.. azink_main, Azure Inkblade chapter promo art, strong web novel cover composition, high-impact social media framing, vertical 9:16 web novel promotional illustration, modern manhwa and anime-influenced fantasy art, clear focal character or story object, dramatic lighting, readable composition, strong foreground and background separation, chapter-specific scene, not a generic landscape, high detail, polished digital painting",
+            "negativePrompt": "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
+            "output": "C:\\Users\\David\\Documents\\Automation tool\\tests\\render_ab\\output\\legacy\\legacy_0.png"
+          }
+        }
+      },
+      {
+        "provider": "local_stable_diffusion",
+        "model": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+        "path": "C:\\Users\\David\\Documents\\Automation tool\\tests\\render_ab\\output\\legacy\\legacy_1.png",
+        "ok": true,
+        "error": "",
+        "cached": false,
+        "text_in_image": false,
+        "duplicate_of": "",
+        "prompt": "Vertical 9:16 cinematic fantasy web novel cover art, no text or typography. Story context: hp, The Hundredfold Path. Teaser text to visually match: He climbs the broken stair toward the jade altar. Scene must clearly depict the teaser with concrete visible elements: He climbs the broken stair toward the jade altar. Visual motifs: hundredfold, path, text. Dramatic lighting, detailed environment, strong focal subject, social media promo composition. Avoid generic landscapes unless the teaser explicitly calls for a landscape.",
+        "trace_meta": {
+          "provider": "local_stable_diffusion",
+          "model": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+          "refinerModel": "",
+          "loraTrack": "main-posts",
+          "loraPath": "C:\\Users\\David\\Documents\\Automation tool\\loras\\main-posts\\pytorch_lora_weights.safetensors",
+          "loraScale": "0.75",
+          "requestedSeed": 582941,
+          "effectiveSeed": 582941,
+          "seedMismatch": false,
+          "size": "768x1344",
+          "orientation": "vertical",
+          "scheduler": "dpm",
+          "steps": "0",
+          "guidanceScale": "0",
+          "negativePrompt": "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
+          "startedAt": "2026-07-26T13:31:22.960545+00:00",
+          "promptUsed": "Vertical 9:16 cinematic fantasy web novel cover art, no text or typography. Story context: hp, The Hundredfold Path. Teaser text to visually match: He climbs the broken stair toward the jade altar. Scene must clearly depict the teaser with concrete visible elements: He climbs the broken stair toward the jade altar. Visual motifs: hundredfold, path, text. Dramatic lighting, detailed environment, strong focal subject, social media promo composition. Avoid generic landscapes unless the teaser explicitly calls for a landscape.",
+          "enhancedPrompt": "Vertical 9:16 cinematic fantasy web novel cover art, no text or typography. Story context: hp, The Hundredfold Path. Teaser text to visually match: He climbs the broken stair toward the jade altar. Scene must clearly depict the teaser with concrete visible elements: He climbs the broken stair toward the jade altar. Visual motifs: hundredfold, path, text. Dramatic lighting, detailed environment, strong focal subject, social media promo composition. Avoid generic landscapes unless the teaser explicitly calls for a landscape.. azink_main, Azure Inkblade chapter promo art, strong web novel cover composition, high-impact social media framing, vertical 9:16 web novel promotional illustration, modern manhwa and anime-influenced fantasy art, clear focal character or story object, dramatic lighting, readable composition, strong foreground and background separation, chapter-specific scene, not a generic landscape, high detail, polished digital painting",
+          "generatorMetadata": {
+            "provider": "local_stable_diffusion",
+            "model": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+            "refinerModel": "",
+            "refinerUsed": false,
+            "qualityMode": "premium",
+            "scheduler": "dpm",
+            "device": "cuda",
+            "xformers": false,
+            "width": 768,
+            "height": 1344,
+            "steps": 40,
+            "guidanceScale": 7.0,
+            "inputImage": "",
+            "strength": 0,
+            "seed": 582941,
+            "loraPath": "C:\\Users\\David\\Documents\\Automation tool\\loras\\main-posts\\pytorch_lora_weights.safetensors",
+            "loraLoaded": true,
+            "loraScale": 0.75,
+            "loraError": "",
+            "seconds": 16.71,
+            "prompt": "Vertical 9:16 cinematic fantasy web novel cover art, no text or typography. Story context: hp, The Hundredfold Path. Teaser text to visually match: He climbs the broken stair toward the jade altar. Scene must clearly depict the teaser with concrete visible elements: He climbs the broken stair toward the jade altar. Visual motifs: hundredfold, path, text. Dramatic lighting, detailed environment, strong focal subject, social media promo composition. Avoid generic landscapes unless the teaser explicitly calls for a landscape.. azink_main, Azure Inkblade chapter promo art, strong web novel cover composition, high-impact social media framing, vertical 9:16 web novel promotional illustration, modern manhwa and anime-influenced fantasy art, clear focal character or story object, dramatic lighting, readable composition, strong foreground and background separation, chapter-specific scene, not a generic landscape, high detail, polished digital painting",
+            "negativePrompt": "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
+            "output": "C:\\Users\\David\\Documents\\Automation tool\\tests\\render_ab\\output\\legacy\\legacy_1.png"
+          }
+        }
+      },
+      {
+        "provider": "local_stable_diffusion",
+        "model": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+        "path": "C:\\Users\\David\\Documents\\Automation tool\\tests\\render_ab\\output\\legacy\\legacy_2.png",
+        "ok": true,
+        "error": "",
+        "cached": false,
+        "text_in_image": false,
+        "duplicate_of": "",
+        "prompt": "Vertical 9:16 cinematic fantasy web novel cover art, no text or typography. Story context: hp, The Hundredfold Path. Teaser text to visually match: Silver light wakes the dormant formation. Scene must clearly depict the teaser with concrete visible elements: Silver light wakes the dormant formation. Visual motifs: hundredfold, path, text. Dramatic lighting, detailed environment, strong focal subject, social media promo composition. Avoid generic landscapes unless the teaser explicitly calls for a landscape.",
+        "trace_meta": {
+          "provider": "local_stable_diffusion",
+          "model": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+          "refinerModel": "",
+          "loraTrack": "main-posts",
+          "loraPath": "C:\\Users\\David\\Documents\\Automation tool\\loras\\main-posts\\pytorch_lora_weights.safetensors",
+          "loraScale": "0.75",
+          "requestedSeed": 917364,
+          "effectiveSeed": 917364,
+          "seedMismatch": false,
+          "size": "768x1344",
+          "orientation": "vertical",
+          "scheduler": "dpm",
+          "steps": "0",
+          "guidanceScale": "0",
+          "negativePrompt": "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
+          "startedAt": "2026-07-26T13:31:44.012164+00:00",
+          "promptUsed": "Vertical 9:16 cinematic fantasy web novel cover art, no text or typography. Story context: hp, The Hundredfold Path. Teaser text to visually match: Silver light wakes the dormant formation. Scene must clearly depict the teaser with concrete visible elements: Silver light wakes the dormant formation. Visual motifs: hundredfold, path, text. Dramatic lighting, detailed environment, strong focal subject, social media promo composition. Avoid generic landscapes unless the teaser explicitly calls for a landscape.",
+          "enhancedPrompt": "Vertical 9:16 cinematic fantasy web novel cover art, no text or typography. Story context: hp, The Hundredfold Path. Teaser text to visually match: Silver light wakes the dormant formation. Scene must clearly depict the teaser with concrete visible elements: Silver light wakes the dormant formation. Visual motifs: hundredfold, path, text. Dramatic lighting, detailed environment, strong focal subject, social media promo composition. Avoid generic landscapes unless the teaser explicitly calls for a landscape.. azink_main, Azure Inkblade chapter promo art, strong web novel cover composition, high-impact social media framing, vertical 9:16 web novel promotional illustration, modern manhwa and anime-influenced fantasy art, clear focal character or story object, dramatic lighting, readable composition, strong foreground and background separation, chapter-specific scene, not a generic landscape, high detail, polished digital painting",
+          "generatorMetadata": {
+            "provider": "local_stable_diffusion",
+            "model": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+            "refinerModel": "",
+            "refinerUsed": false,
+            "qualityMode": "premium",
+            "scheduler": "dpm",
+            "device": "cuda",
+            "xformers": false,
+            "width": 768,
+            "height": 1344,
+            "steps": 40,
+            "guidanceScale": 7.0,
+            "inputImage": "",
+            "strength": 0,
+            "seed": 917364,
+            "loraPath": "C:\\Users\\David\\Documents\\Automation tool\\loras\\main-posts\\pytorch_lora_weights.safetensors",
+            "loraLoaded": true,
+            "loraScale": 0.75,
+            "loraError": "",
+            "seconds": 16.4,
+            "prompt": "Vertical 9:16 cinematic fantasy web novel cover art, no text or typography. Story context: hp, The Hundredfold Path. Teaser text to visually match: Silver light wakes the dormant formation. Scene must clearly depict the teaser with concrete visible elements: Silver light wakes the dormant formation. Visual motifs: hundredfold, path, text. Dramatic lighting, detailed environment, strong focal subject, social media promo composition. Avoid generic landscapes unless the teaser explicitly calls for a landscape.. azink_main, Azure Inkblade chapter promo art, strong web novel cover composition, high-impact social media framing, vertical 9:16 web novel promotional illustration, modern manhwa and anime-influenced fantasy art, clear focal character or story object, dramatic lighting, readable composition, strong foreground and background separation, chapter-specific scene, not a generic landscape, high detail, polished digital painting",
+            "negativePrompt": "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
+            "output": "C:\\Users\\David\\Documents\\Automation tool\\tests\\render_ab\\output\\legacy\\legacy_2.png"
+          }
+        }
+      }
+    ],
+    "director": [
+      {
+        "provider": "local_stable_diffusion",
+        "model": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+        "path": "C:\\Users\\David\\Documents\\Automation tool\\tests\\render_ab\\output\\visual-director\\director_0.png",
+        "ok": true,
+        "error": "",
+        "cached": false,
+        "text_in_image": false,
+        "duplicate_of": "",
+        "prompt": "xianxia cultivation fantasy illustration, vertical 9:16. Narrative Objective: Liang enters the ruined sect hall. Character Identity: Name: Liang; Gender: male; Age: young adult; Appearance: dark topknot hair, calm eyes, cultivator lean, jade sect robes, red banners nearby, silver-edged sword. Action: standing at the entrance, looking upward at ancient formations. Setting: Mountain sect courtyard, jade hall, red banners. Environment State: ancient, ordered, mist, mist layers, falling leaves, qi motes. Camera: wide low-angle environmental shot. Lighting: golden hour, frost rim. Power: ember at core silver glow frost mountain qi. Emotion: awe and uncertainty. Consistent character design, canon-accurate.",
+        "trace_meta": {
+          "provider": "local_stable_diffusion",
+          "model": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+          "refinerModel": "",
+          "loraTrack": "main-posts",
+          "loraPath": "C:\\Users\\David\\Documents\\Automation tool\\loras\\main-posts\\pytorch_lora_weights.safetensors",
+          "loraScale": "0.75",
+          "requestedSeed": 184732,
+          "effectiveSeed": 184732,
+          "seedMismatch": false,
+          "size": "768x1344",
+          "orientation": "vertical",
+          "scheduler": "dpm",
+          "steps": "0",
+          "guidanceScale": "0",
+          "negativePrompt": "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
+          "startedAt": "2026-07-26T13:32:04.776685+00:00",
+          "promptUsed": "xianxia cultivation fantasy illustration, vertical 9:16. Narrative Objective: Liang enters the ruined sect hall. Character Identity: Name: Liang; Gender: male; Age: young adult; Appearance: dark topknot hair, calm eyes, cultivator lean, jade sect robes, red banners nearby, silver-edged sword. Action: standing at the entrance, looking upward at ancient formations. Setting: Mountain sect courtyard, jade hall, red banners. Environment State: ancient, ordered, mist, mist layers, falling leaves, qi motes. Camera: wide low-angle environmental shot. Lighting: golden hour, frost rim. Power: ember at core silver glow frost mountain qi. Emotion: awe and uncertainty. Consistent character design, canon-accurate.",
+          "enhancedPrompt": "xianxia cultivation fantasy illustration, vertical 9:16. Narrative Objective: Liang enters the ruined sect hall. Character Identity: Name: Liang; Gender: male; Age: young adult; Appearance: dark topknot hair, calm eyes, cultivator lean, jade sect robes, red banners nearby, silver-edged sword. Action: standing at the entrance, looking upward at ancient formations. Setting: Mountain sect courtyard, jade hall, red banners. Environment State: ancient, ordered, mist, mist layers, falling leaves, qi motes. Camera: wide low-angle environmental shot. Lighting: golden hour, frost rim. Power: ember at core silver glow frost mountain qi. Emotion: awe and uncertainty. Consistent character design, canon-accurate.. azink_main, Azure Inkblade chapter promo art, strong web novel cover composition, high-impact social media framing, vertical 9:16 web novel promotional illustration, modern manhwa and anime-influenced fantasy art, clear focal character or story object, dramatic lighting, readable composition, strong foreground and background separation, chapter-specific scene, not a generic landscape, high detail, polished digital painting",
+          "generatorMetadata": {
+            "provider": "local_stable_diffusion",
+            "model": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+            "refinerModel": "",
+            "refinerUsed": false,
+            "qualityMode": "premium",
+            "scheduler": "dpm",
+            "device": "cuda",
+            "xformers": false,
+            "width": 768,
+            "height": 1344,
+            "steps": 40,
+            "guidanceScale": 7.0,
+            "inputImage": "",
+            "strength": 0,
+            "seed": 184732,
+            "loraPath": "C:\\Users\\David\\Documents\\Automation tool\\loras\\main-posts\\pytorch_lora_weights.safetensors",
+            "loraLoaded": true,
+            "loraScale": 0.75,
+            "loraError": "",
+            "seconds": 16.33,
+            "prompt": "xianxia cultivation fantasy illustration, vertical 9:16. Narrative Objective: Liang enters the ruined sect hall. Character Identity: Name: Liang; Gender: male; Age: young adult; Appearance: dark topknot hair, calm eyes, cultivator lean, jade sect robes, red banners nearby, silver-edged sword. Action: standing at the entrance, looking upward at ancient formations. Setting: Mountain sect courtyard, jade hall, red banners. Environment State: ancient, ordered, mist, mist layers, falling leaves, qi motes. Camera: wide low-angle environmental shot. Lighting: golden hour, frost rim. Power: ember at core silver glow frost mountain qi. Emotion: awe and uncertainty. Consistent character design, canon-accurate.. azink_main, Azure Inkblade chapter promo art, strong web novel cover composition, high-impact social media framing, vertical 9:16 web novel promotional illustration, modern manhwa and anime-influenced fantasy art, clear focal character or story object, dramatic lighting, readable composition, strong foreground and background separation, chapter-specific scene, not a generic landscape, high detail, polished digital painting",
+            "negativePrompt": "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
+            "output": "C:\\Users\\David\\Documents\\Automation tool\\tests\\render_ab\\output\\visual-director\\director_0.png"
+          }
+        }
+      },
+      {
+        "provider": "local_stable_diffusion",
+        "model": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+        "path": "C:\\Users\\David\\Documents\\Automation tool\\tests\\render_ab\\output\\visual-director\\director_1.png",
+        "ok": true,
+        "error": "",
+        "cached": false,
+        "text_in_image": false,
+        "duplicate_of": "",
+        "prompt": "xianxia cultivation fantasy illustration, vertical 9:16. Narrative Objective: He climbs the broken stair toward the jade altar. Character Identity: Name: Liang; Gender: male; Age: young adult; Appearance: dark topknot hair, calm eyes, cultivator lean, jade sect robes, red banners nearby, silver-edged sword. Action: climbing broken stone stairs, one hand resting near the weapon. Setting: Mountain sect courtyard, jade hall, red banners. Environment State: ancient, ordered, mist, mist layers, falling leaves, qi motes. Camera: over-the-shoulder tracking shot. Lighting: golden hour, frost rim. Power: ember at core silver glow frost mountain qi. Emotion: determination. Consistent character design, canon-accurate.",
+        "trace_meta": {
+          "provider": "local_stable_diffusion",
+          "model": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+          "refinerModel": "",
+          "loraTrack": "main-posts",
+          "loraPath": "C:\\Users\\David\\Documents\\Automation tool\\loras\\main-posts\\pytorch_lora_weights.safetensors",
+          "loraScale": "0.75",
+          "requestedSeed": 582941,
+          "effectiveSeed": 582941,
+          "seedMismatch": false,
+          "size": "768x1344",
+          "orientation": "vertical",
+          "scheduler": "dpm",
+          "steps": "0",
+          "guidanceScale": "0",
+          "negativePrompt": "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
+          "startedAt": "2026-07-26T13:32:25.417517+00:00",
+          "promptUsed": "xianxia cultivation fantasy illustration, vertical 9:16. Narrative Objective: He climbs the broken stair toward the jade altar. Character Identity: Name: Liang; Gender: male; Age: young adult; Appearance: dark topknot hair, calm eyes, cultivator lean, jade sect robes, red banners nearby, silver-edged sword. Action: climbing broken stone stairs, one hand resting near the weapon. Setting: Mountain sect courtyard, jade hall, red banners. Environment State: ancient, ordered, mist, mist layers, falling leaves, qi motes. Camera: over-the-shoulder tracking shot. Lighting: golden hour, frost rim. Power: ember at core silver glow frost mountain qi. Emotion: determination. Consistent character design, canon-accurate.",
+          "enhancedPrompt": "xianxia cultivation fantasy illustration, vertical 9:16. Narrative Objective: He climbs the broken stair toward the jade altar. Character Identity: Name: Liang; Gender: male; Age: young adult; Appearance: dark topknot hair, calm eyes, cultivator lean, jade sect robes, red banners nearby, silver-edged sword. Action: climbing broken stone stairs, one hand resting near the weapon. Setting: Mountain sect courtyard, jade hall, red banners. Environment State: ancient, ordered, mist, mist layers, falling leaves, qi motes. Camera: over-the-shoulder tracking shot. Lighting: golden hour, frost rim. Power: ember at core silver glow frost mountain qi. Emotion: determination. Consistent character design, canon-accurate.. azink_main, Azure Inkblade chapter promo art, strong web novel cover composition, high-impact social media framing, vertical 9:16 web novel promotional illustration, modern manhwa and anime-influenced fantasy art, clear focal character or story object, dramatic lighting, readable composition, strong foreground and background separation, chapter-specific scene, not a generic landscape, high detail, polished digital painting",
+          "generatorMetadata": {
+            "provider": "local_stable_diffusion",
+            "model": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+            "refinerModel": "",
+            "refinerUsed": false,
+            "qualityMode": "premium",
+            "scheduler": "dpm",
+            "device": "cuda",
+            "xformers": false,
+            "width": 768,
+            "height": 1344,
+            "steps": 40,
+            "guidanceScale": 7.0,
+            "inputImage": "",
+            "strength": 0,
+            "seed": 582941,
+            "loraPath": "C:\\Users\\David\\Documents\\Automation tool\\loras\\main-posts\\pytorch_lora_weights.safetensors",
+            "loraLoaded": true,
+            "loraScale": 0.75,
+            "loraError": "",
+            "seconds": 16.27,
+            "prompt": "xianxia cultivation fantasy illustration, vertical 9:16. Narrative Objective: He climbs the broken stair toward the jade altar. Character Identity: Name: Liang; Gender: male; Age: young adult; Appearance: dark topknot hair, calm eyes, cultivator lean, jade sect robes, red banners nearby, silver-edged sword. Action: climbing broken stone stairs, one hand resting near the weapon. Setting: Mountain sect courtyard, jade hall, red banners. Environment State: ancient, ordered, mist, mist layers, falling leaves, qi motes. Camera: over-the-shoulder tracking shot. Lighting: golden hour, frost rim. Power: ember at core silver glow frost mountain qi. Emotion: determination. Consistent character design, canon-accurate.. azink_main, Azure Inkblade chapter promo art, strong web novel cover composition, high-impact social media framing, vertical 9:16 web novel promotional illustration, modern manhwa and anime-influenced fantasy art, clear focal character or story object, dramatic lighting, readable composition, strong foreground and background separation, chapter-specific scene, not a generic landscape, high detail, polished digital painting",
+            "negativePrompt": "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
+            "output": "C:\\Users\\David\\Documents\\Automation tool\\tests\\render_ab\\output\\visual-director\\director_1.png"
+          }
+        }
+      },
+      {
+        "provider": "local_stable_diffusion",
+        "model": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+        "path": "C:\\Users\\David\\Documents\\Automation tool\\tests\\render_ab\\output\\visual-director\\director_2.png",
+        "ok": true,
+        "error": "",
+        "cached": false,
+        "text_in_image": false,
+        "duplicate_of": "",
+        "prompt": "xianxia cultivation fantasy illustration, vertical 9:16. Narrative Objective: Silver light wakes the dormant formation. Character Identity: Name: Liang; Gender: male; Age: young adult; Appearance: dark topknot hair, calm eyes, cultivator lean, jade sect robes, red banners nearby, silver-edged sword. Action: kneeling before the altar as silver qi flows through dormant lines. Setting: Mountain sect courtyard, jade hall, red banners. Environment State: ancient, ordered, mist, mist layers, falling leaves, qi motes. Camera: low-angle hero shot. Lighting: golden hour, frost rim. Power: ember at core silver glow frost mountain qi. Emotion: discovery. Consistent character design, canon-accurate.",
+        "trace_meta": {
+          "provider": "local_stable_diffusion",
+          "model": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+          "refinerModel": "",
+          "loraTrack": "main-posts",
+          "loraPath": "C:\\Users\\David\\Documents\\Automation tool\\loras\\main-posts\\pytorch_lora_weights.safetensors",
+          "loraScale": "0.75",
+          "requestedSeed": 917364,
+          "effectiveSeed": 917364,
+          "seedMismatch": false,
+          "size": "768x1344",
+          "orientation": "vertical",
+          "scheduler": "dpm",
+          "steps": "0",
+          "guidanceScale": "0",
+          "negativePrompt": "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
+          "startedAt": "2026-07-26T13:32:45.968988+00:00",
+          "promptUsed": "xianxia cultivation fantasy illustration, vertical 9:16. Narrative Objective: Silver light wakes the dormant formation. Character Identity: Name: Liang; Gender: male; Age: young adult; Appearance: dark topknot hair, calm eyes, cultivator lean, jade sect robes, red banners nearby, silver-edged sword. Action: kneeling before the altar as silver qi flows through dormant lines. Setting: Mountain sect courtyard, jade hall, red banners. Environment State: ancient, ordered, mist, mist layers, falling leaves, qi motes. Camera: low-angle hero shot. Lighting: golden hour, frost rim. Power: ember at core silver glow frost mountain qi. Emotion: discovery. Consistent character design, canon-accurate.",
+          "enhancedPrompt": "xianxia cultivation fantasy illustration, vertical 9:16. Narrative Objective: Silver light wakes the dormant formation. Character Identity: Name: Liang; Gender: male; Age: young adult; Appearance: dark topknot hair, calm eyes, cultivator lean, jade sect robes, red banners nearby, silver-edged sword. Action: kneeling before the altar as silver qi flows through dormant lines. Setting: Mountain sect courtyard, jade hall, red banners. Environment State: ancient, ordered, mist, mist layers, falling leaves, qi motes. Camera: low-angle hero shot. Lighting: golden hour, frost rim. Power: ember at core silver glow frost mountain qi. Emotion: discovery. Consistent character design, canon-accurate.. azink_main, Azure Inkblade chapter promo art, strong web novel cover composition, high-impact social media framing, vertical 9:16 web novel promotional illustration, modern manhwa and anime-influenced fantasy art, clear focal character or story object, dramatic lighting, readable composition, strong foreground and background separation, chapter-specific scene, not a generic landscape, high detail, polished digital painting",
+          "generatorMetadata": {
+            "provider": "local_stable_diffusion",
+            "model": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+            "refinerModel": "",
+            "refinerUsed": false,
+            "qualityMode": "premium",
+            "scheduler": "dpm",
+            "device": "cuda",
+            "xformers": false,
+            "width": 768,
+            "height": 1344,
+            "steps": 40,
+            "guidanceScale": 7.0,
+            "inputImage": "",
+            "strength": 0,
+            "seed": 917364,
+            "loraPath": "C:\\Users\\David\\Documents\\Automation tool\\loras\\main-posts\\pytorch_lora_weights.safetensors",
+            "loraLoaded": true,
+            "loraScale": 0.75,
+            "loraError": "",
+            "seconds": 16.35,
+            "prompt": "xianxia cultivation fantasy illustration, vertical 9:16. Narrative Objective: Silver light wakes the dormant formation. Character Identity: Name: Liang; Gender: male; Age: young adult; Appearance: dark topknot hair, calm eyes, cultivator lean, jade sect robes, red banners nearby, silver-edged sword. Action: kneeling before the altar as silver qi flows through dormant lines. Setting: Mountain sect courtyard, jade hall, red banners. Environment State: ancient, ordered, mist, mist layers, falling leaves, qi motes. Camera: low-angle hero shot. Lighting: golden hour, frost rim. Power: ember at core silver glow frost mountain qi. Emotion: discovery. Consistent character design, canon-accurate.. azink_main, Azure Inkblade chapter promo art, strong web novel cover composition, high-impact social media framing, vertical 9:16 web novel promotional illustration, modern manhwa and anime-influenced fantasy art, clear focal character or story object, dramatic lighting, readable composition, strong foreground and background separation, chapter-specific scene, not a generic landscape, high detail, polished digital painting",
+            "negativePrompt": "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
+            "output": "C:\\Users\\David\\Documents\\Automation tool\\tests\\render_ab\\output\\visual-director\\director_2.png"
+          }
+        }
+      }
+    ]
+  },
+  "failures": [],
+  "control_check": {
+    "pairs": [
+      {
+        "index": 0,
+        "fields": {
+          "SDXL base checkpoint": {
+            "legacy": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+            "director": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+            "match": true
+          },
+          "refiner": {
+            "legacy": "",
+            "director": "",
+            "match": true
+          },
+          "LoRA path": {
+            "legacy": "C:\\Users\\David\\Documents\\Automation tool\\loras\\main-posts\\pytorch_lora_weights.safetensors",
+            "director": "C:\\Users\\David\\Documents\\Automation tool\\loras\\main-posts\\pytorch_lora_weights.safetensors",
+            "match": true
+          },
+          "LoRA weight": {
+            "legacy": "0.75",
+            "director": "0.75",
+            "match": true
+          },
+          "scheduler": {
+            "legacy": "dpm",
+            "director": "dpm",
+            "match": true
+          },
+          "steps": {
+            "legacy": "0",
+            "director": "0",
+            "match": true
+          },
+          "guidance scale": {
+            "legacy": "0",
+            "director": "0",
+            "match": true
+          },
+          "width and height": {
+            "legacy": "768x1344",
+            "director": "768x1344",
+            "match": true
+          },
+          "negative prompt": {
+            "legacy": "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
+            "director": "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
+            "match": true
+          },
+          "seed": {
+            "legacy": 184732,
+            "director": 184732,
+            "match": true
+          }
+        }
+      },
+      {
+        "index": 1,
+        "fields": {
+          "SDXL base checkpoint": {
+            "legacy": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+            "director": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+            "match": true
+          },
+          "refiner": {
+            "legacy": "",
+            "director": "",
+            "match": true
+          },
+          "LoRA path": {
+            "legacy": "C:\\Users\\David\\Documents\\Automation tool\\loras\\main-posts\\pytorch_lora_weights.safetensors",
+            "director": "C:\\Users\\David\\Documents\\Automation tool\\loras\\main-posts\\pytorch_lora_weights.safetensors",
+            "match": true
+          },
+          "LoRA weight": {
+            "legacy": "0.75",
+            "director": "0.75",
+            "match": true
+          },
+          "scheduler": {
+            "legacy": "dpm",
+            "director": "dpm",
+            "match": true
+          },
+          "steps": {
+            "legacy": "0",
+            "director": "0",
+            "match": true
+          },
+          "guidance scale": {
+            "legacy": "0",
+            "director": "0",
+            "match": true
+          },
+          "width and height": {
+            "legacy": "768x1344",
+            "director": "768x1344",
+            "match": true
+          },
+          "negative prompt": {
+            "legacy": "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
+            "director": "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
+            "match": true
+          },
+          "seed": {
+            "legacy": 582941,
+            "director": 582941,
+            "match": true
+          }
+        }
+      },
+      {
+        "index": 2,
+        "fields": {
+          "SDXL base checkpoint": {
+            "legacy": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+            "director": "C:\\Users\\David\\Documents\\Automation tool\\models\\sdxl-base",
+            "match": true
+          },
+          "refiner": {
+            "legacy": "",
+            "director": "",
+            "match": true
+          },
+          "LoRA path": {
+            "legacy": "C:\\Users\\David\\Documents\\Automation tool\\loras\\main-posts\\pytorch_lora_weights.safetensors",
+            "director": "C:\\Users\\David\\Documents\\Automation tool\\loras\\main-posts\\pytorch_lora_weights.safetensors",
+            "match": true
+          },
+          "LoRA weight": {
+            "legacy": "0.75",
+            "director": "0.75",
+            "match": true
+          },
+          "scheduler": {
+            "legacy": "dpm",
+            "director": "dpm",
+            "match": true
+          },
+          "steps": {
+            "legacy": "0",
+            "director": "0",
+            "match": true
+          },
+          "guidance scale": {
+            "legacy": "0",
+            "director": "0",
+            "match": true
+          },
+          "width and height": {
+            "legacy": "768x1344",
+            "director": "768x1344",
+            "match": true
+          },
+          "negative prompt": {
+            "legacy": "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
+            "director": "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
+            "match": true
+          },
+          "seed": {
+            "legacy": 917364,
+            "director": 917364,
+            "match": true
+          }
+        }
+      }
+    ],
+    "all_matched": true
+  },
+  "legacy_score": {
+    "character_identity": 1,
+    "canon_accuracy": 2,
+    "shot_differentiation": 2,
+    "sequence_coherence": 3,
+    "mobile_readability": 5,
+    "artifact_control": 3,
+    "overall_improvement": 2
+  },
+  "director_score": {
+    "character_identity": 5,
+    "canon_accuracy": 4,
+    "shot_differentiation": 5,
+    "sequence_coherence": 5,
+    "mobile_readability": 5,
+    "artifact_control": 4,
+    "overall_improvement": 5
+  },
+  "gate": {
+    "recommend_continue": true,
+    "director_wins": true,
+    "canon_no_regression": true,
+    "liang_identity_count": 3,
+    "shot_differentiation_ok": true,
+    "reasons": [
+      "overall_improvement Director 5 > Legacy 2: PASS",
+      "canon_accuracy Director 4 >= Legacy 2: PASS",
+      "Liang identity in >=2/3 Director images: 3/3 PASS",
+      "three-shot differentiation (>=4): Director 5 PASS"
+    ]
+  }
+}
