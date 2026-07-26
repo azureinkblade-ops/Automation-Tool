@@ -131,6 +131,32 @@ def test_gate_passes_on_clear_win():
     print("PASS gate: clear win recommended")
 
 
+def test_recorded_backend_plays_real_traces():
+    import tempfile
+    tmp_path = Path(tempfile.mkdtemp(prefix="ab_rec_"))
+    from tests.render_ab.harness import RenderResult, RecordedBackend
+    # Simulate real OpenAI traces (would come from the actual app call).
+    real = [
+        RenderResult(provider="openai", model="gpt-image-1", path=str(tmp_path / "src0.png"),
+                     ok=True, prompt="legacy prompt 0", trace_meta={"model": "gpt-image-1", "size": "1024x1536"}),
+        RenderResult(provider="openai", model="gpt-image-1", path=str(tmp_path / "src1.png"),
+                     ok=True, prompt="legacy prompt 1", trace_meta={"model": "gpt-image-1", "size": "1024x1536"}),
+        RenderResult(provider="openai", model="gpt-image-1", path=str(tmp_path / "src2.png"),
+                     ok=True, prompt="legacy prompt 2", trace_meta={"model": "gpt-image-1", "size": "1024x1536"}),
+    ]
+    # create placeholder source files so RecordedBackend can copy them
+    for r in real:
+        Path(r.path).write_bytes(b"\x89PNG\r\n\x1a\n")
+    backend = RecordedBackend(results=real * 2)
+    out = tmp_path / "out"
+    legacy = [r.prompt for r in real]
+    ab = H.run_ab("hp_liang_review", legacy, legacy, backend, out)
+    assert ab["legacy"][0]["provider"] == "openai"
+    assert ab["legacy"][0]["model"] == "gpt-image-1"
+    assert Path(ab["legacy"][0]["path"]).exists()
+    print("PASS recorded backend: real provider traces flow through run_ab")
+
+
 def test_harness_does_not_touch_production():
     import tempfile
     tmp_path = Path(tempfile.mkdtemp(prefix="ab_iso_"))

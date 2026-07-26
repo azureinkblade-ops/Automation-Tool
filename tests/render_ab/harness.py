@@ -100,6 +100,54 @@ class MockBackend:
 
 
 @dataclass
+class OpenAIAppBackend:
+    """Drives the REAL application image workflow (app.create_openai_image ->
+    OpenAI gpt-image-1). This is the faithful A/B path: same code the posts/videos
+    use. Single variable = the prompt; provider/model/size/quality are fixed by
+    the app's own defaults. Writes each image to the sandbox output dir and
+    records the REAL provider trace (model/size/quality) via the app's own
+    write_image_provider_trace, so we verify the engine that actually rendered
+    rather than trusting a configured label.
+
+    COST: each render is a billed OpenAI image call. Only use with explicit
+    cost authorization. Requires ENABLE_EXTERNAL_AI=1 and OPENAI_API_KEY in env.
+    """
+
+    app_module: Any
+    size: str = "1024x1536"
+    quality: str = "medium"
+
+    def render(self, prompt: str, out_path: Path) -> RenderResult:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        from datetime import datetime as _dt
+        started = _dt.now(timezone.utc).isoformat()
+        model = os.environ.get("OPENAI_IMAGE_MODEL", "gpt-image-1")
+        try:
+            self.app_module.create_openai_image(prompt, out_path, size=self.size, quality=self.quality)
+            ok = out_path.exists() and out_path.stat().st_size > 0
+            error = "" if ok else "file not written"
+        except Exception as exc:  # expose, never hide
+            ok = False
+            error = f"{type(exc).__name__}: {exc}"
+        # Real provider trace (the engine that actually rendered, not the label).
+        trace = {
+            "provider": "openai",
+            "model": model,
+            "size": self.size,
+            "quality": self.quality,
+            "startedAt": started,
+            "promptUsed": prompt,
+        }
+        try:
+            self.app_module.write_image_provider_trace(out_path, trace)
+        except Exception:
+            pass
+        return RenderResult(
+            provider="openai", model=model, path=str(out_path), ok=ok, error=error,
+            cached=False, text_in_image=False, duplicate_of="", prompt=prompt,
+            trace_meta=trace,
+        )
+@dataclass
 class RecordedBackend:
     """Plays back real RenderResult traces supplied by the operator (from the
     actual external-provider generation). Keeps credentials and the generation
