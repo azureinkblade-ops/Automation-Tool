@@ -613,9 +613,15 @@ def _build_shot_plan(
     # hero shot' biased the kneeling frame to an upright stance, so the climax
     # uses a three-quarter side view from altar height instead.
     cameras = [
-        "wide low-angle environmental shot",
-        "over-the-shoulder tracking shot from behind, following the climb",
-        "three-quarter side view from altar height, Liang visibly kneeling on one knee",
+        # Slice A.5 (user-directed, evidence from Run 5): the bottleneck is
+        # COMPOSITION, not wording. SDXL is trained to favor sweeping
+        # environmental concept art, so "wide low-angle environmental shot"
+        # demotes Liang to a speck. Reframe to keep Liang visually PROMINENT
+        # (specify a relative framing ratio + environmental context retained)
+        # without changing any prompt semantics elsewhere.
+        "full-body medium shot of Liang entering the ruined sect hall; Liang occupies roughly one third of the frame while the towering ruined sect hall and gateway fill the background",
+        "over-the-shoulder tracking shot from behind Liang as he climbs the broken stair; Liang remains clearly visible and prominent in the lower third of the frame with the jade altar rising ahead",
+        "three-quarter side view from altar height, Liang clearly the subject kneeling on one knee before the altar with the dormant formation glowing on the floor behind him",
     ]
     emotions = ["awe and uncertainty", "determination", "discovery"]
     shot_types = ["establishing", "travel", "climax"]
