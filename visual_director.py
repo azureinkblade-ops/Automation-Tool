@@ -98,6 +98,11 @@ _GENDER_PRONOUNS = {
     "she": "female", "her": "female", "hers": "female", "herself": "female",
 }
 
+# Abstract state words in the frozen Bible's damage_state that CONTRADICT a
+# 'ruined' scene cue (user finding #1). When present we drop them so SDXL does
+# not draw an intact, maintained temple.
+_RUIN_CONTRADICTORY = {"ordered", "pristine", "intact", "maintained", "well kept", "polished"}
+
 # Visual Creative Director skill: negative constraints that protect canon.
 # Mirrors the skill's "AI Image Risks" + per-character forbidden changes.
 CANON_NEGATIVE_CONSTRAINTS = [
@@ -385,6 +390,33 @@ def _canon_weapon(token: str) -> str:
     return (modifier + " " + base).strip() if modifier else base
 
 
+def _is_scene_placement(token: str) -> bool:
+    """True if a clothing/prop token describes SCENE PLACEMENT (where banners
+    hang), not the character's persistent appearance. Such tokens must be
+    emitted under Setting, never inside the Character Identity block (user
+    finding #6: 'red banners nearby' in the identity block caused robe-color
+    mixing / the red robe in Director 1)."""
+    t = token.lower()
+    return "banner" in t or "banners" in t or "nearby" in t or "around" in t
+
+
+# One exact, unambiguous weapon lock. The frozen Bible's 'silver_edged' +
+# 'silver_edged_weapon' tokens are collapsed to this single precise descriptor
+# so SDXL cannot drift the weapon into a staff / polearm (user finding #4).
+_WEAPON_LOCK = "one standard-length Chinese jian, straight double-edged blade, simple silver guard, sheathed at his left hip"
+
+
+def _weapon_lock_phrase() -> str:
+    return _WEAPON_LOCK
+
+
+def _looks_like_weapon(token: str) -> bool:
+    """True if an appearance token is a (loose) weapon word that should be
+    replaced by the precise _WEAPON_LOCK phrase (user finding #4)."""
+    t = token.lower()
+    return any(w in t for w in ("sword", "jian", "blade", "weapon", "spear", "staff", "polearm", "saber", "sabre"))
+
+
 def _derive_gender(scene_text: str) -> str:
     """Infer character gender from scene-text pronouns (canon YAML has none).
 
@@ -446,6 +478,12 @@ def _character_lock_tokens(
             raw.append(canon_age)
     for c in lock.get("clothing", []):
         cleaned = _clean_canon_token(c)
+        # Clothing tokens that describe SCENE PLACEMENT (banners near the
+        # character), not the character's persistent appearance, must NOT live
+        # in the Character Identity block (user finding #6: contamination caused
+        # robe-color mixing). They are emitted under Setting instead.
+        if _is_scene_placement(cleaned):
+            continue
         # clothing may itself name a weapon (e.g. 'silver_edged_weapon'); route
         # it through the same canonicalizer so it dedups with the weapons list.
         if "weapon" in cleaned.lower() or "sword" in cleaned.lower() or "blade" in cleaned.lower():
@@ -498,6 +536,11 @@ def _build_shot_plan(
     # Environment STATE: location tells SDXL WHERE; state tells SDXL WHAT
     # HAPPENED THERE. Build from the matched location's damage/weather/particle
     # fields so a 'ruined' site renders ruined, not pristine.
+    # Field-hygiene (user finding #1): the frozen Bible sometimes stores an
+    # abstract state word like 'ordered' in damage_state that directly
+    # CONTRADICTS a 'ruined' scene cue and makes SDXL draw intact temples. We
+    # drop those contradictory abstract words and, when the scene text or the
+    # location implies ruin, inject concrete ruin descriptors instead.
     state_bits: List[str] = []
     if location:
         def _skip(v: str) -> bool:
@@ -505,7 +548,12 @@ def _build_shot_plan(
             return vl in ("intact", "n/a", "none", "") or "n/a" in vl or "none" in vl
         dmg = str(location.get("damage_state", "")).replace("_", " ").strip()
         if dmg and not _skip(dmg):
-            state_bits.append(dmg)
+            # drop individual contradictory abstract tokens (e.g. 'ordered',
+            # 'pristine') that conflict with a ruined scene, keep the rest.
+            dmg_tokens = [t for t in dmg.split(",") if t.strip().lower() not in _RUIN_CONTRADICTORY]
+            dmg_clean = ", ".join(dict.fromkeys(t.strip() for t in dmg_tokens if t.strip()))
+            if dmg_clean:
+                state_bits.append(dmg_clean)
         weather = str(location.get("weather", "")).replace("_", " ").strip()
         if weather and not _skip(weather):
             state_bits.append(weather)
@@ -513,7 +561,30 @@ def _build_shot_plan(
             v = str(location.get(key, "")).replace("_", " ").strip()
             if v and not _skip(v):
                 state_bits.append(v)
+    # Concrete ruin language when the scene or location implies abandonment.
+    # This overrides the Bible's 'ordered' tendency (user finding #1).
+    ruin_signals = ("ruin", "ruined", "collaps", "broken", "abandon", "wreck", "decay")
+    implies_ruin = any(s in scene_text.lower() for s in ruin_signals) or (
+        location and any(s in str(location.get("damage_state", "")).lower() for s in ("ruin", "ruined", "collaps", "broken"))
+    )
+    if implies_ruin and not any(s in " ".join(state_bits).lower() for s in ("ruin", "collaps", "broken", "abandon")):
+        state_bits.append("abandoned for centuries, partially collapsed, cracked stone stairs, broken jade railings, fallen roof tiles, faded and torn banners, dust and mist inside the hall")
     env_state = ", ".join(dict.fromkeys(state_bits)) if state_bits else ""
+
+    # Banners belong under SETTING (user finding #5 + #6), never in the
+    # Character Identity block. Collect from the character's clothing placement
+    # tokens and from the location; render as plain cloth with NO pseudo-text.
+    banner_bits: List[str] = []
+    if primary:
+        for c in primary.get("clothing", []) or []:
+            if _is_scene_placement(str(c)):
+                banner_bits.append(_clean_canon_token(c))
+    if location:
+        for key in ("banners", "decorations"):
+            v = str(location.get(key, "")).replace("_", " ").strip()
+            if v and "n/a" not in v.lower() and "none" not in v.lower():
+                banner_bits.append(v)
+    banner_line = ", ".join(dict.fromkeys(banner_bits)) if banner_bits else ""
 
     # Per-image narrative objectives. If caller passes shots_text (the exact
     # per-image beats from the app), use them. Otherwise narrate a generic
@@ -530,17 +601,21 @@ def _build_shot_plan(
             f"Reveal the hidden power as the moment turns",
         ]
 
-    # Pose / action per shot (SDXL responds strongly to explicit pose).
+    # Pose / action per shot (SDXL treats weak verbs as suggestions; user
+    # finding #2/#4: 'climbing' -> standing near stairs, 'kneeling' -> standing
+    # hero). Use STRONG bodily mechanics so the requested motion is unambiguous.
     poses = [
-        "standing at the entrance, looking upward at ancient formations",
-        "climbing broken stone stairs, one hand resting near the weapon",
-        "kneeling before the altar as silver qi flows through dormant lines",
+        "standing at the entrance, head tilted upward, looking at the ancient formations above the gateway",
+        "midway up the broken staircase, one foot planted on a higher step, body leaning forward, robe trailing behind him, right hand hovering over the sword hilt",
+        "kneeling on one knee before the altar, left hand pressed to the cold stone, silver qi visibly flowing through the dormant formation lines on the floor",
     ]
-    # Camera language (expanded taxonomy from the user's brief).
+    # Camera language must AGREE with the pose (user finding #3): 'low-angle
+    # hero shot' biased the kneeling frame to an upright stance, so the climax
+    # uses a three-quarter side view from altar height instead.
     cameras = [
         "wide low-angle environmental shot",
-        "over-the-shoulder tracking shot",
-        "low-angle hero shot",
+        "over-the-shoulder tracking shot from behind, following the climb",
+        "three-quarter side view from altar height, Liang visibly kneeling on one knee",
     ]
     emotions = ["awe and uncertainty", "determination", "discovery"]
     shot_types = ["establishing", "travel", "climax"]
@@ -558,6 +633,7 @@ def _build_shot_plan(
             "emotion": emotions[i],
             "environment": env_name,
             "environment_state": env_state,
+            "banner_line": banner_line,
             "lighting": str(lighting).replace("_", " "),
             "effect": str(magic).replace("_", " "),
         })
@@ -571,6 +647,9 @@ def _negative_prompt(profile: Dict[str, Any]) -> List[str]:
     if "silver sword became staff" in notes or "soulblade" in notes or "sword" in notes:
         # protect the canonical bladed weapon from model drift
         neg.append("weapon became staff")
+    # User finding #4: the model drifts the locked jian into a staff / polearm /
+    # oversized weapon. Force-exclude those so the weapon lock holds.
+    neg.extend(["spear", "staff", "polearm", "oversized weapon", "no spear", "no staff", "no polearm"])
     return neg
 
 
@@ -607,22 +686,30 @@ def _assemble_image_prompts(
             _appearance_lock(c, warnings), name=c.get("name", ""), warnings=warnings,
             scene_text=scene_text,
         ))
-    char_line = ", ".join(dict.fromkeys(char_tokens)) if char_tokens else "the protagonist"
 
     # Permanent character-identity block (appears in EVERY image so SDXL keeps
     # the same person across the sequence). Built from canon + derived gender.
+    # Field hygiene (user finding #6): the block carries ONLY persistent identity
+    # (name/gender/age/build/hair/eyes/robe/weapon). Scene placement like
+    # banners is NOT included here; it is emitted under Setting.
     primary = characters[0] if characters else {}
     gender = shots[0].get("gender", "") if shots else ""
     age_canon = _AGE_CANON.get(str(primary.get("age", "")).strip().lower(), "young adult") if isinstance(primary, dict) else "young adult"
     body = _clean_canon_token(primary.get("body_type") or "") if isinstance(primary, dict) else ""
+    # Build the appearance line, then FORCE the precise weapon lock so the model
+    # cannot drift to a staff/polearm (user finding #4). Strip any loose weapon
+    # word the Bible contributed; the lock phrase is the single source of truth.
+    appearance_tokens = [t for t in char_tokens if not _looks_like_weapon(t)]
+    appearance_line = ", ".join(dict.fromkeys(appearance_tokens)) if appearance_tokens else "the protagonist"
     identity_bits = [f"Name: {primary.get('name', 'the protagonist')}"]
     if gender:
         identity_bits.append(f"Gender: {gender}")
     identity_bits.append(f"Age: {age_canon}")
     if body:
         identity_bits.append(f"Build: {body}")
-    # hair / clothing / weapon from the locked tokens
-    identity_bits.append(f"Appearance: {char_line}")
+    identity_bits.append(f"Appearance: {appearance_line}")
+    # Explicit, unambiguous weapon lock appended to the identity block.
+    identity_bits.append(f"Weapon: {_weapon_lock_phrase()}")
     identity_block = "; ".join(identity_bits)
 
     env_line = ""
@@ -630,7 +717,11 @@ def _assemble_image_prompts(
         env_bits = [str(location.get("name", ""))]
         if location.get("architecture"):
             arch = str(location["architecture"]).replace("_", " ")
-            if "n/a" not in arch and "none" not in arch.lower():
+            # Strip banner references from architecture: banners are emitted as
+            # a dedicated clean phrase under Setting (user finding #5), and the
+            # location's 'jade hall, red banners' would otherwise leak pseudo-text.
+            arch = ", ".join(b for b in arch.split(",") if "banner" not in b.lower())
+            if "n/a" not in arch and "none" not in arch.lower() and arch.strip():
                 env_bits.append(arch)
         env_line = ", ".join(b for b in env_bits if b)
 
@@ -638,14 +729,23 @@ def _assemble_image_prompts(
     prompts: List[str] = []
     genre = NOVEL_GENRE_LABEL.get(str(novel).lower(), "fantasy illustration")
     for shot in shots:
+        # Banners live under Setting as PLAIN CLOTH with no invented writing
+        # (user finding #5: positive banner cues beat the global text-negative).
+        # The raw banner tokens (from character placement / location) are only
+        # used to DECIDE banners are present; we emit one clean phrase, never the
+        # raw tokens, to avoid leaking pseudo-text like 'red banners nearby'.
+        setting_bits = [env_line] if env_line else []
+        if shot.get("banner_line", ""):
+            setting_bits.append("plain weathered red cloth banners, no writing, no symbols, no calligraphy")
+        setting_line = ", ".join(b for b in setting_bits if b)
         parts = [f"{genre}, vertical 9:16."]
         if shot.get("narrative_objective"):
             parts.append(f"Narrative Objective: {shot['narrative_objective']}.")
         parts.append(f"Character Identity: {identity_block}.")
         if shot.get("action"):
             parts.append(f"Action: {shot['action']}.")
-        if env_line:
-            parts.append(f"Setting: {env_line}.")
+        if setting_line:
+            parts.append(f"Setting: {setting_line}.")
         if shot.get("environment_state"):
             parts.append(f"Environment State: {shot['environment_state']}.")
         parts.append(f"Camera: {shot.get('camera', 'wide cinematic')}.")

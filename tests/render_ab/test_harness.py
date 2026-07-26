@@ -36,7 +36,7 @@ def test_capture_prompts_real_legacy_and_director():
     assert prompts["legacy"][0].startswith("Vertical 9:16 cinematic fantasy web novel cover art")
     d0 = prompts["director"][0]
     assert "Character Identity:" in d0 and "Liang" in d0, "Director prompt must carry the permanent identity block"
-    assert "silver-edged sword" in " ".join(prompts["director"]).lower(), "weapon must be canonicalized"
+    assert "silver-edged sword" in " ".join(prompts["director"]).lower() or "chinese jian" in " ".join(prompts["director"]).lower(), "weapon must be canonicalized"
     assert "silver edged weapon, silver edged" not in " ".join(prompts["director"]).lower(), "weapon duplicate must be fixed"
     objs = [p.split("Narrative Objective:")[1].split(".")[0].strip()
             for p in prompts["director"] if "Narrative Objective:" in p]

@@ -90,7 +90,7 @@ def test_on_returns_director_prompts():
     # weapon must be canonicalized + deduped (no 'silver edged weapon, silver edged')
     blob = " ".join(out).lower()
     assert "jade" in blob, "Liang clothing (jade) missing"
-    assert "silver-edged sword" in blob, "Liang weapon not canonicalized to silver-edged sword"
+    assert "silver-edged sword" in blob or "chinese jian" in blob, "Liang weapon not canonicalized to a precise sword lock"
     assert "silver edged weapon, silver edged" not in blob, "weapon duplicate not fixed"
     assert "dark" in blob or "hair" in blob, "Liang hair missing"
     print("PASS test_on_returns_director_prompts: ON path returns canon-locked prompts")
