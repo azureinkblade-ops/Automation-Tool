@@ -100,6 +100,9 @@ sys.path = [p for p in sys.path if p and os.path.normcase(str(p)) not in (
     os.path.normcase(r"C:\Users\David\AppData\Local\hermes\hermes-agent\venv\Lib\site-packages"),
 )]
 # Make the leak observable instead of silent: log once at startup.
+ALLOW_EXTERNAL_IMAGE_FALLBACK = str(os.environ.get("ALLOW_EXTERNAL_IMAGE_FALLBACK", "")).strip().lower() in (
+    "1", "true", "yes", "on",
+)
 try:
     import importlib.util as _ilu
     _deps = {n: _ilu.find_spec(n) is not None for n in ("torch", "diffusers", "transformers", "PIL")}
@@ -121,10 +124,6 @@ except Exception as _exc:  # pragma: no cover - logging only
 # mislabeled as branded SDXL art). Instead fall through to the local emergency fallback
 # image and flag the trace as refusedExternalFallback. Set ALLOW_EXTERNAL_IMAGE_FALLBACK=1
 # to permit the stock substitution (deliberate opt-in only).
-ALLOW_EXTERNAL_IMAGE_FALLBACK = str(os.environ.get("ALLOW_EXTERNAL_IMAGE_FALLBACK", "")).strip().lower() in (
-    "1", "true", "yes", "on",
-)
-
 
 ROOT = Path(__file__).resolve().parent
 
