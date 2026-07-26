@@ -157,6 +157,103 @@ def test_recorded_backend_plays_real_traces():
     print("PASS recorded backend: real provider traces flow through run_ab")
 
 
+def test_localsd_backend_not_ready_reports_failure():
+    # When local SD is not ready in the runtime, the backend must expose the
+    # failure (never hide it) rather than crash or claim success.
+    import tests.render_ab.harness as H
+    import app as appmod
+    orig = appmod.local_stable_diffusion_status
+    try:
+        appmod.local_stable_diffusion_status = lambda: {"ready": False, "dependencies": {"torch": False}, "model": "x"}
+        backend = H.LocalSDAppBackend(app_module=appmod)
+        from pathlib import Path as _P
+        r = backend.render("some prompt", _P(tmp_path if False else __import__("tempfile").mkdtemp(prefix="ab_sd_")) / "x.png")
+        assert r.ok is False
+        assert "not ready" in r.error.lower()
+        print("PASS local-sd backend: not-ready exposes failure, no hidden success")
+    finally:
+        appmod.local_stable_diffusion_status = orig
+
+
+def test_localsd_backend_invokes_generator_when_ready(monkeypatch_tmp=None):
+    # Exercise the real command construction by faking readiness + subprocess.
+    import tests.render_ab.harness as H
+    import app as appmod
+    import subprocess as _sp
+    import json as _json
+    from pathlib import Path as _P
+    import tempfile as _tf
+
+    captured = {}
+    tmp = _P(_tf.mkdtemp(prefix="ab_sdok_"))
+
+    def fake_status():
+        return {
+            "ready": True,
+            "dependencies": {"torch": True, "diffusers": True, "transformers": True, "PIL": True},
+            "model": "models/sdxl-base",
+            "refinerModel": "", "qualityMode": "premium", "scheduler": "dpm",
+            "timeoutSeconds": 60,
+        }
+
+    def fake_local_sd_python():
+        return "python"
+
+    def fake_lora_track(prompt, orientation="vertical"):
+        return "main-posts"
+
+    def fake_find_lora(track):
+        return _P(tmp) / "lora.safetensors"
+
+    def fake_enhance(prompt, orientation="vertical", lora_track=""):
+        return f"ENHANCED::{prompt}"
+
+    class _CP:
+        returncode = 0
+        stderr = ""
+        stdout = ""
+
+    def fake_run(cmd, **kw):
+        captured["cmd"] = list(cmd)
+        # write a fake image + generator metadata (must exceed the 1024-byte validity guard)
+        out = _P(cmd[cmd.index("--output") + 1])
+        out.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 2048)
+        meta = _P(cmd[cmd.index("--metadata") + 1])
+        meta.write_text(_json.dumps({"model": "models/sdxl-base", "seed": 1}), encoding="utf-8")
+        return _CP()
+
+    orig = (appmod.local_stable_diffusion_status, appmod.local_sd_python,
+            appmod.lora_track_for_prompt, appmod.find_lora_weights_for_track,
+            appmod.enhance_local_sd_prompt, appmod._LOCAL_SD_GPU_LOCK)
+    appmod.local_stable_diffusion_status = fake_status
+    appmod.local_sd_python = fake_local_sd_python
+    appmod.lora_track_for_prompt = fake_lora_track
+    appmod.find_lora_weights_for_track = fake_find_lora
+    appmod.enhance_local_sd_prompt = fake_enhance
+    import threading as _th
+    appmod._LOCAL_SD_GPU_LOCK = _th.Lock()
+    import subprocess as _sp
+    _orig_run = _sp.run
+    _sp.run = fake_run
+    try:
+        backend = H.LocalSDAppBackend(app_module=appmod, orientation="vertical")
+        target = tmp / "img.png"
+        r = backend.render("Liang in the hall", target)
+        assert r.ok is True, r.error
+        assert r.provider == "local_stable_diffusion"
+        assert r.model == "models/sdxl-base"
+        # command must contain the real generator script and enhanced prompt
+        assert any("local_image_generator" in str(c) for c in captured["cmd"])
+        assert any("ENHANCED::Liang in the hall" == str(c) for c in captured["cmd"])
+        assert any(c == "--lora-path" for c in captured["cmd"])
+        print("PASS local-sd backend: builds identical generator command, records real trace")
+    finally:
+        _sp.run = _orig_run
+        (appmod.local_stable_diffusion_status, appmod.local_sd_python,
+         appmod.lora_track_for_prompt, appmod.find_lora_weights_for_track,
+         appmod.enhance_local_sd_prompt, appmod._LOCAL_SD_GPU_LOCK) = orig
+
+
 def test_harness_does_not_touch_production():
     import tempfile
     tmp_path = Path(tempfile.mkdtemp(prefix="ab_iso_"))

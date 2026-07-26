@@ -100,18 +100,140 @@ class MockBackend:
 
 
 @dataclass
-class OpenAIAppBackend:
-    """Drives the REAL application image workflow (app.create_openai_image ->
-    OpenAI gpt-image-1). This is the faithful A/B path: same code the posts/videos
-    use. Single variable = the prompt; provider/model/size/quality are fixed by
-    the app's own defaults. Writes each image to the sandbox output dir and
-    records the REAL provider trace (model/size/quality) via the app's own
-    write_image_provider_trace, so we verify the engine that actually rendered
-    rather than trusting a configured label.
+class LocalSDAppBackend:
+    """Drives the REAL application Stable Diffusion pipeline - the app's MAIN
+    image source (create_local_stable_diffusion_image -> local_image_generator.py
+    with the azink_main LoRA). This is the faithful A/B engine: same code the
+    posts/videos use. Single variable = the prompt; model/LoRA/size are fixed by
+    the app's own configuration.
 
-    COST: each render is a billed OpenAI image call. Only use with explicit
-    cost authorization. Requires ENABLE_EXTERNAL_AI=1 and OPENAI_API_KEY in env.
+    Fidelity vs production: this backend builds the IDENTICAL generator command
+    that create_local_stable_diffusion_image builds (same script, model,
+    refiner, quality mode, scheduler, size, steps, guidance, LoRA, enhanced
+    prompt) and runs it. The ONLY delta from the production function is that it
+    deliberately omits the two rotation-state writes (mark_image_used /
+    save_promo_rotation_state) so the A/B does not mutate production metadata or
+    the promo-rotation DB, per the directive's constraint.
+
+    Cost: runs on the local GPU - NO API billing. (No unexpected cost-bearing
+    call.) Requires local_stable_diffusion_status()['ready'] == True in the
+    runtime environment (torch/diffusers/transformers/PIL importable + the
+    local_image_generator.py script + an SDXL model on disk).
+
+    Real trace: records model, loraTrack, loraPath, seed, size from the actual
+    run + the .local-sd.json metadata the generator writes, so we verify the
+    engine that actually rendered (not a configured label).
     """
+
+    app_module: Any
+    orientation: str = "vertical"
+    quality_mode: str = ""
+    seed: int = 0
+
+    def render(self, prompt: str, out_path: Path) -> RenderResult:
+        import random as _random
+        import subprocess as _subprocess
+        from datetime import datetime as _dt
+        app = self.app_module
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        status = app.local_stable_diffusion_status()
+        if not status.get("ready"):
+            missing = [n for n, r in (status.get("dependencies") or {}).items() if not r]
+            return RenderResult(provider="local_stable_diffusion", model=str(status.get("model", "")),
+                                path=str(out_path), ok=False,
+                                error=f"Local SD not ready; missing: {', '.join(missing) or 'generator'}",
+                                prompt=prompt)
+        if self.orientation == "horizontal":
+            width = int(os.environ.get("LOCAL_SD_HORIZONTAL_WIDTH", "1344"))
+            height = int(os.environ.get("LOCAL_SD_HORIZONTAL_HEIGHT", "768"))
+        elif self.orientation == "square":
+            width = height = int(os.environ.get("LOCAL_SD_SQUARE_SIZE", "1024"))
+        else:
+            width = int(os.environ.get("LOCAL_SD_VERTICAL_WIDTH", "768"))
+            height = int(os.environ.get("LOCAL_SD_VERTICAL_HEIGHT", "1344"))
+        lora_track = app.lora_track_for_prompt(prompt, orientation=self.orientation)
+        lora_enabled = os.environ.get("LOCAL_SD_LORA_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
+        lora_path = app.find_lora_weights_for_track(lora_track) if lora_enabled else None
+        enhanced = app.enhance_local_sd_prompt(prompt, orientation=self.orientation, lora_track=lora_track)
+        negative = os.environ.get(
+            "LOCAL_SD_NEGATIVE_PROMPT",
+            "text, typography, watermark, logo, blurry, low quality, distorted hands, extra fingers, duplicate face, duplicate body, bad anatomy, flat lighting, generic stock photo, unrelated landscape",
+        )
+        seed = self.seed or _random.randint(1, 2_147_483_000)
+        command = [
+            str(app.local_sd_python()),
+            str(app.LOCAL_IMAGE_GENERATOR_SCRIPT),
+            "--prompt", enhanced,
+            "--output", str(out_path),
+            "--negative-prompt", negative,
+            "--model", str(status.get("model") or "stabilityai/stable-diffusion-xl-base-1.0"),
+            "--refiner-model", str(status.get("refinerModel") or ""),
+            "--quality-mode", self.quality_mode or str(status.get("qualityMode") or "premium"),
+            "--scheduler", str(status.get("scheduler") or "dpm"),
+            "--width", str(width),
+            "--height", str(height),
+            "--steps", os.environ.get("LOCAL_SD_STEPS", "0"),
+            "--guidance-scale", os.environ.get("LOCAL_SD_GUIDANCE_SCALE", "0"),
+            "--seed", str(seed),
+            "--metadata", str(out_path.with_suffix(out_path.suffix + ".local-sd.json")),
+        ]
+        if lora_path:
+            command.extend(["--lora-path", str(lora_path), "--lora-scale", os.environ.get("LOCAL_SD_LORA_SCALE", "0.75")])
+        started = _dt.now(timezone.utc).isoformat()
+        try:
+            with app._LOCAL_SD_GPU_LOCK:
+                completed = _subprocess.run(command, cwd=str(app.ROOT), capture_output=True, text=True,
+                                            timeout=int(status.get("timeoutSeconds") or 360),
+                                            env={k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")})
+            if completed.returncode != 0:
+                detail = (completed.stderr or completed.stdout or "").strip()
+                return RenderResult(provider="local_stable_diffusion", model=str(status.get("model", "")),
+                                    path=str(out_path), ok=False,
+                                    error=f"SD exit {completed.returncode}: {detail[-800:]}", prompt=prompt)
+            if not out_path.exists() or out_path.stat().st_size < 1024:
+                return RenderResult(provider="local_stable_diffusion", model=str(status.get("model", "")),
+                                    path=str(out_path), ok=False, error="SD did not create a valid image", prompt=prompt)
+            # Read the real generator metadata if present.
+            meta = {}
+            meta_path = out_path.with_suffix(out_path.suffix + ".local-sd.json")
+            if meta_path.exists():
+                try:
+                    meta = __import__("json").loads(meta_path.read_text(encoding="utf-8"))
+                except Exception:
+                    meta = {}
+            trace = {
+                "provider": "local_stable_diffusion",
+                "model": str(status.get("model") or meta.get("model", "")),
+                "loraTrack": lora_track,
+                "loraPath": str(lora_path) if lora_path else "",
+                "seed": seed,
+                "size": f"{width}x{height}",
+                "orientation": self.orientation,
+                "startedAt": started,
+                "promptUsed": prompt,
+                "enhancedPrompt": enhanced,
+                "generatorMetadata": meta,
+            }
+            try:
+                app.write_image_provider_trace(out_path, trace)
+            except Exception:
+                pass
+            return RenderResult(provider="local_stable_diffusion", model=str(status.get("model", "")),
+                                path=str(out_path), ok=True, error="", cached=False,
+                                text_in_image=False, duplicate_of="", prompt=prompt, trace_meta=trace)
+        except Exception as exc:  # expose, never hide
+            return RenderResult(provider="local_stable_diffusion", model=str(status.get("model", "")),
+                                path=str(out_path), ok=False,
+                                error=f"{type(exc).__name__}: {exc}", prompt=prompt)
+
+
+@dataclass
+class OpenAIAppBackend:
+    """Alternative real-workflow backend: app.create_openai_image -> OpenAI
+    gpt-image-1. Used only if the local SD path is unavailable. COST: each render
+    is a billed OpenAI image call - requires explicit cost authorization and
+    ENABLE_EXTERNAL_AI=1 + OPENAI_API_KEY. The A/B default is LocalSDAppBackend
+    (the app's main source, runs on local GPU, no API billing)."""
 
     app_module: Any
     size: str = "1024x1536"
@@ -129,7 +251,6 @@ class OpenAIAppBackend:
         except Exception as exc:  # expose, never hide
             ok = False
             error = f"{type(exc).__name__}: {exc}"
-        # Real provider trace (the engine that actually rendered, not the label).
         trace = {
             "provider": "openai",
             "model": model,
@@ -147,6 +268,8 @@ class OpenAIAppBackend:
             cached=False, text_in_image=False, duplicate_of="", prompt=prompt,
             trace_meta=trace,
         )
+
+
 @dataclass
 class RecordedBackend:
     """Plays back real RenderResult traces supplied by the operator (from the
