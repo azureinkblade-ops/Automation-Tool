@@ -628,6 +628,17 @@ def _build_shot_plan(
 
     shots = []
     for i in range(3):
+        # Slice A.6 (user-directed, Run 6 evidence): for an INTERACTION /
+        # RITUAL shot the narrative hinge is the pose, not the architecture. The
+        # long environmental inventory (mist layers, falling leaves, qi motes,
+        # cracked stairs, broken railings, roof tiles, banners, dust, hall)
+        # competes for model attention with the kneeling / hand-on-stone /
+        # formation interaction. Trim the env-state to a minimal location
+        # establishing descriptor so attention is freed for the action. Non-
+        # interaction shots keep the full descriptive env-state.
+        shot_env_state = env_state
+        if shot_types[i] in _INTERACTION_SHOT_TYPES:
+            shot_env_state = _trim_env_for_interaction(env_state)
         shots.append({
             "type": shot_types[i],
             "camera": cameras[i],
@@ -638,12 +649,51 @@ def _build_shot_plan(
             "action": poses[i],
             "emotion": emotions[i],
             "environment": env_name,
-            "environment_state": env_state,
+            "environment_state": shot_env_state,
             "banner_line": banner_line,
             "lighting": str(lighting).replace("_", " "),
             "effect": str(magic).replace("_", " "),
         })
     return shots
+
+
+# Shot types whose narrative hinge is the POSE / INTERACTION, not the
+# architecture. For these we trim the verbose environmental inventory (Slice
+# A.6, Run 6 evidence) so model attention goes to the action.
+_INTERACTION_SHOT_TYPES = {"climax", "ritual", "action", "interaction"}
+
+# Words that belong to the verbose "ambiance" inventory rather than the core
+# location identity. For interaction shots we drop these so the environment
+# still establishes WHERE without stealing attention from the pose.
+_ENV_TRIM_TOKENS = (
+    "mist", "mist layers", "falling leaves", "leaves", "qi motes", "motes",
+    "abandoned for centuries", "partially collapsed", "cracked stone stairs",
+    "broken jade railings", "fallen roof tiles", "faded and torn banners",
+    "dust", "dust and mist", "fog", "fog density", "ambient particles",
+)
+
+
+def _trim_env_for_interaction(env_state: str) -> str:
+    """For an interaction/ritual shot, keep only the core location-establishing
+    descriptors (short, identity-bearing) and drop the long ambiance inventory
+    (mist layers, falling leaves, qi motes, cracked stairs, broken railings,
+    roof tiles, banners, dust, hall) that competes with the pose for attention.
+    """
+    if not env_state:
+        return env_state
+    kept = []
+    for tok in env_state.split(","):
+        t = tok.strip()
+        if not t:
+            continue
+        tl = t.lower()
+        if tl in _ENV_TRIM_TOKENS:
+            continue
+        # drop any token that is a substring of a trim phrase (e.g. 'roof tiles')
+        if any(tl in phrase or phrase in tl for phrase in _ENV_TRIM_TOKENS):
+            continue
+        kept.append(t)
+    return ", ".join(dict.fromkeys(kept))
 
 
 def _negative_prompt(profile: Dict[str, Any]) -> List[str]:
