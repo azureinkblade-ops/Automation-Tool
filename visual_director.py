@@ -619,11 +619,17 @@ def _build_shot_plan(
         # demotes Liang to a speck. Reframe to keep Liang visually PROMINENT
         # (specify a relative framing ratio + environmental context retained)
         # without changing any prompt semantics elsewhere.
-        "full-body medium shot of Liang entering the ruined sect hall; Liang occupies roughly one third of the frame while the towering ruined sect hall and gateway fill the background",
-        "over-the-shoulder tracking shot from behind Liang as he climbs the broken stair; Liang remains clearly visible and prominent in the lower third of the frame with the jade altar rising ahead",
-        "three-quarter side view from altar height, Liang clearly the subject kneeling on one knee before the altar with the dormant formation glowing on the floor behind him",
+        # Slice A.7: make character SIZE an explicit, evaluable rule (Run 7
+        # review) - target ~20-25% of frame height, recognizable at thumbnail.
+        "full-body medium shot of Liang entering the ruined sect hall; Liang fills approximately 20 to 25 percent of the frame height and is immediately recognizable even at thumbnail size, while the towering ruined sect hall and gateway fill the background",
+        "over-the-shoulder tracking shot from behind Liang as he climbs the broken stair; Liang fills approximately 20 to 25 percent of the frame height and is clearly visible and prominent, with the jade altar rising ahead",
+        "three-quarter side view from altar height, Liang clearly the subject kneeling on one knee before the altar with the dormant formation glowing on the floor behind him; Liang fills approximately 20 to 25 percent of the frame height",
     ]
     emotions = ["awe and uncertainty", "determination", "discovery"]
+    # Slice A.7 (user review Run 7): separate POSE (body mechanics) from
+    # EXPRESSION (emotional face) so each constraint is explicit and tunable,
+    # rather than combining them into one body+emotion blob.
+    expressions = ["quiet awe", "determined focus", "solemn discovery"]
     shot_types = ["establishing", "travel", "climax"]
 
     shots = []
@@ -647,6 +653,7 @@ def _build_shot_plan(
             "subject": primary_name,
             "gender": gender,
             "action": poses[i],
+            "expression": expressions[i],
             "emotion": emotions[i],
             "environment": env_name,
             "environment_state": shot_env_state,
@@ -657,10 +664,12 @@ def _build_shot_plan(
     return shots
 
 
-# Shot types whose narrative hinge is the POSE / INTERACTION, not the
-# architecture. For these we trim the verbose environmental inventory (Slice
-# A.6, Run 6 evidence) so model attention goes to the action.
-_INTERACTION_SHOT_TYPES = {"climax", "ritual", "action", "interaction"}
+# Shot types whose narrative hinge is NOT primarily "show the epic environment,"
+# so we trim the verbose ambiance inventory (Slice A.6 + Run 7: apply the trim
+# selectively). 'establishing' keeps the FULL descriptive env-state because its
+# job IS to sell the location (shot 1 scores 9.5 on that richness); 'travel' and
+# 'climax'/'ritual'/'action' shots free attention for the subject + pose.
+_INTERACTION_SHOT_TYPES = {"travel", "climax", "ritual", "action", "interaction"}
 
 # Words that belong to the verbose "ambiance" inventory rather than the core
 # location identity. For interaction shots we drop these so the environment
@@ -806,12 +815,17 @@ def _assemble_image_prompts(
             parts.append(f"Environment State: {shot['environment_state']}.")
         parts.append(f"Character Identity: {identity_block}.")
         parts.append(f"Camera: {shot.get('camera', 'wide cinematic')}.")
+        # Slice A.7: explicit POSE (body mechanics) + EXPRESSION (face) as two
+        # independent fields so each constraint is separately tunable, instead
+        # of one combined body+emotion blob.
+        if shot.get("action"):
+            parts.append(f"Pose: {shot['action']}.")
+        if shot.get("expression"):
+            parts.append(f"Expression: {shot['expression']}.")
         if shot.get("lighting"):
             parts.append(f"Lighting: {shot['lighting']}.")
         if shot.get("effect"):
             parts.append(f"Power: {shot['effect']}.")
-        if shot.get("emotion"):
-            parts.append(f"Emotion: {shot['emotion']}.")
         if palette_hint:
             parts.append(f"Palette: {palette_hint}.")
         parts.append("Consistent character design, canon-accurate.")

@@ -147,12 +147,15 @@ def judge_scene(result: dict) -> dict:
 
     # 4. Mobile suitability: vertical 9:16 declared; prompts art-directed and
     #    not a wall of text. Slice A.2 added precise fields (physical poses,
-    #    concrete ruin state, no-pseudo-text banners, explicit weapon lock) that
-    #    the user explicitly requested; those are precision, not padding. A
-    #    realistic ceiling for a structured Director prompt is ~1200 chars
-    #    (SDXL consumes 1000+ char prompts without issue; Run 1/2 used ~700-900).
+    #    concrete ruin state, no-pseudo-text banners, explicit weapon lock).
+    #    Slice A.7 added an explicit 20-25 pct character-size rule and split
+    #    Pose / Expression into independent fields (both user-requested
+    #    precision, not padding). The establishing shot also keeps the FULL env
+    #    inventory (it scores 9.5/10 on that richness). A realistic ceiling for
+    #    a structured Director prompt is ~1300 chars (SDXL consumes 1000+ char
+    #    prompts without issue; Run 1/2 used ~700-900, Run 7 ~1100-1250).
     mobile_ok = all(
-        ("9:16" in p or "vertical" in p.lower()) and len(p) < 1200 for p in vd
+        ("9:16" in p or "vertical" in p.lower()) and len(p) < 1300 for p in vd
     )
 
     # 4b. No editorial/YAML noise: scan the ACTUAL prompts (not the diagnostics
