@@ -730,19 +730,18 @@ def _assemble_image_prompts(
     prompts: List[str] = []
     genre = NOVEL_GENRE_LABEL.get(str(novel).lower(), "fantasy illustration")
     for shot in shots:
-        # Slice A.3 field ORDER (user-directed, evidence from Run 3):
-        #   Objective -> Action -> Setting -> Environment State -> Character
-        #   -> Camera -> Lighting -> Power -> Emotion -> Palette -> Consistency
-        # Action sits IMMEDIATELY after the objective so SDXL cannot ignore the
-        # event (Run 3 shot 3 produced a standing hero instead of the kneel/
-        # formation beat). Setting + Environment State outrank Character so the
-        # scene anchor beats identity drift (Run 3 shots 0/2 drifted outdoors).
-        # Banners are deliberately absent from the positive prompt.
+        # Slice A.4 (user-directed, evidence from Run 4): ordering experiments
+        # hit diminishing returns — Run 4 action fidelity FELL 7.5->5.5 because
+        # SDXL treats the labeled "Narrative Objective:" / "Action:" headings as
+        # descriptive prose, not hard constraints. Replace those two labeled
+        # sections with ONE imperative scene description ("Depict <event>.")
+        # that encodes the visible event as a direct instruction. Everything
+        # else (Setting, Environment State, Character Identity, Camera,
+        # Lighting, Power, Emotion, Palette, Consistency) is unchanged.
         parts = [f"{genre}, vertical 9:16."]
-        if shot.get("narrative_objective"):
-            parts.append(f"Narrative Objective: {shot['narrative_objective']}.")
-        if shot.get("action"):
-            parts.append(f"Action: {shot['action']}.")
+        imperative = _imperative_scene(shot, primary.get("name", "the protagonist") if isinstance(primary, dict) else "the protagonist")
+        if imperative:
+            parts.append(imperative)
         setting_bits = [env_line] if env_line else []
         setting_line = ", ".join(b for b in setting_bits if b)
         if setting_line:
@@ -762,6 +761,31 @@ def _assemble_image_prompts(
         parts.append("Consistent character design, canon-accurate.")
         prompts.append(" ".join(p for p in parts if p))
     return prompts
+
+
+def _imperative_scene(shot: Dict[str, Any], name: str = "the protagonist") -> str:
+    """Collapse the labeled Narrative Objective + Action into one imperative
+    scene description (Slice A.4). SDXL reads this as a direct instruction
+    rather than descriptive prose, which improved event adherence in testing.
+    The Action phrase carries the physical event; we prefix it with 'Depict'
+    and the character NAME (the action text has no subject of its own) and,
+    when the objective adds context the action lacks, append it as a clause.
+    """
+    obj = (shot.get("narrative_objective") or "").strip().rstrip(".")
+    act = (shot.get("action") or "").strip().rstrip(".")
+    # ensure the event is bound to the protagonist (action text is subjectless)
+    subject = name if name and name.lower() not in act.lower() else ""
+    core = f"{subject} {act}".strip() if subject else act
+    if act and obj and obj.lower() not in act.lower():
+        # objective supplies context (the 'why'/scene) the action omits
+        scene = f"Depict {core}, as {obj}."
+    elif act:
+        scene = f"Depict {core}."
+    elif obj:
+        scene = f"Depict {obj}."
+    else:
+        return ""
+    return scene
 
 
 def build_visual_scene_package(

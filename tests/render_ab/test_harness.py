@@ -38,9 +38,10 @@ def test_capture_prompts_real_legacy_and_director():
     assert "Character Identity:" in d0 and "Liang" in d0, "Director prompt must carry the permanent identity block"
     assert "silver-edged sword" in " ".join(prompts["director"]).lower() or "chinese jian" in " ".join(prompts["director"]).lower(), "weapon must be canonicalized"
     assert "silver edged weapon, silver edged" not in " ".join(prompts["director"]).lower(), "weapon duplicate must be fixed"
-    objs = [p.split("Narrative Objective:")[1].split(".")[0].strip()
-            for p in prompts["director"] if "Narrative Objective:" in p]
-    assert len(set(objs)) == 3, "each shot needs a distinct narrative objective (no repetition)"
+    assert "Depict" in d0, "Director prompt must lead with an imperative scene description"
+    objs = [p.split("Depict")[1].split(". ")[0].strip()
+            for p in prompts["director"] if "Depict" in p]
+    assert len(set(objs)) == 3, "each shot needs a distinct imperative scene (no repetition)"
     print("PASS capture: 3 legacy + 3 director prompts from real app path")
 
 

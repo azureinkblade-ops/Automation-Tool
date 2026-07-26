@@ -83,10 +83,11 @@ def test_on_returns_director_prompts():
     assert out[0].startswith("xianxia cultivation fantasy illustration"), \
         "ON path must return Director genre-labeled prompt"
     assert "Character Identity:" in out[0] and "Liang" in out[0], "Liang character lock must be present"
-    # per-image narrative objective must differ across the 3 shots (no repetition)
-    objectives = [p.split("Narrative Objective:")[1].split(".")[0].strip() for p in out if "Narrative Objective:" in p]
-    assert len(objectives) == 3, "expected a narrative objective per shot"
-    assert len(set(objectives)) == 3, "narrative objectives must differ across shots (no repetition)"
+    assert "Depict" in out[0], "Director prompt must lead with an imperative scene description"
+    # per-image imperative scene must differ across the 3 shots (no repetition)
+    objectives = [p.split("Depict")[1].split(". ")[0].strip() for p in out if "Depict" in p]
+    assert len(objectives) == 3, "expected an imperative scene per shot"
+    assert len(set(objectives)) == 3, "imperative scenes must differ across shots (no repetition)"
     # weapon must be canonicalized + deduped (no 'silver edged weapon, silver edged')
     blob = " ".join(out).lower()
     assert "jade" in blob, "Liang clothing (jade) missing"
