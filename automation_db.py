@@ -622,6 +622,50 @@ def init_db(root: Path) -> Path:
                     ON weekly_growth_slots(plan_id, slot_number);
                 CREATE INDEX IF NOT EXISTS idx_weekly_growth_slots_history
                     ON weekly_growth_slots(slot_date, novel_abbr, engagement_goal);
+
+                -- === Slice 1 (AIVSB retrieval index): additive, derived cache only ===
+                -- Handoff: SLICE1-AUTOMATION-DB-HANDOFF (recorded 2026-07-27).
+                -- These tables are DERIVED from the external AIVSB YAML corpus and may be
+                -- dropped/rebuilt at any time. No SCHEMA_VERSION bump; idempotent migration.
+                --
+                -- SCHEMA_VERSION CONVENTION (explicit, per handoff): SCHEMA_VERSION governs
+                -- canonical feature tables. Additive CREATE TABLE IF NOT EXISTS for OPTIONAL
+                -- DERIVED CACHES does NOT advance SCHEMA_VERSION. These tables are rebuildable
+                -- and carry no canonical data, so a future reader must not infer schema "6"
+                -- includes or excludes them — the handoff record is the authority.
+                CREATE TABLE IF NOT EXISTS retrieval_chunks (
+                    chunk_id      TEXT PRIMARY KEY,
+                    novel_id      TEXT NOT NULL,
+                    domain        TEXT NOT NULL,
+                    character_id  TEXT,
+                    platform      TEXT,
+                    asset_type    TEXT,
+                    status        TEXT NOT NULL,
+                    version       TEXT,
+                    content_hash  TEXT NOT NULL,
+                    summary       TEXT,
+                    body          TEXT NOT NULL,
+                    tags          TEXT,
+                    source_file   TEXT NOT NULL,
+                    chunk_path    TEXT NOT NULL,
+                    updated_at    TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS chunk_embeddings (
+                    chunk_id            TEXT PRIMARY KEY REFERENCES retrieval_chunks(chunk_id) ON DELETE CASCADE,
+                    embedding_model     TEXT NOT NULL,
+                    embedding_revision  TEXT,
+                    embedding_dim       INTEGER NOT NULL,
+                    embedded_at         TEXT NOT NULL,
+                    content_hash        TEXT NOT NULL,
+                    vector              BLOB NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_rc_novel_domain ON retrieval_chunks(novel_id, domain);
+                CREATE INDEX IF NOT EXISTS idx_rc_char        ON retrieval_chunks(character_id);
+                CREATE INDEX IF NOT EXISTS idx_rc_platform     ON retrieval_chunks(platform);
+                CREATE INDEX IF NOT EXISTS idx_rc_status      ON retrieval_chunks(status);
+                CREATE INDEX IF NOT EXISTS idx_ce_model        ON chunk_embeddings(embedding_model);
                 """
             )
             columns = {
