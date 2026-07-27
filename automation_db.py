@@ -21,7 +21,7 @@ except Exception:  # pragma: no cover - app can still run without pydantic
 
 
 DB_FILENAME = "automation_state.db"
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 _LOCK = threading.RLock()
 
 DEFAULT_NOVELS = {
@@ -666,6 +666,36 @@ def init_db(root: Path) -> Path:
                 CREATE INDEX IF NOT EXISTS idx_rc_platform     ON retrieval_chunks(platform);
                 CREATE INDEX IF NOT EXISTS idx_rc_status      ON retrieval_chunks(status);
                 CREATE INDEX IF NOT EXISTS idx_ce_model        ON chunk_embeddings(embedding_model);
+
+                -- === Slice 1 provenance follow-up (AIVSB-RETRIEVAL-PROVENANCE handoff) ===
+                -- Durable governance/audit metadata (NOT a rebuildable derived cache).
+                -- SCHEMA_VERSION advanced 6 -> 7 for these tables (see handoff rationale).
+                CREATE TABLE IF NOT EXISTS retrieval_index_runs (
+                    run_id             TEXT PRIMARY KEY,
+                    canonical_repo_root TEXT NOT NULL,
+                    source_git_commit TEXT,
+                    source_git_dirty  INTEGER NOT NULL DEFAULT 0,
+                    extractor_version TEXT NOT NULL,
+                    embedding_model   TEXT,
+                    embedding_revision TEXT,
+                    manifest_hash      TEXT NOT NULL,
+                    chunk_count        INTEGER NOT NULL,
+                    embedding_count    INTEGER NOT NULL,
+                    started_at         TEXT NOT NULL,
+                    completed_at       TEXT,
+                    status             TEXT NOT NULL,
+                    error_message      TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS retrieval_index_run_chunks (
+                    run_id       TEXT NOT NULL,
+                    chunk_id     TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    PRIMARY KEY (run_id, chunk_id),
+                    FOREIGN KEY (run_id)
+                        REFERENCES retrieval_index_runs(run_id)
+                        ON DELETE CASCADE
+                );
                 """
             )
             columns = {

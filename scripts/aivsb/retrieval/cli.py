@@ -44,14 +44,15 @@ def resolve_source_path() -> Path:
 
 def cmd_index(args: argparse.Namespace) -> int:
     from .chunk_extractor import extract
-    from .index_store import upsert_chunks, upsert_embedding, count_chunks, count_embeddings
-    from .embed_worker import is_available, embed_texts, EmbeddingUnavailable, SHIPPING_MODEL
+    from .index_store import upsert_embedding, count_chunks, count_embeddings
+    from .embed_worker import is_available, embed_texts, EmbeddingUnavailable, SHIPPING_MODEL, MODEL_REVISION
+    from .provenance import run_index
 
     src = resolve_source_path()
     chunks = list(extract(src))
-    n = upsert_chunks(REPO_ROOT, chunks)
-    print(f"Indexed {n} chunks from {src}")
 
+    model = None
+    rev = None
     if is_available():
         try:
             model, rev, dim, packed = embed_texts([c.body for c in chunks])
@@ -65,7 +66,12 @@ def cmd_index(args: argparse.Namespace) -> int:
         print("WARN: embedding model unavailable; stored chunks without vectors. "
               "retrieve() will use metadata+keyword fallback.")
 
-    print(f"Total chunks: {count_chunks(REPO_ROOT)}, embeddings: {count_embeddings(REPO_ROOT)}")
+    # Two-phase provenance run: inserts STARTED, atomically syncs chunks, records
+    # COMPLETED (or FAILED on error). Does not change retrieval behavior.
+    rid = run_index(REPO_ROOT, src, chunks, embedding_model=model, embedding_revision=rev)
+    print(f"Indexed {len(chunks)} chunks from {src}")
+    print(f"Index run {rid}: COMPLETED. Total chunks: {count_chunks(REPO_ROOT)}, "
+          f"embeddings: {count_embeddings(REPO_ROOT)}")
     return 0
 
 
