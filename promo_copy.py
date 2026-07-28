@@ -20,7 +20,7 @@ import re
 import time
 import urllib.parse
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import app_config as config
 
@@ -36,6 +36,14 @@ PATREON_URL = config.PATREON_URL
 ENABLE_NOVEL_VOICE_VARIANTS = str(
     __import__("os").environ.get("ENABLE_NOVEL_VOICE_VARIANTS", "true")
 ).strip().lower() in ("1", "true", "yes", "on")
+
+# Slice 2 AIVSB retrieval feature flag. Defaults OFF (precedent: ENABLE_POST_AUDIO).
+# When False, build_platform_posts behaves exactly as before: no retrieval import
+# side effects, no DB reads, no retrieval invocation, no logging.
+ENABLE_AIVSB_RETRIEVAL = str(
+    __import__("os").environ.get("ENABLE_AIVSB_RETRIEVAL", "false")
+).strip().lower() in ("1", "true", "yes", "on")
+
 YOUTUBE_SOCIAL_URL = config.YOUTUBE_SOCIAL_URL
 TIKTOK_URL = config.TIKTOK_URL
 INSTAGRAM_URL = config.INSTAGRAM_URL
@@ -1006,6 +1014,110 @@ def short_destination_copy(
     return {"hook": hook, "links": links, "hashtags": profile["hashtags"], "x_hashtags": profile["x_hashtags"]}
 
 
+def _aivsb_retrieval_block(
+    story: str, novel: str, focus: str, context: str, material: dict,
+    *, eval_sink=None,
+) -> str:
+    """Slice 2: build a bounded AIVSB retrieved-context block for injection.
+
+    Returns "" when the flag is OFF or retrieval is unavailable/fails, so the
+    caller's prompt is unchanged. Purely additive; never mutates inputs.
+
+    Query is MINIMAL (no semantic-query redesign): assembled from already-available
+    composer inputs (novel identifier, post intent/focus, characters present).
+    Context formatting enforces: max hits, char budget, deterministic ordering,
+    duplicate suppression, novel isolation, omission of empty context.
+
+    Failure containment: any exception inside retrieval/formatting returns "" and
+    records fallback_reason via eval_sink; it never propagates to post generation.
+    """
+    if not ENABLE_AIVSB_RETRIEVAL:
+        return ""
+    try:
+        from pathlib import Path
+        import automation_db as _adb
+        from scripts.aivsb.retrieval import retrieve, get_active_index_run
+
+        root = _adb.db_path(Path(__file__).resolve().parents[2])
+        run = get_active_index_run(root)
+        run_id = run.run_id if run else None
+        manifest_hash = run.manifest_hash if run else None
+
+        chars = " ".join(str(c) for c in (material.get("characters") or []))
+        query = " ".join(p for p in [novel, focus, context, chars, story] if p).strip()
+        returned_ids: list[str] = []
+        try:
+            hits = retrieve(root, query, novel_id=story or None, top_n=5)
+            returned_ids = [h.chunk_id for h in hits]
+        except Exception as exc:  # contained: retrieval boundary only
+            if eval_sink is not None:
+                eval_sink({
+                    "retrieval_enabled": True, "retrieval_attempted": True,
+                    "retrieval_used": False, "run_id": run_id,
+                    "manifest_hash": manifest_hash, "query": query,
+                    "returned_chunk_ids": [], "injected_chunk_ids": [],
+                    "fallback_reason": f"retrieval_error:{type(exc).__name__}",
+                })
+            return ""
+
+        if not hits:
+            if eval_sink is not None:
+                eval_sink({
+                    "retrieval_enabled": True, "retrieval_attempted": True,
+                    "retrieval_used": False, "run_id": run_id,
+                    "manifest_hash": manifest_hash, "query": query,
+                    "returned_chunk_ids": [], "injected_chunk_ids": [],
+                    "fallback_reason": "no_hits",
+                })
+            return ""
+
+        # Bounded, deterministic formatting.
+        MAX_HITS = 5
+        CHAR_BUDGET = 1200
+        seen = set()
+        injected: list[str] = []
+        injected_ids: list[str] = []
+        total = 0
+        for h in sorted(hits, key=lambda x: x.chunk_id):  # deterministic ordering
+            if h.novel_id and story and h.novel_id != story:
+                continue  # novel isolation
+            if h.chunk_id in seen:
+                continue  # duplicate suppression
+            seen.add(h.chunk_id)
+            body = (h.summary or "").strip() or (h.provenance.get("source_file", "") if isinstance(h.provenance, dict) else "")
+            if not body:
+                body = f"[{h.domain}]"
+            if len(body) > 400:
+                body = body[:397] + "..."
+            piece = f"- ({h.domain}) {body}"
+            if total + len(piece) + 2 > CHAR_BUDGET and injected:
+                break
+            injected.append(piece)
+            injected_ids.append(h.chunk_id)
+            total += len(piece) + 2
+            if len(injected) >= MAX_HITS:
+                break
+        if not injected:
+            return ""
+        block = "[AIVSB RETRIEVED CONTEXT]\n" + "\n".join(injected) + "\n[END AIVSB RETRIEVED CONTEXT]"
+        if eval_sink is not None:
+            eval_sink({
+                "retrieval_enabled": True, "retrieval_attempted": True,
+                "retrieval_used": True, "run_id": run_id,
+                "manifest_hash": manifest_hash, "query": query,
+                "returned_chunk_ids": returned_ids,
+                "injected_chunk_ids": injected_ids,
+                "fallback_reason": None,
+            })
+        return block
+    except Exception:
+        # Programming/setup defect outside retrieval must NOT be swallowed here;
+        # only the retrieval+formatting boundary is contained. Re-raise anything
+        # that isn't a retrieval failure.
+        raise
+
+
+
 def build_platform_posts(
     title: str,
     chapter: str,
@@ -1016,6 +1128,7 @@ def build_platform_posts(
     chapter_ledger_entry=_ledger_entry_default,
     release_status_for_chapter: Any = _release_status_default,
     agent_copy: dict | None = None,
+    retrieval_eval_sink: "Callable[[dict], None] | None" = None,
 ) -> dict[str, str]:
     story = str(material.get("abbr") or material.get("novel") or "").strip()
     novel = str(material.get("novel") or NOVEL_NAMES.get(str(material.get("abbr", "")).upper(), "") or "Azure Inkblade").strip()
@@ -1147,6 +1260,17 @@ def build_platform_posts(
         if len(_x_full) > 280:
             _x_full = f"{_ag_tag_str}"
         x_post = _x_full
+    # Slice 2: inject bounded AIVSB retrieved context (flag OFF -> block is "").
+    _retrieval_block = _aivsb_retrieval_block(
+        story, novel, focus, context, material, eval_sink=retrieval_eval_sink,
+    )
+    if _retrieval_block:
+        if instagram_caption:
+            instagram_caption = f"{instagram_caption}\n\n{_retrieval_block}"
+        if facebook_post:
+            facebook_post = f"{facebook_post}\n\n{_retrieval_block}"
+        if x_post:
+            x_post = f"{x_post}\n\n{_retrieval_block}"
     return {
         "caption": track_copy_links(instagram_caption, story, "instagram", campaign_key, "daily-post"),
         "patreon_note": track_copy_links(patreon_note, story, "patreon", campaign_key, "daily-post"),

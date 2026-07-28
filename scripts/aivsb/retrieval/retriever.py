@@ -142,3 +142,35 @@ def retrieve(root: Path, query: str, novel_id: Optional[str] = None,
                         "version": r[8], "content_hash": r[9]},
         ))
     return out
+
+
+def get_active_index_run(root: Path):
+    """Read-only: return the latest COMPLETED index run's provenance, or None.
+
+    Minimal consumer-wiring accessor (Slice 2). Identifies which index state a
+    retrieval call used, for evaluation logging. Performs NO writes and does NOT
+    alter ranking, filtering, embeddings, indexing, or provenance records.
+    """
+    from .provenance import IndexRunProvenance
+    conn = adb.connect(root)
+    try:
+        row = conn.execute(
+            "SELECT run_id, canonical_repo_root, source_git_commit, source_git_dirty, "
+            "extractor_version, embedding_model, embedding_revision, manifest_hash "
+            "FROM retrieval_index_runs WHERE status='COMPLETED' "
+            "ORDER BY completed_at DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return IndexRunProvenance(
+        run_id=row["run_id"],
+        canonical_repo_root=row["canonical_repo_root"],
+        source_git_commit=row["source_git_commit"],
+        source_git_dirty=bool(row["source_git_dirty"]),
+        extractor_version=row["extractor_version"],
+        embedding_model=row["embedding_model"],
+        embedding_revision=row["embedding_revision"],
+        manifest_hash=row["manifest_hash"],
+    )
