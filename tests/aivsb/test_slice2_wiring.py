@@ -1,9 +1,9 @@
 """Slice 2 AIVSB retrieval consumer wiring — tests.
 
 Verifies the OFF-path contract (flag OFF -> identical result, no retrieval call,
-no DB read, no logging) and the ON-path behavior (bounded injection, provenance
-capture, zero-hit + exception fallbacks, cross-novel isolation, deterministic
-formatting). Consumer-only; does not test retrieval ranking/embedding/indexing.
+no DB read, no logging) and the ON-path behavior (bounded structured signal,
+sink-only provenance, zero-hit + exception fallbacks, cross-novel isolation).
+Consumer-only; does not test retrieval ranking/embedding/indexing.
 
 Run:
   PYTHONPATH=. python -m pytest tests/aivsb/test_slice2_wiring.py -q
@@ -11,6 +11,7 @@ Run:
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import sqlite3
 from pathlib import Path
@@ -129,7 +130,7 @@ def _connect_to(tmp_db_path):
     return conn
 
 
-def test_flag_on_injects_bounded_context_and_captures_provenance():
+def test_flag_on_keeps_public_output_clean_and_captures_signal_provenance():
     os.environ["ENABLE_AIVSB_RETRIEVAL"] = "true"
     importlib.reload(__import__("promo_copy", fromlist=["x"]))
     import promo_copy
@@ -147,10 +148,9 @@ def test_flag_on_injects_bounded_context_and_captures_provenance():
             rotation_next=rot, chapter_ledger_entry=ledger, release_status_for_chapter=rel,
             retrieval_eval_sink=eval_records.append,
         )
-    assert "[AIVSB RETRIEVED CONTEXT]" in out["caption"]
-    assert "[END AIVSB RETRIEVED CONTEXT]" in out["caption"]
-    hits_in_block = out["caption"].count("- (")
-    assert hits_in_block <= 5
+    public_blob = json.dumps(out, sort_keys=True)
+    assert "[AIVSB RETRIEVED CONTEXT]" not in public_blob
+    assert "[END AIVSB RETRIEVED CONTEXT]" not in public_blob
     assert len(eval_records) == 1
     rec = eval_records[0]
     assert rec["retrieval_enabled"] is True
@@ -158,6 +158,20 @@ def test_flag_on_injects_bounded_context_and_captures_provenance():
     assert rec["run_id"] == rid
     assert rec["manifest_hash"]
     assert rec["fallback_reason"] is None
+    assert rec["injected_chunk_ids"] == []
+    for chunk_id in rec["returned_chunk_ids"]:
+        assert chunk_id not in public_blob
+    if rec["derived_signal"] is None:
+        assert rec["derived_signal_source_ids"] == []
+        assert rec["derived_signal_source_rank"] is None
+        assert rec["derived_signal_source_domain"] is None
+        assert rec["signal_fallback_reason"] == "no_mappable_domain"
+    else:
+        assert rec["derived_signal"] in {"character_moment", "worldbuilding"}
+        assert len(rec["derived_signal_source_ids"]) == 1
+        assert rec["derived_signal_source_rank"] >= 1
+        assert rec["derived_signal_source_domain"] in {"character", "worldbuilding", "location"}
+        assert rec["signal_fallback_reason"] is None
 
 
 def test_flag_on_zero_hits_preserves_original_prompt():
@@ -226,7 +240,7 @@ def test_flag_on_retrieval_exception_preserves_original_prompt():
     assert eval_records[0]["fallback_reason"].startswith("retrieval_error:")
 
 
-def test_cross_novel_isolation_in_injected_context():
+def test_cross_novel_isolation_in_derived_signal_and_public_output():
     os.environ["ENABLE_AIVSB_RETRIEVAL"] = "true"
     importlib.reload(__import__("promo_copy", fromlist=["x"]))
     import promo_copy
@@ -239,26 +253,35 @@ def test_cross_novel_isolation_in_injected_context():
             self.chunk_id = cid; self.novel_id = nov; self.domain = dom
             self.score = 1.0; self.summary = f"body-{cid}"; self.provenance = prov
     faked = [
-        _Hit("hp::a", "hp", "visual_identity", {"source_file": "x"}),
-        _Hit("en::b", "en", "visual_identity", {"source_file": "y"}),
-        _Hit("hp::c", "hp", "visual_identity", {"source_file": "z"}),
+        _Hit("hp::a", "hp", "character", {"source_file": "x"}),
+        _Hit("en::b", "en", "worldbuilding", {"source_file": "y"}),
+        _Hit("hp::c", "hp", "location", {"source_file": "z"}),
     ]
     tmp = Path(tempfile.mkdtemp())
     tmp_db = tmp / "automation_state.db"
+    eval_records = []
     with mock.patch.object(adb, "connect", lambda root: _connect_to(tmp_db)), \
          mock.patch("scripts.aivsb.retrieval.retrieve", return_value=faked), \
          mock.patch("scripts.aivsb.retrieval.get_active_index_run", return_value=None):
         out = promo_copy.build_platform_posts(
             material["title"], material["chapter"], material,
             rotation_next=rot, chapter_ledger_entry=ledger, release_status_for_chapter=rel,
+            retrieval_eval_sink=eval_records.append,
         )
-    block = out["caption"]
-    assert "body-en::b" not in block
-    assert "body-hp::a" in block
-    assert "body-hp::c" in block
+    public_blob = json.dumps(out, sort_keys=True)
+    for hit in faked:
+        assert hit.summary not in public_blob
+        assert hit.chunk_id not in public_blob
+    rec = eval_records[0]
+    assert rec["returned_chunk_ids"] == ["hp::a", "en::b", "hp::c"]
+    assert rec["injected_chunk_ids"] == []
+    assert rec["derived_signal"] == "character_moment"
+    assert rec["derived_signal_source_ids"] == ["hp::a"]
+    assert rec["derived_signal_source_rank"] == 1
+    assert rec["derived_signal_source_domain"] == "character"
 
 
-def test_context_formatting_deterministic():
+def test_signal_selection_preserves_retrieval_order_deterministically():
     os.environ["ENABLE_AIVSB_RETRIEVAL"] = "true"
     importlib.reload(__import__("promo_copy", fromlist=["x"]))
     import promo_copy
@@ -271,26 +294,38 @@ def test_context_formatting_deterministic():
             self.chunk_id = cid; self.novel_id = nov; self.domain = dom
             self.score = 1.0; self.summary = f"body-{cid}"; self.provenance = prov
     faked = [
-        _Hit("hp::z", "hp", "visual_identity", {"source_file": "a"}),
-        _Hit("hp::a", "hp", "visual_identity", {"source_file": "b"}),
-        _Hit("hp::a", "hp", "visual_identity", {"source_file": "b"}),  # duplicate
-        _Hit("hp::m", "hp", "visual_identity", {"source_file": "c"}),
+        _Hit("hp::z", "hp", "video", {"source_file": "a"}),
+        _Hit("hp::a", "hp", "character", {"source_file": "b"}),
+        _Hit("hp::a", "hp", "character", {"source_file": "b"}),  # duplicate returned ID
+        _Hit("hp::m", "hp", "location", {"source_file": "c"}),
     ]
     tmp = Path(tempfile.mkdtemp())
     tmp_db = tmp / "automation_state.db"
+    eval_records = []
     with mock.patch.object(adb, "connect", lambda root: _connect_to(tmp_db)), \
          mock.patch("scripts.aivsb.retrieval.retrieve", return_value=faked), \
          mock.patch("scripts.aivsb.retrieval.get_active_index_run", return_value=None):
         out1 = promo_copy.build_platform_posts(
             material["title"], material["chapter"], material,
             rotation_next=rot, chapter_ledger_entry=ledger, release_status_for_chapter=rel,
+            retrieval_eval_sink=eval_records.append,
         )
         out2 = promo_copy.build_platform_posts(
             material["title"], material["chapter"], material,
             rotation_next=rot, chapter_ledger_entry=ledger, release_status_for_chapter=rel,
+            retrieval_eval_sink=eval_records.append,
         )
-    b1 = out1["caption"]
-    b2 = out2["caption"]
-    assert b1 == b2
-    assert b1.count("body-hp::a") == 1
-    assert b1.index("body-hp::a") < b1.index("body-hp::m") < b1.index("body-hp::z")
+    assert out1 == out2
+    assert len(eval_records) == 2
+    expected_order = ["hp::z", "hp::a", "hp::a", "hp::m"]
+    for rec in eval_records:
+        assert rec["returned_chunk_ids"] == expected_order
+        assert rec["injected_chunk_ids"] == []
+        assert rec["derived_signal"] == "character_moment"
+        assert rec["derived_signal_source_ids"] == ["hp::a"]
+        assert rec["derived_signal_source_rank"] == 2
+        assert rec["derived_signal_source_domain"] == "character"
+    public_blob = json.dumps(out1, sort_keys=True)
+    for hit in faked:
+        assert hit.summary not in public_blob
+        assert hit.chunk_id not in public_blob

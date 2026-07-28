@@ -19,6 +19,7 @@ import json
 import re
 import time
 import urllib.parse
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -1014,31 +1015,60 @@ def short_destination_copy(
     return {"hook": hook, "links": links, "hashtags": profile["hashtags"], "x_hashtags": profile["x_hashtags"]}
 
 
-def _aivsb_retrieval_block(
+@dataclass(frozen=True)
+class RetrievedCompositionSignal:
+    """Slice 2R: bounded structured signal derived from accepted retrieval hits.
+
+    Only the field actually consumed by composition is present.
+    """
+    caption_style: str | None
+
+
+# Slice 2R: existing curated caption-style vocabulary (promo_copy.rotating_caption_style).
+CAPTION_STYLE_VOCAB = {
+    "scene_hook", "reader_question", "stakes",
+    "character_moment", "worldbuilding", "catch_up",
+}
+
+# Slice 2R: immutable explicit map from existing KnowledgeChunk.domain to a curated
+# caption style. `location` -> `worldbuilding` is a deliberate POLICY mapping, not identity.
+# visual_identity / video / lesson have no mapping (None).
+DOMAIN_TO_CAPTION_STYLE = {
+    "character": "character_moment",
+    "worldbuilding": "worldbuilding",
+    "location": "worldbuilding",
+}
+
+
+def _aivsb_retrieval_signal(
     story: str, novel: str, focus: str, context: str, material: dict,
     *, eval_sink=None,
-) -> str:
-    """Slice 2: build a bounded AIVSB retrieved-context block for injection.
+) -> RetrievedCompositionSignal | None:
+    """Slice 2R: derive a bounded composition signal from retrieval (no text injection).
 
-    Returns "" when the flag is OFF or retrieval is unavailable/fails, so the
-    caller's prompt is unchanged. Purely additive; never mutates inputs.
+    Returns None when the flag is OFF or retrieval is unavailable/fails/returns no
+    mappable hit, so composition is unchanged. The formatted retrieval block is NOT a
+    composition input; only the derived caption_style reaches the composer.
 
-    Query is MINIMAL (no semantic-query redesign): assembled from already-available
-    composer inputs (novel identifier, post intent/focus, characters present).
-    Context formatting enforces: max hits, char budget, deterministic ordering,
-    duplicate suppression, novel isolation, omission of empty context.
+    Selection: traverse retrieve() hits in the EXACT returned order; pick the FIRST hit
+    whose validated domain exists in DOMAIN_TO_CAPTION_STYLE; validate the mapped style
+    against CAPTION_STYLE_VOCAB. Unknown/missing/malformed/future domains -> no signal.
 
-    Failure containment: any exception inside retrieval/formatting returns "" and
-    records fallback_reason via eval_sink; it never propagates to post generation.
+    Provenance (sink-only): run_id, manifest_hash, query, returned_chunk_ids,
+    injected_chunk_ids (legacy, always []), fallback_reason (retrieval layer),
+    derived_signal, derived_signal_source_ids, derived_signal_source_rank,
+    derived_signal_source_domain, signal_fallback_reason (signal-consumption layer).
+
+    Failure containment: any exception inside retrieval returns None and records
+    fallback_reason via eval_sink; it never propagates to post generation.
     """
     if not ENABLE_AIVSB_RETRIEVAL:
-        return ""
+        return None
     try:
         from pathlib import Path
-        import automation_db as _adb
         from scripts.aivsb.retrieval import retrieve, get_active_index_run
 
-        root = _adb.db_path(Path(__file__).resolve().parents[2])
+        root = Path(__file__).resolve().parent
         run = get_active_index_run(root)
         run_id = run.run_id if run else None
         manifest_hash = run.manifest_hash if run else None
@@ -1057,8 +1087,13 @@ def _aivsb_retrieval_block(
                     "manifest_hash": manifest_hash, "query": query,
                     "returned_chunk_ids": [], "injected_chunk_ids": [],
                     "fallback_reason": f"retrieval_error:{type(exc).__name__}",
+                    "derived_signal": None,
+                    "derived_signal_source_ids": [],
+                    "derived_signal_source_rank": None,
+                    "derived_signal_source_domain": None,
+                    "signal_fallback_reason": None,
                 })
-            return ""
+            return None
 
         if not hits:
             if eval_sink is not None:
@@ -1068,51 +1103,59 @@ def _aivsb_retrieval_block(
                     "manifest_hash": manifest_hash, "query": query,
                     "returned_chunk_ids": [], "injected_chunk_ids": [],
                     "fallback_reason": "no_hits",
+                    "derived_signal": None,
+                    "derived_signal_source_ids": [],
+                    "derived_signal_source_rank": None,
+                    "derived_signal_source_domain": None,
+                    "signal_fallback_reason": None,
                 })
-            return ""
+            return None
 
-        # Bounded, deterministic formatting.
-        MAX_HITS = 5
-        CHAR_BUDGET = 1200
-        seen = set()
-        injected: list[str] = []
-        injected_ids: list[str] = []
-        total = 0
-        for h in sorted(hits, key=lambda x: x.chunk_id):  # deterministic ordering
+        # Traverse in retrieve() order; select the first hit whose domain maps.
+        selected = None
+        for rank, h in enumerate(hits, start=1):
             if h.novel_id and story and h.novel_id != story:
                 continue  # novel isolation
-            if h.chunk_id in seen:
-                continue  # duplicate suppression
-            seen.add(h.chunk_id)
-            body = (h.summary or "").strip() or (h.provenance.get("source_file", "") if isinstance(h.provenance, dict) else "")
-            if not body:
-                body = f"[{h.domain}]"
-            if len(body) > 400:
-                body = body[:397] + "..."
-            piece = f"- ({h.domain}) {body}"
-            if total + len(piece) + 2 > CHAR_BUDGET and injected:
-                break
-            injected.append(piece)
-            injected_ids.append(h.chunk_id)
-            total += len(piece) + 2
-            if len(injected) >= MAX_HITS:
-                break
-        if not injected:
-            return ""
-        block = "[AIVSB RETRIEVED CONTEXT]\n" + "\n".join(injected) + "\n[END AIVSB RETRIEVED CONTEXT]"
+            mapped = DOMAIN_TO_CAPTION_STYLE.get(str(h.domain or "").strip().lower())
+            if mapped is None or mapped not in CAPTION_STYLE_VOCAB:
+                continue
+            selected = (mapped, h.chunk_id, rank, str(h.domain or ""))
+            break
+
+        if selected is None:
+            if eval_sink is not None:
+                eval_sink({
+                    "retrieval_enabled": True, "retrieval_attempted": True,
+                    "retrieval_used": True, "run_id": run_id,
+                    "manifest_hash": manifest_hash, "query": query,
+                    "returned_chunk_ids": returned_ids, "injected_chunk_ids": [],
+                    "fallback_reason": None,
+                    "derived_signal": None,
+                    "derived_signal_source_ids": [],
+                    "derived_signal_source_rank": None,
+                    "derived_signal_source_domain": None,
+                    "signal_fallback_reason": "no_mappable_domain",
+                })
+            return None
+
+        mapped_style, sel_id, sel_rank, sel_domain = selected
         if eval_sink is not None:
             eval_sink({
                 "retrieval_enabled": True, "retrieval_attempted": True,
                 "retrieval_used": True, "run_id": run_id,
                 "manifest_hash": manifest_hash, "query": query,
-                "returned_chunk_ids": returned_ids,
-                "injected_chunk_ids": injected_ids,
+                "returned_chunk_ids": returned_ids, "injected_chunk_ids": [],
                 "fallback_reason": None,
+                "derived_signal": mapped_style,
+                "derived_signal_source_ids": [sel_id],
+                "derived_signal_source_rank": sel_rank,
+                "derived_signal_source_domain": sel_domain,
+                "signal_fallback_reason": None,
             })
-        return block
+        return RetrievedCompositionSignal(caption_style=mapped_style)
     except Exception:
         # Programming/setup defect outside retrieval must NOT be swallowed here;
-        # only the retrieval+formatting boundary is contained. Re-raise anything
+        # only the retrieval boundary is contained. Re-raise anything
         # that isn't a retrieval failure.
         raise
 
@@ -1161,8 +1204,18 @@ def build_platform_posts(
         "youtube_release": "The chapter video release is ready on YouTube for readers who want to listen.",
         "catch_up_archive": "Catch up from the archive and follow the next release when you are ready.",
     }.get(focus, "Follow the latest Azure Inkblade story updates.")
-    style = rotating_caption_style(story, f"campaign_{chapter_id or slugify(title)}_{focus}", rotation_next=rotation_next)
+    style = rotating_caption_style(story, f"campaign_{chapter_id or slugify(title)}_{focus}", rotation_next=rotation_next)  # baseline (advances rotation)
     context = f"campaign_{chapter_id or slugify(title)}"
+    # Slice 2R: derive a bounded composition signal from retrieval (flag-gated, pre-composition).
+    # The formatted retrieval block is NOT injected into final outputs; only the derived
+    # caption_style may override the current style. Rotation state is advanced identically
+    # in both arms above.
+    _sig = (
+        _aivsb_retrieval_signal(story, novel, focus, context, material, eval_sink=retrieval_eval_sink)
+        if ENABLE_AIVSB_RETRIEVAL else None
+    )
+    if _sig is not None and _sig.caption_style in CAPTION_STYLE_VOCAB:
+        style = _sig.caption_style
     style_lines, x_hook = caption_style_lines(story, novel, title, hook, focus, style, cta, public_status_line, context, "instagram", rotation_next=rotation_next)
     facebook_cta = focused_social_cta(story, focus, context, "facebook", rotation_next=rotation_next)
     facebook_lines, _ = caption_style_lines(story, novel, title, hook, focus, style, facebook_cta, public_status_line, context, "facebook", rotation_next=rotation_next)
@@ -1260,17 +1313,6 @@ def build_platform_posts(
         if len(_x_full) > 280:
             _x_full = f"{_ag_tag_str}"
         x_post = _x_full
-    # Slice 2: inject bounded AIVSB retrieved context (flag OFF -> block is "").
-    _retrieval_block = _aivsb_retrieval_block(
-        story, novel, focus, context, material, eval_sink=retrieval_eval_sink,
-    )
-    if _retrieval_block:
-        if instagram_caption:
-            instagram_caption = f"{instagram_caption}\n\n{_retrieval_block}"
-        if facebook_post:
-            facebook_post = f"{facebook_post}\n\n{_retrieval_block}"
-        if x_post:
-            x_post = f"{x_post}\n\n{_retrieval_block}"
     return {
         "caption": track_copy_links(instagram_caption, story, "instagram", campaign_key, "daily-post"),
         "patreon_note": track_copy_links(patreon_note, story, "patreon", campaign_key, "daily-post"),
