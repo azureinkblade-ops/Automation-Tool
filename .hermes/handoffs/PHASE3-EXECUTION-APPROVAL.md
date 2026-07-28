@@ -8,7 +8,7 @@ push_authorized: false
 deployment_authorized: false
 publication_authorized: false
 subject_commit: 5eed6e1823bc398084e8a46998186771a5970347
-harness_commit: pending
+harness_commit: a263b31a34f1013a2dbc78a90743bd08c6e0b079
 ---
 
 # Phase 3 Execution Approval

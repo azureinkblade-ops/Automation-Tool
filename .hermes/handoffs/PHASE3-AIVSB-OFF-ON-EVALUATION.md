@@ -5,7 +5,7 @@ fixture_freeze_authorized: false
 phase3_execution_authorized: false
 feature_enabled: false
 subject_commit: 5eed6e1823bc398084e8a46998186771a5970347
-harness_commit: pending
+harness_commit: a263b31a34f1013a2dbc78a90743bd08c6e0b079
 revision: 2026-07-28-slice2r-v2
 ---
 

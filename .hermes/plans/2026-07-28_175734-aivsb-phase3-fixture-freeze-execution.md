@@ -13,8 +13,10 @@
 ## 1. Current authoritative state
 
 ```yaml
-harness_design_status: AUTHORIZED_IN_PROGRESS
+harness_design_status: IMPLEMENTED_AND_VERIFIED_LOCALLY
 harness_design_authorized_at_utc: 2026-07-28T18:10:00Z
+harness_commit: a263b31a34f1013a2dbc78a90743bd08c6e0b079
+harness_verified_at_utc: 2026-07-28T18:32:38Z
 fixture_freeze_authorized: false
 phase3_execution_authorized: false
 feature_enabled_in_normal_runtime: false
