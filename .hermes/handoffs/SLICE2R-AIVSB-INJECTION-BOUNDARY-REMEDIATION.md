@@ -5,6 +5,7 @@ executed: true
 implementation_authorized: true
 implementation_verified_at_utc: 2026-07-28T17:50:23Z
 implementation_verification: "PYTHONPATH=. python -m pytest tests/aivsb -q: 28 passed"
+implementation_commit: 5eed6e1823bc398084e8a46998186771a5970347
 handoff_id: SLICE2R-AIVSB-INJECTION-BOUNDARY-REMEDIATION
 revision: 2026-07-27
 depends_on_commits: ["2100123 (Slice 1)", "65fb588 (provenance)", "c9e39c5 (Slice 2 wiring)", "da090a9 (Slice 2 handoff closure)"]
@@ -17,7 +18,12 @@ tags: [handoff, aivsb, slice-2r, injection-boundary, remediation, implementation
 # Handoff — Slice 2R AIVSB Retrieval Injection Boundary Remediation
 
 **handoff_id:** `SLICE2R-AIVSB-INJECTION-BOUNDARY-REMEDIATION` · **revision:** 2026-07-27
-**Marked:** RECORDED AND IMPLEMENTED LOCALLY. Authorized at `2026-07-28T17:43:31Z`; verified at `2026-07-28T17:50:23Z` with `28 passed`. The implementation commit hash is recorded by the follow-up closure commit. Flag activation, Phase 3 execution, pushes, and rollout remain unauthorized.
+**Marked:** RECORDED AND IMPLEMENTED LOCALLY. Authorized at `2026-07-28T17:43:31Z`; verified at `2026-07-28T17:50:23Z` with `28 passed`; implementation commit `5eed6e1823bc398084e8a46998186771a5970347`. Flag activation, Phase 3 execution, pushes, and rollout remain unauthorized.
+
+**Change signature:** move retrieval before composition; derive only the bounded
+`KnowledgeChunk.domain -> caption_style` signal; preserve rotation advancement; keep
+raw retrieval text and provenance out of public outputs. Must not alter CTA/release
+objectives, retrieval ranking/embedding logic, feature activation, or Visual Director files.
 
 ## Why this lane exists (code-verified, revised)
 Phase 3 evaluation is BLOCKED because `promo_copy.build_platform_posts` appends the
