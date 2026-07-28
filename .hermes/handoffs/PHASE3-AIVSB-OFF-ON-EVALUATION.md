@@ -1,11 +1,14 @@
 ---
 status: DRAFT
 executed: false
-fixture_freeze_authorized: false
+fixture_candidate_preparation_authorized: true
+fixture_freeze_authorized: true
 phase3_execution_authorized: false
 feature_enabled: false
 subject_commit: 5eed6e1823bc398084e8a46998186771a5970347
 harness_commit: a263b31a34f1013a2dbc78a90743bd08c6e0b079
+fixture_freeze_approval_record: PHASE3-FIXTURE-FREEZE-APPROVAL.md
+fixture_freeze_authorized_at_utc: 2026-07-28T19:06:08Z
 revision: 2026-07-28-slice2r-v2
 ---
 
