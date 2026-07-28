@@ -1,13 +1,14 @@
 ---
 status: RECORDED
 recorded: true
-executed: false
+executed: true
 handoff_id: SLICE2-AIVSB-RETRIEVAL-WIRING
 revision: 2026-07-27
 depends_on_commits: ["2100123 (Slice 1 retrieval index)", "65fb588 (run-level provenance)"]
 approved_by: David (repository owner) — authorization granted for consumer wiring only
+commit: c9e39c5
 purpose: Wire the existing retrieval service into the prompt/composer pipeline behind an OFF feature flag.
-review_gate: "Recorded. Implementation authorized within the scoped boundaries below. Flag stays OFF throughout this lane."
+review_gate: "Recorded. Implementation authorized within the scoped boundaries below. Flag stays OFF throughout this lane. Implemented and committed as c9e39c5 (flag OFF)."
 tags: [handoff, aivsb, slice-2, retrieval, composer, feature-flag]
 ---
 
