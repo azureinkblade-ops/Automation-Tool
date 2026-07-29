@@ -6422,8 +6422,43 @@ def set_pack_image_approval(folder: str, image: str, approved: bool = True) -> d
         approved_images = [item for item in approved_images if str(Path(item).resolve()).lower() != image_key]
         if image_key not in rejected_keys:
             rejected_images.append(image_text)
+        selected_images = [
+            str(Path(str(item)).resolve())
+            for item in metadata.get("images", []) or []
+            if str(item or "").strip() and Path(str(item)).exists() and str(Path(str(item)).resolve()).lower() != image_key
+        ]
+        candidate_images = [
+            str(Path(str(item)).resolve())
+            for item in metadata.get("candidate_images", []) or []
+            if str(item or "").strip() and Path(str(item)).exists() and str(Path(str(item)).resolve()).lower() != image_key
+        ]
+        deleted_images = metadata.get("deleted_images") if isinstance(metadata.get("deleted_images"), list) else []
+        deleted_record = {
+            "image": image_text,
+            "filename": image_path.name,
+            "deletedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "reason": "rejected_bad_image",
+        }
+        deleted_record["retiredBankImages"] = retire_rejected_image_from_bank(image_path, metadata)
+        if image_path.exists() and image_path.is_file() and image_path.suffix.lower() in IMAGE_EXTENSIONS:
+            try:
+                image_path.unlink()
+                deleted_record["deleted"] = True
+            except OSError as exc:
+                deleted_record["deleted"] = False
+                deleted_record["error"] = str(exc)
+        else:
+            deleted_record["deleted"] = False
+            deleted_record["error"] = "Image file was already missing."
+        deleted_images.append(deleted_record)
+        metadata["images"] = selected_images
+        metadata["candidate_images"] = candidate_images
+        metadata["deleted_images"] = deleted_images[-250:]
     metadata["approved_images"] = approved_images
-    metadata["rejected_images"] = rejected_images
+    metadata["rejected_images"] = [
+        path for path in rejected_images
+        if str(Path(str(path)).resolve()).lower() != image_key or Path(str(path)).exists()
+    ]
     metadata["approvalManual"] = True
     metadata["imageReviewApprovedAt"] = time.strftime("%Y-%m-%d %H:%M:%S") if approved else metadata.get("imageReviewApprovedAt", "")
     metadata["lastApprovalAction"] = {
@@ -15585,10 +15620,12 @@ def deep_tiktok_chapter_moments(chapter_text: str, abbr: str, count: int = 8) ->
 
 
 DEEP_TIKTOK_BAD_OVERLAY_RE = re.compile(
-    r"(establishing world shot|protagonist in motion|tense confrontation|intimate emotional beat|"
+    r"(establishing|world shot|wide shot|close[- ]?up|camera|scene focus|scene \d+|"
+    r"visual beat|visual prompt|image prompt|prompt:|panel|frame|storyboard|"
+    r"protagonist in motion|tense confrontation|intimate emotional beat|"
     r"startling revelation|dangerous environment|quiet character moment|haunting closing image|"
-    r"realistic cinematic|promotional image|scene focus|theme:|photorealistic|no text|"
-    r"typography|logo|web novel|chapter \d+ teaser)",
+    r"realistic cinematic|promotional image|theme:|photorealistic|no text|"
+    r"typography|logo|web novel|novel title|chapter title|chapter \d+ teaser)",
     re.IGNORECASE,
 )
 
@@ -15597,14 +15634,20 @@ def sanitize_deep_tiktok_overlay(text: str, novel: str = "", fallback: str = "")
     cleaned = clean_teaser_text(str(text or ""), limit=110, max_words=12)
     lower = cleaned.lower()
     novel_lower = str(novel or "").strip().lower()
+    if ":" in cleaned and DEEP_TIKTOK_BAD_OVERLAY_RE.search(cleaned.split(":", 1)[0]):
+        cleaned = cleaned.split(":", 1)[1].strip()
+        lower = cleaned.lower()
     invalid = (
         not cleaned
         or bool(DEEP_TIKTOK_BAD_OVERLAY_RE.search(cleaned))
         or (novel_lower and lower == novel_lower)
+        or (novel_lower and lower.startswith(novel_lower))
         or len(cleaned.split()) < 3
     )
     if invalid:
         cleaned = fallback or "A hidden choice changes everything."
+    if DEEP_TIKTOK_BAD_OVERLAY_RE.search(cleaned):
+        cleaned = "A hidden choice changes everything."
     return reel_overlay_text(cleaned, limit=58)
 
 
@@ -15680,9 +15723,22 @@ def repair_deep_tiktok_metadata(folder: Path, metadata: dict[str, Any] | None = 
     novel = NOVEL_NAMES.get(abbr, abbr)
     overlays_file = folder / "video-overlays.txt"
     overlays = [line.strip() for line in overlays_file.read_text(encoding="utf-8").splitlines() if line.strip()] if overlays_file.exists() else []
+    scene_fallbacks = deep_tiktok_chapter_moments(chapter_text, abbr, max(8, len(overlays))) if chapter_text else []
+    if not scene_fallbacks:
+        scene_fallbacks = deep_tiktok_novel_overlay_fallbacks(novel, max(8, len(overlays) or 8))
+    sanitized_overlays: list[str] = []
+    for index, line in enumerate(overlays):
+        fallback = scene_fallbacks[index % len(scene_fallbacks)] if scene_fallbacks else ""
+        sanitized_overlays.append(sanitize_deep_tiktok_overlay(line, novel, fallback))
+    if sanitized_overlays and sanitized_overlays != overlays:
+        overlays = sanitized_overlays
+        overlays_file.write_text("\n".join(overlays) + "\n", encoding="utf-8")
     if not overlays and chapter_text:
-        overlays = [reel_overlay_text(moment, limit=58) for moment in deep_tiktok_chapter_moments(chapter_text, abbr, 8)]
-        overlays.append(reel_overlay_text(f"READ {novel} ON ROYAL ROAD", limit=62))
+        overlays = [
+            sanitize_deep_tiktok_overlay(moment, novel, deep_tiktok_novel_overlay_fallbacks(novel, 1)[0])
+            for moment in deep_tiktok_chapter_moments(chapter_text, abbr, 8)
+        ]
+        overlays.append(reel_overlay_text("Read the next chapter. Link in bio.", limit=62))
         overlays_file.write_text("\n".join(overlays) + "\n", encoding="utf-8")
     hook = (overlays[0].replace("\n", " ") if overlays else f"A deeper look at {novel}").strip()
     chapter_label = "Prologue" if str(chapter).strip() in {"0", "prologue", "Prologue"} else f"Chapter {chapter}"
@@ -15700,7 +15756,7 @@ def repair_deep_tiktok_metadata(folder: Path, metadata: dict[str, Any] | None = 
             "description": str(metadata.get("description") or "").strip() or caption,
             "caption": caption,
             "tiktok_title": str(metadata.get("tiktok_title") or "").strip() or deep_tiktok_title(abbr, str(chapter), title),
-            "video_overlays": metadata.get("video_overlays") or overlays,
+            "video_overlays": overlays or metadata.get("video_overlays") or [],
             "duration_target": metadata.get("duration_target") or 68,
             "platforms": metadata.get("platforms") or ["tiktok"],
             "folder": str(folder),
@@ -25005,7 +25061,7 @@ def mark_image_review_approved(folder: str) -> dict[str, Any]:
         "rejectedImageCount": len(rejected_keys),
         "message": (
             f"{len(approved_images)} image(s) are approved for this pack; {len(newly_approved)} changed in this action."
-            + (" Rejected images remain selected and must be regenerated before posting." if rejected_keys else " Buffer upload can continue after other pack requirements pass.")
+            + (" Rejected images were left out and must be regenerated before posting." if rejected_keys else " Buffer upload can continue after other pack requirements pass.")
         ),
     }
 
@@ -25874,21 +25930,36 @@ def social_post_preview(
     def wants(platform: str) -> bool:
         return requested_platforms is None or platform in requested_platforms
 
+    def preview_text(platform: str, *metadata_keys: str) -> str:
+        file_candidates = {
+            "x": ("x.txt", "x-post.txt", "x_post.txt"),
+            "facebook": ("facebook.txt", "facebook-post.txt", "facebook_post.txt"),
+        }.get(platform, (f"{platform}.txt",))
+        for filename in file_candidates:
+            candidate = post_folder / filename
+            if candidate.exists():
+                text = candidate.read_text(encoding="utf-8").strip()
+                if text:
+                    return text
+        for key in metadata_keys:
+            text = str(metadata.get(key) or "").strip()
+            if text:
+                return text
+        return ""
+
     specs = []
+    x_text = preview_text("x", "x", "x_post")
     if wants("x") and str(metadata.get("kind") or "") != "royal-road":
         specs.append(
             {
                 "key": "x",
                 "label": "X",
                 "url": "https://x.com/compose/post",
-                "text": str(metadata.get("x") or ""),
+                "text": x_text,
                 "media_path": str(image_path) if image_path.exists() else "",
             }
         )
-    facebook_text = str(metadata.get("facebook") or "").strip()
-    facebook_file = post_folder / "facebook.txt"
-    if facebook_file.exists():
-        facebook_text = facebook_file.read_text(encoding="utf-8").strip()
+    facebook_text = preview_text("facebook", "facebook", "facebook_post")
     if wants("facebook") and facebook_text:
         specs.append(
             {
@@ -41260,7 +41331,8 @@ ${data.message || 'Builder finished.'}`;
             if (!response.ok) throw new Error(data.error || 'Could not refresh pack preview');
             renderGenericPackPreview(data);
           })
-          .catch(error => { statusEl.textContent = error.message; button.disabled = false; });
+          .catch(error => { statusEl.textContent = error.message; })
+          .finally(() => { button.disabled = false; });
       } else if (regeneratePackImages) {
         button.disabled = true;
         currentFolder = regeneratePackImages;

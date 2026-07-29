@@ -302,14 +302,16 @@ def check_image_approval_roundtrip() -> list[dict[str, object]]:
         shutil.rmtree(folder)
     folder.mkdir(parents=True, exist_ok=True)
     image = folder / "regression-image.png"
+    approved_image = folder / "regression-approved-image.png"
     create_test_png(image)
+    create_test_png(approved_image)
     metadata = {
         "abbr": "EN",
         "novel": "Eternal Nexus",
         "chapter": "999",
         "title": "Regression Image Approval",
         "kind": "tiktok",
-        "images": [str(image)],
+        "images": [str(image), str(approved_image)],
         "caption": "Regression only. Do not post.",
         "packStatus": "needs_image_review",
     }
@@ -317,14 +319,19 @@ def check_image_approval_roundtrip() -> list[dict[str, object]]:
     original_feedback = app.IMAGE_FEEDBACK_FILE.read_text(encoding="utf-8") if app.IMAGE_FEEDBACK_FILE.exists() else None
     try:
         preview = app.pack_preview(str(folder))
-        checks.append(assert_result("approval_preview_has_card", len(preview.get("imageCards") or []) == 1, f"cards={len(preview.get('imageCards') or [])}"))
+        checks.append(assert_result("approval_preview_has_card", len(preview.get("imageCards") or []) == 2, f"cards={len(preview.get('imageCards') or [])}"))
 
         rejected = app.set_pack_image_approval(str(folder), str(image), False)
-        rejected_card = (rejected.get("imageCards") or [{}])[0]
-        checks.append(assert_result("single_image_reject", bool(rejected_card.get("rejected")) and not bool(rejected_card.get("approved")), str(rejected_card)))
+        rejected_meta = app.read_metadata(folder)
+        checks.append(assert_result(
+            "single_image_reject_deletes_file",
+            (not image.exists()) and str(image) not in (rejected_meta.get("images") or []),
+            f"exists={image.exists()} images={rejected_meta.get('images')}",
+            response=rejected,
+        ))
 
-        approved = app.set_pack_image_approval(str(folder), str(image), True)
-        approved_card = (approved.get("imageCards") or [{}])[0]
+        approved = app.set_pack_image_approval(str(folder), str(approved_image), True)
+        approved_card = next((card for card in (approved.get("imageCards") or []) if Path(str(card.get("image", ""))) == approved_image), {})
         checks.append(assert_result("single_image_approve", bool(approved_card.get("approved")) and not bool(approved_card.get("rejected")), str(approved_card)))
 
         pack = app.mark_image_review_approved(str(folder))
