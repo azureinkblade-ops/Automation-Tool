@@ -1,0 +1,26 @@
+{
+  "asset": "climax_kneel_detected_R1.png",
+  "derivation": "R1 minimal anatomical repair of Map B (climax_kneel_detected_B.png)",
+  "variable_under_test": "single joint idx9 (l_hip) repositioned only",
+  "idx9_before": {
+    "x": 0.359375,
+    "y": 0.85546875,
+    "score": 1.0,
+    "id": -1
+  },
+  "idx9_after": {
+    "x": 0.36,
+    "y": 0.56,
+    "score": 1.0,
+    "id": -1
+  },
+  "other_joints_changed": "NONE (all 17 other coordinates preserved)",
+  "edges_changed": "NONE (same limbSeq as Map B)",
+  "source_raw": "C:\\Users\\David\\Documents\\Automation tool\\assets\\pose_refs\\_mapB_raw.json",
+  "canvas_wh": [
+    768,
+    512
+  ],
+  "timestamp_utc": "2026-07-26T20:37:40.130178+00:00",
+  "next_step": "validate with run_map_compare.py --map R1 (identical 4-seed harness)"
+}

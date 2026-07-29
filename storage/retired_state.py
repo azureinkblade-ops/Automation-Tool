@@ -24,6 +24,7 @@ from pathlib import Path
 RETIRED_FILE_NAMES = [
     "analytics-lab.json",
     "youtube-comment-queue.json",
+    "youtube-pinned-comment-verified.json",
     "release_status.json",
     "pinned-content-plan.json",
     "pinned-profile-assets.json",
@@ -41,6 +42,7 @@ RETIRED_FILE_NAMES = [
 RETIRED_STATE_KEYS = {
     "analyticsLab": {"resource": "state_snapshots", "file": "analytics-lab.json"},
     "youtubeCommentQueue": {"resource": "state_snapshots", "file": "youtube-comment-queue.json"},
+    "youtubePinnedCommentVerified": {"resource": "state_snapshots", "file": "youtube-pinned-comment-verified.json"},
     "release_status": {"resource": "release_status", "file": "release_status.json", "relational": True},
     "pinnedContentPlan": {"resource": "state_snapshots", "file": "pinned-content-plan.json"},
     "pinnedProfileAssets": {"resource": "state_snapshots", "file": "pinned-profile-assets.json"},
@@ -59,6 +61,7 @@ RETIRED_BOOTSTRAP_KEYS = {
     "releaseStatus",
     "creatorBenchmarks",
     "youtubeCommentQueue",
+    "youtubePinnedCommentVerified",
 }
 
 

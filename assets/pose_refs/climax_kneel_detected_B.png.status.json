@@ -1,0 +1,18 @@
+{
+  "asset": "climax_kneel_detected_B.png",
+  "status": "empirically_working_conditioning_map",
+  "not_production_asset": false,
+  "derived_from": "sources/kneeling_man_altar_user_ref_2026-07-26.png",
+  "detector": "controlnet_aux:OpenposeDetector (hand_and_face=True)",
+  "used_in": "Slice B0 Track 3 LoRA-0.50 sweep + seed-confirm; reliably drives the one-knee kneel in the generator at LoRA 0.50 (kneel 4-5/5, male 5/5, jian yes across seeds).",
+  "defect_diagnosis_CORRECTED_2026-07-26": {
+    "method": "Raw 18-pt body keypoint array recovered from the installed controlnet_aux source (draw_bodypose limbSeq, util.py:86-92) and rendered as an INDEX-LABELED diagnostic (_mapB_diagnostic.png). NOT a visual review.",
+    "arm_chain": "COMPLETE. shoulder(2)->elbow(3)->wrist(4) and shoulder(5)->elbow(6)->wrist(7) both present and connected. The earlier 'right_arm_incomplete' claim was a VISUAL MISREAD -- the arm was never broken.",
+    "hands": "left_hand / right_hand fields are None (no hand detected). This is NORMAL for body-pose control and is NOT a defect to repair.",
+    "hips": "Index 9 (l_hip) is misplaced at y=0.855 (near floor). Edges [2,9] and [9,10] draw a vertical line from shoulder (y=0.258) straight down to floor (y=0.855). THAT VERTICAL LINE IS THE KNEELING-LEG VISUAL. The earlier 'merged_hip_keypoints' claim was a VISUAL MISREAD -- the hips are not merged; one hip index is simply mislabeled to floor level, and that mislabel is what produces the kneel signal.",
+    "kneel_signal": "Lowest points (idx9@0.855, idx13@0.809) encode the grounded kneel. Present and working.",
+    "conclusion": "Map B's only true oddity is a mislabeled hip index (idx9) that ACTIVELY CONTRIBUTES to the kneel the generator responds to. Repairing it (moving idx9 to mid-torso) would REMOVE the kneel line and likely REGRESS pose compliance. Per user directive 2026-07-26: do NOT improve knee/ankle/hip posture -- those imperfect features are the working signal."
+  },
+  "gate": "Passes generator validation (drives kneel + male + jian at LoRA 0.50). Limb-perfect it is not, but 'limb-complete' and 'drives kneel' are currently MUTUALLY EXCLUSIVE in this detector (Map C was limb-complete but failed to drive the pose, 1-of-4 seeds). Map B is the working baseline; repair candidates B2a/B2b are diagnostic probes, not assumed improvements.",
+  "updated_at": "2026-07-26"
+}

@@ -3,9 +3,8 @@
 This is a file-boundary integration (Codex pattern): the app shells out to the
 Hermes CLI to generate the story-hook script text, exactly like
 ``agent_post_writer.py`` does for post copy. The output is written to the same
-``STORY_HOOK_RESULT_FILE`` shape the Playwright/ChatGPT path uses, so the rest of
-the pipeline (parse -> build_story_hook_video_files -> diffusers thumbnail) is
-untouched.
+JSON shape the Playwright/ChatGPT path uses, so the rest of the pipeline
+(parse -> build_story_hook_video_files -> diffusers thumbnail) is untouched.
 
 Why this exists: the ChatGPT path required a signed-in ChatGPT tab driven over
 Chrome DevTools (connectOverCDP), which is fragile (the 9222 endpoint stalls when
@@ -191,7 +190,7 @@ def generate_and_write(
     timeout: int = 300,
     max_turns: int = 6,
 ) -> dict | None:
-    """Generate the story hook via Hermes and write ``STORY_HOOK_RESULT_FILE``.
+    """Generate the story hook via Hermes and write the caller's result file.
 
     Writes the SAME shape the Playwright/ChatGPT script writes:
     ``{ok, storyText, wordCount, sourceUrl, completedAt}`` so the existing

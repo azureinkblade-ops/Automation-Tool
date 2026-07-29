@@ -1,0 +1,16 @@
+{
+  "pretrained_model": "models/sdxl-base",
+  "train_data_dir": "lora-training/realistic-posts/train-1024",
+  "output_dir": "loras/realistic_posts",
+  "resolution": 1024,
+  "train_batch_size": 1,
+  "gradient_accumulation_steps": 4,
+  "learning_rate": 0.0001,
+  "num_train_epochs": 12,
+  "max_train_steps": 0,
+  "rank": 16,
+  "seed": 42,
+  "mixed_precision": "bf16",
+  "repeats": 10,
+  "shuffle_tags": false
+}

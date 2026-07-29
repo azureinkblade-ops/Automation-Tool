@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import importlib
+import inspect
 import json
 import shutil
 import sys
@@ -469,46 +471,80 @@ def check_tiktok_pack_single_track() -> list[dict[str, object]]:
     asserting the produced pack folder's images all carry the requested track sidecar.
     """
     checks: list[dict[str, object]] = []
-    asset_dir = app.TIKTOK_ASSET_DIR
+    original_asset_dir = app.TIKTOK_ASSET_DIR
+    temp_parent = ROOT / "tmp"
+    temp_parent.mkdir(parents=True, exist_ok=True)
+    temp_root = Path(tempfile.mkdtemp(prefix="tiktok-assets-", dir=str(temp_parent)))
+    asset_dir = temp_root / "assets"
+    app.TIKTOK_ASSET_DIR = asset_dir
     asset_dir.mkdir(parents=True, exist_ok=True)
     # stage fake assets: ABBR=EN, chapter=777, 3 main + 2 realistic
     staged: list[Path] = []
     try:
-        for i, track in enumerate(["main-posts", "main-posts", "main-posts", "realistic-posts", "realistic-posts"], start=1):
+        for i, track in enumerate(["main-posts", "main-posts", "realistic-posts", "realistic-posts", "realistic-posts"], start=1):
             png = asset_dir / f"EN_777_{i}.png"
             png.write_text("placeholder-png", encoding="utf-8")  # content unused by the style filter
             (asset_dir / f"EN_777_{i}.png.track").write_text(track, encoding="utf-8")
             staged.append(png)
-        # Build a pack requesting realistic-posts; it should pick ONLY the 2 realistic assets and
-        # would regenerate to reach 3 (we just assert the filter selects only realistic here).
-        real_fn = app.generate_tiktok_images
-        # Prevent real generation during the <3 regenerate path: return staged realistic copies.
-        def _fake_gen(*a, **k):
-            return {"created": [str(staged[3]), str(staged[4])]}
-        app.generate_tiktok_images = _fake_gen
-        try:
-            result = app.make_tiktok_pack("EN", "777", force_new_images=True, style="realistic-posts")
-            images = result.get("images", []) or []
-            # Scene images (exclude the neutral novel-promo-card outro) must all be on-track.
-            scene_images = [im for im in images if "novel-promo-card" not in Path(im).name]
-            realistic_ok = all(
-                (Path(im).with_name(Path(im).name + ".track")).exists()
-                and (Path(im).with_name(Path(im).name + ".track")).read_text(encoding="utf-8").strip() == "realistic-posts"
-                for im in scene_images
-            )
-            checks.append(assert_result(
-                "tiktok_pack_locks_single_track",
-                result.get("pack_track") == "realistic-posts" and realistic_ok and len(images) >= 1,
-                f"pack_track={result.get('pack_track')}, images={len(images)}, realistic_ok={realistic_ok}",
-            ))
-        finally:
-            app.generate_tiktok_images = real_fn
+        sound = asset_dir / "test-sound.mp3"
+        sound.write_text("placeholder-sound", encoding="utf-8")
+        pack_folder = temp_root / "pack"
+        import promo_builder
+
+        collab = {
+            "list_tiktok_assets": lambda: {
+                "sounds": [{"name": sound.name, "path": str(sound)}],
+                "imageGroups": [{
+                    "abbr": "EN",
+                    "novel": "Eternal Nexus",
+                    "chapter": "777",
+                    "count": len(staged),
+                    "files": [str(path) for path in staged],
+                    "tracks": [path.with_name(path.name + ".track").read_text(encoding="utf-8").strip() for path in staged],
+                }],
+                "videos": [],
+            },
+            "stable_chapter_folder": lambda *a, **k: pack_folder,
+            "reusable_pack_result": lambda *a, **k: None,
+            "reset_generated_folder": lambda folder: (shutil.rmtree(folder, ignore_errors=True), Path(folder).mkdir(parents=True, exist_ok=True)),
+            "prepare_tiktok_outro_image": lambda folder, *a, **k: str(Path(folder) / "novel-promo-card.png"),
+            "tiktok_caption": lambda *a, **k: "caption",
+            "instagram_reel_caption": lambda *a, **k: "reel caption",
+            "youtube_shorts_metadata": lambda *a, **k: {"title": "short title", "description": "short description"},
+            "tiktok_chapter_teaser_overlays": lambda *a, **k: ["ONE CHOICE", "THE PATH CHANGES", "READ NOW"],
+            "tiktok_narration_text": lambda *a, **k: "One choice changes the path.",
+            "generate_deep_tiktok_narration": lambda *a, **k: None,
+            "write_tiktok_video_helper": lambda *a, **k: None,
+            "update_chapter_ledger": lambda *a, **k: None,
+            "generate_tiktok_images": lambda *a, **k: {"created": []},
+        }
+        result = promo_builder.make_tiktok_pack(
+            "EN",
+            "777",
+            force_new_images=True,
+            style="realistic-posts",
+            collaborators=collab,
+        )
+        images = result.get("images", []) or []
+        scene_images = [im for im in images if "novel-promo-card" not in Path(im).name]
+        realistic_ok = all(
+            (Path(im).with_name(Path(im).name + ".track")).exists()
+            and (Path(im).with_name(Path(im).name + ".track")).read_text(encoding="utf-8").strip() == "realistic-posts"
+            for im in scene_images
+        )
+        checks.append(assert_result(
+            "tiktok_pack_locks_single_track",
+            result.get("pack_track") == "realistic-posts" and realistic_ok and len(scene_images) == 3,
+            f"pack_track={result.get('pack_track')}, scene_images={len(scene_images)}, realistic_ok={realistic_ok}",
+        ))
     except Exception as exc:
         checks.append(assert_result("tiktok_pack_locks_single_track", False, f"harness error: {exc}"))
     finally:
         for p in staged:
             p.unlink(missing_ok=True)
             (p.with_name(p.name + ".track")).unlink(missing_ok=True)
+        app.TIKTOK_ASSET_DIR = original_asset_dir
+        shutil.rmtree(temp_root, ignore_errors=True)
     return checks
 
 
@@ -1533,12 +1569,17 @@ def check_pack_health_social_preview_controls() -> list[dict[str, object]]:
 
 def check_full_youtube_ready_artifacts() -> list[dict[str, object]]:
     checks: list[dict[str, object]] = []
-    folders = [
-        folder for folder in sorted(app.YOUTUBE_OUTPUT_DIR.iterdir(), key=lambda path: path.stat().st_mtime, reverse=True)
-        if folder.is_dir() and (folder / "metadata.json").exists() and (folder / "youtube-video.mp4").exists()
-    ][:8]
+    folders: list[Path] = []
+    for folder in sorted(app.YOUTUBE_OUTPUT_DIR.iterdir(), key=lambda path: path.stat().st_mtime, reverse=True):
+        if not folder.is_dir() or not (folder / "metadata.json").exists():
+            continue
+        metadata = app.read_metadata(folder)
+        if app.pack_status_for_folder(folder, metadata) == "ready_to_upload":
+            folders.append(folder)
+        if len(folders) >= 8:
+            break
     if not folders:
-        return [result("full_youtube_ready_artifacts_skipped", True, "No rendered full YouTube folders found.")]
+        return [result("full_youtube_ready_artifacts_skipped", True, "No ready full YouTube folders found.")]
     failures: list[str] = []
     for folder in folders:
         video = folder / "youtube-video.mp4"
@@ -1840,8 +1881,6 @@ def check_db_source_of_truth() -> list[dict[str, object]]:
         ("automationStrategy", app.AUTOMATION_STRATEGY_FILE),
         # Phase 2D: job-state / YouTube / app-ops
         ("youtubePendingUpload", app.YOUTUBE_PENDING_UPLOAD_FILE),
-        ("youtubeCommentQueue", app.YOUTUBE_COMMENT_QUEUE_FILE),
-        ("youtubePinnedCommentVerified", app.YOUTUBE_PINNED_COMMENT_VERIFIED_FILE),
         ("youtubeMetadataExperiments", app.YOUTUBE_METADATA_EXPERIMENTS_FILE),
         ("chatgptChapterStatus", app.CHATGPT_CHAPTER_STATUS_FILE),
         ("chatgptChapterResult", app.CHATGPT_CHAPTER_RESULT_FILE),
@@ -1878,6 +1917,76 @@ def check_db_source_of_truth() -> list[dict[str, object]]:
         except Exception as exc:
             checks.append(result(f"{state_key}_db_present", False, f"read error: {exc}"))
 
+    # Phase 3: YouTube comment state uses strict SQLite helpers, not the generic
+    # Phase-2 blob path. This blocks reviving youtube-comment-queue.json or
+    # youtube-pinned-comment-verified.json from Patreon/YouTube workflows.
+    try:
+        retired_state = importlib.import_module("storage.retired_state")
+        retired_bootstrap = getattr(retired_state, "RETIRED_BOOTSTRAP_KEYS")
+        files = app.database_state_files()
+        for state_key, loader_name, saver_name in (
+            ("youtubeCommentQueue", "load_youtube_comment_queue", "save_youtube_comment_queue"),
+            ("youtubePinnedCommentVerified", "load_verified_pinned_comments", "save_verified_pinned_comments"),
+        ):
+            checks.append(assert_result(
+                f"{state_key}_retired_from_bootstrap",
+                state_key not in files and state_key in retired_bootstrap,
+                f"{state_key} must not be registered as a JSON-backed bootstrap blob.",
+            ))
+            loader_src = inspect.getsource(getattr(app, loader_name))
+            saver_src = inspect.getsource(getattr(app, saver_name))
+            checks.append(assert_result(
+                f"{state_key}_uses_strict_sqlite_helpers",
+                "load_state_snapshot_from_database" in loader_src
+                and "automation_db.upsert_state_snapshot" in saver_src
+                and "_phase2_" not in loader_src
+                and "_phase2_" not in saver_src
+                and "write_json_atomic" not in saver_src,
+                f"{loader_name}/{saver_name} must use state_snapshots directly, not retired JSON mirrors.",
+            ))
+    except Exception as exc:
+        checks.append(result("youtube_comment_retirement_contract", False, f"check error: {exc}"))
+
+    # Phase 3 JSON sweep: the retirement registry is the single source for
+    # retired root JSONs, and every state_snapshots-backed retired key must be
+    # served by root_state_repository. This prevents one-off retirements from
+    # drifting out of the app's DB read/write layer.
+    try:
+        retired_state = importlib.import_module("storage.retired_state")
+        retired_keys = getattr(retired_state, "RETIRED_STATE_KEYS")
+        rsr_src = (ROOT / "storage" / "root_state_repository.py").read_text(encoding="utf-8", errors="replace")
+        for state_key, meta in retired_keys.items():
+            if meta.get("resource") != "state_snapshots":
+                continue
+            checks.append(assert_result(
+                f"{state_key}_retired_repository_key",
+                f'"{state_key}"' in rsr_src,
+                f"{state_key} is retired but missing from storage/root_state_repository.py KEYS.",
+            ))
+    except Exception as exc:
+        checks.append(result("retired_repository_registry_contract", False, f"check error: {exc}"))
+
+    try:
+        src = (ROOT / "app.py").read_text(encoding="utf-8", errors="replace")
+        bad_snippets = [
+            "fallback_file=AUTO_METRICS_STATE_FILE",
+            "fallback_file=STORY_HOOK_RESULT_FILE",
+            "fallback_file=YOUTUBE_COMMENT_QUEUE_FILE",
+            "fallback_file=YOUTUBE_PINNED_COMMENT_VERIFIED_FILE",
+            "STORY_HOOK_RESULT_FILE.write_text",
+            "STORY_HOOK_RESULT_FILE.unlink",
+            "STORY_HOOK_RESULT_FILE.read_text",
+            "STORY_HOOK_RESULT_FILE.exists",
+        ]
+        leaked = [snippet for snippet in bad_snippets if snippet in src]
+        checks.append(assert_result(
+            "retired_json_no_app_fallback_leaks",
+            not leaked,
+            f"Retired root JSON fallback/read/write snippets must not exist in app.py: {leaked}",
+        ))
+    except Exception as exc:
+        checks.append(result("retired_json_no_app_fallback_leaks", False, f"check error: {exc}"))
+
     # --- 2c. Phase 2B: reads are DB-first (not JSON-first) ---
     # Isolated temp DB only (TEST_STATE_ROOT); never touches live state.
     try:
@@ -1908,8 +2017,6 @@ def check_db_source_of_truth() -> list[dict[str, object]]:
             ("automationStrategy", app.AUTOMATION_STRATEGY_FILE),
             # Phase 2D: job-state / YouTube / app-ops
             ("youtubePendingUpload", app.YOUTUBE_PENDING_UPLOAD_FILE),
-            ("youtubeCommentQueue", app.YOUTUBE_COMMENT_QUEUE_FILE),
-            ("youtubePinnedCommentVerified", app.YOUTUBE_PINNED_COMMENT_VERIFIED_FILE),
             ("youtubeMetadataExperiments", app.YOUTUBE_METADATA_EXPERIMENTS_FILE),
             ("chatgptChapterStatus", app.CHATGPT_CHAPTER_STATUS_FILE),
             ("chatgptChapterResult", app.CHATGPT_CHAPTER_RESULT_FILE),
@@ -1930,24 +2037,16 @@ def check_db_source_of_truth() -> list[dict[str, object]]:
                 db_first,
                 f"Reader must return DB snapshot before JSON for '{state_key}' (DB-first source-of-truth).",
             ))
-        # Fallback: missing DB row must fall back to JSON (when JSON exists).
-        # Use a fresh temp DB (never seeded) so the row is genuinely absent.
+        # Phase 3: JSON mirrors are retired. Missing DB rows should return None,
+        # not revive retired JSON mirrors.
         tmp2 = TEST_STATE_ROOT()
         automation_db.init_db(tmp2)
-        json_present = app.CONTENT_EXPERIMENTS_FILE.exists()
         got2 = app._phase2_load_blob("contentExperiments", app.CONTENT_EXPERIMENTS_FILE, root=tmp2)
-        if json_present:
-            checks.append(assert_result(
-                "contentExperiments_reads_fallback_when_db_missing",
-                isinstance(got2, dict) and "__phase2b_db_first_contentExperiments__" not in got2,
-                "When DB row is missing, reader must fall back to JSON.",
-            ))
-        else:
-            checks.append(assert_result(
-                "contentExperiments_reads_fallback_when_db_missing",
-                True,
-                "JSON absent and DB absent: empty fallback acceptable.",
-            ))
+        checks.append(assert_result(
+            "contentExperiments_missing_db_returns_none",
+            got2 is None,
+            "After JSON retirement, missing DB row must return None instead of reading JSON.",
+        ))
     except Exception as exc:
         checks.append(result("phase2b_reads_db_first", False, f"read-path error: {exc}"))
 
@@ -1980,6 +2079,57 @@ def check_db_source_of_truth() -> list[dict[str, object]]:
     except Exception as exc:
         checks.append(result("approval_cleared_isolated_roundtrip", False, f"isolated test error: {exc}"))
 
+    return checks
+
+
+def check_stabilization_contracts() -> list[dict[str, object]]:
+    checks: list[dict[str, object]] = []
+    try:
+        profile = app.brand_profile("EN")
+        checks.append(assert_result(
+            "brand_profile_returns_profile_dict",
+            isinstance(profile, dict) and isinstance(profile.get("formattingRules"), list),
+            "brand_profile must return the per-novel profile dict used by dynamic copy.",
+        ))
+    except Exception as exc:
+        checks.append(result("brand_profile_returns_profile_dict", False, f"brand_profile error: {exc}"))
+    try:
+        caption = app.social_caption_link_in_bio(
+            "Read this now\nPatreon https://example.com/a\nRoyal Road https://example.com/b",
+            "instagram",
+        )
+        checks.append(assert_result(
+            "social_caption_uses_link_in_bio",
+            "http" not in caption.lower() and "link in bio" in caption.lower(),
+            "Social captions must strip direct links and point to link in bio.",
+            caption=caption,
+        ))
+    except Exception as exc:
+        checks.append(result("social_caption_uses_link_in_bio", False, f"caption cleanup error: {exc}"))
+    try:
+        overlay = app.sanitize_deep_tiktok_overlay(
+            "Realistic cinematic promotional image. Scene focus: establishing world shot.",
+            "Eternal Nexus",
+            "A hidden choice changes everything.",
+        )
+        checks.append(assert_result(
+            "deep_tiktok_overlay_rejects_prompt_text",
+            "establishing" not in overlay.lower() and "promotional image" not in overlay.lower(),
+            "Deep TikTok overlays must not use image prompt labels or provider prompts.",
+            overlay=overlay,
+        ))
+    except Exception as exc:
+        checks.append(result("deep_tiktok_overlay_rejects_prompt_text", False, f"overlay sanitizer error: {exc}"))
+    try:
+        import youtube_pipeline
+        checks.append(assert_result(
+            "youtube_queue_uses_strict_save_collaborator",
+            "save_youtube_comment_queue" in youtube_pipeline.REQUIRED_COLLABORATORS
+            and "mirror_state_snapshot_to_database" not in youtube_pipeline.REQUIRED_COLLABORATORS,
+            "YouTube pinned comment queue must use the strict queue save collaborator.",
+        ))
+    except Exception as exc:
+        checks.append(result("youtube_queue_uses_strict_save_collaborator", False, f"youtube pipeline import error: {exc}"))
     return checks
 
 
@@ -2049,6 +2199,7 @@ def run_once() -> dict[str, object]:
         check_royal_road_verification,
         check_caption_voice_rotation,
         check_db_source_of_truth,
+        check_stabilization_contracts,
     ]:
         checks, timing = timed_runner(runner.__name__, runner)
         all_checks.extend(checks)

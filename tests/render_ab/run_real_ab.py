@@ -91,7 +91,61 @@ def main():
     ap.add_argument("--scene-id", default="hp_liang_review")
     ap.add_argument("--seeds", default="184732,582941,917364",
                     help="Three predetermined seeds (establishing, character, action), reused across both sets.")
+    ap.add_argument("--pose-spike", action="store_true",
+                    help="Slice B0: run the three-column pose-ControlNet evidence spike "
+                         "(frozen Director vs frozen Director + xinsir OpenPose ControlNet) "
+                         "on the same seeds. Requires LOCAL_SD_CONTROLNET_MODEL + a pose asset.")
+    ap.add_argument("--pose-scale", type=float, default=0.65,
+                    help="controlnet_conditioning_scale for the pose spike (experiment default 0.65).")
+    ap.add_argument("--pose-index", type=int, default=2,
+                    help="Which shot index gets ControlNet in the spike (default 2 = shot 3 climax).")
     args = ap.parse_args()
+
+    # Slice B0 pose spike: resolve the ControlNet model + pose-reference asset,
+    # then run the three-column evidence run. Env-gated by LOCAL_SD_CONTROLNET_MODEL
+    # being set; the Director itself stays frozen (no prompt change).
+    if args.pose_spike:
+        import pose_resolver as PR
+        controlnet_model = os.environ.get("LOCAL_SD_CONTROLNET_MODEL", "").strip()
+        if not controlnet_model:
+            print("ERROR: --pose-spike requires LOCAL_SD_CONTROLNET_MODEL (e.g. xinsir/controlnet-openpose-sdxl-1.0).")
+            sys.exit(2)
+        # Resolve the pose reference for the spike shot from the Director's prompts.
+        title, chapter, phrases, novel = SCENE
+        prompts = H.capture_prompts(title, chapter, phrases, novel, appmod)
+        director_prompts = prompts["director"]
+        shot_meta = {"type": "climax", "action": director_prompts[args.pose_index]}
+        pose_img = PR.resolve_pose_reference(shot_meta)
+        if pose_img is None:
+            print(f"ERROR: no pose-reference asset resolved for shot {args.pose_index}. "
+                  f"Checked template 'climax_kneel_touch_altar_v1'; asset missing at {PR.POSE_ASSET_DIR}.")
+            sys.exit(2)
+        print(f"Pose spike: controlnet={controlnet_model} image={pose_img} scale={args.pose_scale} index={args.pose_index}")
+        base = H.LocalSDAppBackend(app_module=appmod, orientation="vertical", quality_mode="")
+        pose_bk = H.LocalSDAppBackend(
+            app_module=appmod, orientation="vertical", quality_mode="",
+            controlnet_model=controlnet_model, controlnet_image=pose_img,
+            controlnet_scale=args.pose_scale,
+        )
+        out_root = Path(args.out)
+        ab = H.run_ab_pose_spike(args.scene_id, director_prompts, base, pose_bk, out_root,
+                                 seeds=seeds, pose_index=args.pose_index)
+        manifest = {
+            "scene_id": args.scene_id,
+            "engine": args.backend,
+            "experiment": "slice_b0_pose_controlnet",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "control": "single variable = ControlNet conditioning; same frozen Director prompt, model, LoRA, size, seed",
+            "prompts": prompts,
+            "ab": ab,
+            "failures": [f"[{k} {i}] ERROR: {r['error']}" for k in ("legacy", "director", "director_pose")
+                         for i, r in enumerate(ab[k]) if not r["ok"]],
+        }
+        H.write_manifest(out_root / "manifest.pose_spike.json", manifest)
+        print(f"Pose spike rendered under {out_root} (look in legacy/ visual-director/ visual-director-pose/)")
+        print(f"Manifest: {out_root / 'manifest.pose_spike.json'}")
+        print("Next: score director_pose_[2] vs director_[2] for kneeling compliance + identity/no-regression.")
+        return
 
     seeds = tuple(int(s) for s in args.seeds.split(",") if s.strip())
 

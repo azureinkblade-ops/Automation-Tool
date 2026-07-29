@@ -1,11 +1,9 @@
-"""Phase-3 retirement verification (gate for commits 2-4).
+"""Phase-3 retirement verification.
 
 Checks:
 - DB health (schema v6, required tables, no pending migrations, quick_check ok).
-- The 3 large blobs are present in their SQLite homes:
-    analytics-lab        -> state_snapshots['analyticsLab']
-    youtube-comment-queue-> state_snapshots['youtubeCommentQueue']
-    release_status       -> dedicated release_status table (rows > 0)
+- Every retired state_snapshots-backed root JSON has a SQLite snapshot row.
+- release_status has relational SQLite rows.
 - The retired root JSON mirrors do NOT exist (no silent recreation).
 - Bootstrap still runs with the retired keys removed from database_state_files().
 
@@ -24,21 +22,10 @@ sys.path.insert(0, str(ROOT))
 import automation_db  # noqa: E402
 import storage.database as sd  # noqa: E402
 import app as _app  # noqa: E402
+from storage.retired_state import RETIRED_FILE_NAMES, RETIRED_STATE_KEYS  # noqa: E402
 
 
-RETIRED_ROOT_FILES = [
-    "analytics-lab.json",
-    "youtube-comment-queue.json",
-    "release_status.json",
-    "pinned-content-plan.json",
-    "pinned-profile-assets.json",
-    "youtube-end-screen-plan.json",
-    "youtube-end-screen-state.json",
-    "app-regression-dashboard.json",
-    "automatic-metrics-state.json",
-    "story-hook-chatgpt-result.json",
-    "release-automation-state.json",
-]
+RETIRED_ROOT_FILES = list(RETIRED_FILE_NAMES)
 
 
 def main() -> int:
@@ -73,16 +60,14 @@ def main() -> int:
         failures.append(f"retirement enforcement check raised: {exc}")
 
     with automation_db.connect(ROOT) as conn:
-        lab = conn.execute("SELECT 1 FROM state_snapshots WHERE state_key='analyticsLab'").fetchone()
-        if not lab:
-            failures.append("analyticsLab missing from state_snapshots")
-        else:
-            print("[ok] analyticsLab present in state_snapshots")
-        ycq = conn.execute("SELECT 1 FROM state_snapshots WHERE state_key='youtubeCommentQueue'").fetchone()
-        if not ycq:
-            failures.append("youtubeCommentQueue missing from state_snapshots")
-        else:
-            print("[ok] youtubeCommentQueue present in state_snapshots")
+        for state_key, meta in RETIRED_STATE_KEYS.items():
+            if meta.get("resource") != "state_snapshots":
+                continue
+            row = conn.execute("SELECT 1 FROM state_snapshots WHERE state_key=?", (state_key,)).fetchone()
+            if not row:
+                failures.append(f"{state_key} missing from state_snapshots")
+            else:
+                print(f"[ok] {state_key} present in state_snapshots")
         rs = conn.execute("SELECT COUNT(*) FROM release_status").fetchone()[0]
         if rs == 0:
             failures.append("release_status table empty")

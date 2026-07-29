@@ -26,6 +26,8 @@ FILE_TO_KEY = {
     "pinned-content-plan.json": "pinnedContentPlan",
     "pinned-profile-assets.json": "pinnedProfileAssets",
     "analytics-lab.json": "analyticsLab",
+    "youtube-comment-queue.json": "youtubeCommentQueue",
+    "youtube-pinned-comment-verified.json": "youtubePinnedCommentVerified",
     "youtube-end-screen-plan.json": "youtubeEndScreenPlan",
     "youtube-end-screen-state.json": "youtubeEndScreenState",
     "app-regression-dashboard.json": "appRegressionDashboard",

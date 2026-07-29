@@ -107,7 +107,9 @@ def publish_x_post(folder: str, *, collaborators: dict[str, Any] | None = None) 
         raise RuntimeError("This folder does not contain social post metadata.")
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     image_path = Path(metadata["image"]).resolve()
-
+    x_text = metadata.get("x") or metadata.get("x_post") or ""
+    if not x_text.strip():
+        raise RuntimeError("No X post text found in metadata (expected 'x' or 'x_post').")
     upload = _get(collab, "multipart_bearer_request")(
         "https://api.x.com/2/media/upload",
         token,
@@ -120,7 +122,7 @@ def publish_x_post(folder: str, *, collaborators: dict[str, Any] | None = None) 
     created = _get(collab, "bearer_json_request")(
         "https://api.x.com/2/tweets",
         token,
-        {"text": metadata.get("x", ""), "media": {"media_ids": [str(media_id)]}},
+        {"text": x_text, "media": {"media_ids": [str(media_id)]}},
     )
     metadata["x_publish"] = {
         "media_upload": upload,
@@ -147,9 +149,10 @@ def manual_facebook_assist(folder: str, *, collaborators: dict[str, Any] | None 
         raise RuntimeError("This folder does not contain social post metadata.")
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     image_path = Path(metadata["image"]).resolve()
+    facebook_text = metadata.get("facebook") or metadata.get("facebook_post") or ""
     facebook_file = post_folder / "facebook.txt"
     if not facebook_file.exists():
-        facebook_file.write_text(str(metadata.get("facebook", "")).strip() + "\n", encoding="utf-8")
+        facebook_file.write_text(str(facebook_text).strip() + "\n", encoding="utf-8")
     try:
         _get(collab, "clipboard_copy")(facebook_file)
     except Exception:
@@ -170,7 +173,7 @@ def manual_facebook_assist(folder: str, *, collaborators: dict[str, Any] | None 
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return {
         "image": str(image_path),
-        "text": metadata.get("facebook", ""),
+        "text": facebook_text,
         "facebook_file": str(facebook_file),
         "folder": str(post_folder),
         "message": "Opened Facebook and the post folder. Facebook text copied to clipboard.",

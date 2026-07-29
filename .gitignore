@@ -82,6 +82,7 @@ migration-backups/pre-restore/
 migration-backups/sc8-logs/
 # Phase-3 final/pre-repoint/soak backups are also local DB copies (off-repo)
 migration-backups/*.sqlite
+phase1-json-backup/
 
 # Orphaned SD dependency-probe temp files (see app.py inline probe fix)
 hermes-sd-probe-*.py
@@ -93,4 +94,89 @@ runtime/
 # SC-7: reversible quarantine for confirmed-dead JSON (restore via tools/restore_trash_json.py)
 /_trash-json/
 _trash-json/
+
+# Local dependency environments, model caches, and browser profiles
+.pytest_cache/
+sc7-src-*/
+.automation-media-repo/
+.codex-remote-attachments/
+.model-acquisition/
+.venv-chatterbox/
+.venv-stage2-v2/
+.playwright-system-chrome-profile/
+chrome-helper-profile/
+chrome-helper/
+
+# Local Hermes evidence/backups and attachment captures
+.hermes-cron/
+.hermes/backups/
+.hermes/desktop-attachments/
+.hermes/evidence/
+.hermes/freeze/
+.hermes/manifest/
+
+# Runtime logs, smoke reports, and scratch files
+*.log
+app-smoke-report.json
+reg_err.txt
+reg_repro_*.txt
+_cb_test.txt
+_cron*
+_tmp*
+_test_sunday_gen.png
+_draft_*.md
+nul
+
+# Local chapter import/draft scratch
+*-context.json
+*_context.json
+*_ctx.json
+*-prior.json
+*-prior.txt
+*-import-body.json
+*-import-result.json
+*-preimport-context.json
+*-draft.txt
+chapters-draft-*.txt
+hermes_en_prev.json
+
+# Runtime/generated workflow outputs
+experiment-post-packs/
+manual-video-packs/
+image-lab/
+review-staging/
+pinterest/
+pinned-profile-assets-output/
+story-hook-inbox/
+chapter-retry-context/
+tmp_daily_chapters/
+youtube-end-screen-debug/
+output/
+outputs/
+logs/
+backup/
+sc8x/
+temp/
+codex-skills/
+continuity/
+training-data/
+
+# Release/state backups and bad quarantine files
+chapter-release-queue.backup*.json
+release-automation-state.json.bak-*
+deep-tiktok-rotation.json.bak-*
+youtube-upload-pending.json.bad-*
+migration-backups/*/
+
+# LoRA/model run outputs. Keep curated training sets, configs, and final weights explicit.
+loras/*/checkpoint-*/
+loras/_smoketest/
+loras/realistic_posts/checkpoint-*/
+loras/realistic_posts/fantasy_pack/
+loras/main-posts/
+lora-training/*/output/
+lora-training/*/rejected/
+lora-training/*/test-output/
+tests/render_ab/output/
+tools/loras/
 

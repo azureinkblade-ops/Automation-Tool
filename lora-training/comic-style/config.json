@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "track": "comic-style",
+  "label": "Comic Style",
+  "triggerToken": "azink_comic",
+  "promptSuffix": "vertical manhwa webtoon panel style, expressive characters, cinematic sequential art, clean readable action",
+  "use": "Deep TikTok, Shorts/Reels, story hooks, and comic-style chapter moments.",
+  "sourceFolders": {
+    "approved": "C:\\Users\\David\\Documents\\Automation tool\\lora-training\\comic-style\\approved",
+    "rejected": "C:\\Users\\David\\Documents\\Automation tool\\lora-training\\comic-style\\rejected",
+    "captions": "C:\\Users\\David\\Documents\\Automation tool\\lora-training\\comic-style\\captions",
+    "datasets": "C:\\Users\\David\\Documents\\Automation tool\\lora-training\\comic-style\\datasets"
+  },
+  "outputFolder": "C:\\Users\\David\\Documents\\Automation tool\\lora-training\\comic-style\\output",
+  "modelFolder": "C:\\Users\\David\\Documents\\Automation tool\\loras\\comic-style",
+  "notes": "Put approved training images and matching captions here. Drop trained LoRA weights in the model folder or output folder."
+}

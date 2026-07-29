@@ -107,6 +107,11 @@ class LocalSDAppBackend:
     posts/videos use. Single variable = the prompt; model/LoRA/size are fixed by
     the app's own configuration.
 
+    Slice B0: supports an optional ControlNet column ('director+pose'). When
+    controlnet_model/controlnet_image are supplied, they are forwarded to
+    create_local_stable_diffusion_image; otherwise the path is unchanged. This
+    keeps the legacy + frozen-Director columns byte-identical to production.
+
     Fidelity vs production: this backend builds the IDENTICAL generator command
     that create_local_stable_diffusion_image builds (same script, model,
     refiner, quality mode, scheduler, size, steps, guidance, LoRA, enhanced
@@ -129,6 +134,12 @@ class LocalSDAppBackend:
     orientation: str = "vertical"
     quality_mode: str = ""
     seeds: tuple = (184732, 582941, 917364)  # per-position seeds: establishing, character, action
+    # Slice B0: optional ControlNet params for the third ('director+pose') column.
+    controlnet_model: str = ""
+    controlnet_image: Optional[Path] = None
+    controlnet_scale: float = 0.65
+    control_guidance_start: float = 0.0
+    control_guidance_end: float = 0.75
 
     def render(self, prompt: str, out_path: Path, index: int = 0) -> RenderResult:
         import random as _random
@@ -182,6 +193,15 @@ class LocalSDAppBackend:
         ]
         if lora_path:
             command.extend(["--lora-path", str(lora_path), "--lora-scale", os.environ.get("LOCAL_SD_LORA_SCALE", "0.75")])
+        # Slice B0: forward ControlNet args for the third column only when set.
+        if self.controlnet_model and self.controlnet_image and Path(self.controlnet_image).exists():
+            command.extend([
+                "--controlnet-model", str(self.controlnet_model),
+                "--controlnet-image", str(self.controlnet_image),
+                "--controlnet-scale", str(self.controlnet_scale),
+                "--control-guidance-start", str(self.control_guidance_start),
+                "--control-guidance-end", str(self.control_guidance_end),
+            ])
         started = _dt.now(timezone.utc).isoformat()
         try:
             with app._LOCAL_SD_GPU_LOCK:
@@ -375,6 +395,69 @@ def run_ab(scene_id: str, legacy_prompts: List[str], director_prompts: List[str]
         },
         "legacy": legacy_results,
         "director": director_results,
+    }
+
+
+def run_ab_pose_spike(scene_id: str, director_prompts: List[str],
+                      backend: RenderBackend, pose_backend: RenderBackend,
+                      out_root: Path,
+                      seeds: tuple = (184732, 582941, 917364),
+                      pose_index: int = 2) -> Dict[str, Any]:
+    """Slice B0 Stage 2 three-column evidence run (spike scope: shot 3 only).
+
+    Columns (same seeds, same frozen Director prompts):
+      legacy            -> director_prompts rendered WITHOUT ControlNet
+      director          -> alias of the same (kept for manifest clarity)
+      director_pose     -> the SAME director prompts rendered WITH ControlNet,
+                           via pose_backend (which carries controlnet_*/image).
+    The ONLY delta between 'director' and 'director_pose' is the ControlNet
+    conditioning image + scale. Question: does ControlNet improve pose/interaction
+    without undoing the Director's gains?
+
+    For the narrow first spike, only `pose_index` (default 2 = shot 3 / climax)
+    is rendered in the director_pose column; legacy/director still render all 3
+    for context.
+    """
+    out_root = Path(out_root)
+    legacy_dir = out_root / "legacy"
+    director_dir = out_root / "visual-director"
+    pose_dir = out_root / "visual-director-pose"
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+    director_dir.mkdir(parents=True, exist_ok=True)
+    pose_dir.mkdir(parents=True, exist_ok=True)
+
+    legacy_results = []
+    for i, p in enumerate(director_prompts):
+        r = backend.render(p, legacy_dir / f"legacy_{i}.png", index=i)
+        legacy_results.append(asdict(r))
+    director_results = []
+    for i, p in enumerate(director_prompts):
+        r = backend.render(p, director_dir / f"director_{i}.png", index=i)
+        director_results.append(asdict(r))
+    pose_results = []
+    for i, p in enumerate(director_prompts):
+        if i == pose_index:
+            r = pose_backend.render(p, pose_dir / f"director_pose_{i}.png", index=i)
+        else:
+            # Non-spike shots: render once into the pose column too (byte-identical
+            # to director, no ControlNet) so the column is complete.
+            r = backend.render(p, pose_dir / f"director_pose_{i}.png", index=i)
+        pose_results.append(asdict(r))
+
+    return {
+        "scene_id": scene_id,
+        "experiment": "slice_b0_pose_controlnet",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "seeds": list(seeds[:3]),
+        "pose_index": pose_index,
+        "seed_assignment": {
+            "legacy_0 / director_0": seeds[0] if len(seeds) > 0 else None,
+            "legacy_1 / director_1": seeds[1] if len(seeds) > 1 else None,
+            "legacy_2 / director_2 (pose spike)": seeds[2] if len(seeds) > 2 else None,
+        },
+        "legacy": legacy_results,
+        "director": director_results,
+        "director_pose": pose_results,
     }
 
 

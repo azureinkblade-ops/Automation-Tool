@@ -371,6 +371,35 @@ def make_social_post(
             )
         except Exception:
             pass
+    try:
+        (folder / "social-post-record.json").write_text(
+            json.dumps(
+                {
+                    "contentType": "daily-social-post",
+                    "platform": "multi-social",
+                    "platforms": ["instagram", "x", "facebook"],
+                    "platformStatus": {
+                        "instagram": "draft",
+                        "x": "manual-draft",
+                        "facebook": "manual-draft",
+                    },
+                    "novel": payload.get("novel") or item.get("novel") or "",
+                    "chapter": payload.get("chapter") or item.get("chapter_number") or "",
+                    "title": payload.get("title") or item.get("filename") or "",
+                    "publishDate": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "liveUrl": "",
+                    "assetFolder": str(folder),
+                    "folder": str(folder),
+                    "instagram": payload.get("instagram", ""),
+                    "x": payload.get("x", ""),
+                    "facebook": payload.get("facebook", ""),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
     return _get(collab, "auto_publish_generated_media")(folder, payload)
 
 

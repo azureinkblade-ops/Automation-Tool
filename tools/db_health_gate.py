@@ -29,21 +29,9 @@ sys.path.insert(0, str(ROOT))
 
 import automation_db as adb  # noqa: E402
 import storage.database as sd  # noqa: E402
+from storage.retired_state import RETIRED_FILE_NAMES  # noqa: E402
 
-# Retired mirrors (kept in sync with verify_phase3_retirement.RETIRED_ROOT_FILES)
-RETIRED_ROOT_FILES = [
-    "analytics-lab.json",
-    "youtube-comment-queue.json",
-    "release_status.json",
-    "pinned-content-plan.json",
-    "pinned-profile-assets.json",
-    "youtube-end-screen-plan.json",
-    "youtube-end-screen-state.json",
-    "app-regression-dashboard.json",
-    "automatic-metrics-state.json",
-    "story-hook-chatgpt-result.json",
-    "release-automation-state.json",
-]
+RETIRED_ROOT_FILES = list(RETIRED_FILE_NAMES)
 
 
 def run(root: Path, enforce_no_mirrors: bool, as_json: bool) -> int:

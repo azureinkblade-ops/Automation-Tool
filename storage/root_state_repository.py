@@ -5,14 +5,14 @@ Phase-2 `_phase2_save_blob` system, or lives in dedicated tables (release_status
 The files handled here are the genuinely FILE-ONLY ones (read via
 `read_json_safe`, no `state_snapshots` row yet): automaticMetricsState,
 releaseAutomationState, storyHookChatgptResult, pinnedContentPlan,
-pinnedProfileAssets, analyticsLab, youtubeEndScreenPlan, youtubeEndScreenState,
+pinnedProfileAssets, analyticsLab, youtubeCommentQueue,
+youtubePinnedCommentVerified, youtubeEndScreenPlan, youtubeEndScreenState,
 appRegressionDashboard.
 
 This repository stores each under a `state_snapshots` key (camelCase logical
-name), mirroring schedule_repository. It NEVER touches the live JSON file after
-cutover, but provides a fail-soft fallback so behavior is preserved during the
-transition: if the DB read fails, fall back to `fallback_file` (the legacy JSON),
-then to `default`.
+name), mirroring schedule_repository. It NEVER touches retired root JSON files
+after cutover. Optional fallback files are allowed only for non-retired
+transitional state.
 
 Phase-3 guardrails (approved 2026-07-23):
 - Large blobs (analytics-lab 891KB, youtube-comment-queue 162KB, release_status
@@ -33,6 +33,7 @@ from typing import Any, Dict, Optional
 
 import automation_db
 from automation_db import loads_json, dumps_json
+from storage.retired_state import assert_not_retired_write, warn_if_retired_read
 
 logger = logging.getLogger("root_state_repository")
 
@@ -45,6 +46,7 @@ KEYS = {
     "pinnedProfileAssets": "pinnedProfileAssets",
     "analyticsLab": "analyticsLab",
     "youtubeCommentQueue": "youtubeCommentQueue",
+    "youtubePinnedCommentVerified": "youtubePinnedCommentVerified",
     "youtubeEndScreenPlan": "youtubeEndScreenPlan",
     "youtubeEndScreenState": "youtubeEndScreenState",
     "appRegressionDashboard": "appRegressionDashboard",
@@ -90,8 +92,9 @@ def load(root: Path, file_constant: str, default: Any = None,
          fallback_file: Optional[Path] = None) -> Any:
     """Load a root-state blob from state_snapshots.
 
-    Fail-soft: on any DB error, fall back to `fallback_file` (the legacy JSON),
-    then to `default`. JSON is parsed ONLY here, after an explicit request.
+    Fail-soft: on any DB error, fall back to `fallback_file` only when it is not
+    a retired root JSON mirror, then to `default`. JSON is parsed ONLY here,
+    after an explicit request.
     """
     key = _key(file_constant)
     try:
@@ -103,6 +106,9 @@ def load(root: Path, file_constant: str, default: Any = None,
     except Exception as exc:
         logger.warning("load(%s) DB failed, trying fallback: %s", key, exc)
     if fallback_file is not None and fallback_file.exists():
+        if warn_if_retired_read(fallback_file, root=root):
+            logger.warning("load(%s) retired fallback file ignored: %s", key, fallback_file)
+            return default
         try:
             return loads_json(fallback_file.read_text(encoding="utf-8"))
         except Exception as exc:
@@ -114,15 +120,15 @@ def save(root: Path, file_constant: str, data: Any,
          fallback_file: Optional[Path] = None) -> None:
     """Persist a root-state blob to state_snapshots (DB-first, transactional).
 
-    Logs payload SIZE only (never content). Optionally mirrors to
-    `fallback_file` during transition; once cutover is verified, callers pass
-    fallback_file=None.
+    Logs payload SIZE only (never content). Optionally mirrors to a non-retired
+    `fallback_file` during transition; retired root JSON mirrors are blocked.
     """
     key = _key(file_constant)
     payload = dumps_json(data)
     logger.info("save(%s): payload_size_bytes=%d", key, len(payload))
     automation_db.upsert_state_snapshot(root, key, data)
     if fallback_file is not None:
+        assert_not_retired_write(fallback_file, root=root)
         try:
             fallback_file.write_text(payload, encoding="utf-8")
         except Exception as exc:

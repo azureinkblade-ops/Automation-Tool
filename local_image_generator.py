@@ -132,6 +132,16 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--lora-path", default=os.environ.get("LOCAL_SD_LORA_PATH", ""))
     parser.add_argument("--lora-scale", type=float, default=float(os.environ.get("LOCAL_SD_LORA_SCALE", "0.75")))
+    parser.add_argument("--controlnet-model", default=os.environ.get("LOCAL_SD_CONTROLNET_MODEL", ""),
+                        help="ControlNet checkpoint (e.g. xinsir/controlnet-openpose-sdxl-1.0). Empty = disabled.")
+    parser.add_argument("--controlnet-image", default="",
+                        help="Conditioning image (OpenPose skeleton / reference) for ControlNet. Empty = disabled.")
+    parser.add_argument("--controlnet-scale", type=float, default=float(os.environ.get("LOCAL_SD_CONTROLNET_SCALE", "0.65")),
+                        help="controlnet_conditioning_scale (experiment default 0.65).")
+    parser.add_argument("--control-guidance-start", type=float, default=float(os.environ.get("LOCAL_SD_CONTROL_GUIDANCE_START", "0.0")),
+                        help="control_guidance_start (experiment default 0.0).")
+    parser.add_argument("--control-guidance-end", type=float, default=float(os.environ.get("LOCAL_SD_CONTROL_GUIDANCE_END", "0.75")),
+                        help="control_guidance_end (experiment default 0.75).")
     parser.add_argument("--metadata", default="")
     args = parser.parse_args()
 
@@ -164,9 +174,31 @@ def main() -> int:
             pass
     model = args.model
     input_image = load_input_image(args.input_image, width, height) if args.input_image else None
+    # ControlNet conditioning image (optional, experiment-gated). Only loaded when
+    # BOTH a controlnet model and a conditioning image are supplied; otherwise
+    # the existing txt2img/img2img path is used unchanged.
+    control_image = None
+    controlnet_model = args.controlnet_model or ""
+    if controlnet_model and args.controlnet_image:
+        try:
+            from PIL import Image
+            control_image = Image.open(args.controlnet_image).convert("RGB").resize((width, height))
+        except Exception as _ce:
+            control_image = None
+            print(json.dumps({"controlnetWarning": f"could not load conditioning image: {_ce}"}))
 
     if input_image:
         pipe = AutoPipelineForImage2Image.from_pretrained(model, torch_dtype=dtype)
+    elif control_image is not None:
+        # Slice B0: native SDXL ControlNet pipeline (NOT forced into the existing
+        # AutoPipelineForText2Image object). Backward compatible: only entered
+        # when a controlnet model + image are provided.
+        from diffusers import ControlNetModel, StableDiffusionXLControlNetPipeline
+        controlnet = ControlNetModel.from_pretrained(controlnet_model, torch_dtype=dtype, use_safetensors=True)
+        pipe = StableDiffusionXLControlNetPipeline.from_pretrained(
+            model, controlnet=controlnet, torch_dtype=dtype,
+            variant="fp16" if device == "cuda" else None, use_safetensors=True,
+        )
     elif is_sdxl_model(model):
         pipe = AutoPipelineForText2Image.from_pretrained(model, torch_dtype=dtype, variant="fp16" if device == "cuda" else None, use_safetensors=True)
     else:
@@ -226,6 +258,13 @@ def main() -> int:
         }
         if input_image:
             result = pipe(image=input_image, strength=strength, **common)
+        elif control_image is not None:
+            # Slice B0: pass the conditioning image + control guidance window.
+            common["image"] = control_image
+            common["controlnet_conditioning_scale"] = args.controlnet_scale
+            common["control_guidance_start"] = args.control_guidance_start
+            common["control_guidance_end"] = args.control_guidance_end
+            result = pipe(**common)
         else:
             result = pipe(width=width, height=height, **common)
 
@@ -272,6 +311,12 @@ def main() -> int:
         "loraLoaded": lora_loaded,
         "loraScale": args.lora_scale,
         "loraError": lora_error,
+        "controlnetModel": controlnet_model,
+        "controlnetImage": args.controlnet_image,
+        "controlnetScale": args.controlnet_scale if control_image is not None else 0,
+        "controlGuidanceStart": args.control_guidance_start if control_image is not None else 0,
+        "controlGuidanceEnd": args.control_guidance_end if control_image is not None else 0,
+        "controlnetUsed": control_image is not None,
         "seconds": round(time.time() - started, 2),
         "prompt": args.prompt,
         "negativePrompt": args.negative_prompt,

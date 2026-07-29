@@ -1,0 +1,9 @@
+{
+  "asset": "climax_kneel_detected_C.png",
+  "status": "production_candidate",
+  "not_production_asset": false,
+  "limb_complete": true,
+  "known_defects": [],
+  "gate": "must pass preprocessing gate (vision) + random-seed re-validation at LoRA 0.50",
+  "generated_at": "2026-07-26T19:43:39.439157+00:00"
+}

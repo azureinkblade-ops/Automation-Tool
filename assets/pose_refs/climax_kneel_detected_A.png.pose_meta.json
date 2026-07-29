@@ -1,0 +1,16 @@
+{
+  "detector_package": "controlnet_aux",
+  "detector_package_version": "0.0.10",
+  "detector_name": "OpenposeDetector",
+  "detector_model_repo": "lllyasviel/Annotators",
+  "detector_model_revision": "C:\\Users\\David\\.cache\\huggingface\\hub\\models--lllyasviel--Annotators\\snapshots\\982e7edaec38759d914a963c48c4726685de7d96",
+  "source_image": "C:\\Users\\David\\Documents\\Automation tool\\assets\\pose_refs\\sources\\kneeling_man_candle_Shixart1985_CC-BY-2.0.jpg",
+  "source_sha256": "e208d484c531289757815ea78bf5093e018ca4470bad3a97f635acb79482072b",
+  "output_path": "C:\\Users\\David\\Documents\\Automation tool\\assets\\pose_refs\\climax_kneel_detected_A.png",
+  "output_dimensions": [
+    512,
+    768
+  ],
+  "timestamp_utc": "2026-07-26T16:40:33.833226+00:00",
+  "license_note": "Upstream controlnet_aux OpenPose detector components carry their own licenses; review before production distribution. Source reference image: CC BY 2.0 (Shixart1985) - attribution required if redistributed."
+}

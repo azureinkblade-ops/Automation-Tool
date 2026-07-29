@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "track": "realistic-posts",
+  "label": "Realistic Posts",
+  "triggerToken": "azink_real",
+  "promptSuffix": "cinematic realistic fantasy photography, grounded lighting, detailed environment, dramatic character realism",
+  "use": "Realistic promotional posts, darker story hook thumbnails, and non-comic experiments.",
+  "sourceFolders": {
+    "approved": "C:\\Users\\David\\Documents\\Automation tool\\lora-training\\realistic-posts\\approved",
+    "rejected": "C:\\Users\\David\\Documents\\Automation tool\\lora-training\\realistic-posts\\rejected",
+    "captions": "C:\\Users\\David\\Documents\\Automation tool\\lora-training\\realistic-posts\\captions",
+    "datasets": "C:\\Users\\David\\Documents\\Automation tool\\lora-training\\realistic-posts\\datasets"
+  },
+  "outputFolder": "C:\\Users\\David\\Documents\\Automation tool\\lora-training\\realistic-posts\\output",
+  "modelFolder": "C:\\Users\\David\\Documents\\Automation tool\\loras\\realistic-posts",
+  "notes": "Put approved training images and matching captions here. Drop trained LoRA weights in the model folder or output folder."
+}

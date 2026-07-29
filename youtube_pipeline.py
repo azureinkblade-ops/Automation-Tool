@@ -6,10 +6,11 @@ queue lock/thread live here; the lock is injected as a data collaborator (thread
 owned by app.py until Task 8).
 
 Not-yet-extracted deps are injected via REQUIRED_COLLABORATORS with safe stubs; app.py
-wires the real functions at Task 8. write_json_atomic/read_json_safe come from release_state
-+ promo_copy; story_key from promo_copy; YOUTUBE_COMMENT_QUEUE_FILE from config.
+wires the real functions at Task 8. read_json_safe and story_key come from
+promo_copy. Queue persistence is collaborator-owned so the app can write
+state_snapshots directly without reviving retired JSON mirrors.
 
-Imports ONLY app_config, app_state, promo_copy, release_state, and any already-extracted
+Imports ONLY app_config, app_state, promo_copy, and any already-extracted
 helpers. MUST NOT import app.
 
 Behavior preserved verbatim from app.py. See .hermes/plans/2026-07-16_143000-monolith-extraction.md (Task 7).
@@ -19,20 +20,15 @@ from __future__ import annotations
 
 import hashlib
 import time
-from pathlib import Path
 from typing import Any
 
 import app_config as config
 import app_state as state  # noqa: F401 (reserved for future in-module locks/caches)
 import promo_copy as copy
-import release_state as rs
 
 # Re-exported config constants used below.
 ROOT = config.ROOT
-YOUTUBE_COMMENT_QUEUE_FILE = config.YOUTUBE_COMMENT_QUEUE_FILE
 
-# release_state provides the atomic JSON write.
-write_json_atomic = rs.write_json_atomic
 # promo_copy provides the pure helpers.
 read_json_safe = copy.read_json_safe
 story_key = copy.story_key
@@ -41,6 +37,7 @@ story_key = copy.story_key
 # --- not-yet-extracted collaborators (stubs; wired by app.py at Task 8) ---
 
 REQUIRED_COLLABORATORS = [
+    "save_youtube_comment_queue",
     "resolve_youtube_pack_folder",
     "media_file_valid",
     "media_duration_seconds",
@@ -160,7 +157,7 @@ def queue_youtube_pinned_comment(upload: dict[str, Any], *, collaborators: dict[
         if existing.get("status") not in {"posted", "pinned"}:
             existing["status"] = "waiting_video_id" if not existing.get("videoId") else "waiting_public"
         queue["updatedAt"] = now
-        write_json_atomic(YOUTUBE_COMMENT_QUEUE_FILE, queue)
+        _get(collab, "save_youtube_comment_queue")(queue)
         return dict(existing)
 
 

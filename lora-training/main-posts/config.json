@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "track": "main-posts",
+  "label": "Main Posts",
+  "triggerToken": "azink_main",
+  "promptSuffix": "Azure Inkblade chapter promo art, strong web novel cover composition, high-impact social media framing",
+  "use": "Daily chapter promos, Patreon/X/Facebook images, and general novel campaign art.",
+  "sourceFolders": {
+    "approved": "C:\\Users\\David\\Documents\\Automation tool\\lora-training\\main-posts\\approved",
+    "rejected": "C:\\Users\\David\\Documents\\Automation tool\\lora-training\\main-posts\\rejected",
+    "captions": "C:\\Users\\David\\Documents\\Automation tool\\lora-training\\main-posts\\captions",
+    "datasets": "C:\\Users\\David\\Documents\\Automation tool\\lora-training\\main-posts\\datasets"
+  },
+  "outputFolder": "C:\\Users\\David\\Documents\\Automation tool\\lora-training\\main-posts\\output",
+  "modelFolder": "C:\\Users\\David\\Documents\\Automation tool\\loras\\main-posts",
+  "notes": "Put approved training images and matching captions here. Drop trained LoRA weights in the model folder or output folder."
+}

@@ -480,7 +480,6 @@ def database_state_files() -> dict[str, Path]:
         "automationStrategy": AUTOMATION_STRATEGY_FILE,
         # Phase 2D: job-state / YouTube / app-ops
         "youtubePendingUpload": YOUTUBE_PENDING_UPLOAD_FILE,
-        "youtubePinnedCommentVerified": YOUTUBE_PINNED_COMMENT_VERIFIED_FILE,
         "youtubeMetadataExperiments": YOUTUBE_METADATA_EXPERIMENTS_FILE,
         "chatgptChapterStatus": CHATGPT_CHAPTER_STATUS_FILE,
         "chatgptChapterResult": CHATGPT_CHAPTER_RESULT_FILE,
@@ -490,10 +489,11 @@ def database_state_files() -> dict[str, Path]:
         "backgroundVideoUsage": BACKGROUND_VIDEO_USAGE_FILE,
         "clickupSync": CLICKUP_SYNC_FILE,
         "monetizationStatus": MONETIZATION_STATUS_FILE,
-        # NOTE: releaseStatus, creatorBenchmarks, youtubeCommentQueue were removed
-        # from the JSON bootstrap (Phase-3 retirement, 2026-07-23). They are
-        # sourced from SQLite (release_status table / state_snapshots) and their
-        # root JSON mirrors are dead and quarantined.
+        # NOTE: releaseStatus, creatorBenchmarks, youtubeCommentQueue, and
+        # youtubePinnedCommentVerified were removed from the JSON bootstrap
+        # (Phase-3 retirement, 2026-07-23). They are sourced from SQLite
+        # (release_status table / state_snapshots), and their root JSON mirrors
+        # are dead and quarantined.
     }
     # Enforcement: block re-registration of retired bootstrap keys. If any
     # retired key is re-added here, startup must fail loudly rather than
@@ -2184,7 +2184,7 @@ def youtube_pinned_comment_text(metadata: dict[str, Any]) -> str:
 
 
 def load_youtube_comment_queue() -> dict[str, Any]:
-    data = _phase2_load_blob("youtubeCommentQueue")
+    data = load_state_snapshot_from_database("youtubeCommentQueue")
     if not isinstance(data, dict):
         data = {"schemaVersion": 1, "items": []}
     if not isinstance(data.get("items"), list):
@@ -2193,12 +2193,20 @@ def load_youtube_comment_queue() -> dict[str, Any]:
 
 
 def load_verified_pinned_comments() -> dict[str, Any]:
-    data = _phase2_load_blob("youtubePinnedCommentVerified", YOUTUBE_PINNED_COMMENT_VERIFIED_FILE)
+    data = load_state_snapshot_from_database("youtubePinnedCommentVerified")
     if not isinstance(data, dict):
         data = {"schemaVersion": 1, "videos": {}}
     if not isinstance(data.get("videos"), dict):
         data["videos"] = {}
     return data
+
+
+def save_youtube_comment_queue(queue: dict[str, Any]) -> None:
+    automation_db.upsert_state_snapshot(ROOT, "youtubeCommentQueue", queue)
+
+
+def save_verified_pinned_comments(data: dict[str, Any]) -> None:
+    automation_db.upsert_state_snapshot(ROOT, "youtubePinnedCommentVerified", data)
 
 
 def verified_pinned_video_ids() -> set[str]:
@@ -2227,7 +2235,7 @@ def mark_youtube_comment_verified_pinned(item: dict[str, Any]) -> None:
         "watchUrl": str(item.get("watchUrl") or f"https://www.youtube.com/watch?v={video_id}"),
     }
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    _phase2_save_blob("youtubePinnedCommentVerified", YOUTUBE_PINNED_COMMENT_VERIFIED_FILE, data)
+    save_verified_pinned_comments(data)
 
 
 def backfill_verified_pinned_comments_from_queue() -> int:
@@ -2261,7 +2269,7 @@ def youtube_comment_capture_video(upload_id: str, video_id: str = "", video_url:
             item["status"] = "waiting_public"
         item["updatedAt"] = now
         queue["updatedAt"] = now
-        _phase2_save_blob("youtubeCommentQueue", data=queue)
+        save_youtube_comment_queue(queue)
         return dict(item)
 
 
@@ -2284,7 +2292,7 @@ def youtube_comment_mark_release(folder: Path, upload_id: str, status: str) -> d
             )
         item["updatedAt"] = now
         queue["updatedAt"] = now
-        _phase2_save_blob("youtubeCommentQueue", data=queue)
+        save_youtube_comment_queue(queue)
         return dict(item)
 
 
@@ -2331,7 +2339,7 @@ def youtube_comment_helper_start_backfill() -> dict[str, Any]:
                 reset += 1
         if reset:
             queue["updatedAt"] = now
-            _phase2_save_blob("youtubeCommentQueue", data=queue)
+            save_youtube_comment_queue(queue)
     pending = youtube_comment_helper_pending()
     item = pending.get("item")
     launched = False
@@ -2607,7 +2615,7 @@ def youtube_comment_helper_ack(comment_id: str, status: str, error: str = "") ->
             item["pinnedAt"] = now
             mark_youtube_comment_verified_pinned(item)
         queue["updatedAt"] = now
-        _phase2_save_blob("youtubeCommentQueue", data=queue)
+        save_youtube_comment_queue(queue)
     try:
         folder = Path(str(item.get("folder") or "")).resolve()
         metadata = read_metadata(folder)
@@ -2874,7 +2882,10 @@ def scan_existing_youtube_videos() -> dict[str, Any]:
         "unmatched": unmatched,
         "skippedShorts": skipped_shorts,
         "skippedVerifiedPinned": skipped_verified_pinned,
-        "verifiedPinnedFile": str(YOUTUBE_PINNED_COMMENT_VERIFIED_FILE),
+        "verifiedPinnedFile": None,
+        "storage": "sqlite",
+        "resource": "state_snapshots",
+        "verifiedPinnedStateKey": "youtubePinnedCommentVerified",
         "verifiedPinnedBackfilled": backfilled,
         "commentQueue": load_youtube_comment_queue(),
     }
@@ -3144,9 +3155,8 @@ def load_brand_brain() -> dict[str, Any]:
 def brand_profile(abbr: str) -> dict[str, Any]:
     abbr = story_key(abbr)
     profiles = load_brand_brain().get("profiles", {})
-    return profiles.get(abbr) or default_brand_profile(abbr)
-
-
+    profile = profiles.get(abbr)
+    return profile if isinstance(profile, dict) else default_brand_profile(abbr)
 # ---------------------------------------------------------------------------
 # Phase 2: single-blob JSON state -> SQLite (state_snapshots kv).
 # DB-first read + dual-write + startup backfill. No new tables; reuses the
@@ -3179,8 +3189,6 @@ _PHASE2_BLOB_MAP: tuple[tuple[str, Any], ...] = (
     ("automationStrategy", AUTOMATION_STRATEGY_FILE),
     # Phase 2D: job-state / YouTube / app-ops single-blob state -> SQLite
     ("youtubePendingUpload", YOUTUBE_PENDING_UPLOAD_FILE),
-    ("youtubeCommentQueue", YOUTUBE_COMMENT_QUEUE_FILE),
-    ("youtubePinnedCommentVerified", YOUTUBE_PINNED_COMMENT_VERIFIED_FILE),
     ("youtubeMetadataExperiments", YOUTUBE_METADATA_EXPERIMENTS_FILE),
     ("chatgptChapterStatus", CHATGPT_CHAPTER_STATUS_FILE),
     ("chatgptChapterResult", CHATGPT_CHAPTER_RESULT_FILE),
@@ -3399,6 +3407,11 @@ def structured_chapter_package_fallback(
                 f"agent_post_writer skipped: {_agent_exc}"
             )
     posts = build_platform_posts(title, body, material, agent_copy=agent_copy)
+    agent_post_copy_status = {
+        "enabled": str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"},
+        "used": isinstance(agent_copy, dict) and bool(posts.get("_agent_source") or agent_copy.get("caption")),
+        "source": str(posts.get("_agent_source") or ""),
+    }
     image_prompts = make_chapter_image_prompts(title, body, list(hook_map.values())[:3], novel)[:5]
     hooks = [
         {
@@ -3441,6 +3454,7 @@ def structured_chapter_package_fallback(
             "x": [posts.get("x_post", "")],
             "patreon": [posts.get("patreon_note", "")],
         },
+        "agent_post_copy": agent_post_copy_status,
         "fatigue_flags": content_fatigue_flags(openings, recent_openings or []),
         "source": "fallback",
     }
@@ -6499,7 +6513,7 @@ def reconcile_approval_inbox_items() -> dict[str, Any]:
             changed = True
     if changed:
         queue["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        _phase2_save_blob("youtubeCommentQueue", data=queue)
+        save_youtube_comment_queue(queue)
     comments = load_comment_assistant()
     before = len(comments.get("comments", []))
     comments["comments"] = [
@@ -9192,7 +9206,7 @@ def clear_youtube_comment_inbox_item(comment_id: str) -> dict[str, Any]:
         item["dismissedAt"] = now
         item["updatedAt"] = now
         queue["updatedAt"] = now
-        _phase2_save_blob("youtubeCommentQueue", data=queue)
+        save_youtube_comment_queue(queue)
     return {"ok": True, "commentId": comment_id, "message": "YouTube comment item cleared from the approval inbox."}
 
 
@@ -9560,16 +9574,13 @@ def pinned_content_plan() -> dict[str, Any]:
         "generatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
         "profiles": profiles,
         "rotationRule": "Each platform chooses pinned profile posts from measured candidates for that platform, weighted by views, follower gains, engagement, completion, and experiment score.",
-        "file": str(PINNED_CONTENT_PLAN_FILE),
-    }
-    rsr.save(ROOT, "pinnedContentPlan", result)
-    return {
-        **result,
         "file": None,
         "storage": "sqlite",
         "resource": "state_snapshots",
         "state_key": "pinnedContentPlan",
     }
+    rsr.save(ROOT, "pinnedContentPlan", result)
+    return result
 
 
 def comment_content_ideas() -> list[dict[str, Any]]:
@@ -11524,7 +11535,6 @@ def youtube_end_screen_targets(limit: int = 80, refresh_scan: bool = False) -> d
         "scannedAt": raw.get("scannedAt", "") if isinstance(raw, dict) else "",
         "targets": targets,
         "skipped": skipped[:120],
-        "stateFile": str(YOUTUBE_END_SCREEN_STATE_FILE),
         "stateFile": None,
         "file": None,
         "storage": "sqlite",
@@ -12188,7 +12198,7 @@ def start_automatic_comment_worker() -> None:
 
 
 def load_automatic_metrics_state() -> dict[str, Any]:
-    data = rsr.load(ROOT, "automaticMetricsState", default={}, fallback_file=AUTO_METRICS_STATE_FILE)
+    data = rsr.load(ROOT, "automaticMetricsState", default={})
     if not isinstance(data, dict):
         data = {}
     data.setdefault("enabled", AUTO_METRICS_ENABLED)
@@ -12200,7 +12210,7 @@ def load_automatic_metrics_state() -> dict[str, Any]:
 
 def save_automatic_metrics_state(data: dict[str, Any]) -> None:
     data["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    rsr.save(ROOT, "automaticMetricsState", data, fallback_file=AUTO_METRICS_STATE_FILE)
+    rsr.save(ROOT, "automaticMetricsState", data)
 
 
 def experiment_timestamp(value: Any) -> datetime | None:
@@ -13031,7 +13041,12 @@ def pack_status_for_folder(folder: Path, metadata: dict[str, Any]) -> str:
             return "needs_image_review"
         return "ready_to_queue"
     if pack_type in {"full_youtube", "story_hook_video", "manual_video"}:
-        return "ready_to_upload" if (folder / "youtube-video.mp4").exists() else "needs_video_build"
+        video = folder / "youtube-video.mp4"
+        if not video.exists():
+            return "needs_video_build"
+        if not media_file_valid(video, "v:0") or not media_file_valid(video, "a:0"):
+            return "needs_video_build"
+        return "ready_to_upload"
     if pack_type in {"daily_social", "experiment_social_pack"}:
         return "ready_to_queue" if metadata.get("image") else "needs_image_review"
     if pack_type == "campaign_promo":
@@ -15569,9 +15584,46 @@ def deep_tiktok_chapter_moments(chapter_text: str, abbr: str, count: int = 8) ->
     return moments[:count]
 
 
+DEEP_TIKTOK_BAD_OVERLAY_RE = re.compile(
+    r"(establishing world shot|protagonist in motion|tense confrontation|intimate emotional beat|"
+    r"startling revelation|dangerous environment|quiet character moment|haunting closing image|"
+    r"realistic cinematic|promotional image|scene focus|theme:|photorealistic|no text|"
+    r"typography|logo|web novel|chapter \d+ teaser)",
+    re.IGNORECASE,
+)
+
+
+def sanitize_deep_tiktok_overlay(text: str, novel: str = "", fallback: str = "") -> str:
+    cleaned = clean_teaser_text(str(text or ""), limit=110, max_words=12)
+    lower = cleaned.lower()
+    novel_lower = str(novel or "").strip().lower()
+    invalid = (
+        not cleaned
+        or bool(DEEP_TIKTOK_BAD_OVERLAY_RE.search(cleaned))
+        or (novel_lower and lower == novel_lower)
+        or len(cleaned.split()) < 3
+    )
+    if invalid:
+        cleaned = fallback or "A hidden choice changes everything."
+    return reel_overlay_text(cleaned, limit=58)
+
+
+def deep_tiktok_novel_overlay_fallbacks(novel: str, count: int = 8) -> list[str]:
+    lines = [
+        "A quiet moment turns into a test.",
+        "The first clue refuses to stay buried.",
+        "Power answers when fear runs out.",
+        "One choice changes the path forward.",
+        "The danger was closer than it looked.",
+        "A hidden truth pushes into the light.",
+        "The next step costs more than expected.",
+        "The story is only getting sharper.",
+    ]
+    return lines[:count]
+
+
 def deep_tiktok_caption(abbr: str, chapter: str, title: str, hook: str) -> str:
     novel = NOVEL_NAMES.get(abbr, abbr)
-    destination = short_destination_copy(abbr, chapter, source="deep-tiktok")
     profile = social_profile(abbr)
     chapter_label = "Prologue" if str(chapter).strip() in {"0", "prologue", "Prologue"} else f"Chapter {chapter}"
     title_tail = re.sub(rf"^{re.escape(chapter_label)}\s*[:.\-\u2013\u2014]?\s*", "", str(title or "").strip(), flags=re.IGNORECASE).strip()
@@ -15580,8 +15632,8 @@ def deep_tiktok_caption(abbr: str, chapter: str, title: str, hook: str) -> str:
         [
             f"A deeper look at {novel} {chapter_label}{title_suffix}",
             hook,
-            "Watch the full story beat, then continue the chapter:",
-            destination["links"],
+            "Watch the full story beat, then continue the chapter.",
+            "Read now. Link in bio.",
             "",
             profile["hashtags"],
         ]
@@ -15684,10 +15736,17 @@ def repair_deep_tiktok_metadata(folder: Path, metadata: dict[str, Any] | None = 
         image_sources.extend(["deep-tiktok-scene"] * (len(images) - len(image_sources)))
         metadata["image_sources"] = image_sources
     if images and not metadata.get("image_prompts"):
-        metadata["image_prompts"] = [
-            f"Deep TikTok scene image for {novel} {chapter_label}: {overlays[index] if index < len(overlays) else title}"
-            for index, _ in enumerate(images)
-        ]
+        metadata["image_prompts"] = []
+        scene_texts = (
+            deep_tiktok_chapter_moments(chapter_text, abbr, len(images))
+            if chapter_text and abbr
+            else []
+        )
+        for index in range(len(images)):
+            source = scene_texts[index] if index < len(scene_texts) else title or novel
+            metadata["image_prompts"].append(
+                f"Deep TikTok scene {index + 1} for {novel} {chapter_label}: {clean_teaser_text(str(source), limit=140, max_words=24)}"
+            )
     approved = metadata.get("approved_images")
     if not isinstance(approved, list):
         approved = []
@@ -16310,7 +16369,7 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
     images.append(prepare_tiktok_outro_image(folder, abbr, novel, "", style=pack_track))
     sources.append("rotating-novel-card")
 
-    hook = sub_themes[0]
+    hook = deep_tiktok_novel_overlay_fallbacks(novel, 1)[0]
     # Full per-novel discoverability hashtag set (BookTok/FantasyBooks/RoyalRoad/etc.),
     # rotated by prompt so repeated builds surface different tag orderings for reach.
     _profile = social_profile(abbr)
@@ -16322,8 +16381,7 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
     for _anchor in ("#AzureInkblade", "#TikTokBooks"):
         if _anchor.lower() not in novel_tags.lower():
             novel_tags = f"{novel_tags} {_anchor}".strip()
-    rr_link = royal_road_url_for_story(abbr) or linktree_url()
-
+    rr_link = ""
     agent = None
     if str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"}:
         try:
@@ -16345,9 +16403,9 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
         if isinstance(ag_overlays, str):
             ag_overlays = [line.strip() for line in ag_overlays.splitlines() if line.strip()]
     else:
-        body = f"{novel}: {prompt}"
-        cta = f"Read {novel} free on Royal Road."
-        tiktok_title = f"{novel}: {prompt[:48]}"
+        body = f"A deeper look at {novel}. {prompt[:120]}"
+        cta = f"Continue {novel}. Link in bio."
+        tiktok_title = f"{novel}: {prompt[:48]} | 60 Second Novel Highlight"
         ag_overlays = []
 
     # Rich multi-line description: hook/teaser, CTA + link, then the full tag block.
@@ -16358,16 +16416,24 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
             novel_tags,
         ] if part and part.strip()
     ).strip()
+    caption = social_caption_link_in_bio(caption, "tiktok")
     ag_tags = novel_tags
 
+    fallback_overlays = deep_tiktok_novel_overlay_fallbacks(novel, scene_count)
     if ag_overlays and len(ag_overlays) >= 2:
-        overlays = [reel_overlay_text(str(line), limit=58) for line in ag_overlays[:8]]
+        overlays = [
+            sanitize_deep_tiktok_overlay(
+                str(line),
+                novel,
+                fallback_overlays[index % len(fallback_overlays)],
+            )
+            for index, line in enumerate(ag_overlays[:scene_count])
+        ]
     else:
-        # Fallback: scene-beat descriptors only. Overlay text must describe the
-        # scene/story beat, never repeat the source novel name. The previous
-        # f"{novel}: {sub}" form produced "NOVEL: establishing world shot" x8
-        # whenever the agent was off (the default), which is the reported bug.
-        overlays = [reel_overlay_text(sub, limit=58) for sub in sub_themes[:8] if sub and str(sub).strip()]
+        overlays = [sanitize_deep_tiktok_overlay(line, novel, line) for line in fallback_overlays]
+    while len(overlays) < scene_count:
+        fallback = fallback_overlays[len(overlays) % len(fallback_overlays)]
+        overlays.append(sanitize_deep_tiktok_overlay(fallback, novel, fallback))
     overlays.append(reel_overlay_text(f"READ {novel} ON ROYAL ROAD", limit=62))
     hook_line = overlays[0].replace("\n", " ") if overlays else f"A deeper look at {novel}"
 
@@ -19214,7 +19280,13 @@ Rules:
     }
 
 
-def write_story_hook_playwright_script(job_id: str, prompt: str, target_words: int) -> Path:
+def story_hook_job_result_file(job_id: str) -> Path:
+    folder = ROOT / "temp" / "story-hook-results"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / f"{slugify(job_id) or 'story-hook'}.json"
+
+
+def write_story_hook_playwright_script(job_id: str, prompt: str, target_words: int, output_path: Path) -> Path:
     STORY_HOOK_SCRIPT_FILE.write_text(
         rf"""const fs = require('fs');
 const {{ chromium }} = require('playwright');
@@ -19222,7 +19294,7 @@ const cdpUrl = {json.dumps(chrome_debug_url())};
 const jobId = {json.dumps(job_id)};
 const prompt = {json.dumps(prompt)};
 const targetWords = {int(target_words or 1600)};
-const outputPath = {json.dumps(str(STORY_HOOK_RESULT_FILE))};
+const outputPath = {json.dumps(str(output_path))};
 
 async function findEditor(page) {{
   const candidates = [
@@ -19563,8 +19635,14 @@ def process_story_hook_inbox() -> dict[str, Any]:
     return {"enabled": True, "processed": results}
 
 
-def _run_chatgpt_story_hook(job: dict[str, Any]) -> None:
+def _run_chatgpt_story_hook(job: dict[str, Any], result_file: Path) -> None:
     """Original ChatGPT/CDP browser-scrape path (fallback for Hermes failures)."""
+    write_story_hook_playwright_script(
+        str(job.get("jobId") or "story-hook"),
+        str(job.get("prompt") or ""),
+        int(job.get("targetWords") or 1600),
+        result_file,
+    )
     run = subprocess.run(
         [str(bundled_node_executable()), str(STORY_HOOK_SCRIPT_FILE)],
         cwd=str(ROOT),
@@ -19575,10 +19653,10 @@ def _run_chatgpt_story_hook(job: dict[str, Any]) -> None:
         check=False,
         creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
     )
-    if run.returncode != 0 and not STORY_HOOK_RESULT_FILE.exists():
+    if run.returncode != 0 and not result_file.exists():
         # Surface the failure so the worker can report it (don't overwrite a
         # partial result file the script may have written on error).
-        STORY_HOOK_RESULT_FILE.write_text(
+        result_file.write_text(
             json.dumps(
                 {"ok": False, "jobId": job.get("jobId"), "error": run.stderr.strip() or "ChatGPT browser helper failed."},
                 ensure_ascii=False,
@@ -19590,6 +19668,7 @@ def _run_chatgpt_story_hook(job: dict[str, Any]) -> None:
 
 def story_hook_video_worker(job: dict[str, Any]) -> None:
     try:
+        result_file = story_hook_job_result_file(str(job.get("jobId") or "story-hook"))
         # Hermes-authored packs bypass the ChatGPT/CDP browser scrape entirely.
         if str(job.get("source") or "").lower() == "hermes":
             from tools.story_hook_writer import generate_and_write as _hermes_story_hook
@@ -19599,18 +19678,20 @@ def story_hook_video_worker(job: dict[str, Any]) -> None:
                 str(job.get("angle") or ""),
                 int(job.get("targetWords") or 1600),
                 str(job.get("prompt") or ""),
-                STORY_HOOK_RESULT_FILE,
+                result_file,
             )
             if not hermes_result or not hermes_result.get("ok"):
                 # Fall back to the ChatGPT/CDP path so capability is never lost.
-                _run_chatgpt_story_hook(job)
-            result = rsr.load(ROOT, "storyHookChatgptResult", default={}, fallback_file=STORY_HOOK_RESULT_FILE)
+                _run_chatgpt_story_hook(job, result_file)
         else:
-            _run_chatgpt_story_hook(job)
-            result = rsr.load(ROOT, "storyHookChatgptResult", default={}, fallback_file=STORY_HOOK_RESULT_FILE)
+            _run_chatgpt_story_hook(job, result_file)
+        try:
+            result = json.loads(result_file.read_text(encoding="utf-8")) if result_file.exists() else {}
+        except Exception as exc:
+            result = {"ok": False, "jobId": job.get("jobId"), "error": f"Story hook result could not be read: {exc}"}
         if not isinstance(result, dict) or str(result.get("jobId") or "") != str(job.get("jobId") or ""):
             result = {"ok": False, "error": "Story hook helper did not return a result."}
-        rsr.save(ROOT, "storyHookChatgptResult", result, fallback_file=STORY_HOOK_RESULT_FILE)
+        rsr.save(ROOT, "storyHookChatgptResult", result)
         state = {**job, **result, "running": False, "ready": False, "finishedAt": time.strftime("%Y-%m-%d %H:%M:%S")}
         if result.get("ok") and result.get("storyText"):
             parsed = parse_story_hook_output(str(result.get("storyText") or ""), job)
@@ -19661,11 +19742,9 @@ def start_story_hook_video_writer(abbr: str = "", angle: str = "", target_words:
         context = story_hook_prompt(abbr, angle, target_words)
         job_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{context['abbr']}-story-hook"
         try:
-            STORY_HOOK_RESULT_FILE.unlink()
+            story_hook_job_result_file(job_id).unlink()
         except OSError:
             pass
-        if not use_hermes:
-            write_story_hook_playwright_script(job_id, str(context.get("prompt") or ""), int(context.get("targetWords") or 1600))
         state = {
             "jobId": job_id,
             "abbr": context["abbr"],
@@ -25981,10 +26060,32 @@ def social_post_preview(
         "playwright_returncode": playwright_returncode,
         "playwright_stdout": playwright_stdout if use_playwright and ready else "",
         "playwright_stderr": playwright_stderr if use_playwright and ready else "",
+        "preview_error": preview_error or "",
     }
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    if preview_error:
-        raise RuntimeError(preview_error)
+    degraded = bool(preview_error)
+    if degraded:
+        for spec in specs:
+            try:
+                open_url_once(spec["url"])
+            except Exception:
+                pass
+        return {
+            "message": "Post preview opened in degraded mode. Review the cockpit/manual copy because Playwright could not confirm composer fill.",
+            "folder": str(post_folder),
+            "cockpit": str(cockpit),
+            "playwright_script": str(script),
+            "playwright_available": ready,
+            "playwright_launched": launched,
+            "playwright_returncode": playwright_returncode,
+            "playwright_result": str(post_folder / "manual-posts-playwright-result.json"),
+            "playwright_stdout": playwright_stdout if use_playwright and ready else "",
+            "playwright_stderr": playwright_stderr if use_playwright and ready else "",
+            "playwright_events": playwright_events,
+            "platforms": specs,
+            "degraded": True,
+            "preview_error": preview_error,
+        }
     return {
         "message": "Post preview sent to the platform tabs. Review and publish manually.",
         "folder": str(post_folder),
@@ -25998,6 +26099,7 @@ def social_post_preview(
         "playwright_stderr": playwright_stderr if use_playwright and ready else "",
         "playwright_events": playwright_events,
         "platforms": specs,
+        "degraded": False,
     }
 
 
@@ -28773,7 +28875,13 @@ def playwright_available() -> bool:
         timeout=15,
         check=False,
     )
-    return run.returncode == 0
+    if run.returncode != 0:
+        return False
+    try:
+        with urllib.request.urlopen(f"{chrome_debug_url().rstrip('/')}/json/version", timeout=3) as _:
+            return True
+    except Exception:
+        return False
 
 
 def prepare_manual_posts(folder: str, use_playwright: bool = True) -> dict[str, Any]:
@@ -31537,16 +31645,38 @@ def create_fallback_image(query: str, target: Path, index: int, size: tuple[int,
     image.save(target)
 
 
+SOCIAL_LINK_LABEL_RE = re.compile(r"(?im)^\s*(rr|royal road|patreon|youtube|tik\s*tok|tiktok|instagram|x|twitter)\b.*$")
+
+
+def link_in_bio_cta(platform: str = "") -> str:
+    platform = str(platform or "").strip().lower()
+    if platform in {"x", "twitter"}:
+        return "Read now: link in bio."
+    return "Read now. Link in bio."
+
+
+def social_caption_link_in_bio(text: str, platform: str = "") -> str:
+    cleaned = re.sub(r"https?://\S+", "", str(text or ""))
+    cleaned = re.sub(r"(?m)^\s*[^\w#\n]{1,12}\s*$", "", cleaned)
+    cleaned = SOCIAL_LINK_LABEL_RE.sub("", cleaned)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    cta = link_in_bio_cta(platform)
+    if cleaned and "link in bio" not in cleaned.lower():
+        cleaned = f"{cleaned}\n\n{cta}"
+    return cleaned or cta
+
+
 def write_text_artifacts(folder: Path, payload: dict[str, Any]) -> None:
     story = str(payload.get("abbr") or payload.get("novel") or payload.get("title") or "")
-    links = platform_links_block(story)
-    payload["caption"] = with_instagram_links(str(payload.get("caption", "")), story)
+    # links stripped - link-in-bio only
+    # strip all tracked links — link-in-bio only, bio already has Linktree
     payload.setdefault("x_post", str(payload.get("x", "")).strip())
     payload.setdefault("facebook_post", str(payload.get("caption", "")).strip())
-    for key in ("patreon_note", "royal_road_note", "facebook_post"):
-        text = str(payload.get(key, "")).strip()
-        if text and linktree_url() not in text:
-            payload[key] = f"{text}\n\n{links}"
+    for key, platform in (("caption", "instagram"), ("x_post", "x"), ("facebook_post", "facebook")):
+        value = str(payload.get(key) or "").strip()
+        if value:
+            payload[key] = social_caption_link_in_bio(value, platform)
     (folder / "phrases.txt").write_text("\n".join(payload["phrases"]) + "\n", encoding="utf-8")
     (folder / "caption.txt").write_text(payload["caption"].strip() + "\n", encoding="utf-8")
     (folder / "instagram-caption.txt").write_text(payload["caption"].strip() + "\n", encoding="utf-8")
@@ -32125,7 +32255,13 @@ def make_campaign(
             material.setdefault("warnings", []).append(
                 f"agent_post_writer skipped: {_agent_exc}"
             )
-    material.update(build_platform_posts(title, chapter, material, post_focus, agent_copy=agent_copy))
+    platform_posts = build_platform_posts(title, chapter, material, post_focus, agent_copy=agent_copy)
+    material.update(platform_posts)
+    material["agent_post_copy"] = {
+        "enabled": str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"},
+        "used": isinstance(agent_copy, dict) and bool(platform_posts.get("_agent_source") or agent_copy.get("caption")),
+        "source": str(platform_posts.get("_agent_source") or ""),
+    }
     write_text_artifacts(folder, material)
     if abbr and str(chapter_id).isdigit():
         update_chapter_ledger(
