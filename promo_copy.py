@@ -282,12 +282,30 @@ def track_copy_links(text: str, story: str, source: str, campaign: str, content:
     return result
 
 
+DIRECT_PUBLIC_URL_RE = re.compile(
+    r"(?i)\b(?:https?://|www\.)?\S*(?:linktr\.ee|royalroad\.com|patreon\.com|youtube\.com|youtu\.be|tiktok\.com|x\.com|twitter\.com|instagram\.com)\S*"
+)
+
+
+def public_copy_without_links(text: str, platform: str = "") -> str:
+    cleaned = DIRECT_PUBLIC_URL_RE.sub("", str(text or ""))
+    cleaned = re.sub(r"(?im)^\s*(rr|royal road|patreon|youtube|tik\s*tok|tiktok|instagram|x|twitter)\b.*$", "", cleaned)
+    cleaned = re.sub(r"https?://\S+", "", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    cta = "Read now: link in bio." if str(platform or "").strip().lower() in {"x", "twitter"} else "Read now. Link in bio."
+    if cleaned and "link in bio" not in cleaned.lower():
+        cleaned = f"{cleaned}\n\n{cta}"
+    return cleaned or cta
+
+
 def audience_hub_line(story: str = "", *, verb: str = "Start reading") -> str:
     profile = social_profile(story) if story else {"name": "Azure Inkblade"}
     name = str(profile.get("name") or "Azure Inkblade")
     if story_key(story):
-        return f"{verb} {name}, watch chapter videos, and find all links: {linktree_url()}"
-    return f"{verb}, watch, and follow Azure Inkblade: {linktree_url()}"
+        return f"{verb} {name}, watch chapter videos, and find every link in bio."
+    return f"{verb}, watch, and follow Azure Inkblade through the link in bio."
 
 
 def platform_links_block(story: str = "") -> str:
@@ -720,7 +738,7 @@ def focused_social_cta(abbr: str, focus: str, context: str = "", platform: str =
     focus = normalize_post_copy_mode(focus)
     profile = social_profile(abbr)
     goal = dynamic_cta_goal(abbr, focus, context or platform, rotation_next=rotation_next)
-    hub = linktree_url()
+    hub = "link in bio"
     name = profile["name"]
     # Per-novel voice variants (2026-07-20 plan §1): complete phrases in each
     # novel's voice, keyed by normalized abbr then CTA goal. Falls back to the
@@ -735,7 +753,7 @@ def focused_social_cta(abbr: str, focus: str, context: str = "", platform: str =
     if not variants:
         return audience_hub_line(abbr)
     key = f"CTA_TEXT_{context}_{platform}_{abbr_key}_{focus}_{goal}".upper()
-    return variants[rotation_next(key, len(variants))].format(hub=hub, name=name)
+    return public_copy_without_links(variants[rotation_next(key, len(variants))].format(hub=hub, name=name), platform)
 
 
 
@@ -1243,14 +1261,14 @@ def build_platform_posts(
         f"{facebook_cta}\n\n"
         f"{facebook_tail}"
     )
-    x_destination = track_copy_links(linktree_url(), story, "x", campaign_key, "daily-post")
+    x_destination = "Read now: link in bio."
     x_parts = [f"{novel} - {title}", x_hook or hook]
     if focus == "royal_road_live" and royal_road_url:
-        x_parts.append(track_copy_links(f"Read and follow: {linktree_url()}", story, "x", campaign_key, "daily-post"))
+        x_parts.append("Read and follow through the link in bio.")
     elif focus == "patreon_early":
-        x_parts.append(track_copy_links(f"Read ahead: {linktree_url()}", story, "x", campaign_key, "daily-post"))
+        x_parts.append("Read ahead through the link in bio.")
     elif focus == "youtube_release":
-        x_parts.append(track_copy_links(f"Watch/listen: {linktree_url()}", story, "x", campaign_key, "daily-post"))
+        x_parts.append("Watch/listen through the link in bio.")
     elif focus == "weekly_general_promo":
         x_parts.append(x_destination)
     elif focus == "catch_up_archive":
@@ -1314,10 +1332,10 @@ def build_platform_posts(
             _x_full = f"{_ag_tag_str}"
         x_post = _x_full
     return {
-        "caption": track_copy_links(instagram_caption, story, "instagram", campaign_key, "daily-post"),
-        "patreon_note": track_copy_links(patreon_note, story, "patreon", campaign_key, "daily-post"),
-        "facebook_post": track_copy_links(facebook_post, story, "facebook", campaign_key, "daily-post"),
-        "x_post": x_post,
+        "caption": public_copy_without_links(instagram_caption, "instagram"),
+        "patreon_note": public_copy_without_links(patreon_note, "patreon"),
+        "facebook_post": public_copy_without_links(facebook_post, "facebook"),
+        "x_post": public_copy_without_links(x_post, "x"),
         "x_thread_links": track_copy_links(links, story, "x", campaign_key, "daily-post-links"),
         "post_focus": focus,
         "caption_style": style,
@@ -1359,11 +1377,7 @@ def normalize_chapter_id(title: str, chapter: str | int = "") -> str:
 
 
 def with_instagram_links(text: str, story: str = "") -> str:
-    text = text.strip()
-    if linktree_url() in text:
-        return text
-    footer = platform_links_block(story)
-    return f"{text}\n\n{footer}" if text else footer
+    return public_copy_without_links(text, "instagram")
 
 
 def fallback_social_copy(novel: str, abbr: str, day: str, filename: str) -> dict[str, str]:
@@ -1391,13 +1405,12 @@ def fallback_social_copy(novel: str, abbr: str, day: str, filename: str) -> dict
             "",
             cta,
             "",
-            platform_links_block(abbr),
+            audience_hub_line(abbr),
             "",
             tags,
         ]
     )
-    x_link = linktree_url()
-    x_text = f"{profile['emoji']} {hook}\n{x_link}\n{x_tags}"
+    x_text = f"{profile['emoji']} {hook}\nRead now: link in bio.\n{x_tags}"
     if len(x_text) > 260:
         x_text = x_text[:257].rsplit(" ", 1)[0] + "..."
     facebook = "\n\n".join(
@@ -1406,14 +1419,14 @@ def fallback_social_copy(novel: str, abbr: str, day: str, filename: str) -> dict
             hook,
             cta,
             "Follow the story updates across the main channels.",
-            platform_links_block(abbr),
+            audience_hub_line(abbr),
             tags,
         ]
     )
     return {
         "instagram": with_instagram_links(instagram, abbr),
         "x": x_text,
-        "facebook": facebook,
+        "facebook": public_copy_without_links(facebook, "facebook"),
         "alt_text": f"Promotional image for {profile['name']}, scheduled for {day}.",
         "post_focus": focus,
         "caption_style": style,

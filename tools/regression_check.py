@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT))
 import app  # noqa: E402
 import automation_db  # noqa: E402
 import growth_scheduler  # noqa: E402
+import promo_copy  # noqa: E402
 
 # Wire the extracted-module collaborator seams the same way app.main() does at server
 # boot. The regression harness imports app directly (in-process) and calls app
@@ -910,19 +911,27 @@ def check_live_server_routes() -> list[dict[str, object]]:
     except Exception as exc:
         checks.append(result("live_pack_health_fast", False, str(exc)))
 
-    preview_folder = ""
+    preview_folders: list[str] = []
     for root in [app.TIKTOK_OUTPUT_DIR, app.SOCIAL_OUTPUT_DIR, app.OUTPUT_DIR]:
-        recent = recent_pack_folders(root, 1)
-        if recent:
-            preview_folder = str(recent[0])
-            break
-    if not preview_folder:
+        preview_folders.extend(str(folder) for folder in recent_pack_folders(root, 4))
+    if not preview_folders:
         checks.append(result("live_pack_preview_skipped", True, "No recent pack folder found."))
         return checks
     started = time.time()
+    preview_errors: list[str] = []
     try:
-        preview_path = "/api/pack-preview?folder=" + urllib.parse.quote(preview_folder)
-        preview = fetch_local_json(preview_path, timeout=20.0)
+        preview = None
+        preview_folder = ""
+        for candidate in preview_folders:
+            try:
+                preview_path = "/api/pack-preview?folder=" + urllib.parse.quote(candidate)
+                preview = fetch_local_json(preview_path, timeout=20.0)
+                preview_folder = candidate
+                break
+            except Exception as exc:
+                preview_errors.append(f"{Path(candidate).name}: {exc}")
+        if preview is None:
+            raise RuntimeError("; ".join(preview_errors[:4]) or "No previewable pack found.")
         elapsed = time.time() - started
         preflight = preview.get("bufferPreflight") if isinstance(preview.get("bufferPreflight"), dict) else {}
         checks.append(
@@ -934,10 +943,11 @@ def check_live_server_routes() -> list[dict[str, object]]:
                 folder=preview_folder,
                 cards=len(preview.get("imageCards") or []),
                 preflightKeys=list(preflight.keys()),
+                skippedPreviewErrors=preview_errors[:4],
             )
         )
     except Exception as exc:
-        checks.append(result("live_pack_preview_has_image_cards_and_preflight", False, str(exc), folder=preview_folder))
+        checks.append(result("live_pack_preview_has_image_cards_and_preflight", False, str(exc), folders=preview_folders[:12]))
     return checks
 
 
@@ -973,8 +983,8 @@ def check_weekend_post_prereqs() -> list[dict[str, object]]:
             instagram = str(copy.get("instagram") or "")
             facebook = str(copy.get("facebook") or "")
             x_text = str(copy.get("x") or "")
-            if app.linktree_url() not in instagram:
-                copy_failures.append(f"{abbr} {day}: instagram missing Linktree hub")
+            if "link in bio" not in instagram.lower() or "http" in instagram.lower():
+                copy_failures.append(f"{abbr} {day}: instagram missing link-in-bio CTA or still has a raw URL")
             old_link_count = sum(1 for link in [app.PATREON_URL, app.TIKTOK_URL, app.YOUTUBE_SOCIAL_URL] if link in instagram)
             if old_link_count >= 2:
                 copy_failures.append(f"{abbr} {day}: instagram still lists too many separate social links")
@@ -1002,7 +1012,7 @@ def check_linktree_dynamic_caption_engine() -> list[dict[str, object]]:
     # which always returns index 0 (no rotation) unless a rotating collaborator is
     # injected. The app never injects one, so CTA rotation is currently a no-op in
     # both the live server and the harness. This check therefore asserts the CTAs are
-    # valid linktree hub lines (non-empty + hub URL present), NOT that they rotate.
+    # valid link-in-bio hub lines (non-empty + public CTA present), NOT that they rotate.
     ctas = [
         app.focused_social_cta("HA", "weekly_general_promo", f"{context}_{i}", "instagram")
         for i in range(4)
@@ -1010,7 +1020,7 @@ def check_linktree_dynamic_caption_engine() -> list[dict[str, object]]:
     all_valid = (
         len(ctas) == 4
         and all(isinstance(c, str) and c.strip() for c in ctas)
-        and all(app.linktree_url() in c for c in ctas)
+        and all("link in bio" in c.lower() and "http" not in c.lower() for c in ctas)
     )
     checks.append(
         assert_result(
@@ -1035,9 +1045,14 @@ def check_linktree_dynamic_caption_engine() -> list[dict[str, object]]:
     x_post = str(copy.get("x_post") or "")
     checks.append(
         assert_result(
-            "platform_posts_use_linktree_hub",
-            app.linktree_url() in caption and app.linktree_url() in facebook and app.linktree_url() in x_post,
-            f"captionHas={app.linktree_url() in caption}, facebookHas={app.linktree_url() in facebook}, xHas={app.linktree_url() in x_post}",
+            "platform_posts_use_link_in_bio_hub",
+            "link in bio" in caption.lower()
+            and "link in bio" in facebook.lower()
+            and "link in bio" in x_post.lower()
+            and "http" not in caption.lower()
+            and "http" not in facebook.lower()
+            and "http" not in x_post.lower(),
+            f"captionBio={'link in bio' in caption.lower()}, facebookBio={'link in bio' in facebook.lower()}, xBio={'link in bio' in x_post.lower()}",
         )
     )
     old_link_count = sum(1 for link in [app.PATREON_URL, app.TIKTOK_URL, app.YOUTUBE_SOCIAL_URL] if link in caption)
@@ -1060,7 +1075,11 @@ def check_linktree_dynamic_caption_engine() -> list[dict[str, object]]:
     checks.append(
         assert_result(
             "shorts_and_reels_use_distinct_caption_voice",
-            tiktok != reel and app.linktree_url() in tiktok and app.linktree_url() in reel,
+            tiktok != reel
+            and "link in bio" in tiktok.lower()
+            and "link in bio" in reel.lower()
+            and "http" not in tiktok.lower()
+            and "http" not in reel.lower(),
             f"tiktokLen={len(tiktok)}, reelLen={len(reel)}",
         )
     )
@@ -1246,10 +1265,11 @@ def check_caption_voice_rotation() -> list[dict[str, object]]:
         f"en={en_novel_tag} ha={ha_novel_tag} sf={sf_novel_tag} hp={hp_novel_tag}",
     ))
 
-    # 13. CTA still contains Linktree and respects the selected release focus.
+    # 13. CTA still uses the public link-in-bio hub and respects the selected release focus.
     checks.append(assert_result(
-        "cta_keeps_linktree_and_focus",
-        app.linktree_url() in str(en.get("caption") or "")
+        "cta_keeps_link_in_bio_and_focus",
+        "link in bio" in str(en.get("caption") or "").lower()
+        and "http" not in str(en.get("caption") or "").lower()
         and en.get("post_focus") == "royal_road_live",
         f"focus={en.get('post_focus')}",
     ))
@@ -1358,18 +1378,18 @@ def check_story_hook_pack_readiness() -> list[dict[str, object]]:
             failures=folder_errors,
         )
     )
-    legacy_hosts = ("patreon.com", "royalroad.com", "youtube.com", "tiktok.com", "x.com")
+    legacy_hosts = ("linktr.ee", "patreon.com", "royalroad.com", "youtube.com", "youtu.be", "tiktok.com", "x.com", "twitter.com", "instagram.com")
     description_errors: list[str] = []
     for item in items:
         folder = Path(str(item.get("folder") or ""))
         description_file = folder / "youtube-description.txt"
         description = description_file.read_text(encoding="utf-8", errors="replace") if description_file.exists() else ""
         legacy = [host for host in legacy_hosts if host in description.lower()]
-        if description.count(app.linktree_url()) != 1 or legacy:
-            description_errors.append(f"{folder.name}: linktree={description.count(app.linktree_url())}, legacy={legacy}")
+        if "link in bio" not in description.lower() or legacy or "http" in description.lower():
+            description_errors.append(f"{folder.name}: linkInBio={'link in bio' in description.lower()}, legacy={legacy}, hasHttp={'http' in description.lower()}")
     checks.append(
         assert_result(
-            "story_hook_descriptions_use_single_linktree_cta",
+            "story_hook_descriptions_use_link_in_bio_cta",
             not description_errors,
             f"checked={len(items)}",
             failures=description_errors,
@@ -1654,7 +1674,11 @@ def check_weekly_growth_planner() -> list[dict[str, object]]:
     checks.append(assert_result("weekly_growth_weekdays_are_one_novel_each", all(row.get("type") == "novel" and row.get("abbr") for row in rows[:5]), str([(row.get("day"), row.get("abbr")) for row in rows[:5]])))
     checks.append(assert_result("weekly_growth_has_community_and_recap", rows[5].get("type") == "community_poll" and rows[6].get("type") == "recap", str([row.get("type") for row in rows])))
     checks.append(assert_result("weekly_growth_uses_one_goal_per_slot", all(row.get("engagementGoal") in growth_scheduler.GOALS for row in rows), str([row.get("engagementGoal") for row in rows])))
-    checks.append(assert_result("weekly_growth_is_linktree_first", all(growth_scheduler.LINKTREE_URL in " ".join((row.get("platformCopy") or {}).values()) for row in rows), "Every slot should include the Linktree hub."))
+    checks.append(assert_result(
+        "weekly_growth_uses_link_in_bio",
+        all("link in bio" in " ".join((row.get("platformCopy") or {}).values()).lower() and "http" not in " ".join((row.get("platformCopy") or {}).values()).lower() for row in rows),
+        "Every slot should use link-in-bio wording without raw URLs.",
+    ))
     checks.append(assert_result(
         "weekly_growth_copy_is_platform_native",
         all(
@@ -1697,10 +1721,11 @@ def check_weekly_growth_planner() -> list[dict[str, object]]:
         "weekly_growth_youtube_is_seo_rich",
         all(
             all(token in str((row.get("platformCopy") or {}).get("youtube") or "").lower() for token in ("progression fantasy", "web novel", "azure inkblade"))
-            and growth_scheduler.LINKTREE_URL in str((row.get("platformCopy") or {}).get("youtube") or "")
+            and "link in bio" in str((row.get("platformCopy") or {}).get("youtube") or "").lower()
+            and "http" not in str((row.get("platformCopy") or {}).get("youtube") or "").lower()
             for row in rows
         ),
-        "YouTube previews should include discoverable genre terms, the brand, and the Linktree destination.",
+        "YouTube previews should include discoverable genre terms, the brand, and a link-in-bio CTA without raw URLs.",
     ))
     checks.append(assert_result("weekly_growth_scores_every_slot", all(isinstance((row.get("predictedEngagement") or {}).get("score"), int) for row in rows), str([row.get("predictedEngagement", {}).get("score") for row in rows])))
     checks.append(assert_result("weekly_growth_default_plan_clears_quality_gate", bool(plan.get("summary", {}).get("ready")) and int(plan.get("summary", {}).get("diversityWarnings") or 0) == 0, str(plan.get("summary"))))
@@ -1710,7 +1735,7 @@ def check_weekly_growth_planner() -> list[dict[str, object]]:
     duplicate = growth_scheduler.engagement_score(
         hook="A repeated hook with enough words to normally score well for this regression test.",
         cta="Follow for the next chapter.", goal="Followers",
-        platform_copy={name: f"Adapted {name} {growth_scheduler.LINKTREE_URL}" for name in ("instagram", "tiktok", "x", "facebook")},
+        platform_copy={name: f"Adapted {name} link in bio" for name in ("instagram", "tiktok", "x", "facebook")},
         image_ref="same.png",
         history=[{"hook": "A repeated hook with enough words to normally score well for this regression test.", "cta": "Follow for the next chapter.", "imageRef": "same.png"}],
     )
@@ -2113,6 +2138,25 @@ def check_stabilization_contracts() -> list[dict[str, object]]:
         ))
     except Exception as exc:
         checks.append(result("social_caption_uses_link_in_bio", False, f"caption cleanup error: {exc}"))
+    try:
+        hub_line = promo_copy.audience_hub_line("EN")
+        public_caption = promo_copy.public_copy_without_links(
+            "Read this https://linktr.ee/azureinkblade and https://www.royalroad.com/fiction/128852/eternal-nexus",
+            "youtube",
+        )
+        checks.append(assert_result(
+            "public_copy_has_no_direct_links",
+            "http" not in hub_line.lower()
+            and "linktr.ee" not in hub_line.lower()
+            and "http" not in public_caption.lower()
+            and "royalroad.com" not in public_caption.lower()
+            and "link in bio" in public_caption.lower(),
+            "Generated public copy must use link-in-bio wording instead of raw URLs.",
+            hubLine=hub_line,
+            publicCaption=public_caption,
+        ))
+    except Exception as exc:
+        checks.append(result("public_copy_has_no_direct_links", False, f"public copy cleanup error: {exc}"))
     try:
         overlay = app.sanitize_deep_tiktok_overlay(
             "Realistic cinematic promotional image. Scene focus: establishing world shot.",

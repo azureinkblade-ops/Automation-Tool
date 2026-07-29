@@ -2117,7 +2117,7 @@ def generated_weekly_promo_images_dir() -> Path:
 
 INSTAGRAM_LINK_FOOTER = "\n".join(
     [
-        "Read, watch, and follow Azure Inkblade: https://linktr.ee/azureinkblade",
+        "Read, watch, and follow Azure Inkblade through the link in bio.",
     ]
 )
 
@@ -2133,14 +2133,12 @@ def tracked_url(*args, **kwargs):
 def track_copy_links(*args, **kwargs):
     return promo_copy.track_copy_links(*args, **kwargs)
 def youtube_links_block(story: str = "") -> str:
-    # Lead with Linktree as the single hub (all links + next-chapter hub), keep the
-    # read link (Royal Road) and the support link (Patreon). Drop the self-referential
-    # YouTube/TikTok/X links -- they are noise on a YouTube video and bury the hub.
-    lines = [f"All links & next chapters: {linktree_url()}"]
+    # Public descriptions should point to the profile hub without exposing raw URLs.
+    lines = ["All links and next chapters are in bio."]
     royal_road_url = royal_road_url_for_story(story)
     if royal_road_url:
-        lines.append(f"Read {NOVEL_NAMES.get(story_key(story), 'this web novel')} free on Royal Road: {royal_road_url}")
-    lines.append(f"Support the release schedule on Patreon: {PATREON_URL}")
+        lines.append(f"Read {NOVEL_NAMES.get(story_key(story), 'this web novel')} free on Royal Road through the link in bio.")
+    lines.append("Support the release schedule on Patreon through the link in bio.")
     return "\n".join(lines)
 
 
@@ -9652,9 +9650,9 @@ def build_comment_content_post(comment_id: str) -> dict[str, Any]:
     prompt = f"Reader question inspired social artwork for {novel}: {hook}. No text or typography."
     image = folder / f"{abbr or 'AzureInkblade'}_reader_question.png"
     source = create_fresh_social_image_from_caption(image, abbr=abbr, novel=novel, title="Reader Question", caption=hook, hook=hook, visual_brief=prompt)
-    links = track_copy_links(platform_links_block(abbr), abbr, "reader-question", f"comment-{abbr}-{str(comment_id)[:8]}", str(comment_id))
+    links = "Find the story and all reader links in bio."
     instagram = f"Reader question: {hook}\n\nWhat do you think?\n\n{links}\n\n{social_profile(abbr)['hashtags']}"
-    x_destination = tracked_url(royal_road_url_for_story(abbr) or PATREON_URL, "x", f"comment-{abbr or 'azureinkblade'}", str(comment_id))
+    x_destination = "Read now: link in bio."
     x_text = f"Reader question: {hook}\n{x_destination}\n#AzureInkblade"
     if len(x_text) > 275:
         x_text = f"{hook[:100]}\n{x_destination}"
@@ -9757,9 +9755,9 @@ def arc_campaign_plans(build_drafts: bool = False, only_abbr: str = "") -> dict[
             reset_generated_folder(folder)
             image = folder / f"{abbr}_arc.png"
             source = create_fresh_social_image_from_caption(image, abbr=abbr, novel=novel, title=arc, caption=plan["hook"], hook=plan["hook"])
-            links = track_copy_links(platform_links_block(abbr), abbr, "arc-campaign", f"{abbr}-{arc}", "arc")
+            links = "Start the arc through the link in bio."
             instagram = f"{novel}: {arc}\n\n{plan['hook']}\n\nStart the arc on Royal Road.\n\n{links}\n\n{social_profile(abbr)['hashtags']}"
-            payload = {**plan, "kind": "arc_campaign", "folder": str(folder), "image": str(image), "image_source": source, "instagram": instagram, "x": f"{novel}: {arc}\n{plan['hook']}\n{tracked_url(royal_road_url_for_story(abbr), 'x', f'arc-{abbr}', 'arc')}", "facebook": instagram, "createdAt": time.strftime("%Y-%m-%d %H:%M:%S")}
+            payload = {**plan, "kind": "arc_campaign", "folder": str(folder), "image": str(image), "image_source": source, "instagram": instagram, "x": f"{novel}: {arc}\n{plan['hook']}\nRead now: link in bio.", "facebook": instagram, "createdAt": time.strftime("%Y-%m-%d %H:%M:%S")}
             for name, value in [("instagram.txt", payload["instagram"]), ("x.txt", payload["x"]), ("facebook.txt", payload["facebook"])]:
                 (folder / name).write_text(value + "\n", encoding="utf-8")
             (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -10711,7 +10709,7 @@ def build_manual_video_pack(title: str, abbr: str, image_input: str, duration: i
     script = write_manual_video_builder(folder, [item["packImage"] for item in selected], soundtrack, duration)
     tags = youtube_tag_list(["web novel", "fantasy audiobook", "progression fantasy", "Azure Inkblade", NOVEL_NAMES.get(abbr, "")])
     desc = description.strip() or f"Manual Azure Inkblade video built from approved, banked images for {NOVEL_NAMES.get(abbr, 'Azure Inkblade')}."
-    desc = f"{desc}\n\n{platform_links_block(abbr)}".strip()
+    desc = social_caption_link_in_bio(desc, "youtube")
     metadata = {
         "kind": "manual_video_pack",
         "title": title,
@@ -10891,13 +10889,12 @@ def pinned_asset_caption(asset: dict[str, Any]) -> str:
         base = "Listen to full chapter narrations and story hooks on YouTube."
     else:
         base = title
-    links = destination.replace(" | ", "\n") if destination else platform_links_block(str(asset.get("source") or ""))
     if platform == "x":
-        text = f"{base}\n{links}\n#AzureInkblade"
+        text = f"{base}\nRead now: link in bio.\n#AzureInkblade"
         return text[:275]
     if platform == "youtube":
-        return f"{base}\n\nStart here:\n{links}\n\nWhich series should get the next spotlight?"
-    return f"{base}\n\nStart here:\n{links}\n\n#AzureInkblade #RoyalRoadFantasy #WebNovelCommunity #ProgressionFantasy"
+        return f"{base}\n\nStart here through the link in bio.\n\nWhich series should get the next spotlight?"
+    return f"{base}\n\nStart here through the link in bio.\n\n#AzureInkblade #RoyalRoadFantasy #WebNovelCommunity #ProgressionFantasy"
 
 
 def draw_centered_wrapped_text(draw: Any, box: tuple[int, int, int, int], text: str, font: Any, fill: tuple[int, int, int], spacing: int = 12) -> None:
@@ -12444,7 +12441,7 @@ def variant_platform_copy(experiment: dict[str, Any], variant: dict[str, Any]) -
             profile["hashtags"],
         ]
     ).replace("\n\n\n", "\n\n").strip()
-    x_destination = tracked_url(linktree_url(), "x", campaign_key, variant_id)
+    x_destination = "Read now: link in bio."
     x = "\n\n".join([opening, x_destination, profile["x_hashtags"]]).strip()
     if len(x) > 275:
         available = max(24, 275 - len(x_destination) - len("\n#AzureInkblade") - 1)
@@ -13750,8 +13747,8 @@ def platform_copy(
         "catch_up": f"Catch up on {profile['name']} before the next release lands.",
     }.get(style, f"{chapter_label} is ready.")
     lines, x_hook = caption_style_lines(abbr or novel, profile["name"], f"Chapter {chapter}", hook_seed, focus, style, cta, status_line, f"release_{target}_{chapter}", "release")
-    instagram = "\n".join(lines + ["", platform_links_block(abbr or novel), "", profile["hashtags"]])
-    x_link = linktree_url()
+    instagram = "\n".join(lines + ["", "Read now. Link in bio.", "", profile["hashtags"]])
+    x_link = "Read now: link in bio."
     x_text = f"{profile['emoji']} {x_hook}\n{x_link}\n{profile['x_hashtags']}"
     if len(x_text) > 260:
         x_text = x_text[:257].rsplit(" ", 1)[0] + "..."
@@ -14410,9 +14407,9 @@ def default_social_prompt() -> str:
         Image filename: {filename}
 
         Return JSON with:
-        - instagram: an Instagram caption using this structure: fresh hook line, one engagement prompt, one Linktree CTA, hashtags
-        - x: a concise X post under 260 characters with one Linktree CTA and 2-4 hashtags
-        - facebook: a slightly fuller Facebook post with a fresh hook, one engagement prompt, one Linktree CTA, and hashtags
+        - instagram: an Instagram caption using this structure: fresh hook line, one engagement prompt, one link-in-bio CTA, hashtags
+        - x: a concise X post under 260 characters with one link-in-bio CTA and 2-4 hashtags
+        - facebook: a slightly fuller Facebook post with a fresh hook, one engagement prompt, one link-in-bio CTA, and hashtags
         - alt_text: accessible image alt text
 
         Style:
@@ -14420,7 +14417,7 @@ def default_social_prompt() -> str:
         - energetic but not spammy
         - no fake chapter number unless one is supplied
         - mention the novel name naturally
-        - use this one public hub link instead of listing every social link: https://linktr.ee/azureinkblade
+        - never include raw URLs or full links; use "link in bio" for the public hub CTA
         - rotate the CTA intent between start reading, read ahead, watch/listen, follow for next chapter, and comment with a prediction
         - do not include an X link in Instagram or Facebook copy
         """
@@ -14897,7 +14894,7 @@ def tiktok_caption(novel: str, chapter: str) -> str:
     question = platform_engagement_prompt_line(story_key(novel), "short_reel", "tiktok", context=f"caption-{chapter}")
     # Plain novel name in the body for TikTok search indexing (viewers search book
     # names like 'soul forged novel', 'avure ink', 'Eternalnexus').
-    return "\n".join(
+    return social_caption_link_in_bio("\n".join(
         [
             f"{profile['emoji']} {short_platform_intro(novel, chapter, 'tiktok')}",
             f"This is {profile['name']}.",
@@ -14908,7 +14905,7 @@ def tiktok_caption(novel: str, chapter: str) -> str:
             "",
             hashtags,
         ]
-    )
+    ), "tiktok")
 
 
 def instagram_reel_caption(novel: str, chapter: str) -> str:
@@ -14916,7 +14913,7 @@ def instagram_reel_caption(novel: str, chapter: str) -> str:
     destination = short_destination_copy(novel, chapter, source="instagram-reel")
     # Engagement question for IG too (saves/comments loop).
     question = platform_engagement_prompt_line(story_key(novel), "short_reel", "instagram", context=f"caption-{chapter}")
-    return "\n".join(
+    return social_caption_link_in_bio("\n".join(
         [
             f"{profile['emoji']} {short_platform_intro(novel, chapter, 'instagram-reel')}",
             f"This is {profile['name']}.",
@@ -14927,7 +14924,7 @@ def instagram_reel_caption(novel: str, chapter: str) -> str:
             "",
             profile["hashtags"],
         ]
-    )
+    ), "instagram")
 
 
 def youtube_shorts_metadata(novel: str, chapter: str) -> dict[str, str]:
@@ -15743,6 +15740,7 @@ def repair_deep_tiktok_metadata(folder: Path, metadata: dict[str, Any] | None = 
     hook = (overlays[0].replace("\n", " ") if overlays else f"A deeper look at {novel}").strip()
     chapter_label = "Prologue" if str(chapter).strip() in {"0", "prologue", "Prologue"} else f"Chapter {chapter}"
     caption = str(metadata.get("caption") or "").strip() or deep_tiktok_caption(abbr, str(chapter), title, hook)
+    caption = social_caption_link_in_bio(caption, "tiktok")
     if f"{chapter_label}: {chapter_label}" in caption:
         caption = caption.replace(f"{chapter_label}: {chapter_label}", chapter_label)
     metadata["tiktok_title"] = deep_tiktok_title(abbr, str(chapter), title)
@@ -15753,7 +15751,7 @@ def repair_deep_tiktok_metadata(folder: Path, metadata: dict[str, Any] | None = 
             "novel": novel,
             "chapter": str(chapter),
             "title": title,
-            "description": str(metadata.get("description") or "").strip() or caption,
+            "description": social_caption_link_in_bio(str(metadata.get("description") or "").strip() or caption, "tiktok"),
             "caption": caption,
             "tiktok_title": str(metadata.get("tiktok_title") or "").strip() or deep_tiktok_title(abbr, str(chapter), title),
             "video_overlays": overlays or metadata.get("video_overlays") or [],
@@ -16297,7 +16295,7 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
     overlays = [reel_overlay_text(moment, limit=58) for moment in moments]
     overlays.append(reel_overlay_text(f"READ {novel} ON ROYAL ROAD", limit=62))
     hook = overlays[0].replace("\n", " ") if overlays else f"A deeper look at {novel}"
-    caption = deep_tiktok_caption(abbr, chapter, title, hook)
+    caption = social_caption_link_in_bio(deep_tiktok_caption(abbr, chapter, title, hook), "tiktok")
     # Voice the long/deep TikTok with the natural caption sentence (NOT the
     # overlay sticker). Fail-soft: if TTS is unavailable the video still
     # builds with music only.
@@ -17148,7 +17146,7 @@ def weekend_social_copy(abbr: str, day: str) -> dict[str, str]:
         ]
     )
     if len(x_text) > 275:
-        x_text = "\n".join([hook, linktree_url(), profile["x_hashtags"]])
+        x_text = "\n".join([hook, "Read now: link in bio.", profile["x_hashtags"]])
     if len(x_text) > 275:
         x_text = x_text[:272].rsplit(" ", 1)[0].rstrip() + "..."
     facebook = "\n\n".join(
@@ -17161,9 +17159,9 @@ def weekend_social_copy(abbr: str, day: str) -> dict[str, str]:
         ]
     )
     return {
-        "instagram": instagram,
-        "x": x_text,
-        "facebook": facebook,
+        "instagram": social_caption_link_in_bio(instagram, "instagram"),
+        "x": social_caption_link_in_bio(x_text, "x"),
+        "facebook": social_caption_link_in_bio(facebook, "facebook"),
         "alt_text": f"Weekend promotional image for {profile['name']}.",
         "post_focus": focus,
         "caption_style": style,
@@ -20756,23 +20754,23 @@ def release_copy(abbr: str, chapter: int, title: str, decision: str) -> dict[str
     rr = royal_road_url_for_story(abbr)
     if decision == "update_existing":
         hook = f"{profile['emoji']} {profile['name']} Chapter {chapter} has an updated version ready."
-        instagram = "\n".join([hook, title, "Latest text is ready for platform review.", platform_links_block(abbr), "", profile["hashtags"]])
-        x_text = f"{profile['emoji']} {profile['name']} Ch. {chapter} has been refreshed.\n{rr}\n{profile['x_hashtags']}"
+        instagram = "\n".join([hook, title, "Latest text is ready for platform review.", "Read now. Link in bio.", "", profile["hashtags"]])
+        x_text = f"{profile['emoji']} {profile['name']} Ch. {chapter} has been refreshed.\nRead now: link in bio.\n{profile['x_hashtags']}"
     elif decision in {"social_only", "royal_road_ready"}:
         hook = f"{profile['emoji']} {profile['name']} Chapter {chapter} is live on Royal Road!"
-        instagram = "\n".join([hook, title, platform_links_block(abbr), "", profile["hashtags"]])
-        x_text = f"{profile['emoji']} {profile['name']} Ch. {chapter} is live on Royal Road.\n{rr}\n{profile['x_hashtags']}"
+        instagram = "\n".join([hook, title, "Read now. Link in bio.", "", profile["hashtags"]])
+        x_text = f"{profile['emoji']} {profile['name']} Ch. {chapter} is live on Royal Road.\nRead now: link in bio.\n{profile['x_hashtags']}"
     elif decision in {"patreon_only", "patreon_ready"}:
         hook = f"{profile['emoji']} {profile['name']} Chapter {chapter} is available early on Patreon."
-        instagram = "\n".join([hook, title, platform_links_block(abbr), "", profile["hashtags"]])
-        x_text = f"{profile['emoji']} {profile['name']} Ch. {chapter} is on Patreon early.\n{PATREON_URL}\n{profile['x_hashtags']}"
+        instagram = "\n".join([hook, title, "Read ahead. Link in bio.", "", profile["hashtags"]])
+        x_text = f"{profile['emoji']} {profile['name']} Ch. {chapter} is on Patreon early.\nRead ahead: link in bio.\n{profile['x_hashtags']}"
     else:
         hook = f"{profile['emoji']} {profile['name']} Chapter {chapter} is not ready for public posting yet."
-        instagram = "\n".join([hook, "Hold this post until Patreon/Royal Road status is ready.", platform_links_block(abbr)])
+        instagram = "\n".join([hook, "Hold this post until Patreon/Royal Road status is ready."])
         x_text = f"{profile['name']} Ch. {chapter} is queued for a later release check."
     if len(x_text) > 275:
         x_text = x_text[:272].rsplit(" ", 1)[0].rstrip() + "..."
-    facebook = "\n\n".join([instagram.split("\n\n")[0], "Follow the story updates here:", platform_links_block(abbr), profile["hashtags"]])
+    facebook = "\n\n".join([instagram.split("\n\n")[0], "Follow the story updates through the link in bio.", profile["hashtags"]])
     return {
         "instagram": with_instagram_links(instagram, abbr),
         "x": x_text,
@@ -29365,7 +29363,7 @@ def story_hook_youtube_description(title: str, story_text: str, abbr: str = "", 
         f"{clean_title} is an original Azure Inkblade story hook connected to {novel}, "
         f"created for readers and listeners who enjoy {discovery}.{cue}\n\n"
         f"{question}\n\n"
-        f"Read the novels, watch more stories, and find author resources: {linktree_url()}"
+        "Read the novels, watch more stories, and find author resources through the link in bio."
     ).strip()
     # Limitation fix #7: explicit YouTube 5,000-char guard.
     if len(description) > 5000:
@@ -29374,20 +29372,14 @@ def story_hook_youtube_description(title: str, story_text: str, abbr: str = "", 
 
 
 def story_hook_single_hub_description(value: str) -> str:
-    hub = linktree_url()
-    hub_line = f"Read the novels, watch more stories, and find author resources: {hub}"
-    legacy_hosts = ("patreon.com", "royalroad.com", "youtube.com", "tiktok.com", "x.com")
+    hub_line = "Read the novels, watch more stories, and find author resources through the link in bio."
+    legacy_hosts = ("linktr.ee", "patreon.com", "royalroad.com", "youtube.com", "youtu.be", "tiktok.com", "x.com", "twitter.com", "instagram.com")
     lines: list[str] = []
     hub_added = False
     for raw_line in str(value or "").splitlines():
         line = raw_line.strip()
         lowered = line.lower()
         if any(host in lowered for host in legacy_hosts):
-            continue
-        if hub.lower() in lowered:
-            if not hub_added:
-                lines.append(hub_line)
-                hub_added = True
             continue
         lines.append(raw_line.rstrip())
     cleaned = "\n".join(lines).strip()
@@ -29411,7 +29403,7 @@ def normalize_story_hook_description(folder: Path, metadata: dict[str, Any] | No
     description = story_hook_youtube_description(title, story_text, abbr, tags)
     (folder / "youtube-description.txt").write_text(description + "\n", encoding="utf-8")
     metadata["description"] = description
-    metadata["descriptionFormat"] = "linktree_v1"
+    metadata["descriptionFormat"] = "link_in_bio_v1"
     metadata["descriptionUpdatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
     (folder / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return {"folder": str(folder), "description": description, "metadata": metadata}
@@ -29451,7 +29443,7 @@ def story_hook_metadata_variants(folder_value: str) -> dict[str, Any]:
     story_text = (folder / "story-script.txt").read_text(encoding="utf-8", errors="replace") if (folder / "story-script.txt").exists() else ""
     hook = youtube_chapter_summary(title, story_text)
     visual_terms = chapter_keywords(title, story_text, 10)
-    hub_line = f"Read the novels, watch more stories, and find author resources: {linktree_url()}"
+    hub_line = "Read the novels, watch more stories, and find author resources through the link in bio."
     variants = [
         {
             "variantId": "curiosity_revenge",
@@ -31717,6 +31709,9 @@ def create_fallback_image(query: str, target: Path, index: int, size: tuple[int,
 
 
 SOCIAL_LINK_LABEL_RE = re.compile(r"(?im)^\s*(rr|royal road|patreon|youtube|tik\s*tok|tiktok|instagram|x|twitter)\b.*$")
+PUBLIC_URL_RE = re.compile(
+    r"(?i)\b(?:https?://|www\.)?\S*(?:linktr\.ee|royalroad\.com|patreon\.com|youtube\.com|youtu\.be|tiktok\.com|x\.com|twitter\.com|instagram\.com)\S*"
+)
 
 
 def link_in_bio_cta(platform: str = "") -> str:
@@ -31727,9 +31722,11 @@ def link_in_bio_cta(platform: str = "") -> str:
 
 
 def social_caption_link_in_bio(text: str, platform: str = "") -> str:
-    cleaned = re.sub(r"https?://\S+", "", str(text or ""))
+    cleaned = PUBLIC_URL_RE.sub("", str(text or ""))
+    cleaned = re.sub(r"https?://\S+", "", cleaned)
     cleaned = re.sub(r"(?m)^\s*[^\w#\n]{1,12}\s*$", "", cleaned)
     cleaned = SOCIAL_LINK_LABEL_RE.sub("", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     cta = link_in_bio_cta(platform)
