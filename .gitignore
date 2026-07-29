@@ -160,6 +160,7 @@ temp/
 codex-skills/
 continuity/
 training-data/
+assets/pose_refs/_*
 
 # Release/state backups and bad quarantine files
 chapter-release-queue.backup*.json
@@ -177,6 +178,7 @@ loras/main-posts/
 lora-training/*/output/
 lora-training/*/rejected/
 lora-training/*/test-output/
+lora-training/realistic-posts/train-1024/extra-tiktok-ch20plus/
 tests/render_ab/output/
 tools/loras/
 
