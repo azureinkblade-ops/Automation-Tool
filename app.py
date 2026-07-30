@@ -25554,45 +25554,41 @@ def mark_manual_instagram_posted(folder: str) -> dict[str, Any]:
     return {"posted": True, "folder": str(post_folder), "clickup": clickup_sync}
 
 
-def manual_x_assist(folder: str) -> dict[str, Any]:
+def _manual_social_assist_with_preview(folder: str, platform: str) -> dict[str, Any]:
     post_folder = Path(folder).resolve()
-    if not (
-        str(post_folder).startswith(str(SOCIAL_OUTPUT_DIR.resolve()))
-        or str(post_folder).startswith(str(EXPERIMENT_OUTPUT_DIR.resolve()))
-    ):
-        raise RuntimeError("Social post folder is not valid.")
-    ensure_quality_gate(str(post_folder), "x")
     metadata_path = post_folder / "metadata.json"
     if not metadata_path.exists():
         raise RuntimeError("This folder does not contain social post metadata.")
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    image_path = Path(metadata["image"]).resolve()
-    x_file = post_folder / "x.txt"
-    try:
-        subprocess.run(["powershell", "-NoProfile", "-Command", f"Get-Content -Raw -LiteralPath '{x_file}' | Set-Clipboard"], check=False)
-    except Exception:
-        pass
-    try:
-        os.startfile(str(post_folder))
-    except Exception:
-        pass
-    try:
-        open_url_once("https://x.com/compose/post")
-    except Exception:
-        pass
-    metadata["manual_x_assist"] = {
+    platform_key = str(platform or "").strip().lower()
+    if platform_key not in {"x", "facebook"}:
+        raise RuntimeError("Manual social preview platform is not valid.")
+    preview = social_post_preview(str(post_folder), use_playwright=True, platforms=[platform_key])
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    image_path = Path(str(metadata.get("image") or "")).resolve()
+    text_file = post_folder / ("x.txt" if platform_key == "x" else "facebook.txt")
+    metadata[f"manual_{platform_key}_assist"] = {
         "opened_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "image": str(image_path),
-        "x_file": str(x_file),
+        "text_file": str(text_file),
+        "playwright_launched": preview.get("playwright_launched"),
+        "degraded": preview.get("degraded"),
     }
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    return {
+    message_platform = "X" if platform_key == "x" else "Facebook"
+    result = {
         "image": str(image_path),
-        "text": metadata.get("x", ""),
-        "x_file": str(x_file),
+        "text": metadata.get(platform_key, metadata.get(f"{platform_key}_post", "")),
+        "text_file": str(text_file),
         "folder": str(post_folder),
-        "message": "Opened X and the post folder. X text copied to clipboard.",
+        "message": f"{message_platform} preview sent to the platform tab. Review and publish manually.",
     }
+    result.update(preview)
+    return result
+
+
+def manual_x_assist(folder: str) -> dict[str, Any]:
+    return _manual_social_assist_with_preview(folder, "x")
 
 
 def mark_manual_x_posted(folder: str) -> dict[str, Any]:
@@ -25632,8 +25628,8 @@ def mark_manual_x_posted(folder: str) -> dict[str, Any]:
     return {"posted": True, "folder": str(post_folder), "clickup": clickup_sync}
 
 
-def manual_facebook_assist(*args, **kwargs):
-    return browser_publish.manual_facebook_assist(*args, **kwargs)
+def manual_facebook_assist(folder: str) -> dict[str, Any]:
+    return _manual_social_assist_with_preview(folder, "facebook")
 def mark_manual_facebook_posted(folder: str) -> dict[str, Any]:
     post_folder = Path(folder).resolve()
     if not (
@@ -26094,7 +26090,8 @@ def social_post_preview(
                 (
                     event
                     for event in reversed(playwright_events)
-                    if str(event.get("platform") or "").lower() == platform_key and "filled" in event
+                    if str(event.get("platform") or "").lower() == platform_key
+                    and (bool(event.get("filled")) or "filled" in str(event.get("action") or ""))
                 ),
                 None,
             )
