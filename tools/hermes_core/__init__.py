@@ -2,6 +2,7 @@
 
 from .hashing import canonical_json, sha256_file, sha256_payload, sha256_text
 from .evidence import EvidencePackage, EvidencePackageBuilder, EvidencePackageError
+from .evidence_recorder import EvidenceLedgerRecorder, RecordedEvidence
 from .ledger import EventLedger, LedgerEntry, LedgerError
 from .registry import ArtifactRecord, ArtifactRegistry, ArtifactRegistryError
 from .schemas import SchemaCatalog, SchemaValidationError, load_schema_catalog
@@ -21,10 +22,12 @@ __all__ = [
     "EvidencePackage",
     "EvidencePackageBuilder",
     "EvidencePackageError",
+    "EvidenceLedgerRecorder",
     "EventLedger",
     "LedgerEntry",
     "LedgerError",
     "RecordedTransition",
+    "RecordedEvidence",
     "SchemaCatalog",
     "SchemaValidationError",
     "StateTransitionError",
