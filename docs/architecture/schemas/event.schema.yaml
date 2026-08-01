@@ -1,0 +1,64 @@
+schema: hermes.event
+schema_version: "1.0"
+status: proposed
+description: >
+  Versioned immutable event envelope for agent-to-agent communication and
+  governance state changes.
+
+required:
+  - event_id
+  - event_type
+  - occurred_at
+  - workflow_id
+  - task_id
+  - correlation_id
+  - sender
+  - payload
+  - integrity
+
+fields:
+  event_id:
+    type: string
+    format: uuid
+  event_type:
+    type: string
+  occurred_at:
+    type: string
+    format: date-time
+  workflow_id:
+    type: string
+  task_id:
+    type: string
+  correlation_id:
+    type: string
+  causation_id:
+    type: string
+    nullable: true
+  sender:
+    type: object
+    required: [component, identity]
+    fields:
+      component:
+        type: string
+      identity:
+        type: string
+  scope:
+    type: object
+  payload:
+    type: object
+  integrity:
+    type: object
+    required: [payload_sha256]
+    fields:
+      payload_sha256:
+        type: string
+  routing:
+    type: object
+    fields:
+      hop_count:
+        type: integer
+      maximum_hops:
+        type: integer
+      visited_components:
+        type: array
+        items: string

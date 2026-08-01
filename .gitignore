@@ -25,6 +25,10 @@ app-regression-dashboard.json
 /story-hook-videos/
 /background-videos/
 /docs/
+!/docs/
+/docs/*
+!/docs/architecture/
+!/docs/architecture/**
 /promo-image-archive/
 /.playwright-profile/
 /automation_state.db*

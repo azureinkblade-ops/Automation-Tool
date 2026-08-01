@@ -1,0 +1,78 @@
+schema: hermes.review
+schema_version: "1.0"
+status: proposed
+description: >
+  A review is a bounded model or human assessment of a frozen evidence package.
+  It may recommend a disposition, but it cannot approve, authorize, or execute.
+
+required:
+  - review_id
+  - task_id
+  - reviewer
+  - evidence_package_id
+  - started_at
+  - completed_at
+  - findings
+  - authority
+
+fields:
+  review_id:
+    type: string
+    format: uuid
+  task_id:
+    type: string
+    format: uuid
+  evidence_package_id:
+    type: string
+  reviewer:
+    type: object
+    required: [agent_id, model_id, role]
+    fields:
+      agent_id:
+        type: string
+      model_id:
+        type: string
+      role:
+        type: string
+        enum: [reviewer, architect_reviewer, security_reviewer, implementation_reviewer]
+  started_at:
+    type: string
+    format: date-time
+  completed_at:
+    type: string
+    format: date-time
+  findings:
+    type: array
+    items:
+      type: object
+      required: [finding_id, severity, summary, evidence_refs, confidence]
+      fields:
+        finding_id:
+          type: string
+        severity:
+          type: string
+          enum: [info, low, medium, high, critical]
+        summary:
+          type: string
+        evidence_refs:
+          type: array
+          items: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+  recommendation:
+    type: string
+    enum: [accept, reject, inconclusive, escalate]
+  authority:
+    type: object
+    fields:
+      can_modify_state:
+        type: boolean
+        const: false
+      can_authorize_execution:
+        type: boolean
+        const: false
+      can_execute:
+        type: boolean
+        const: false

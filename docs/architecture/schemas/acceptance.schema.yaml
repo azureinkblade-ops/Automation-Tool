@@ -1,0 +1,43 @@
+schema: hermes.acceptance
+schema_version: "1.0"
+status: proposed
+description: >
+  Acceptance records that a frozen evidence package satisfied a review and
+  consensus policy. Acceptance is not permission to execute.
+
+required:
+  - acceptance_id
+  - task_id
+  - consensus_id
+  - evidence_package_id
+  - accepted_at
+  - acceptance_sha256
+  - authority
+
+fields:
+  acceptance_id:
+    type: string
+    format: uuid
+  task_id:
+    type: string
+    format: uuid
+  consensus_id:
+    type: string
+  evidence_package_id:
+    type: string
+  accepted_at:
+    type: string
+    format: date-time
+  acceptance_sha256:
+    type: string
+  notes:
+    type: string
+  authority:
+    type: object
+    fields:
+      can_authorize_execution:
+        type: boolean
+        const: false
+      requires_separate_authorization:
+        type: boolean
+        const: true

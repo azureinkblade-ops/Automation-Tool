@@ -1,0 +1,63 @@
+schema: hermes.execution
+schema_version: "1.0"
+status: proposed
+description: >
+  Execution records operations performed under a valid authorization envelope.
+  It cannot create acceptance and cannot broaden its own scope.
+
+required:
+  - execution_id
+  - task_id
+  - authorization_id
+  - started_at
+  - executor
+  - scope
+  - result
+
+fields:
+  execution_id:
+    type: string
+    format: uuid
+  task_id:
+    type: string
+    format: uuid
+  authorization_id:
+    type: string
+  started_at:
+    type: string
+    format: date-time
+  completed_at:
+    type: string
+    format: date-time
+    nullable: true
+  executor:
+    type: object
+    required: [agent_id, worker_id]
+    fields:
+      agent_id:
+        type: string
+      worker_id:
+        type: string
+  scope:
+    type: object
+    required: [effective_read_paths, effective_write_paths, effective_network_policy]
+    fields:
+      effective_read_paths:
+        type: array
+        items: string
+      effective_write_paths:
+        type: array
+        items: string
+      effective_network_policy:
+        type: string
+  commands:
+    type: array
+    items:
+      type: object
+      required: [command_id, summary, started_at, status]
+  result:
+    type: string
+    enum: [not_started, running, completed, failed, scope_violation, cancelled]
+  validation_required:
+    type: boolean
+    const: true
