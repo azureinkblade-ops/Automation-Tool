@@ -46,6 +46,7 @@ This handbook is intended for:
 | [hermes-review-report-validator.md](hermes-review-report-validator.md) | Local validation for reviewer reports bound to frozen evidence |
 | [hermes-reviewer-registry.md](hermes-reviewer-registry.md) | Local reviewer identity and authority registry |
 | [hermes-review-assignment-builder.md](hermes-review-assignment-builder.md) | Local assignment planning for eligible evidence and active reviewers |
+| [hermes-review-session-envelope.md](hermes-review-session-envelope.md) | Frozen read-only input package for future reviewer runners |
 | [glossary.md](glossary.md) | Canonical terminology |
 | [architecture-roadmap.md](architecture-roadmap.md) | Phased implementation sequence and exit criteria |
 | [component-model.md](component-model.md) | Component responsibilities and interfaces |
