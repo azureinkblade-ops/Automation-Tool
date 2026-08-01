@@ -38,6 +38,7 @@ This handbook is intended for:
 | [state-machine.md](state-machine.md) | Deterministic governance states, allowed transitions, and prohibited shortcuts |
 | [hermes-core-validator.md](hermes-core-validator.md) | Executable schema and state-transition guard for the first governance core |
 | [hermes-ledger-registry.md](hermes-ledger-registry.md) | Local append-only ledger and artifact registry for auditable governance state |
+| [hermes-transition-recorder.md](hermes-transition-recorder.md) | Validated transition recording and latest-state replay |
 | [glossary.md](glossary.md) | Canonical terminology |
 | [architecture-roadmap.md](architecture-roadmap.md) | Phased implementation sequence and exit criteria |
 | [component-model.md](component-model.md) | Component responsibilities and interfaces |

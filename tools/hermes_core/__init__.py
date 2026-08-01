@@ -10,6 +10,7 @@ from .state_machine import (
     TransitionResult,
     validate_transition,
 )
+from .transition_recorder import RecordedTransition, TransitionRecorder
 
 __all__ = [
     "ArtifactRecord",
@@ -19,10 +20,12 @@ __all__ = [
     "EventLedger",
     "LedgerEntry",
     "LedgerError",
+    "RecordedTransition",
     "SchemaCatalog",
     "SchemaValidationError",
     "StateTransitionError",
     "TransitionResult",
+    "TransitionRecorder",
     "canonical_json",
     "load_schema_catalog",
     "sha256_file",
