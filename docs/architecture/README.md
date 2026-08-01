@@ -44,6 +44,7 @@ This handbook is intended for:
 | [hermes-evidence-staleness-checker.md](hermes-evidence-staleness-checker.md) | Stale evidence and review eligibility reporting |
 | [hermes-review-eligibility-gate.md](hermes-review-eligibility-gate.md) | Local gate for deciding whether review may begin |
 | [hermes-review-report-validator.md](hermes-review-report-validator.md) | Local validation for reviewer reports bound to frozen evidence |
+| [hermes-reviewer-registry.md](hermes-reviewer-registry.md) | Local reviewer identity and authority registry |
 | [glossary.md](glossary.md) | Canonical terminology |
 | [architecture-roadmap.md](architecture-roadmap.md) | Phased implementation sequence and exit criteria |
 | [component-model.md](component-model.md) | Component responsibilities and interfaces |
