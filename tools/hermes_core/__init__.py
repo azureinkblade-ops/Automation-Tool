@@ -10,6 +10,7 @@ from .evidence_staleness import (
 )
 from .ledger import EventLedger, LedgerEntry, LedgerError
 from .registry import ArtifactRecord, ArtifactRegistry, ArtifactRegistryError
+from .review_gate import ReviewEligibilityDecision, ReviewEligibilityGate
 from .schemas import SchemaCatalog, SchemaValidationError, load_schema_catalog
 from .state_machine import (
     ArtifactBundle,
@@ -36,6 +37,8 @@ __all__ = [
     "LedgerError",
     "RecordedTransition",
     "RecordedEvidence",
+    "ReviewEligibilityDecision",
+    "ReviewEligibilityGate",
     "SchemaCatalog",
     "SchemaValidationError",
     "StateTransitionError",
