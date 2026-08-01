@@ -41,6 +41,7 @@ This handbook is intended for:
 | [hermes-transition-recorder.md](hermes-transition-recorder.md) | Validated transition recording and latest-state replay |
 | [hermes-evidence-package-builder.md](hermes-evidence-package-builder.md) | Frozen evidence package creation and verification |
 | [hermes-evidence-ledger-recorder.md](hermes-evidence-ledger-recorder.md) | Verified evidence package ledger recording |
+| [hermes-evidence-staleness-checker.md](hermes-evidence-staleness-checker.md) | Stale evidence and review eligibility reporting |
 | [glossary.md](glossary.md) | Canonical terminology |
 | [architecture-roadmap.md](architecture-roadmap.md) | Phased implementation sequence and exit criteria |
 | [component-model.md](component-model.md) | Component responsibilities and interfaces |
