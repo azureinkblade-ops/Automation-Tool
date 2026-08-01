@@ -10,6 +10,12 @@ from .evidence_staleness import (
 )
 from .ledger import EventLedger, LedgerEntry, LedgerError
 from .registry import ArtifactRecord, ArtifactRegistry, ArtifactRegistryError
+from .review_assignment import (
+    ReviewAssignmentBuilder,
+    ReviewAssignmentError,
+    ReviewAssignmentPlan,
+    ReviewerAssignment,
+)
 from .review_gate import ReviewEligibilityDecision, ReviewEligibilityGate
 from .review_report import ReviewReportError, ReviewReportValidation, ReviewReportValidator
 from .reviewer_registry import ReviewerAgent, ReviewerRegistry, ReviewerRegistryError
@@ -41,9 +47,13 @@ __all__ = [
     "RecordedEvidence",
     "ReviewEligibilityDecision",
     "ReviewEligibilityGate",
+    "ReviewAssignmentBuilder",
+    "ReviewAssignmentError",
+    "ReviewAssignmentPlan",
     "ReviewReportError",
     "ReviewReportValidation",
     "ReviewReportValidator",
+    "ReviewerAssignment",
     "ReviewerAgent",
     "ReviewerRegistry",
     "ReviewerRegistryError",

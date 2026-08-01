@@ -45,6 +45,7 @@ This handbook is intended for:
 | [hermes-review-eligibility-gate.md](hermes-review-eligibility-gate.md) | Local gate for deciding whether review may begin |
 | [hermes-review-report-validator.md](hermes-review-report-validator.md) | Local validation for reviewer reports bound to frozen evidence |
 | [hermes-reviewer-registry.md](hermes-reviewer-registry.md) | Local reviewer identity and authority registry |
+| [hermes-review-assignment-builder.md](hermes-review-assignment-builder.md) | Local assignment planning for eligible evidence and active reviewers |
 | [glossary.md](glossary.md) | Canonical terminology |
 | [architecture-roadmap.md](architecture-roadmap.md) | Phased implementation sequence and exit criteria |
 | [component-model.md](component-model.md) | Component responsibilities and interfaces |
