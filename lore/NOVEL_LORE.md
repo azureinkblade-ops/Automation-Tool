@@ -32,6 +32,16 @@ All 4 novels are actively being written (not complete). My lane is support (prom
 - **Art tags (azink_real):** urban cultivation, golden ember chest-glow, amber qi threads, pale-blue HUD panel, rainy neon city.
 - **Approved test render:** `loras/realistic_posts/test_kai_ha.png` (v2 — ember + qi confirmed; USER PICKED THIS AS BEST).
 - **Promo angle:** "A dying clerk. A system in his chest. Heaven's debt comes due."
+- **Comic adaptation continuity locks (canonical for any HA comic/art):** verified Ch.3 for fidelity, keep these identical across all panels/pages:
+  - **Kai wardrobe:** plain GRAY WORK SHIRT with a small FADED GENERIC logo — NO store name, NO Korean text (never "Happy Mart"/"Haengbok Mart"/"Seongbuk Mart"). Black pants.
+  - **Ember:** warm golden glow at the STERNUM, UNDER the shirt — never on the neck, never a visible external object.
+  - **LENA vs silver-rings woman:** LENA = the shopkeeper already in the room, plain dark hair, NO earrings, always beside a small wooden box. The SILVER-RINGS WOMAN (short black hair tucked behind one ear, that ear lined with multiple silver rings) is a SEPARATE character and Dae's entering companion, not Lena.
+  - **DAE HYUN:** tall, long dark hair tied back, charcoal coat, no visible markings; smile is a mask; SEATED across from Kai unless stated otherwise.
+  - **BROAD-SHOULDERED MAN:** Dae's silent associate, hands in coat pockets, by the entrance until the final page; NOT a "guard."
+  - **Setting:** rainy afternoon; warm bookstore interior (North Hollow) / cold blue rainy exterior through frosted glass.
+  - **Factions (Ch.3):** shadowy only — Black Tide, North River, Azure Meridian. NO invasion-war / soldiers / flags invented. System warning box verbatim: [WARNING.][UNKNOWN SPIRITUAL SIGNATURES.][THREAT ASSESSMENT UNAVAILABLE.]
+  - **Forbidden in art:** neck ember, store branding, fabricated military imagery, blood-stained talismans, time-travel premise (Kai is awake < 1 day).
+  - **Workflow:** comic art generated clean (no text); dialogue typeset afterward from exact manuscript lines. Worked two-stage example: `Docs/HA_Ch3_prompt_sheet_v4.md`.
 
 ## SF — Soulforge Era
 - **Genre:** Post-Apocalyptic Soul-Forging / Under-city.
@@ -62,7 +72,13 @@ All 4 novels are actively being written (not complete). My lane is support (prom
 - **No character LoRAs yet** — current `azink_real` is style-only, not character-consistent. Per-character datasets needed for recurring faces.
 - **HA mystery B-plot** (Mina/Root Index) is a unique promo angle vs generic cultivation — underused so far.
 - **SF "gold in the eyes"** awakening = strong cover hook, underused.
-- **Art limitation noted:** SDXL drops held/coiled objects (Soulblade, silver sword, arm-chains) and subtle glows (qi) even at high guidance — accept as style proofs.
+- **Art limitation noted:** SDXL drops held/coiled objects (Soulblade, silver sword, arm-chains) and subtle glows (qi) even at high guidance. Accept as style proofs.
+
+### Live manuscript update, 2026-07-22
+- **EN through Chapter 127:** Kael and his distinct other self breached Dominion's sealed ark succession channel as a stable disagreement. They began separating more than nine million compressed patterns into witness spaces, discovered a younger biological Ilyan inside the ark, and encountered an older Kael continuity that claims both current Kaels are copies. Ilyan's support-frame continuity stopped breathing as the ark countdown continued.
+- **HA through Chapter 86:** Kai countered One's synchronized northern-Seoul signal with changing, relationship-based rhythms rather than a central rescue path. One erased Taeho's name from Mina's notebook, but his consequence as the witness who held the door remained. Six formation bodies now approach through the Haedam maintenance line while an unseen seventh voice warns Kai not to let them restore him.
+- **SF through Chapter 122:** The live manuscript remains Gray's POV. Gray, Lisern, Voss, and the completed man entered the maternal forge beneath the first forged. Voss revealed that his buried name Varik came from his mother, the forge founder, and began separating her imposed Warden/Predator inheritance from his chosen identity. The founder distributed herself across a buried forge network, and a chained child inside the first forge-heart opened eyes matching Gray's.
+- **HP through Chapter 146:** Liang exposed the nameless Teacher relation beneath the empty jade throne and rejected succession as its successful vessel. Teaching persisted as temporary, answerable relation after central authority weakened. A woman bearing Liang's pre-rebirth face then appeared as the source continuity, claimed Liang had chosen the teacher, and caught the nameless token as it wrote Cai's name.
 
 ## File/asset map (2026-07-13)
 - Trained LoRA: `loras/realistic_posts/pytorch_lora_weights.safetensors`
