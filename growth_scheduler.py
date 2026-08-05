@@ -40,9 +40,9 @@ GOAL_CTAS = {
         "Keep the story moving: subscribe for full chapters and shorts.",
     ),
     "Traffic": (
-        f"Start reading, watch, or read ahead here: {LINKTREE_URL}",
-        f"Choose your next Azure Inkblade story here: {LINKTREE_URL}",
-        f"Find every novel, video, and early chapter here: {LINKTREE_URL}",
+        "Start reading, watch, or read ahead through the link in bio.",
+        "Choose your next Azure Inkblade story through the link in bio.",
+        "Find every novel, video, and early chapter through the link in bio.",
     ),
 }
 
@@ -153,7 +153,8 @@ def engagement_score(
     goal_score = 12 if goal in GOALS else 3
     cta_score = 17 if cta.strip() and any(token in cta.lower() for token in ("comment", "follow", "subscribe", "share", "send", "start", "read")) else 6
     platform_score = min(20, 4 * sum(bool(str(platform_copy.get(name) or "").strip()) for name in ("instagram", "tiktok", "x", "facebook", "youtube")))
-    destination_score = 10 if LINKTREE_URL in " ".join(platform_copy.values()) or LINKTREE_URL in cta else 4
+    public_copy = " ".join(platform_copy.values()).lower()
+    destination_score = 10 if "link in bio" in public_copy or "link in bio" in cta.lower() else 4
     diversity_score = 10 - (4 if repeated_hook else 0) - (3 if repeated_cta else 0) - (5 if repeated_image else 0)
     diversity_score = max(0, diversity_score)
     total = max(0, min(100, hook_score + goal_score + cta_score + platform_score + destination_score + diversity_score))
@@ -188,7 +189,7 @@ def engagement_score(
 
 
 def _platform_copy(novel: str, hook: str, cta: str, goal: str) -> dict[str, str]:
-    hub = LINKTREE_URL
+    hub = "Link in bio."
     return {
         "instagram": f"{hook}\n\nStep into {novel}, where every victory leaves a mark and every choice carries forward. Feel the consequence, then choose what you would risk next.\n\n{cta}\n{hub}\n\n#AzureInkblade #WebNovel #ProgressionFantasy #FantasyReads",
         "tiktok": f"{hook} {cta} Read and watch: {hub} #BookTok #WebNovel #FantasyTok",

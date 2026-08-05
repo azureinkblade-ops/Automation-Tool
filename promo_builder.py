@@ -28,6 +28,7 @@ from typing import Any
 
 import app_config as config
 import promo_copy as copy
+import promo_copy as promo_copy_module
 
 # Re-exported config constants / helpers used below.
 NOVEL_NAMES = config.NOVEL_NAMES
@@ -156,11 +157,11 @@ def make_tiktok_pack(
     reused = _get(collab, "reusable_pack_result")(folder, required_files=["caption.txt", "instagram-reel-caption.txt", "youtube-shorts-description.txt"])
     if not force_new_images and reused and reused.get("chapter") == group["chapter"] and reused.get("abbr") == abbr:
         novel = NOVEL_NAMES.get(abbr, abbr)
-        reused["caption"] = _get(collab, "tiktok_caption")(novel, group["chapter"])
-        reused["instagram_reel_caption"] = _get(collab, "instagram_reel_caption")(novel, group["chapter"])
+        reused["caption"] = copy.public_copy_without_links(_get(collab, "tiktok_caption")(novel, group["chapter"]), "tiktok")
+        reused["instagram_reel_caption"] = copy.public_copy_without_links(_get(collab, "instagram_reel_caption")(novel, group["chapter"]), "instagram")
         shorts = _get(collab, "youtube_shorts_metadata")(novel, group["chapter"])
         reused["youtube_shorts_title"] = shorts["title"]
-        reused["youtube_shorts_description"] = shorts["description"]
+        reused["youtube_shorts_description"] = copy.public_copy_without_links(shorts["description"], "youtube")
         (folder / "caption.txt").write_text(reused["caption"] + "\n", encoding="utf-8")
         (folder / "instagram-reel-caption.txt").write_text(reused["instagram_reel_caption"] + "\n", encoding="utf-8")
         (folder / "youtube-shorts-title.txt").write_text(reused["youtube_shorts_title"] + "\n", encoding="utf-8")
@@ -209,9 +210,10 @@ def make_tiktok_pack(
     sound_target = folder / sound_source.name
     shutil.copy2(sound_source, sound_target)
     novel = NOVEL_NAMES.get(abbr, abbr)
-    caption = _get(collab, "tiktok_caption")(novel, group["chapter"])
-    reel_caption = _get(collab, "instagram_reel_caption")(novel, group["chapter"])
+    caption = copy.public_copy_without_links(_get(collab, "tiktok_caption")(novel, group["chapter"]), "tiktok")
+    reel_caption = copy.public_copy_without_links(_get(collab, "instagram_reel_caption")(novel, group["chapter"]), "instagram")
     shorts = _get(collab, "youtube_shorts_metadata")(novel, group["chapter"])
+    shorts_description = copy.public_copy_without_links(shorts["description"], "youtube")
     copied_images.append(_get(collab, "prepare_tiktok_outro_image")(folder, abbr, novel, group["chapter"], style=pack_track))
     overlays = _get(collab, "tiktok_chapter_teaser_overlays")(abbr, group["chapter"], novel, chapter_text=chapter_text, fallback_text=visual_prompt or caption)
     payload = {
@@ -224,7 +226,7 @@ def make_tiktok_pack(
         "caption": caption,
         "instagram_reel_caption": reel_caption,
         "youtube_shorts_title": shorts["title"],
-        "youtube_shorts_description": shorts["description"],
+        "youtube_shorts_description": shorts_description,
         "folder": str(folder),
         "visual_prompt": visual_prompt,
         "video_overlays": overlays,
@@ -232,7 +234,7 @@ def make_tiktok_pack(
     (folder / "caption.txt").write_text(caption + "\n", encoding="utf-8")
     (folder / "instagram-reel-caption.txt").write_text(reel_caption + "\n", encoding="utf-8")
     (folder / "youtube-shorts-title.txt").write_text(shorts["title"] + "\n", encoding="utf-8")
-    (folder / "youtube-shorts-description.txt").write_text(shorts["description"] + "\n", encoding="utf-8")
+    (folder / "youtube-shorts-description.txt").write_text(shorts_description + "\n", encoding="utf-8")
     (folder / "sound.txt").write_text(str(sound_target) + "\n", encoding="utf-8")
     (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     narration_src = _get(collab, "tiktok_narration_text")({"caption": caption}, overlays) if caption else (overlays[0].replace("\n", " ").strip() if overlays else "")
@@ -303,12 +305,13 @@ def make_social_post(
         base_instagram = f"{daily_hook}\n\n{base_instagram}" if base_instagram else daily_hook
     if cta not in base_instagram:
         base_instagram = f"{base_instagram}\n\n{cta}" if base_instagram else cta
-    copy["instagram"] = with_instagram_links(base_instagram, abbr)
+    copy["instagram"] = promo_copy_module.public_copy_without_links(with_instagram_links(base_instagram, abbr), "instagram")
     copy["x"] = str(copy.get("x") or fallback_social_copy(item["novel"], abbr, item["day"], item["filename"])["x"]).strip()
-    x_focus_link = linktree_url()
-    if x_focus_link and x_focus_link not in copy["x"]:
+    x_focus_link = "Read now: link in bio."
+    if "link in bio" not in copy["x"].lower():
         candidate = f"{copy['x']}\n{x_focus_link}".strip()
         copy["x"] = candidate if len(candidate) <= 275 else copy["x"]
+    copy["x"] = promo_copy_module.public_copy_without_links(copy["x"], "x")
     copy["facebook"] = str(copy.get("facebook") or "").strip()
     if not copy["facebook"]:
         copy["facebook"] = "\n\n".join(
@@ -316,15 +319,16 @@ def make_social_post(
                 f"{item['day']} spotlight: {item['novel']}.",
                 cta,
                 "Follow the story updates across the main channels.",
-                platform_links_block(abbr),
+                promo_copy_module.audience_hub_line(abbr),
                 "#webnovel #royalroad #serialfiction #indieauthor",
             ]
         )
     else:
         if cta not in copy["facebook"]:
             copy["facebook"] = f"{copy['facebook']}\n\n{cta}"
-        if linktree_url() not in copy["facebook"]:
-            copy["facebook"] = f"{copy['facebook']}\n\n{platform_links_block(abbr)}"
+        if "link in bio" not in copy["facebook"].lower():
+            copy["facebook"] = f"{copy['facebook']}\n\n{promo_copy_module.audience_hub_line(abbr)}"
+    copy["facebook"] = promo_copy_module.public_copy_without_links(copy["facebook"], "facebook")
     copy["caption_style"] = style
 
     image_target = folder / f"{abbr}_{item['day']}.png"
