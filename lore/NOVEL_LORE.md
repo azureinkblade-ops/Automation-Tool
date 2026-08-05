@@ -38,10 +38,12 @@ All 4 novels are actively being written (not complete). My lane is support (prom
   - **LENA vs silver-rings woman:** LENA = the shopkeeper already in the room, plain dark hair, NO earrings, always beside a small wooden box. The SILVER-RINGS WOMAN (short black hair tucked behind one ear, that ear lined with multiple silver rings) is a SEPARATE character and Dae's entering companion, not Lena.
   - **DAE HYUN:** tall, long dark hair tied back, charcoal coat, no visible markings; smile is a mask; SEATED across from Kai unless stated otherwise.
   - **BROAD-SHOULDERED MAN:** Dae's silent associate, hands in coat pockets, by the entrance until the final page; NOT a "guard."
+  - **Objects (persist like characters):** OBJ-001 wooden box (Lena's, always beside Lena unless stated); OBJ-002 paper concealment talisman (Dae's until handed to Kai at Ch.3 end); OBJ-003 tea cup (Kai's hands until set on table); OBJ-004 blue-pattern teapot (always centered on tea table).
   - **Setting:** rainy afternoon; warm bookstore interior (North Hollow) / cold blue rainy exterior through frosted glass.
   - **Factions (Ch.3):** shadowy only — Black Tide, North River, Azure Meridian. NO invasion-war / soldiers / flags invented. System warning box verbatim: [WARNING.][UNKNOWN SPIRITUAL SIGNATURES.][THREAT ASSESSMENT UNAVAILABLE.]
   - **Forbidden in art:** neck ember, store branding, fabricated military imagery, blood-stained talismans, time-travel premise (Kai is awake < 1 day).
-  - **Workflow:** comic art generated clean (no text); dialogue typeset afterward from exact manuscript lines. Worked two-stage example: `Docs/HA_Ch3_prompt_sheet_v4.md`.
+  - **Identity lock:** use this block and `Docs/HA_series_bible.md` v1.0 exactly. Do not redesign, merge, or accessorize characters. Recurring objects drift as often as characters; hold them to the OBJ list above.
+  - **Workflow:** comic art generated clean (no text); Identity Lock + panel memory (Prev/Current/Next) prepended per prompt; dialogue typeset afterward from exact manuscript lines. Authoritative Series Bible v1.0: `Docs/HA_series_bible.md`. Worked two-stage example: `Docs/HA_Ch3_prompt_sheet_v4.md`.
 
 ## SF — Soulforge Era
 - **Genre:** Post-Apocalyptic Soul-Forging / Under-city.
