@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -161,14 +162,21 @@ def _strip_session_line(text: str) -> str:
 
 
 def _extract_json(text: str) -> dict | None:
-    """Parse JSON from the agent output, tolerating a prose wrapper or ```fence."""
+    """Parse JSON from the agent output, tolerating a prose wrapper, ```fence,
+    and the malformed JSON the model occasionally emits (unquoted keys, trailing
+    commas, inline // comments, stray adjacent quotes). Falls back to None only
+    when the output is unrecoverable (e.g. truncated mid-object).
+
+    Hermes sometimes returns almost-valid JSON rather than clean JSON; a tolerant
+    repair step recovers those parses instead of silently degrading to the template.
+    """
     cleaned = _strip_session_line(text)
-    # Try direct parse.
+    # 1) Direct parse (most outputs are already valid JSON).
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
         pass
-    # Try fenced block.
+    # 2) Fenced block (```json ... ```).
     if "```" in cleaned:
         start = cleaned.find("```")
         end = cleaned.find("```", start + 3)
@@ -178,15 +186,34 @@ def _extract_json(text: str) -> dict | None:
                 return json.loads(inner)
             except json.JSONDecodeError:
                 pass
-    # Try first { to last }.
+    # 3) Slice first { to last }. If the object is truncated (no closing brace,
+    #    or the braces are unbalanced) this yields nothing -> unrecoverable.
     fb = cleaned.find("{")
     lb = cleaned.rfind("}")
-    if fb != -1 and lb > fb:
-        try:
-            return json.loads(cleaned[fb : lb + 1])
-        except json.JSONDecodeError:
-            pass
-    return None
+    if fb == -1 or lb <= fb:
+        return None
+    body = cleaned[fb : lb + 1]
+    # --- stdlib repair passes (no external dependency required) ---
+    # Strip // comments that are NOT part of a URL (protect http(s)://).
+    body = re.sub(r"(?<!:)//[^\n]*", "", body)
+    # Collapse runs of adjacent double-quotes (e.g. `{ ""hook":` -> `{ "hook":`).
+    body = re.sub(r'"{2,}', '"', body)
+    # Quote unquoted bare keys: { or , followed by an identifier then ':'.
+    body = re.sub(r'([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:', r'\1"\2":', body)
+    # Remove trailing commas before } or ].
+    body = re.sub(r",(\s*[}\]])", r"\1", body)
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        pass
+    # 4) Optional boost: json5 (installed in the codex runtime) tolerates the
+    #    remaining edge cases. Not required — absent json5, we fall back to None.
+    try:
+        import json5
+
+        return json5.loads(body)
+    except Exception:
+        return None
 
 
 def _unwrap_variation(payload: dict | None) -> dict | None:

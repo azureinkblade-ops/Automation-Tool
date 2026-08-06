@@ -152,6 +152,44 @@ def test_5_fenced_and_prose_extraction():
     return ok
 
 
+def test_6_malformed_json_recovered():
+    print("[6] recoverable malformed JSON is parsed (not silently dropped)")
+    ok = True
+    # Real-world corruption the model emits (unquoted keys, trailing commas,
+    # inline // comments, stray adjacent quotes). Each should parse to a dict
+    # with the expected keys, then normalize to a usable flat contract.
+    samples = {
+        "unquoted_keys": (
+            '{ hook: "h", caption: "c", cta: "ct", hashtags: ["#A"], '
+            'content_angle: "a", intended_audience: "b" }'
+        ),
+        "trailing_comma": (
+            '{ "hook": "h", "caption": "c", "cta": "ct", "hashtags": ["#A",], '
+            '"content_angle": "a", "intended_audience": "b", }'
+        ),
+        "slash_comments": (
+            '{ "hook": "h", // a note\n "caption": "c", "cta": "ct", '
+            '"hashtags": ["#A"], "content_angle": "a", "intended_audience": "b" }'
+        ),
+        "stray_adjacent_quotes": (
+            '{ ""hook": "h", "caption": "c", "cta": "ct", '
+            '"hashtags": ["#A"], "content_angle": "a", "intended_audience": "b" }'
+        ),
+    }
+    for label, raw in samples.items():
+        parsed = _extract_json(raw)
+        ok &= _assert(isinstance(parsed, dict), f"parsed: {label}")
+        out = _unwrap_variation(parsed)
+        ok &= _assert(out is not None, f"normalizes to usable post: {label}")
+        if out is not None:
+            ok &= _assert(out["caption"] == "c", f"caption intact: {label}")
+            ok &= _assert(out["hook"] == "h", f"hook intact: {label}")
+    # Truncated output (no closing brace) must remain unrecoverable -> None.
+    truncated = '{ "hook": "h", "caption": "Liang walks the hundredfold path and finds his'
+    ok &= _assert(_extract_json(truncated) is None, "truncated output stays None (fallback)")
+    return ok
+
+
 def main():
     _assert.failed = 0
     results = [
@@ -160,6 +198,7 @@ def main():
         test_3_empty_or_malformed_variations(),
         test_4_missing_caption_rejected(),
         test_5_fenced_and_prose_extraction(),
+        test_6_malformed_json_recovered(),
     ]
     print()
     if _assert.failed == 0 and all(results):
