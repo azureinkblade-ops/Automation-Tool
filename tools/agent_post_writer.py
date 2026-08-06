@@ -30,19 +30,22 @@ from pathlib import Path
 # Diagnostics: every agent failure (rc!=0, unparseable output, subprocess error) is
 # logged here with the raw Hermes stdout/stderr so a failed post-build is diagnosable
 # instead of silently falling back to the template. The app's own logs/ dir.
+#
+# This module uses a dedicated, isolated logger. It must NOT call logging.basicConfig
+# (which would hijack the process-wide root handler and pollute unrelated application
+# logs). All agent diagnostics stay in logs/agent_post_writer.log only.
 _LOG_PATH = Path(__file__).resolve().parent.parent / "logs" / "agent_post_writer.log"
-try:
-    _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        filename=str(_LOG_PATH),
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-        force=True,
-    )
-    _logger = logging.getLogger("agent_post_writer")
-except OSError:
-    _logger = logging.getLogger("agent_post_writer")
-    _logger.addHandler(logging.NullHandler())
+_logger = logging.getLogger("automation.agent_post_writer")
+_logger.setLevel(logging.INFO)
+_logger.propagate = False
+if not _logger.handlers:
+    try:
+        _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _handler = logging.FileHandler(_LOG_PATH, encoding="utf-8")
+        _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        _logger.addHandler(_handler)
+    except OSError:
+        _logger.addHandler(logging.NullHandler())
 
 
 def _log(msg: str, *, abbr: str = "", stdout: str = "", stderr: str = "") -> None:
