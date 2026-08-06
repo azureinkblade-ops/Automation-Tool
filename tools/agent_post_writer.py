@@ -542,11 +542,21 @@ def generate_post_result(
         completed_at = __import__("time").strftime("%Y-%m-%dT%H:%M:%S")
         duration_ms = int((__import__("time").time() - t0) * 1000)
         _log(f"FAIL: subprocess timeout: {exc!r}", abbr=abbr)
-        return AgentPostResult(
-            status=AgentPostStatus.HERMES_TIMEOUT,
-            copy=None,
-            raw_response_path=None,
-            fallback_reason="hermes subprocess timed out",
+        return _finalize(
+            AgentPostResult(
+                status=AgentPostStatus.HERMES_TIMEOUT,
+                copy=None,
+                raw_response_path=None,
+                fallback_reason="hermes subprocess timed out",
+                execution=HermesExecution(
+                    command_flags=tuple(argv), exit_code=None, duration_ms=duration_ms,
+                    started_at=started_at, completed_at=completed_at, reasoning="none",
+                    skills=skills, max_turns=str(max_turns),
+                    stdout_replacement_count=0, error=repr(exc),
+                ),
+            ),
+            abbr=abbr, novel=title, chapter=chapter,
+            stdout_text="", stdout_raw=b"", stderr_text="", normalized=None,
             execution=HermesExecution(
                 command_flags=tuple(argv), exit_code=None, duration_ms=duration_ms,
                 started_at=started_at, completed_at=completed_at, reasoning="none",
@@ -558,11 +568,20 @@ def generate_post_result(
         completed_at = __import__("time").strftime("%Y-%m-%dT%H:%M:%S")
         duration_ms = int((__import__("time").time() - t0) * 1000)
         _log(f"FAIL: subprocess error: {exc!r}", abbr=abbr)
-        return AgentPostResult(
-            status=AgentPostStatus.HERMES_PROCESS_FAILED,
-            copy=None,
-            raw_response_path=None,
-            fallback_reason=f"hermes subprocess error: {exc!r}",
+        return _finalize(
+            AgentPostResult(
+                status=AgentPostStatus.HERMES_PROCESS_FAILED,
+                copy=None,
+                raw_response_path=None,
+                fallback_reason=f"hermes subprocess error: {exc!r}",
+                execution=HermesExecution(
+                    command_flags=tuple(argv), exit_code=None, duration_ms=duration_ms,
+                    started_at=started_at, completed_at=completed_at, reasoning="none",
+                    skills=skills, max_turns=str(max_turns), error=repr(exc),
+                ),
+            ),
+            abbr=abbr, novel=title, chapter=chapter,
+            stdout_text="", stdout_raw=b"", stderr_text="", normalized=None,
             execution=HermesExecution(
                 command_flags=tuple(argv), exit_code=None, duration_ms=duration_ms,
                 started_at=started_at, completed_at=completed_at, reasoning="none",
@@ -592,21 +611,31 @@ def generate_post_result(
             stdout=stdout_text[:2000],
             stderr=stderr_text[:2000],
         )
-        return AgentPostResult(
-            status=AgentPostStatus.HERMES_PROCESS_FAILED,
-            copy=None,
-            raw_response_path=None,
-            fallback_reason=f"hermes rc={proc.returncode}",
-            execution=execution,
+        return _finalize(
+            AgentPostResult(
+                status=AgentPostStatus.HERMES_PROCESS_FAILED,
+                copy=None,
+                raw_response_path=None,
+                fallback_reason=f"hermes rc={proc.returncode}",
+                execution=execution,
+            ),
+            abbr=abbr, novel=title, chapter=chapter,
+            stdout_text=stdout_text, stdout_raw=stdout_raw,
+            stderr_text=stderr_text, normalized=None, execution=execution,
         )
     if not stdout_text.strip():
         _log("FAIL: empty hermes stdout", abbr=abbr, stderr=stderr_text[:1500])
-        return AgentPostResult(
-            status=AgentPostStatus.HERMES_EMPTY_OUTPUT,
-            copy=None,
-            raw_response_path=None,
-            fallback_reason="hermes produced no output",
-            execution=execution,
+        return _finalize(
+            AgentPostResult(
+                status=AgentPostStatus.HERMES_EMPTY_OUTPUT,
+                copy=None,
+                raw_response_path=None,
+                fallback_reason="hermes produced no output",
+                execution=execution,
+            ),
+            abbr=abbr, novel=title, chapter=chapter,
+            stdout_text=stdout_text, stdout_raw=stdout_raw,
+            stderr_text=stderr_text, normalized=None, execution=execution,
         )
     data = _extract_json(stdout_text)
     # Normalize to the flat consumer contract. Accepts both the wrapped skill
@@ -647,12 +676,17 @@ def generate_post_result(
             stdout=stdout_text[:3000],
             stderr=stderr_text[:1500],
         )
-        return AgentPostResult(
-            status=AgentPostStatus.FINAL_BLOCK_NOT_FOUND,
-            copy=None,
-            raw_response_path=None,
-            fallback_reason="reasoning transcript contained no complete final block",
-            execution=execution,
+        return _finalize(
+            AgentPostResult(
+                status=AgentPostStatus.FINAL_BLOCK_NOT_FOUND,
+                copy=None,
+                raw_response_path=None,
+                fallback_reason="reasoning transcript contained no complete final block",
+                execution=execution,
+            ),
+            abbr=abbr, novel=title, chapter=chapter,
+            stdout_text=stdout_text, stdout_raw=stdout_raw,
+            stderr_text=stderr_text, normalized=None, execution=execution,
         )
     missing, validation_errors = _validate_contract(normalized)
     if missing or validation_errors:
