@@ -1117,6 +1117,21 @@ def check_caption_voice_rotation() -> list[dict[str, object]]:
             },
         )
 
+    def _agent_post(abbr: str, chapter_text: str, agent_copy: dict[str, object]) -> dict[str, str]:
+        novel_name = app.NOVEL_NAMES.get(abbr.upper(), "Azure Inkblade")
+        return app.build_platform_posts(
+            f"Chapter 25: Agent Regression {abbr}",
+            chapter_text,
+            {
+                "abbr": abbr,
+                "novel": novel_name,
+                "chapter": "25",
+                "phrases": [chapter_text],
+                "release_status": {"royalRoadExists": True},
+            },
+            agent_copy=agent_copy,
+        )
+
     en_text = "Kai saw the gate open under the rain. The system blinked once and offered a choice no one else could see."
     ha_text = "The System's quota left no room for the weak to breathe. A hidden heavenly rule rewrote what survival cost."
 
@@ -1274,7 +1289,32 @@ def check_caption_voice_rotation() -> list[dict[str, object]]:
         f"focus={en.get('post_focus')}",
     ))
 
-    # 14. Existing saved pack metadata is not rewritten automatically (no state mutation here).
+    # 14. Hermes structured copy drives the public FB/IG copy instead of being
+    # reduced to the generic fallback template.
+    agent_payload = {
+        "hook": "Breathed until his lungs felt carved from stone, and still the sect felt like home.",
+        "caption": "In the Hundredfold Path, true strength is not just in the breath that burns, but in finding a sect that feels like home.",
+        "cta": "Walk the Hundredfold Path: start free on Royal Road, go deep on Patreon.",
+        "hashtags": ["#HundredfoldPath", "#AzureInkblade", "#Xianxia", "#Wuxia", "#JadeToken"],
+        "content_angle": "found-family in a ruthless world",
+        "intended_audience": "xianxia fans seeking found-family and inner strength",
+        "_source": "hermes",
+    }
+    agent_post = _agent_post("HP", "The sect's heart beat under the mountain.", agent_payload)
+    agent_caption = str(agent_post.get("caption") or "")
+    agent_facebook = str(agent_post.get("facebook_post") or "")
+    checks.append(assert_result(
+        "agent_structured_copy_drives_fb_ig",
+        "Breathed until his lungs" in agent_caption
+        and "true strength is not just" in agent_facebook
+        and agent_post.get("content_angle") == "found-family in a ruthless world"
+        and agent_post.get("intended_audience") == "xianxia fans seeking found-family and inner strength"
+        and "http" not in agent_caption.lower()
+        and "\u2014" not in agent_caption,
+        f"caption={agent_caption[:90]!r}",
+    ))
+
+    # 15. Existing saved pack metadata is not rewritten automatically (no state mutation here).
     checks.append(assert_result(
         "no_saved_pack_metadata_rewrite",
         True,  # build_platform_posts is pure (no persistence); verified by call returning only.

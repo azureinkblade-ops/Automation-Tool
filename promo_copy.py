@@ -291,6 +291,7 @@ def public_copy_without_links(text: str, platform: str = "") -> str:
     cleaned = DIRECT_PUBLIC_URL_RE.sub("", str(text or ""))
     cleaned = re.sub(r"(?im)^\s*(rr|royal road|patreon|youtube|tik\s*tok|tiktok|instagram|x|twitter)\b.*$", "", cleaned)
     cleaned = re.sub(r"https?://\S+", "", cleaned)
+    cleaned = cleaned.replace("\u2014", "-").replace("\u2013", "-")
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
@@ -409,6 +410,40 @@ def rotated_x_hashtags(abbr: str, seed: str, limit: int = 5) -> str:
     # BUG FIX #1: deterministic SHA-256 ordering (built-in hash() is not stable across restarts)
     ordered = sorted(base, key=lambda t: int(hashlib.sha256(f"{seed}:{t}".encode("utf-8")).hexdigest()[:8], 16))
     return " ".join(ordered[:limit])
+
+
+def _agent_list_hashtags(agent_copy: dict, fallback_tags: str) -> list[str]:
+    raw_tags = agent_copy.get("hashtags") if isinstance(agent_copy, dict) else []
+    if isinstance(raw_tags, str):
+        candidates = re.findall(r"#\w+", raw_tags)
+    elif isinstance(raw_tags, list):
+        candidates = []
+        for item in raw_tags:
+            text = str(item or "").strip()
+            if not text:
+                continue
+            if not text.startswith("#"):
+                text = "#" + re.sub(r"\W+", "", text)
+            candidates.extend(re.findall(r"#\w+", text))
+    else:
+        candidates = []
+    candidates.extend(re.findall(r"#\w+", fallback_tags))
+    result: list[str] = []
+    seen: set[str] = set()
+    for tag in candidates:
+        key = tag.lower()
+        if not tag or key in seen:
+            continue
+        seen.add(key)
+        result.append(tag)
+    return result[:12]
+
+
+def _clean_copy_field(text: str) -> str:
+    cleaned = DIRECT_PUBLIC_URL_RE.sub("", str(text or ""))
+    cleaned = re.sub(r"https?://\S+", "", cleaned)
+    cleaned = cleaned.replace("\u2014", "-").replace("\u2013", "-")
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def chapter_range_text(start: int | str, end: int | str | None = None, prefix: str = "Ch.") -> str:
@@ -1291,45 +1326,52 @@ def build_platform_posts(
     # When the caller passes agent_copy (from tools/agent_post_writer.generate_post_copy),
     # splice the agent's reader-facing caption/cta/hashtags over the template output.
     # The template above remains the fallback when agent_copy is None (or partial).
+    agent_hook = ""
+    agent_content_angle = ""
+    agent_intended_audience = ""
+    # ---- Agent override (Hermes post-differentiation). ----
+    # When the caller passes agent_copy (from tools/agent_post_writer.generate_post_copy),
+    # splice the agent's structured hook/caption/cta/hashtags over the template output.
+    # The template above remains the fallback when agent_copy is None (or partial).
     if isinstance(agent_copy, dict) and agent_copy.get("caption"):
+        agent_hook = str(agent_copy.get("hook") or hook).strip()
         _ag_caption = str(agent_copy["caption"]).strip()
         _ag_cta = str(agent_copy.get("cta") or "").strip()
-        _ag_tags = agent_copy.get("hashtags") or []
-        _ag_tag_str = " ".join(str(t) for t in _ag_tags if str(t).strip())
-        # Ensure brand + novel anchors are present even if the agent omitted them.
-        if "#AzureInkblade" not in _ag_tag_str:
-            _ag_tag_str = f"#AzureInkblade {_ag_tag_str}".strip()
-        if novel_tag and novel_tag not in _ag_tag_str:
-            _ag_tag_str = f"{_ag_tag_str} {novel_tag}".strip()
-        # Instagram: agent caption + agent cta (once) + agent hashtags.
-        instagram_caption = (
-            f"{_ag_caption}\n\n{_ag_cta}\n\n{_ag_tag_str}" if _ag_cta else f"{_ag_caption}\n\n{_ag_tag_str}"
+        agent_content_angle = str(agent_copy.get("content_angle") or "").strip()
+        agent_intended_audience = str(agent_copy.get("intended_audience") or "").strip()
+        _ag_tags = _agent_list_hashtags(
+            agent_copy,
+            rotated_hashtags(story, f"{campaign_key}_agent", chapter_text=chapter, limit=9),
         )
-        # Facebook: keep novel/title header + agent caption + agent cta + agent tags.
-        _fb_body = _ag_caption
-        if _ag_cta:
-            _fb_body = f"{_fb_body}\n\n{_ag_cta}"
-        facebook_post = (
-            f"{novel} - {title}\n\n"
-            f"{_fb_body}\n\n"
-            f"{_ag_tag_str}"
+        _ag_tag_str = " ".join(_ag_tags)
+        _x_tag_str = " ".join(
+            _agent_list_hashtags(agent_copy, rotated_x_hashtags(story, f"{campaign_key}_agent", limit=5))[:5]
         )
+        _structured_body = "\n\n".join(
+            part for part in [agent_hook, _ag_caption, _ag_cta, _ag_tag_str] if part
+        )
+        # Instagram/Facebook: organic reader-facing text, no raw JSON labels.
+        instagram_caption = _structured_body
+        facebook_post = _structured_body
         # Patreon note: keep structure, swap in agent caption + cta.
         patreon_note = (
             f"{novel}\n{title}\n\n"
+            f"{agent_hook}\n\n"
             f"{_ag_caption}\n\n"
             f"{_ag_cta or patreon_cta}\n\n"
             "Thank you for supporting the stories and helping keep the release schedule moving."
         )
-        # X: agent caption (trimmed to 280) + agent tags; keep tracked destination.
-        _x_body = _ag_caption
+        # X: agent hook/caption (trimmed to 280) + agent tags; keep link-in-bio copy.
+        _x_body = agent_hook or _ag_caption
         if _ag_cta:
             _x_body = f"{_x_body}\n\n{_ag_cta}"
-        _x_full = f"{novel} - {title}\n\n{_x_body}\n\n{_ag_tag_str}"
+        _x_full = f"{novel} - {title}\n\n{_x_body}\n\n{_x_tag_str}"
         if len(_x_full) > 280:
-            _x_full = f"{_x_body}\n\n{_ag_tag_str}"
+            _x_full = f"{_x_body}\n\n{_x_tag_str}"
         if len(_x_full) > 280:
-            _x_full = f"{_ag_tag_str}"
+            _x_full = f"{(agent_hook or _ag_caption)[:180].rstrip()}\n\n{_x_tag_str}"
+        if len(_x_full) > 280:
+            _x_full = f"{_x_tag_str}"
         x_post = _x_full
     return {
         "caption": public_copy_without_links(instagram_caption, "instagram"),
@@ -1340,6 +1382,9 @@ def build_platform_posts(
         "post_focus": focus,
         "caption_style": style,
         "tracking_campaign": campaign_key,
+        "hook": _clean_copy_field(agent_hook or hook),
+        "content_angle": _clean_copy_field(agent_content_angle),
+        "intended_audience": _clean_copy_field(agent_intended_audience),
         "_agent_source": (agent_copy.get("_source") if isinstance(agent_copy, dict) else None),
     }
 
