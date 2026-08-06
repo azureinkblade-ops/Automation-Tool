@@ -329,10 +329,12 @@ def _extract_json(stdout_text: str) -> dict | None:
     markers. Returns the parsed dict, or None when no usable block exists.
     """
     # 1) Direct whole-text parse (most outputs are already valid JSON).
-    try:
-        return json.loads(stdout_text.strip())
-    except json.JSONDecodeError:
-        pass
+    # Reject outright if the whole response is a draft/analysis section.
+    if not _looks_like_draft(stdout_text):
+        try:
+            return json.loads(stdout_text.strip())
+        except json.JSONDecodeError:
+            pass
     # 2) Fenced block (```json ... ```). Take the LAST complete fence.
     if "```" in stdout_text:
         fences = []
@@ -345,6 +347,8 @@ def _extract_json(stdout_text: str) -> dict | None:
             fences.append(inner)
             idx = stdout_text.find("```", end + 3)
         for inner in reversed(fences):
+            if _looks_like_draft(inner):
+                continue
             try:
                 return json.loads(inner)
             except json.JSONDecodeError:
@@ -610,6 +614,33 @@ def generate_post_result(
     # final block was not found / not parseable.
     normalized = _unwrap_variation(data)
     if normalized is None:
+        # A JSON object WAS found but failed the unwrap (no caption / malformed
+        # variations). Distinguish a found-but-invalid contract (envelope-only,
+        # empty required fields) from a genuinely missing final block so the
+        # caller records the precise missing_fields.
+        if isinstance(data, dict):
+            missing, validation_errors = _validate_contract(data)
+            if missing or validation_errors:
+                _log(
+                    f"FAIL: contract validation failed missing={missing} errors={validation_errors}",
+                    abbr=abbr,
+                    stdout=stdout_text[:3000],
+                    stderr=stderr_text[:1500],
+                )
+                return _finalize(
+                    AgentPostResult(
+                        status=AgentPostStatus.CONTRACT_VALIDATION_FAILED,
+                        copy=None,
+                        raw_response_path=None,
+                        validation_errors=tuple(validation_errors),
+                        missing_fields=tuple(missing),
+                        fallback_reason=f"contract validation failed: missing={missing}",
+                        execution=execution,
+                    ),
+                    abbr=abbr, novel=title, chapter=chapter,
+                    stdout_text=stdout_text, stdout_raw=stdout_raw,
+                    stderr_text=stderr_text, normalized=None, execution=execution,
+                )
         _log(
             "FAIL: output not parseable as post JSON (missing caption / empty or malformed variations)",
             abbr=abbr,
