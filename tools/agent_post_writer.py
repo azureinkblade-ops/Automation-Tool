@@ -189,6 +189,50 @@ def _extract_json(text: str) -> dict | None:
     return None
 
 
+def _unwrap_variation(payload: dict | None) -> dict | None:
+    """Normalize the agent's output into the flat consumer contract.
+
+    The agent (post-differentiation-agent skill) may emit EITHER:
+      * the flat legacy contract: {"hook", "caption", "cta", "hashtags",
+        "content_angle", "intended_audience"} at the top level, OR
+      * the skill's wrapped contract: {"generated_at", "agent",
+        "variations": [ {...}, ... ]} where each variation carries the same fields.
+    The consumer (promo_copy.build_platform_posts) only reads the flat keys, so we
+    normalize the wrapped form down to one variation. Fails closed (None) when the
+    payload has no usable caption (missing/empty variations, or no caption).
+    """
+    if not isinstance(payload, dict):
+        return None
+    if isinstance(payload.get("variations"), list) and payload["variations"]:
+        candidate = None
+        for v in payload["variations"]:
+            if isinstance(v, dict) and v.get("caption"):
+                candidate = v
+                break
+        if candidate is None:
+            return None
+        src = candidate
+    elif isinstance(payload, dict) and payload.get("caption"):
+        src = payload
+    else:
+        return None
+    tags = src.get("hashtags") or []
+    if isinstance(tags, str):
+        tags = [t.strip() for t in tags.replace(",", " ").split() if t.strip()]
+    out = {
+        "hook": str(src.get("hook") or "").strip(),
+        "caption": str(src.get("caption") or "").strip(),
+        "cta": str(src.get("cta") or "").strip(),
+        "hashtags": [str(t) for t in tags],
+        "content_angle": str(src.get("content_angle") or "").strip(),
+        "intended_audience": str(src.get("intended_audience") or "").strip(),
+    }
+    if not out["caption"]:
+        return None
+    out["_source"] = "hermes_agent"
+    return out
+
+
 def generate_post_copy(
     abbr: str,
     title: str,
@@ -244,21 +288,19 @@ def generate_post_copy(
         )
         return None
     data = _extract_json(proc.stdout)
-    if not isinstance(data, dict) or not data.get("caption"):
+    # Normalize to the flat consumer contract. Accepts both the wrapped skill
+    # output ({"variations":[...]}) and the legacy flat response. None => fall
+    # back to the template engine (the caller treats None as "use template").
+    normalized = _unwrap_variation(data)
+    if normalized is None:
         _log(
-            "FAIL: output not parseable as post JSON (or missing caption)",
+            "FAIL: output not parseable as post JSON (missing caption / empty or malformed variations)",
             abbr=abbr,
             stdout=proc.stdout[:3000],
             stderr=proc.stderr[:1500],
         )
         return None
-    # Normalize hashtags to a list of strings.
-    tags = data.get("hashtags") or []
-    if isinstance(tags, str):
-        tags = [t.strip() for t in tags.replace(",", " ").split() if t.strip()]
-    data["hashtags"] = [str(t) for t in tags]
-    data["_source"] = "hermes_agent"
-    return data
+    return normalized
 
 
 if __name__ == "__main__":
