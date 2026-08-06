@@ -412,31 +412,40 @@ def rotated_x_hashtags(abbr: str, seed: str, limit: int = 5) -> str:
     return " ".join(ordered[:limit])
 
 
-def _agent_list_hashtags(agent_copy: dict, fallback_tags: str) -> list[str]:
+def _agent_list_hashtags(agent_copy: dict, deterministic_tags: str, limit: int = 12) -> list[str]:
+    """Build the agent post's hashtag set.
+
+    Deterministic-first: Python generates the complete, brand-correct set
+    (story profile tags + required #AzureInkblade + required novel anchor +
+    rotated/chapter tags) and passes it as `deterministic_tags`. The model's own
+    `hashtags` are NOT the primary source — if the model omits them entirely, the
+    post still gets a complete, brand-correct tag set. Model-produced tags are
+    merged only as a deprecated compatibility tail (deduped, capped) so legacy
+    agent responses are not discarded, but they never shrink or replace the
+    deterministic base.
+    """
+    base = re.findall(r"#\w+", deterministic_tags or "")
     raw_tags = agent_copy.get("hashtags") if isinstance(agent_copy, dict) else []
+    compat: list[str] = []
     if isinstance(raw_tags, str):
-        candidates = re.findall(r"#\w+", raw_tags)
+        compat = re.findall(r"#\w+", raw_tags)
     elif isinstance(raw_tags, list):
-        candidates = []
         for item in raw_tags:
             text = str(item or "").strip()
             if not text:
                 continue
             if not text.startswith("#"):
                 text = "#" + re.sub(r"\W+", "", text)
-            candidates.extend(re.findall(r"#\w+", text))
-    else:
-        candidates = []
-    candidates.extend(re.findall(r"#\w+", fallback_tags))
+            compat.extend(re.findall(r"#\w+", text))
     result: list[str] = []
     seen: set[str] = set()
-    for tag in candidates:
+    for tag in base + compat:
         key = tag.lower()
         if not tag or key in seen:
             continue
         seen.add(key)
         result.append(tag)
-    return result[:12]
+    return result[:limit]
 
 
 def _clean_copy_field(text: str) -> str:
@@ -1345,7 +1354,7 @@ def build_platform_posts(
         )
         _ag_tag_str = " ".join(_ag_tags)
         _x_tag_str = " ".join(
-            _agent_list_hashtags(agent_copy, rotated_x_hashtags(story, f"{campaign_key}_agent", limit=5))[:5]
+            _agent_list_hashtags(agent_copy, rotated_x_hashtags(story, f"{campaign_key}_agent", limit=5), limit=5)
         )
         _structured_body = "\n\n".join(
             part for part in [agent_hook, _ag_caption, _ag_cta, _ag_tag_str] if part

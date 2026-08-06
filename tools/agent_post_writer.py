@@ -25,7 +25,70 @@ import re
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
+from typing import Any
+
+
+class AgentPostStatus(str, Enum):
+    """Terminal outcome of a single agent-post attempt (outcome only, not a phase)."""
+
+    SUCCESS = "SUCCESS"
+    HERMES_NOT_ENABLED = "HERMES_NOT_ENABLED"
+    HERMES_NOT_STARTED = "HERMES_NOT_STARTED"
+    HERMES_TIMEOUT = "HERMES_TIMEOUT"
+    HERMES_PROCESS_FAILED = "HERMES_PROCESS_FAILED"
+    HERMES_EMPTY_OUTPUT = "HERMES_EMPTY_OUTPUT"
+    FINAL_BLOCK_NOT_FOUND = "FINAL_BLOCK_NOT_FOUND"
+    JSON_PARSE_FAILED = "JSON_PARSE_FAILED"
+    CONTRACT_VALIDATION_FAILED = "CONTRACT_VALIDATION_FAILED"
+    DATABASE_PERSIST_FAILED = "DATABASE_PERSIST_FAILED"
+
+
+@dataclass(frozen=True)
+class HermesExecution:
+    """Provenance of a single Hermes invocation (observed, never pinned)."""
+
+    command_flags: tuple[str, ...]
+    exit_code: int | None
+    duration_ms: int
+    started_at: str
+    completed_at: str
+    requested_model: str | None = None
+    requested_provider: str | None = None
+    resolved_model: str = "unknown"
+    resolved_provider: str = "unknown"
+    reasoning: str = "(default)"
+    skills: str = ""
+    quiet: bool = True
+    max_turns: str = "(default 500)"
+    session_mode: str = "fresh"
+    session_id: str = ""
+    stdout_replacement_count: int = 0
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class AgentPostResult:
+    """Full, structured result of an agent-post attempt.
+
+    `status` is the only terminal signal. Diagnostics (parse_mode, normalizations,
+    validation_errors, missing_fields, block counts) describe HOW an outcome was
+    reached and are recorded even on failure. Never bare None.
+    """
+
+    status: AgentPostStatus
+    copy: dict[str, Any] | None
+    raw_response_path: Path | None
+    parse_mode: str | None = None
+    normalizations: tuple[str, ...] = ()
+    validation_errors: tuple[str, ...] = ()
+    missing_fields: tuple[str, ...] = ()
+    final_block_count: int = 0
+    selected_candidate_index: int | None = None
+    fallback_reason: str | None = None
+    execution: HermesExecution | None = None
 
 # Diagnostics: every agent failure (rc!=0, unparseable output, subprocess error) is
 # logged here with the raw Hermes stdout/stderr so a failed post-build is diagnosable
@@ -159,64 +222,146 @@ The caption and cta together form one post — keep each distinct so nothing is 
 
 
 def _strip_session_line(text: str) -> str:
-    """Drop the `session_id: ...` line Hermes quietly appends in -Q mode."""
+    """Drop the `session_id: ...` line Hermes quietly appends.
+
+    NOTE: session_id arrives on STDERR in -Q mode, not stdout. This helper is
+    applied to stderr only; it must NOT be applied to stdout (the candidate
+    model content), or it would never match and would be a no-op anyway.
+    """
     lines = [ln for ln in text.splitlines() if not ln.strip().startswith("session_id:")]
     return "\n".join(lines).strip()
 
 
-def _extract_json(text: str) -> dict | None:
-    """Parse JSON from the agent output, tolerating a prose wrapper, ```fence,
-    and the malformed JSON the model occasionally emits (unquoted keys, trailing
-    commas, inline // comments, stray adjacent quotes). Falls back to None only
-    when the output is unrecoverable (e.g. truncated mid-object).
+def _find_balanced_json_objects(text: str) -> list[str]:
+    """Return every maximal balanced {...} substring in `text`, individually.
 
-    Hermes sometimes returns almost-valid JSON rather than clean JSON; a tolerant
-    repair step recovers those parses instead of silently degrading to the template.
+    Never spans candidates. A substring is balanced when every '{' has a matching
+    '}' at the same nesting depth. Empty or truncated objects are excluded.
     """
-    cleaned = _strip_session_line(text)
-    # 1) Direct parse (most outputs are already valid JSON).
+    objects: list[str] = []
+    depth = 0
+    start = -1
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start != -1:
+                    body = text[start : i + 1]
+                    objects.append(body)
+                    start = -1
+    return objects
+
+
+def _repair_json_body(body: str) -> tuple[str | None, tuple[str, ...]]:
+    """Attempt tolerant repair of an almost-valid JSON object body.
+
+    Returns (repaired_text, normalizations). normalizations is a tuple of labels
+    describing which repairs were applied. Returns (None, ()) when repair fails.
+    """
+    normalizations: list[str] = []
+    candidate = body
+    # Strip // comments that are NOT part of a URL (protect http(s)://).
+    stripped = re.sub(r"(?<!:)//[^\n]*", "", candidate)
+    if stripped != candidate:
+        normalizations.append("removed_line_comment")
+        candidate = stripped
+    # Collapse runs of adjacent double-quotes (e.g. `{ ""hook":` -> `{ "hook":`).
+    collapsed = re.sub(r'"{2,}', '"', candidate)
+    if collapsed != candidate:
+        normalizations.append("collapsed_double_quotes")
+        candidate = collapsed
+    # Quote unquoted bare keys: { or , followed by an identifier then ':'.
+    quoted = re.sub(r'([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:', r'\1"\2":', candidate)
+    if quoted != candidate:
+        normalizations.append("quoted_bare_keys")
+        candidate = quoted
+    # Remove trailing commas before } or ].
+    trimmed = re.sub(r",(\s*[}\]])", r"\1", candidate)
+    if trimmed != candidate:
+        normalizations.append("removed_trailing_comma")
+        candidate = trimmed
     try:
-        return json.loads(cleaned)
+        json.loads(candidate)
+        return candidate, tuple(normalizations)
     except json.JSONDecodeError:
         pass
-    # 2) Fenced block (```json ... ```).
-    if "```" in cleaned:
-        start = cleaned.find("```")
-        end = cleaned.find("```", start + 3)
-        if end > start:
-            inner = cleaned[start + 3 : end].lstrip("json").strip()
+    # Optional boost: json5 (installed in the codex runtime) tolerates the
+    # remaining edge cases. Not required — absent json5, we fall back to None.
+    try:
+        import json5
+
+        json5.loads(candidate)
+        return candidate, tuple(normalizations)
+    except Exception:
+        return None, ()
+
+
+def _looks_like_draft(markup: str) -> bool:
+    """Detect draft/analysis contamination inside a candidate block."""
+    lowered = markup.lower()
+    markers = (
+        "draft:",
+        "corrected draft:",
+        "wait,",
+        "final check:",
+        "**image_prompt**",
+        "**variations**",
+        "**reasoning",
+        "_metadata_",
+    )
+    return any(m in lowered for m in markers)
+
+
+def _extract_json(stdout_text: str) -> dict | None:
+    """Select the final usable JSON payload from Hermes stdout.
+
+    Selection order (per the reliability plan, Task 4):
+      1. Last complete fenced JSON object.
+      2. Last complete balanced JSON object passing the contract.
+      3. Failure (None) with diagnostics recorded by the caller.
+
+    NEVER slices first-brace-to-last-brace across candidates. Each balanced object
+    is evaluated individually. The selected block must not contain draft/analysis
+    markers. Returns the parsed dict, or None when no usable block exists.
+    """
+    # 1) Direct whole-text parse (most outputs are already valid JSON).
+    try:
+        return json.loads(stdout_text.strip())
+    except json.JSONDecodeError:
+        pass
+    # 2) Fenced block (```json ... ```). Take the LAST complete fence.
+    if "```" in stdout_text:
+        fences = []
+        idx = stdout_text.find("```")
+        while idx != -1:
+            end = stdout_text.find("```", idx + 3)
+            if end == -1:
+                break
+            inner = stdout_text[idx + 3 : end].lstrip("json").strip()
+            fences.append(inner)
+            idx = stdout_text.find("```", end + 3)
+        for inner in reversed(fences):
             try:
                 return json.loads(inner)
             except json.JSONDecodeError:
                 pass
-    # 3) Slice first { to last }. If the object is truncated (no closing brace,
-    #    or the braces are unbalanced) this yields nothing -> unrecoverable.
-    fb = cleaned.find("{")
-    lb = cleaned.rfind("}")
-    if fb == -1 or lb <= fb:
-        return None
-    body = cleaned[fb : lb + 1]
-    # --- stdlib repair passes (no external dependency required) ---
-    # Strip // comments that are NOT part of a URL (protect http(s)://).
-    body = re.sub(r"(?<!:)//[^\n]*", "", body)
-    # Collapse runs of adjacent double-quotes (e.g. `{ ""hook":` -> `{ "hook":`).
-    body = re.sub(r'"{2,}', '"', body)
-    # Quote unquoted bare keys: { or , followed by an identifier then ':'.
-    body = re.sub(r'([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:', r'\1"\2":', body)
-    # Remove trailing commas before } or ].
-    body = re.sub(r",(\s*[}\]])", r"\1", body)
-    try:
-        return json.loads(body)
-    except json.JSONDecodeError:
-        pass
-    # 4) Optional boost: json5 (installed in the codex runtime) tolerates the
-    #    remaining edge cases. Not required — absent json5, we fall back to None.
-    try:
-        import json5
-
-        return json5.loads(body)
-    except Exception:
-        return None
+    # 3) Last complete balanced {...} object that parses and is not a draft.
+    objects = _find_balanced_json_objects(stdout_text)
+    for body in reversed(objects):
+        if _looks_like_draft(body):
+            continue
+        repaired, _ = _repair_json_body(body)
+        if repaired is None:
+            continue
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            continue
+    return None
 
 
 def _unwrap_variation(payload: dict | None) -> dict | None:
@@ -263,6 +408,360 @@ def _unwrap_variation(payload: dict | None) -> dict | None:
     return out
 
 
+# social-post-v1 consumer contract: the model-facing fields the app requires.
+# `hashtags` is NEVER a model-facing field; it is generated in Python afterwards.
+_REQUIRED_FIELDS = ("hook", "caption", "cta", "content_angle", "intended_audience")
+
+
+def _validate_contract(copy: dict | None) -> tuple[list[str], list[str]]:
+    """Return (missing_fields, validation_errors) for the social-post-v1 contract."""
+    missing: list[str] = []
+    errors: list[str] = []
+    if not isinstance(copy, dict):
+        return list(_REQUIRED_FIELDS), ["payload is not a JSON object"]
+    for field in _REQUIRED_FIELDS:
+        value = copy.get(field)
+        if not isinstance(value, str) or not value.strip():
+            missing.append(field)
+    if not copy.get("caption"):
+        errors.append("caption empty")
+    return missing, errors
+
+
+def runtime_provenance() -> dict:
+    """Report what is actually imported/running, for runtime verification.
+
+    Uses module.__file__ so it reports the imported path, not just what is on
+    disk. Safe to call from app.py (no Hermes invocation).
+    """
+    import subprocess as _sp
+
+    try:
+        head = _sp.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, cwd=str(Path(__file__).resolve().parent.parent),
+            check=False,
+        )
+        git_commit = head.stdout.strip() or None
+        dirty = bool(_sp.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True, text=True, cwd=str(Path(__file__).resolve().parent.parent),
+            check=False,
+        ).stdout.strip())
+    except Exception:
+        git_commit, dirty = None, False
+    return {
+        "git_commit": git_commit,
+        "git_dirty": dirty,
+        "promo_copy_path": str(__import__("promo_copy").__file__) if _module_loaded("promo_copy") else None,
+        "agent_post_writer_path": str(Path(__file__).resolve()),
+        "agent_posts_enabled": bool(_resolve_hermes()),
+        "prompt_contract_version": "social-post-v1",
+        "hermes_path": _resolve_hermes(),
+        "hermes_flags": "-Q --reasoning none",
+        "pid": __import__("os").getpid(),
+        "process_start_time": _process_start_time(),
+        "cwd": str(Path.cwd()),
+    }
+
+
+def _module_loaded(name: str) -> bool:
+    import sys as _sys
+
+    return name in _sys.modules
+
+
+def _process_start_time() -> str:
+    try:
+        import psutil  # type: ignore
+
+        return str(psutil.Process(__import__("os").getpid()).create_time())
+    except Exception:
+        return ""
+
+
+def generate_post_result(
+    abbr: str,
+    title: str,
+    chapter: str,
+    hook: str,
+    material: dict | None = None,
+    *,
+    skills: str = _DEFAULT_SKILLS,
+    timeout: int = 180,
+    max_turns: int = 4,
+) -> AgentPostResult:
+    """Run Hermes and return a fully-structured AgentPostResult.
+
+    Never raises — every failure path produces a terminal-status result so the
+    caller can fall back to the template engine with precise diagnostics.
+    """
+    material = material or {}
+    hermes = _resolve_hermes()
+    if not hermes:
+        _log("FAIL: hermes CLI not resolvable", abbr=abbr)
+        return AgentPostResult(
+            status=AgentPostStatus.HERMES_NOT_ENABLED,
+            copy=None,
+            raw_response_path=None,
+            fallback_reason="hermes CLI not resolvable",
+        )
+    brief_path = _brief_for_abbr(abbr)
+    brief_text = ""
+    if brief_path and Path(brief_path).exists():
+        try:
+            brief_text = Path(brief_path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            brief_text = ""
+    prompt = _build_prompt(abbr, title, chapter, hook, brief_text, material)
+
+    argv = [hermes, "chat", "-q", prompt, "-s", skills, "-Q", "--reasoning", "none",
+            "--max-turns", str(max_turns)]
+    # Strip the Hermes venv leak (broken numpy) + suppress banner/spinner.
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
+    env["HERMES_QUIET"] = "1"
+    # Gate 3A Outcome A: --reasoning none yields a single clean JSON object
+    # reliably. Keep max_turns generous (the skill needs vault reads).
+    started_at = __import__("time").strftime("%Y-%m-%dT%H:%M:%S")
+    t0 = __import__("time").time()
+    try:
+        proc = subprocess.run(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=False,
+            timeout=timeout,
+            env=env,
+            cwd=str(Path.cwd()),
+        )
+    except subprocess.TimeoutExpired as exc:
+        completed_at = __import__("time").strftime("%Y-%m-%dT%H:%M:%S")
+        duration_ms = int((__import__("time").time() - t0) * 1000)
+        _log(f"FAIL: subprocess timeout: {exc!r}", abbr=abbr)
+        return AgentPostResult(
+            status=AgentPostStatus.HERMES_TIMEOUT,
+            copy=None,
+            raw_response_path=None,
+            fallback_reason="hermes subprocess timed out",
+            execution=HermesExecution(
+                command_flags=tuple(argv), exit_code=None, duration_ms=duration_ms,
+                started_at=started_at, completed_at=completed_at, reasoning="none",
+                skills=skills, max_turns=str(max_turns),
+                stdout_replacement_count=0, error=repr(exc),
+            ),
+        )
+    except (OSError, ValueError) as exc:
+        completed_at = __import__("time").strftime("%Y-%m-%dT%H:%M:%S")
+        duration_ms = int((__import__("time").time() - t0) * 1000)
+        _log(f"FAIL: subprocess error: {exc!r}", abbr=abbr)
+        return AgentPostResult(
+            status=AgentPostStatus.HERMES_PROCESS_FAILED,
+            copy=None,
+            raw_response_path=None,
+            fallback_reason=f"hermes subprocess error: {exc!r}",
+            execution=HermesExecution(
+                command_flags=tuple(argv), exit_code=None, duration_ms=duration_ms,
+                started_at=started_at, completed_at=completed_at, reasoning="none",
+                skills=skills, max_turns=str(max_turns), error=repr(exc),
+            ),
+        )
+    completed_at = __import__("time").strftime("%Y-%m-%dT%H:%M:%S")
+    duration_ms = int((__import__("time").time() - t0) * 1000)
+    # Keep raw bytes; decode separately so exact bytes remain available for
+    # provenance. Never concatenate stdout (candidate content) and stderr
+    # (Hermes diagnostics / session_id line).
+    stdout_raw = proc.stdout or b""
+    stderr_raw = proc.stderr or b""
+    stdout_text = stdout_raw.decode("utf-8", errors="replace")
+    stderr_text = stderr_raw.decode("utf-8", errors="replace")
+    # session_id: arrives on stderr (not stdout) in -Q mode; strip it there only.
+    stderr_text = _strip_session_line(stderr_text)
+    execution = HermesExecution(
+        command_flags=tuple(argv), exit_code=proc.returncode, duration_ms=duration_ms,
+        started_at=started_at, completed_at=completed_at, reasoning="none", skills=skills,
+        max_turns=str(max_turns), stdout_replacement_count=stdout_text.count("\ufffd"),
+    )
+    if proc.returncode != 0:
+        _log(
+            f"FAIL: hermes rc={proc.returncode}",
+            abbr=abbr,
+            stdout=stdout_text[:2000],
+            stderr=stderr_text[:2000],
+        )
+        return AgentPostResult(
+            status=AgentPostStatus.HERMES_PROCESS_FAILED,
+            copy=None,
+            raw_response_path=None,
+            fallback_reason=f"hermes rc={proc.returncode}",
+            execution=execution,
+        )
+    if not stdout_text.strip():
+        _log("FAIL: empty hermes stdout", abbr=abbr, stderr=stderr_text[:1500])
+        return AgentPostResult(
+            status=AgentPostStatus.HERMES_EMPTY_OUTPUT,
+            copy=None,
+            raw_response_path=None,
+            fallback_reason="hermes produced no output",
+            execution=execution,
+        )
+    data = _extract_json(stdout_text)
+    # Normalize to the flat consumer contract. Accepts both the wrapped skill
+    # output ({"variations":[...]}) and the legacy flat response. None => the
+    # final block was not found / not parseable.
+    normalized = _unwrap_variation(data)
+    if normalized is None:
+        _log(
+            "FAIL: output not parseable as post JSON (missing caption / empty or malformed variations)",
+            abbr=abbr,
+            stdout=stdout_text[:3000],
+            stderr=stderr_text[:1500],
+        )
+        return AgentPostResult(
+            status=AgentPostStatus.FINAL_BLOCK_NOT_FOUND,
+            copy=None,
+            raw_response_path=None,
+            fallback_reason="reasoning transcript contained no complete final block",
+            execution=execution,
+        )
+    missing, validation_errors = _validate_contract(normalized)
+    if missing or validation_errors:
+        _log(
+            f"FAIL: contract validation failed missing={missing} errors={validation_errors}",
+            abbr=abbr,
+            stdout=stdout_text[:3000],
+            stderr=stderr_text[:1500],
+        )
+        return _finalize(
+            AgentPostResult(
+                status=AgentPostStatus.CONTRACT_VALIDATION_FAILED,
+                copy=None,
+                raw_response_path=None,
+                validation_errors=tuple(validation_errors),
+                missing_fields=tuple(missing),
+                fallback_reason=f"contract validation failed: missing={missing}",
+                execution=execution,
+            ),
+            abbr=abbr, novel=title, chapter=chapter,
+            stdout_text=stdout_text, stdout_raw=stdout_raw,
+            stderr_text=stderr_text, normalized=None, execution=execution,
+        )
+    normalized["_source"] = "hermes_agent"
+    return _finalize(
+        AgentPostResult(
+            status=AgentPostStatus.SUCCESS,
+            copy=normalized,
+            raw_response_path=None,
+            execution=execution,
+        ),
+        abbr=abbr, novel=title, chapter=chapter,
+        stdout_text=stdout_text, stdout_raw=stdout_raw,
+        stderr_text=stderr_text, normalized=normalized, execution=execution,
+    )
+
+
+def _finalize(
+    result: AgentPostResult,
+    *,
+    abbr: str,
+    novel: str,
+    chapter: str,
+    stdout_text: str,
+    stdout_raw: bytes,
+    stderr_text: str,
+    normalized: dict | None,
+    execution: HermesExecution | None,
+) -> AgentPostResult:
+    """Persist the run to SQLite (the lifecycle source of truth), then return.
+
+    Failed runs are persisted too (most valuable diagnostics). A successful
+    generation whose record fails to persist must NOT silently proceed: it is
+    downgraded to DATABASE_PERSIST_FAILED and falls back to the template, with an
+    emergency file log (never re-entering the unavailable DB).
+    """
+    try:
+        import automation_db  # local import keeps the module boundary clean
+
+        root = Path(__file__).resolve().parent.parent
+        run_id = f"agentpost_{abbr}_{chapter}_{__import__('time').strftime('%Y%m%dT%H%M%S')}"
+        fields: list[tuple[int, str, str | None]] = []
+        if isinstance(normalized, dict):
+            for i, fld in enumerate(_REQUIRED_FIELDS):
+                fields.append((i, fld, str(normalized.get(fld) or "") or None))
+        automation_db.insert_agent_post_run(
+            root,
+            run_id=run_id,
+            novel=novel,
+            chapter=chapter,
+            title=novel,
+            status=result.status.value,
+            fallback_reason=result.fallback_reason,
+            provider=execution.resolved_provider if execution else None,
+            model=execution.resolved_model if execution else None,
+            command_flags=" ".join(execution.command_flags) if execution else None,
+            request_text=None,
+            decoded_stdout=stdout_text,
+            raw_stdout=stdout_raw,
+            stderr_text=stderr_text,
+            selected_final_block=None,
+            hook=normalized.get("hook") if normalized else None,
+            caption=normalized.get("caption") if normalized else None,
+            cta=normalized.get("cta") if normalized else None,
+            content_angle=normalized.get("content_angle") if normalized else None,
+            intended_audience=normalized.get("intended_audience") if normalized else None,
+            parse_mode=result.parse_mode,
+            validation_errors=",".join(result.validation_errors) or None,
+            started_at=execution.started_at if execution else None,
+            completed_at=execution.completed_at if execution else None,
+            duration_ms=execution.duration_ms if execution else None,
+            exit_code=execution.exit_code if execution else None,
+        )
+        automation_db.replace_agent_post_fields(root, run_id, fields)
+    except Exception as exc:  # persistence failure: never silently proceed
+        _log(f"FAIL: persistence error: {exc!r}", abbr=abbr)
+        _emergency_log(abbr, novel, chapter, result, exc)
+        if result.status is AgentPostStatus.SUCCESS:
+            return AgentPostResult(
+                status=AgentPostStatus.DATABASE_PERSIST_FAILED,
+                copy=None,
+                raw_response_path=None,
+                fallback_reason=f"generation succeeded but persistence failed: {exc!r}",
+                execution=execution,
+            )
+    return result
+
+
+def _emergency_log(abbr: str, novel: str, chapter: str, result: AgentPostResult, exc: Exception) -> None:
+    """Append-only emergency log when the SQLite lifecycle store is unavailable."""
+    try:
+        emerg = _LOG_PATH.parent / "agent_post_writer_emergency.log"
+        line = (
+            f"{__import__('time').strftime('%Y-%m-%dT%H:%M:%S')} "
+            f"PERSIST_FAIL abbr={abbr} novel={novel} chapter={chapter} "
+            f"status={result.status.value} reason={result.fallback_reason!r} error={exc!r}\n"
+        )
+        with emerg.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+    except OSError:
+        pass
+
+
+def agent_fallback_metadata(result: AgentPostResult) -> dict[str, object]:
+    """Internal metadata for a bundle when the agent did not supply copy.
+
+    A successful fallback is still an agent-generation failure; never conflate
+    the two. Internal metadata only — never public copy.
+    """
+    return {
+        "_agent_requested": True,
+        "_agent_used": result.status is AgentPostStatus.SUCCESS,
+        "_agent_status": result.status.value,
+        "_agent_fallback_reason": result.fallback_reason or "",
+        "_agent_model": (result.execution.resolved_model if result.execution else "unknown"),
+        "_agent_schema_version": "social-post-v1",
+        "_agent_run_id": "",
+    }
+
+
 def generate_post_copy(
     abbr: str,
     title: str,
@@ -274,63 +773,16 @@ def generate_post_copy(
     timeout: int = 180,
     max_turns: int = 4,
 ) -> dict | None:
-    """Return the agent's post copy dict, or None to signal 'fall back to template'.
+    """Backward-compatible thin wrapper: returns the copy dict, or None to fall back.
 
-    Never raises — any failure returns None so the caller uses build_platform_posts().
+    Keeps the four existing app.py call sites unchanged during migration. Prefer
+    `generate_post_result` for new code that needs diagnostics.
     """
-    material = material or {}
-    hermes = _resolve_hermes()
-    if not hermes:
-        _log("FAIL: hermes CLI not resolvable", abbr=abbr)
-        return None
-    brief_path = _brief_for_abbr(abbr)
-    brief_text = ""
-    if brief_path and Path(brief_path).exists():
-        try:
-            brief_text = Path(brief_path).read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            brief_text = ""
-    prompt = _build_prompt(abbr, title, chapter, hook, brief_text, material)
-
-    # Strip the Hermes venv leak (broken numpy) + suppress banner/spinner.
-    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
-    env["HERMES_QUIET"] = "1"
-    try:
-        proc = subprocess.run(
-            [hermes, "chat", "-q", prompt, "-s", skills, "-Q", "--max-turns", str(max_turns)],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            env=env,
-            cwd=str(Path.cwd()),
-        )
-    except (subprocess.TimeoutExpired, OSError, ValueError) as exc:
-        _log(f"FAIL: subprocess error: {exc!r}", abbr=abbr)
-        return None
-    if proc.returncode != 0:
-        _log(
-            f"FAIL: hermes rc={proc.returncode}",
-            abbr=abbr,
-            stdout=proc.stdout[:2000],
-            stderr=proc.stderr[:2000],
-        )
-        return None
-    data = _extract_json(proc.stdout)
-    # Normalize to the flat consumer contract. Accepts both the wrapped skill
-    # output ({"variations":[...]}) and the legacy flat response. None => fall
-    # back to the template engine (the caller treats None as "use template").
-    normalized = _unwrap_variation(data)
-    if normalized is None:
-        _log(
-            "FAIL: output not parseable as post JSON (missing caption / empty or malformed variations)",
-            abbr=abbr,
-            stdout=proc.stdout[:3000],
-            stderr=proc.stderr[:1500],
-        )
-        return None
-    return normalized
+    result = generate_post_result(
+        abbr, title, chapter, hook, material,
+        skills=skills, timeout=timeout, max_turns=max_turns,
+    )
+    return result.copy
 
 
 if __name__ == "__main__":
@@ -338,5 +790,6 @@ if __name__ == "__main__":
     _a = (sys.argv[1] if len(sys.argv) > 1 else "HA")
     _t = (sys.argv[2] if len(sys.argv) > 2 else "Ch 24")
     _h = (sys.argv[3] if len(sys.argv) > 3 else "")
-    _out = generate_post_copy(_a, _t, _t, _h, {})
-    print(json.dumps(_out, indent=2, ensure_ascii=False) if _out else "NULL (fallback)")
+    _res = generate_post_result(_a, _t, _t, _h, {})
+    print(f"status={_res.status.value} missing={_res.missing_fields} reason={_res.fallback_reason}")
+    print(json.dumps(_res.copy, indent=2, ensure_ascii=False) if _res.copy else "NULL (fallback)")
