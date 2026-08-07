@@ -24,7 +24,7 @@ import random
 import shutil
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import app_config as config
 import promo_copy as copy
@@ -264,6 +264,8 @@ def make_social_post(
     use_openai: bool,
     post_focus: str = "",
     chapter_number: str | int = "",
+    agent_copy: dict | None = None,
+    agent_meta: dict | None = None,
     *,
     collaborators: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -279,57 +281,95 @@ def make_social_post(
     folder = _get(collab, "social_post_folder")(abbr, item["day"], chapter_number)
     _get(collab, "reset_generated_folder")(folder)
 
-    source = "fallback"
-    try:
-        if use_openai:
-            copy = _get(collab, "social_copy_with_openai")(prompt_template, item["novel"], abbr, item["day"], item["filename"])
-            source = "openai"
-        else:
-            raise RuntimeError("OpenAI disabled for this run.")
-    except Exception as exc:
-        copy = fallback_social_copy(item["novel"], abbr, item["day"], item["filename"])
-        copy["warning"] = str(exc)
-    focus = resolve_post_focus(abbr, f"daily_{item['day']}", post_focus, chapter=chapter_number)
-    cta = focused_social_cta(abbr, focus)
-    style = str(copy.get("caption_style") or rotating_caption_style(abbr, f"daily_{item['day']}_{focus}_{chapter_number or 'general'}"))
-    daily_hook = {
-        "scene_hook": f"{item['novel']} has another scene worth stepping into today.",
-        "reader_question": "Would you read ahead if the next choice changed the whole path?",
-        "stakes": f"The stakes are moving again in {item['novel']}.",
-        "character_moment": f"Today's spotlight leans into a character turn from {item['novel']}.",
-        "worldbuilding": f"Today's post opens another door into the world of {item['novel']}.",
-        "catch_up": f"This is a good day to catch up on {item['novel']} before the next release.",
-    }.get(style, f"{item['novel']} has another update ready.")
-    base_instagram = str(copy.get("instagram", "")).strip()
-    if daily_hook and daily_hook not in base_instagram:
-        base_instagram = f"{daily_hook}\n\n{base_instagram}" if base_instagram else daily_hook
-    if cta not in base_instagram:
-        base_instagram = f"{base_instagram}\n\n{cta}" if base_instagram else cta
-    copy["instagram"] = promo_copy_module.public_copy_without_links(with_instagram_links(base_instagram, abbr), "instagram")
-    copy["x"] = str(copy.get("x") or fallback_social_copy(item["novel"], abbr, item["day"], item["filename"])["x"]).strip()
-    x_focus_link = "Read now: link in bio."
-    if "link in bio" not in copy["x"].lower():
-        candidate = f"{copy['x']}\n{x_focus_link}".strip()
-        copy["x"] = candidate if len(candidate) <= 275 else copy["x"]
-    copy["x"] = promo_copy_module.public_copy_without_links(copy["x"], "x")
-    copy["facebook"] = str(copy.get("facebook") or "").strip()
-    if not copy["facebook"]:
-        copy["facebook"] = "\n\n".join(
-            [
-                f"{item['day']} spotlight: {item['novel']}.",
-                cta,
-                "Follow the story updates across the main channels.",
-                promo_copy_module.audience_hub_line(abbr),
-                "#webnovel #royalroad #serialfiction #indieauthor",
-            ]
+    agent_consumed = bool(agent_copy) and bool(str((agent_copy or {}).get("caption") or "").strip())
+    if agent_consumed:
+        # Agent-differentiated copy path (Hermes boundary supplies agent_copy; this
+        # module only forwards it to the pure assembly helper and never calls Hermes).
+        source = "hermes_agent"
+        material = {
+            "abbr": abbr,
+            "novel": item["novel"],
+            "phrases": [],
+            "chapter": str(chapter_number) or "",
+        }
+        platform_posts = promo_copy_module.build_platform_posts(
+            item["novel"],
+            str(chapter_number) or "",
+            material,
+            post_focus,
+            agent_copy=agent_copy,
         )
+        copy = {
+            "instagram": platform_posts.get("caption", ""),
+            "x": platform_posts.get("x_post", ""),
+            "facebook": platform_posts.get("facebook_post", ""),
+            "patreon": platform_posts.get("patreon_note", ""),
+            "alt_text": f"Promotional image for {item['novel']}, scheduled for {item['day']}.",
+            "caption_style": platform_posts.get("caption_style", ""),
+            "post_focus": platform_posts.get("post_focus", ""),
+        }
     else:
-        if cta not in copy["facebook"]:
-            copy["facebook"] = f"{copy['facebook']}\n\n{cta}"
-        if "link in bio" not in copy["facebook"].lower():
-            copy["facebook"] = f"{copy['facebook']}\n\n{promo_copy_module.audience_hub_line(abbr)}"
-    copy["facebook"] = promo_copy_module.public_copy_without_links(copy["facebook"], "facebook")
-    copy["caption_style"] = style
+        source = "fallback"
+        try:
+            if use_openai:
+                copy = _get(collab, "social_copy_with_openai")(prompt_template, item["novel"], abbr, item["day"], item["filename"])
+                source = "openai"
+            else:
+                raise RuntimeError("OpenAI disabled for this run.")
+        except Exception as exc:
+            copy = fallback_social_copy(item["novel"], abbr, item["day"], item["filename"])
+            copy["warning"] = str(exc)
+    if agent_meta is not None:
+        agent_meta["_agent_used"] = agent_consumed
+        if agent_consumed:
+            agent_meta.setdefault("_agent_source", (agent_copy or {}).get("_source"))
+    focus = resolve_post_focus(abbr, f"daily_{item['day']}", post_focus, chapter=chapter_number)
+    if not agent_consumed:
+        cta = focused_social_cta(abbr, focus)
+        style = str(copy.get("caption_style") or rotating_caption_style(abbr, f"daily_{item['day']}_{focus}_{chapter_number or 'general'}"))
+        daily_hook = {
+            "scene_hook": f"{item['novel']} has another scene worth stepping into today.",
+            "reader_question": "Would you read ahead if the next choice changed the whole path?",
+            "stakes": f"The stakes are moving again in {item['novel']}.",
+            "character_moment": f"Today's spotlight leans into a character turn from {item['novel']}.",
+            "worldbuilding": f"Today's post opens another door into the world of {item['novel']}.",
+            "catch_up": f"This is a good day to catch up on {item['novel']} before the next release.",
+        }.get(style, f"{item['novel']} has another update ready.")
+        base_instagram = str(copy.get("instagram", "")).strip()
+        if daily_hook and daily_hook not in base_instagram:
+            base_instagram = f"{daily_hook}\n\n{base_instagram}" if base_instagram else daily_hook
+        if cta not in base_instagram:
+            base_instagram = f"{base_instagram}\n\n{cta}" if base_instagram else cta
+        copy["instagram"] = promo_copy_module.public_copy_without_links(with_instagram_links(base_instagram, abbr), "instagram")
+        copy["x"] = str(copy.get("x") or fallback_social_copy(item["novel"], abbr, item["day"], item["filename"])["x"]).strip()
+        x_focus_link = "Read now: link in bio."
+        if "link in bio" not in copy["x"].lower():
+            candidate = f"{copy['x']}\n{x_focus_link}".strip()
+            copy["x"] = candidate if len(candidate) <= 275 else copy["x"]
+        copy["x"] = promo_copy_module.public_copy_without_links(copy["x"], "x")
+        copy["facebook"] = str(copy.get("facebook") or "").strip()
+        if not copy["facebook"]:
+            copy["facebook"] = "\n\n".join(
+                [
+                    f"{item['day']} spotlight: {item['novel']}.",
+                    cta,
+                    "Follow the story updates across the main channels.",
+                    promo_copy_module.audience_hub_line(abbr),
+                    "#webnovel #royalroad #serialfiction #indieauthor",
+                ]
+            )
+        else:
+            if cta not in copy["facebook"]:
+                copy["facebook"] = f"{copy['facebook']}\n\n{cta}"
+            if "link in bio" not in copy["facebook"].lower():
+                copy["facebook"] = f"{copy['facebook']}\n\n{promo_copy_module.audience_hub_line(abbr)}"
+        copy["facebook"] = promo_copy_module.public_copy_without_links(copy["facebook"], "facebook")
+        copy["caption_style"] = style
+    else:
+        # Agent-differentiated copy is already final (assembled by build_platform_posts).
+        # Only ensure the alt_text and caption_style fields are present and consistent.
+        copy["alt_text"] = copy.get("alt_text") or f"Promotional image for {item['novel']}, scheduled for {item['day']}."
+        copy.setdefault("caption_style", "")
 
     image_target = folder / f"{abbr}_{item['day']}.png"
     image_source = _get(collab, "create_fresh_social_image_from_caption")(
@@ -354,6 +394,10 @@ def make_social_post(
     }
     if str(chapter_number).strip():
         payload["chapter"] = str(chapter_number).strip()
+    if agent_meta:
+        for _k, _v in agent_meta.items():
+            if str(_k).startswith("_agent_"):
+                payload[_k] = _v
     (folder / "instagram.txt").write_text(copy["instagram"].strip() + "\n", encoding="utf-8")
     (folder / "x.txt").write_text(copy["x"].strip() + "\n", encoding="utf-8")
     (folder / "facebook.txt").write_text(copy["facebook"].strip() + "\n", encoding="utf-8")
@@ -397,6 +441,7 @@ def make_social_post(
                     "instagram": payload.get("instagram", ""),
                     "x": payload.get("x", ""),
                     "facebook": payload.get("facebook", ""),
+                    "agentMeta": {_k: _v for _k, _v in payload.items() if str(_k).startswith("_agent_")},
                 },
                 indent=2,
             ),
@@ -408,7 +453,8 @@ def make_social_post(
 
 
 def build_week_social_posts(use_openai: bool = False, days: list[str] | None = None,
-                            *, collaborators: dict[str, Any] | None = None) -> dict[str, Any]:
+                            *, collaborators: dict[str, Any] | None = None,
+                            agent_copy_for: "Callable[[str, str, str, dict], tuple[dict | None, dict | None]] | None" = None) -> dict[str, Any]:
     collab = collaborators if collaborators is not None else _COLLAB
     selected_days = days or ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
     posts: list[dict[str, Any]] = []
@@ -417,7 +463,21 @@ def build_week_social_posts(use_openai: bool = False, days: list[str] | None = N
     for day in selected_days:
         for abbr in NOVEL_NAMES:
             try:
-                posts.append(make_social_post(abbr, day, template, use_openai, collaborators=collab))
+                _agent_copy = None
+                _agent_meta: dict[str, Any] | None = None
+                if callable(agent_copy_for):
+                    try:
+                        _agent_copy, _agent_meta = agent_copy_for(abbr, day, template, {
+                            "abbr": abbr,
+                            "novel": NOVEL_NAMES.get(abbr, abbr),
+                            "day": day,
+                        })
+                    except Exception:
+                        _agent_copy, _agent_meta = None, None
+                posts.append(make_social_post(
+                    abbr, day, template, use_openai,
+                    agent_copy=_agent_copy, agent_meta=_agent_meta, collaborators=collab,
+                ))
             except Exception as exc:
                 errors.append({"abbr": abbr, "day": day, "error": str(exc)})
     return {

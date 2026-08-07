@@ -20176,6 +20176,33 @@ WORKFLOW_ACTION_ORDER = ["promo", "shorts", "royal-road", "instagram"]
 
 def chapter_ledger_entry(*args, **kwargs):
     return release_state.chapter_ledger_entry(*args, **kwargs)
+
+
+def latest_released_chapter_for(abbr: str) -> str:
+    """Return the highest released chapter number for a novel (string), or '' if none.
+
+    Used by the daily/weekly social-post path, which has no chapter of its own and
+    instead promotes the most recently released chapter for the novel.
+    """
+    abbr_key = story_key(abbr)
+    try:
+        ledger = load_chapter_ledger()
+        chapters = ledger.get("chapters", {}) if isinstance(ledger, dict) else {}
+        nums = []
+        for key in chapters:
+            if not isinstance(key, str):
+                continue
+            if key.split("-", 1)[0].upper() == abbr_key.upper():
+                suffix = key.split("-", 1)[1] if "-" in key else key
+                try:
+                    nums.append(int(str(suffix).strip()))
+                except (TypeError, ValueError):
+                    continue
+        if nums:
+            return str(max(nums))
+    except Exception:
+        pass
+    return ""
 def missing_workflow_actions(abbr: str, chapter: int | str) -> list[str]:
     entry = chapter_ledger_entry(abbr, chapter)
     missing = []
@@ -43852,18 +43879,84 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/social-post":
                 prompt_template = str(body.get("promptTemplate") or social_prompt_template())
+                _abbr = str(body.get("abbr") or "")
+                _chapter = str(body.get("chapterNumber") or body.get("chapter") or "")
+                agent_copy = None
+                agent_meta: dict = {}
+                if agent_posts_enabled() and _abbr:
+                    try:
+                        _title = NOVEL_NAMES.get(_abbr, _abbr)
+                        _chapter = _chapter or latest_released_chapter_for(_abbr)
+                        _agent_hook = ""
+                        agent_copy, agent_meta = resolve_agent_post_copy(
+                            _abbr, _title, _chapter, _agent_hook, {"abbr": _abbr, "novel": _title},
+                        )
+                    except Exception as _agent_exc:  # never block a daily post on the agent
+                        agent_copy = None
+                        agent_meta = {
+                            "_agent_requested": True,
+                            "_agent_used": False,
+                            "_agent_fallback_reason": str(_agent_exc),
+                        }
                 result = make_social_post(
-                    str(body.get("abbr") or ""),
+                    _abbr,
                     str(body.get("day") or ""),
                     prompt_template,
                     bool(body.get("useOpenAI", True)),
                     str(body.get("postFocus") or ""),
-                    str(body.get("chapterNumber") or body.get("chapter") or ""),
+                    _chapter,
+                    agent_copy=agent_copy,
+                    agent_meta=agent_meta,
                 )
+                # Observability: correlate this post back to its Hermes run
+                # (same trail as the campaign path). No-op when no run id.
+                if agent_meta and agent_meta.get("_agent_run_id"):
+                    record_generated_social_posts(
+                        agent_meta,
+                        {
+                            "caption": result.get("instagram", ""),
+                            "x_post": result.get("x", ""),
+                            "facebook_post": result.get("facebook", ""),
+                            "patreon_note": result.get("patreon", ""),
+                        },
+                    )
                 self.send_json(result)
                 return
             if self.path == "/api/build-week-social-posts":
-                self.send_json(build_week_social_posts(bool(body.get("useOpenAI", False))))
+                def _weekly_agent_copy_for(abbr, day, template, material):
+                    if not agent_posts_enabled() or not abbr:
+                        return None, None
+                    try:
+                        _title = NOVEL_NAMES.get(abbr, abbr)
+                        _ch = latest_released_chapter_for(abbr)
+                        return resolve_agent_post_copy(
+                            abbr, _title, _ch, "", {"abbr": abbr, "novel": _title},
+                        )
+                    except Exception as _wexc:
+                        return None, {
+                            "_agent_requested": True,
+                            "_agent_used": False,
+                            "_agent_fallback_reason": str(_wexc),
+                        }
+                week = build_week_social_posts(
+                    bool(body.get("useOpenAI", False)),
+                    agent_copy_for=_weekly_agent_copy_for,
+                )
+                # Observability: correlate each weekly post back to its Hermes run
+                # (same generated_social_posts trail as the campaign/daily paths).
+                for _p in week.get("posts", []):
+                    _am = {_k: _v for _k, _v in _p.items() if str(_k).startswith("_agent_")}
+                    if _am.get("_agent_run_id"):
+                        record_generated_social_posts(
+                            _am,
+                            {
+                                "caption": _p.get("instagram", ""),
+                                "x_post": _p.get("x", ""),
+                                "facebook_post": _p.get("facebook", ""),
+                                "patreon_note": _p.get("patreon", ""),
+                            },
+                        )
+                self.send_json(week)
                 return
             if self.path == "/api/build-this-week":
                 self.send_json(build_this_week_plan(bool(body.get("useOpenAI", False))))

@@ -100,6 +100,7 @@ class _Sandbox:
     def _patch_finalize_root(self):
         real_insert = automation_db.insert_agent_post_run
         real_fields = automation_db.replace_agent_post_fields
+        real_social = automation_db.insert_generated_social_posts
         tmp = self.tmp
 
         def insert(root, **kw):
@@ -108,9 +109,13 @@ class _Sandbox:
         def fields(root, run_id, flds):
             return real_fields(tmp, run_id, flds)
 
-        self._orig_finalize_root = (real_insert, real_fields)
+        def social(root, run_id, rows):
+            return real_social(tmp, run_id, rows)
+
+        self._orig_finalize_root = (real_insert, real_fields, real_social)
         automation_db.insert_agent_post_run = insert
         automation_db.replace_agent_post_fields = fields
+        automation_db.insert_generated_social_posts = social
 
     def __exit__(self, *exc):
         subprocess.run = self._orig_run
@@ -119,6 +124,7 @@ class _Sandbox:
         if self._orig_finalize_root:
             automation_db.insert_agent_post_run = self._orig_finalize_root[0]
             automation_db.replace_agent_post_fields = self._orig_finalize_root[1]
+            automation_db.insert_generated_social_posts = self._orig_finalize_root[2]
         return False
 
     def run_rows(self, run_id):
@@ -403,6 +409,66 @@ def test_en37_malformed_block_repaired_end_to_end():
     return ok
 
 
+def test_daily_weekly_correlation_trail():
+    print("[9] daily/weekly post -> generated_social_posts rows correlated to _agent_run_id")
+    ok = True
+    try:
+        import app  # noqa: E402
+    except Exception as exc:  # pragma: no cover - environment dependent
+        print(f"  SKIP: app import unavailable ({exc})")
+        return True
+
+    with _Sandbox() as box:
+        # Simulate what /api/social-post (and the weekly loop) now does after a
+        # successful build: correlate the platform text back to the Hermes run.
+        run_id = "agentpost_HP_36_20260807T125947_30ce47"
+        agent_meta = {
+            "_agent_requested": True,
+            "_agent_used": True,
+            "_agent_status": "SUCCESS",
+            "_agent_run_id": run_id,
+            "_agent_source": "hermes_agent",
+            "_agent_fallback_reason": None,
+        }
+        # Daily/platform-assembled text (instagram/x/facebook/patreon shaped the
+        # handler builds before calling record_generated_social_posts).
+        daily_posts = {
+            "caption": "Silver light poured from a wound like blood, and the hall went quiet.",
+            "x_post": "Silver light poured from a wound like blood, and the hall went quiet.",
+            "facebook_post": "Silver light poured from a wound like blood, and the hall went quiet.",
+            "patreon_note": "Silver light poured from a wound like blood, and the hall went quiet.",
+        }
+        # The parent agent_post_runs row (written by _finalize in the real flow)
+        # must exist for the FK; create it the same way the sandbox does.
+        automation_db.insert_agent_post_run(
+            box.tmp, run_id=run_id, novel="Hundredfold Path", chapter="36",
+            title="Hundredfold Path", status="SUCCESS", fallback_reason=None,
+            provider="hermes", model="unknown", command_flags="",
+            request_text=None, decoded_stdout="", raw_stdout=b"",
+            stderr_text="", selected_final_block=None, hook="hook",
+            caption="Silver light poured from a wound like blood, and the hall went quiet.",
+            cta="cta", content_angle="angle", intended_audience="readers",
+            parse_mode="balanced_repair", validation_errors=None,
+            started_at="2026-08-07T12:59:47", completed_at="2026-08-07T12:59:47",
+            duration_ms=1, exit_code=0,
+        )
+        app.record_generated_social_posts(agent_meta, daily_posts)
+        srows = box.social_rows(run_id)
+        ok &= _assert(len(srows) == 4, f"4 generated_social_posts rows correlated (got {len(srows)})")
+        ok &= _assert(all(r["agent_used"] == 1 for r in srows), "rows flagged agent_used=1")
+        ok &= _assert(
+            all(r["post_text"] == daily_posts["caption"] for r in srows),
+            "platform text matches the daily build",
+        )
+
+        # No run id -> no rows written (fail-soft guard).
+        before = len(box.social_rows("agentpost_NO_RUN_999"))
+        app.record_generated_social_posts({"_agent_used": True}, daily_posts)
+        after = len(box.social_rows("agentpost_NO_RUN_999"))
+        ok &= _assert(before == after == 0, "no run_id -> no correlation rows")
+    return ok
+
+
 def main():
     _assert.failed = 0
     results = [
@@ -414,6 +480,7 @@ def main():
         test_metadata_contract_shape(),
         test_write_text_artifacts_boundary(),
         test_en37_malformed_block_repaired_end_to_end(),
+        test_daily_weekly_correlation_trail(),
     ]
     print()
     if _assert.failed == 0 and all(results):
