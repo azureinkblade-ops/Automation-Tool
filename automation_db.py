@@ -21,7 +21,7 @@ except Exception:  # pragma: no cover - app can still run without pydantic
 
 
 DB_FILENAME = "automation_state.db"
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 _LOCK = threading.RLock()
 
 DEFAULT_NOVELS = {
@@ -694,6 +694,75 @@ def init_db(root: Path) -> Path:
                     PRIMARY KEY (run_id, chunk_id),
                     FOREIGN KEY (run_id)
                         REFERENCES retrieval_index_runs(run_id)
+                        ON DELETE CASCADE
+                );
+
+                -- Agent post lifecycle (Hermes post-differentiation). Source of truth
+                -- for every attempt, success or failure. Additive (schema 7 -> 8).
+                CREATE TABLE IF NOT EXISTS agent_post_runs (
+                    run_id            TEXT PRIMARY KEY,
+                    novel             TEXT,
+                    chapter           TEXT,
+                    title             TEXT,
+                    status            TEXT NOT NULL,
+                    fallback_reason   TEXT,
+                    hermes_profile    TEXT,
+                    provider          TEXT,
+                    model             TEXT,
+                    command_flags     TEXT,
+                    request_text      TEXT,
+                    decoded_stdout    TEXT,
+                    raw_stdout        BLOB,
+                    stderr_text       TEXT,
+                    selected_final_block TEXT,
+                    hook              TEXT,
+                    caption           TEXT,
+                    cta               TEXT,
+                    content_angle     TEXT,
+                    intended_audience TEXT,
+                    schema_version    TEXT DEFAULT 'social-post-v1',
+                    parse_mode        TEXT,
+                    validation_errors TEXT,
+                    started_at        TEXT,
+                    completed_at      TEXT,
+                    duration_ms       INTEGER,
+                    exit_code         INTEGER,
+                    created_at        TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_agent_post_runs_created
+                    ON agent_post_runs(created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS agent_post_fields (
+                    run_id    TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    field    TEXT NOT NULL,
+                    value    TEXT,
+                    PRIMARY KEY (run_id, position),
+                    FOREIGN KEY (run_id)
+                        REFERENCES agent_post_runs(run_id)
+                        ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS agent_post_hashtags (
+                    run_id    TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    tag      TEXT NOT NULL,
+                    PRIMARY KEY (run_id, position),
+                    FOREIGN KEY (run_id)
+                        REFERENCES agent_post_runs(run_id)
+                        ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS generated_social_posts (
+                    run_id     TEXT NOT NULL,
+                    platform   TEXT NOT NULL,
+                    post_text  TEXT,
+                    agent_used INTEGER NOT NULL DEFAULT 0,
+                    fallback_reason TEXT,
+                    PRIMARY KEY (run_id, platform),
+                    FOREIGN KEY (run_id)
+                        REFERENCES agent_post_runs(run_id)
                         ON DELETE CASCADE
                 );
                 """
@@ -1757,6 +1826,177 @@ def insert_recovery_event(root: Path, event: dict[str, Any]) -> None:
                     str(event.get("time") or utc_now_text()),
                 ),
             )
+            conn.commit()
+
+
+def insert_agent_post_run(
+    root: Path,
+    *,
+    run_id: str,
+    novel: str,
+    chapter: str,
+    title: str,
+    status: str,
+    fallback_reason: str | None = None,
+    hermes_profile: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    command_flags: str | None = None,
+    request_text: str | None = None,
+    decoded_stdout: str | None = None,
+    raw_stdout: bytes | None = None,
+    stderr_text: str | None = None,
+    selected_final_block: str | None = None,
+    hook: str | None = None,
+    caption: str | None = None,
+    cta: str | None = None,
+    content_angle: str | None = None,
+    intended_audience: str | None = None,
+    parse_mode: str | None = None,
+    validation_errors: str | None = None,
+    started_at: str | None = None,
+    completed_at: str | None = None,
+    duration_ms: int | None = None,
+    exit_code: int | None = None,
+) -> None:
+    """Persist one agent-post attempt (success OR failure) as the lifecycle source of truth.
+
+    Failed runs are the most valuable diagnostic records, so they are stored too.
+    The application owns this transaction; Hermes never writes here.
+    """
+    init_db(root)
+    now = utc_now_text()
+    with _LOCK:
+        with connect(root) as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_post_runs(
+                    run_id, novel, chapter, title, status, fallback_reason, hermes_profile,
+                    provider, model, command_flags, request_text, decoded_stdout, raw_stdout,
+                    stderr_text, selected_final_block, hook, caption, cta, content_angle,
+                    intended_audience, schema_version, parse_mode, validation_errors,
+                    started_at, completed_at, duration_ms, exit_code, created_at
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    status=excluded.status,
+                    fallback_reason=excluded.fallback_reason,
+                    decoded_stdout=excluded.decoded_stdout,
+                    raw_stdout=excluded.raw_stdout,
+                    stderr_text=excluded.stderr_text,
+                    selected_final_block=excluded.selected_final_block,
+                    hook=excluded.hook,
+                    caption=excluded.caption,
+                    cta=excluded.cta,
+                    content_angle=excluded.content_angle,
+                    intended_audience=excluded.intended_audience,
+                    parse_mode=excluded.parse_mode,
+                    validation_errors=excluded.validation_errors,
+                    completed_at=excluded.completed_at,
+                    duration_ms=excluded.duration_ms,
+                    exit_code=excluded.exit_code,
+                    created_at=excluded.created_at
+                """,
+                (
+                    str(run_id), str(novel or ""), str(chapter or ""), str(title or ""),
+                    str(status), str(fallback_reason or "") or None,
+                    str(hermes_profile or "") or None, str(provider or "") or None, str(model or "") or None,
+                    str(command_flags or "") or None, str(request_text or "") or None,
+                    str(decoded_stdout or "") or None, raw_stdout, str(stderr_text or "") or None,
+                    str(selected_final_block or "") or None, str(hook or "") or None,
+                    str(caption or "") or None, str(cta or "") or None,
+                    str(content_angle or "") or None, str(intended_audience or "") or None,
+                    "social-post-v1", str(parse_mode or "") or None, str(validation_errors or "") or None,
+                    str(started_at or "") or None, str(completed_at or "") or None,
+                    int(duration_ms) if duration_ms is not None else None,
+                    int(exit_code) if exit_code is not None else None, now,
+                ),
+            )
+            conn.commit()
+
+
+def replace_agent_post_fields(root: Path, run_id: str, fields: list[tuple[int, str, str | None]]) -> None:
+    """Replace the per-field record for a run (position, field, value)."""
+    init_db(root)
+    with _LOCK:
+        with connect(root) as conn:
+            conn.execute("DELETE FROM agent_post_fields WHERE run_id=?", (str(run_id),))
+            for position, field, value in fields:
+                conn.execute(
+                    """
+                    INSERT INTO agent_post_fields(run_id, position, field, value)
+                    VALUES(?, ?, ?, ?)
+                    """,
+                    (str(run_id), int(position), str(field), None if value is None else str(value)),
+                )
+            conn.commit()
+
+
+def list_agent_post_runs(root: Path, limit: int = 20) -> list[dict]:
+    """Recent agent post runs for diagnostics, newest first.
+
+    Deliberately selects only small columns: `decoded_stdout`, `raw_stdout`, and
+    `stderr_text` are large blobs and must never be returned by a list endpoint.
+    `agent_used` is derived from whether any correlated generated post actually
+    consumed the agent copy. `limit` is clamped to 1..200.
+    """
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = 20
+    limit = max(1, min(200, limit))
+    init_db(root)
+    with _LOCK:
+        with connect(root) as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    r.run_id, r.novel, r.chapter, r.status, r.fallback_reason,
+                    r.duration_ms, r.created_at,
+                    EXISTS (
+                        SELECT 1 FROM generated_social_posts g
+                        WHERE g.run_id = r.run_id AND g.agent_used = 1
+                    ) AS agent_used
+                FROM agent_post_runs r
+                ORDER BY r.created_at DESC, r.rowid DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+    return [
+        {
+            "run_id": row["run_id"],
+            "novel": row["novel"],
+            "chapter": row["chapter"],
+            "status": row["status"],
+            "fallback_reason": row["fallback_reason"],
+            "duration_ms": row["duration_ms"],
+            "created_at": row["created_at"],
+            "agent_used": bool(row["agent_used"]),
+        }
+        for row in rows
+    ]
+
+
+def insert_generated_social_posts(
+    root: Path, run_id: str, posts: list[tuple[str, str, bool, str | None]]
+) -> None:
+    """Record each generated platform post for a run (platform, text, agent_used, fallback_reason)."""
+    init_db(root)
+    with _LOCK:
+        with connect(root) as conn:
+            for platform, post_text, agent_used, fallback_reason in posts:
+                conn.execute(
+                    """
+                    INSERT INTO generated_social_posts(run_id, platform, post_text, agent_used, fallback_reason)
+                    VALUES(?, ?, ?, ?, ?)
+                    ON CONFLICT(run_id, platform) DO UPDATE SET
+                        post_text=excluded.post_text,
+                        agent_used=excluded.agent_used,
+                        fallback_reason=excluded.fallback_reason
+                    """,
+                    (str(run_id), str(platform), str(post_text or ""), 1 if agent_used else 0, str(fallback_reason or "") or None),
+                )
             conn.commit()
 
 

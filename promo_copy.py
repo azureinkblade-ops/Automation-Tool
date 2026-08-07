@@ -282,12 +282,31 @@ def track_copy_links(text: str, story: str, source: str, campaign: str, content:
     return result
 
 
+DIRECT_PUBLIC_URL_RE = re.compile(
+    r"(?i)\b(?:https?://|www\.)?\S*(?:linktr\.ee|royalroad\.com|patreon\.com|youtube\.com|youtu\.be|tiktok\.com|x\.com|twitter\.com|instagram\.com)\S*"
+)
+
+
+def public_copy_without_links(text: str, platform: str = "") -> str:
+    cleaned = DIRECT_PUBLIC_URL_RE.sub("", str(text or ""))
+    cleaned = re.sub(r"(?im)^\s*(rr|royal road|patreon|youtube|tik\s*tok|tiktok|instagram|x|twitter)\b.*$", "", cleaned)
+    cleaned = re.sub(r"https?://\S+", "", cleaned)
+    cleaned = cleaned.replace("\u2014", "-").replace("\u2013", "-")
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    cta = "Read now: link in bio." if str(platform or "").strip().lower() in {"x", "twitter"} else "Read now. Link in bio."
+    if cleaned and "link in bio" not in cleaned.lower():
+        cleaned = f"{cleaned}\n\n{cta}"
+    return cleaned or cta
+
+
 def audience_hub_line(story: str = "", *, verb: str = "Start reading") -> str:
     profile = social_profile(story) if story else {"name": "Azure Inkblade"}
     name = str(profile.get("name") or "Azure Inkblade")
     if story_key(story):
-        return f"{verb} {name}, watch chapter videos, and find all links: {linktree_url()}"
-    return f"{verb}, watch, and follow Azure Inkblade: {linktree_url()}"
+        return f"{verb} {name}, watch chapter videos, and find every link in bio."
+    return f"{verb}, watch, and follow Azure Inkblade through the link in bio."
 
 
 def platform_links_block(story: str = "") -> str:
@@ -391,6 +410,49 @@ def rotated_x_hashtags(abbr: str, seed: str, limit: int = 5) -> str:
     # BUG FIX #1: deterministic SHA-256 ordering (built-in hash() is not stable across restarts)
     ordered = sorted(base, key=lambda t: int(hashlib.sha256(f"{seed}:{t}".encode("utf-8")).hexdigest()[:8], 16))
     return " ".join(ordered[:limit])
+
+
+def _agent_list_hashtags(agent_copy: dict, deterministic_tags: str, limit: int = 12) -> list[str]:
+    """Build the agent post's hashtag set.
+
+    Deterministic-first: Python generates the complete, brand-correct set
+    (story profile tags + required #AzureInkblade + required novel anchor +
+    rotated/chapter tags) and passes it as `deterministic_tags`. The model's own
+    `hashtags` are NOT the primary source — if the model omits them entirely, the
+    post still gets a complete, brand-correct tag set. Model-produced tags are
+    merged only as a deprecated compatibility tail (deduped, capped) so legacy
+    agent responses are not discarded, but they never shrink or replace the
+    deterministic base.
+    """
+    base = re.findall(r"#\w+", deterministic_tags or "")
+    raw_tags = agent_copy.get("hashtags") if isinstance(agent_copy, dict) else []
+    compat: list[str] = []
+    if isinstance(raw_tags, str):
+        compat = re.findall(r"#\w+", raw_tags)
+    elif isinstance(raw_tags, list):
+        for item in raw_tags:
+            text = str(item or "").strip()
+            if not text:
+                continue
+            if not text.startswith("#"):
+                text = "#" + re.sub(r"\W+", "", text)
+            compat.extend(re.findall(r"#\w+", text))
+    result: list[str] = []
+    seen: set[str] = set()
+    for tag in base + compat:
+        key = tag.lower()
+        if not tag or key in seen:
+            continue
+        seen.add(key)
+        result.append(tag)
+    return result[:limit]
+
+
+def _clean_copy_field(text: str) -> str:
+    cleaned = DIRECT_PUBLIC_URL_RE.sub("", str(text or ""))
+    cleaned = re.sub(r"https?://\S+", "", cleaned)
+    cleaned = cleaned.replace("\u2014", "-").replace("\u2013", "-")
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def chapter_range_text(start: int | str, end: int | str | None = None, prefix: str = "Ch.") -> str:
@@ -720,7 +782,7 @@ def focused_social_cta(abbr: str, focus: str, context: str = "", platform: str =
     focus = normalize_post_copy_mode(focus)
     profile = social_profile(abbr)
     goal = dynamic_cta_goal(abbr, focus, context or platform, rotation_next=rotation_next)
-    hub = linktree_url()
+    hub = "link in bio"
     name = profile["name"]
     # Per-novel voice variants (2026-07-20 plan §1): complete phrases in each
     # novel's voice, keyed by normalized abbr then CTA goal. Falls back to the
@@ -735,7 +797,7 @@ def focused_social_cta(abbr: str, focus: str, context: str = "", platform: str =
     if not variants:
         return audience_hub_line(abbr)
     key = f"CTA_TEXT_{context}_{platform}_{abbr_key}_{focus}_{goal}".upper()
-    return variants[rotation_next(key, len(variants))].format(hub=hub, name=name)
+    return public_copy_without_links(variants[rotation_next(key, len(variants))].format(hub=hub, name=name), platform)
 
 
 
@@ -1243,14 +1305,14 @@ def build_platform_posts(
         f"{facebook_cta}\n\n"
         f"{facebook_tail}"
     )
-    x_destination = track_copy_links(linktree_url(), story, "x", campaign_key, "daily-post")
+    x_destination = "Read now: link in bio."
     x_parts = [f"{novel} - {title}", x_hook or hook]
     if focus == "royal_road_live" and royal_road_url:
-        x_parts.append(track_copy_links(f"Read and follow: {linktree_url()}", story, "x", campaign_key, "daily-post"))
+        x_parts.append("Read and follow through the link in bio.")
     elif focus == "patreon_early":
-        x_parts.append(track_copy_links(f"Read ahead: {linktree_url()}", story, "x", campaign_key, "daily-post"))
+        x_parts.append("Read ahead through the link in bio.")
     elif focus == "youtube_release":
-        x_parts.append(track_copy_links(f"Watch/listen: {linktree_url()}", story, "x", campaign_key, "daily-post"))
+        x_parts.append("Watch/listen through the link in bio.")
     elif focus == "weekly_general_promo":
         x_parts.append(x_destination)
     elif focus == "catch_up_archive":
@@ -1273,55 +1335,65 @@ def build_platform_posts(
     # When the caller passes agent_copy (from tools/agent_post_writer.generate_post_copy),
     # splice the agent's reader-facing caption/cta/hashtags over the template output.
     # The template above remains the fallback when agent_copy is None (or partial).
+    agent_hook = ""
+    agent_content_angle = ""
+    agent_intended_audience = ""
+    # ---- Agent override (Hermes post-differentiation). ----
+    # When the caller passes agent_copy (from tools/agent_post_writer.generate_post_copy),
+    # splice the agent's structured hook/caption/cta/hashtags over the template output.
+    # The template above remains the fallback when agent_copy is None (or partial).
     if isinstance(agent_copy, dict) and agent_copy.get("caption"):
+        agent_hook = str(agent_copy.get("hook") or hook).strip()
         _ag_caption = str(agent_copy["caption"]).strip()
         _ag_cta = str(agent_copy.get("cta") or "").strip()
-        _ag_tags = agent_copy.get("hashtags") or []
-        _ag_tag_str = " ".join(str(t) for t in _ag_tags if str(t).strip())
-        # Ensure brand + novel anchors are present even if the agent omitted them.
-        if "#AzureInkblade" not in _ag_tag_str:
-            _ag_tag_str = f"#AzureInkblade {_ag_tag_str}".strip()
-        if novel_tag and novel_tag not in _ag_tag_str:
-            _ag_tag_str = f"{_ag_tag_str} {novel_tag}".strip()
-        # Instagram: agent caption + agent cta (once) + agent hashtags.
-        instagram_caption = (
-            f"{_ag_caption}\n\n{_ag_cta}\n\n{_ag_tag_str}" if _ag_cta else f"{_ag_caption}\n\n{_ag_tag_str}"
+        agent_content_angle = str(agent_copy.get("content_angle") or "").strip()
+        agent_intended_audience = str(agent_copy.get("intended_audience") or "").strip()
+        _ag_tags = _agent_list_hashtags(
+            agent_copy,
+            rotated_hashtags(story, f"{campaign_key}_agent", chapter_text=chapter, limit=9),
         )
-        # Facebook: keep novel/title header + agent caption + agent cta + agent tags.
-        _fb_body = _ag_caption
-        if _ag_cta:
-            _fb_body = f"{_fb_body}\n\n{_ag_cta}"
-        facebook_post = (
-            f"{novel} - {title}\n\n"
-            f"{_fb_body}\n\n"
-            f"{_ag_tag_str}"
+        _ag_tag_str = " ".join(_ag_tags)
+        _x_tag_str = " ".join(
+            _agent_list_hashtags(agent_copy, rotated_x_hashtags(story, f"{campaign_key}_agent", limit=5), limit=5)
         )
+        _structured_body = "\n\n".join(
+            part for part in [agent_hook, _ag_caption, _ag_cta, _ag_tag_str] if part
+        )
+        # Instagram/Facebook: organic reader-facing text, no raw JSON labels.
+        instagram_caption = _structured_body
+        facebook_post = _structured_body
         # Patreon note: keep structure, swap in agent caption + cta.
         patreon_note = (
             f"{novel}\n{title}\n\n"
+            f"{agent_hook}\n\n"
             f"{_ag_caption}\n\n"
             f"{_ag_cta or patreon_cta}\n\n"
             "Thank you for supporting the stories and helping keep the release schedule moving."
         )
-        # X: agent caption (trimmed to 280) + agent tags; keep tracked destination.
-        _x_body = _ag_caption
+        # X: agent hook/caption (trimmed to 280) + agent tags; keep link-in-bio copy.
+        _x_body = agent_hook or _ag_caption
         if _ag_cta:
             _x_body = f"{_x_body}\n\n{_ag_cta}"
-        _x_full = f"{novel} - {title}\n\n{_x_body}\n\n{_ag_tag_str}"
+        _x_full = f"{novel} - {title}\n\n{_x_body}\n\n{_x_tag_str}"
         if len(_x_full) > 280:
-            _x_full = f"{_x_body}\n\n{_ag_tag_str}"
+            _x_full = f"{_x_body}\n\n{_x_tag_str}"
         if len(_x_full) > 280:
-            _x_full = f"{_ag_tag_str}"
+            _x_full = f"{(agent_hook or _ag_caption)[:180].rstrip()}\n\n{_x_tag_str}"
+        if len(_x_full) > 280:
+            _x_full = f"{_x_tag_str}"
         x_post = _x_full
     return {
-        "caption": track_copy_links(instagram_caption, story, "instagram", campaign_key, "daily-post"),
-        "patreon_note": track_copy_links(patreon_note, story, "patreon", campaign_key, "daily-post"),
-        "facebook_post": track_copy_links(facebook_post, story, "facebook", campaign_key, "daily-post"),
-        "x_post": x_post,
+        "caption": public_copy_without_links(instagram_caption, "instagram"),
+        "patreon_note": public_copy_without_links(patreon_note, "patreon"),
+        "facebook_post": public_copy_without_links(facebook_post, "facebook"),
+        "x_post": public_copy_without_links(x_post, "x"),
         "x_thread_links": track_copy_links(links, story, "x", campaign_key, "daily-post-links"),
         "post_focus": focus,
         "caption_style": style,
         "tracking_campaign": campaign_key,
+        "hook": _clean_copy_field(agent_hook or hook),
+        "content_angle": _clean_copy_field(agent_content_angle),
+        "intended_audience": _clean_copy_field(agent_intended_audience),
         "_agent_source": (agent_copy.get("_source") if isinstance(agent_copy, dict) else None),
     }
 
@@ -1359,11 +1431,7 @@ def normalize_chapter_id(title: str, chapter: str | int = "") -> str:
 
 
 def with_instagram_links(text: str, story: str = "") -> str:
-    text = text.strip()
-    if linktree_url() in text:
-        return text
-    footer = platform_links_block(story)
-    return f"{text}\n\n{footer}" if text else footer
+    return public_copy_without_links(text, "instagram")
 
 
 def fallback_social_copy(novel: str, abbr: str, day: str, filename: str) -> dict[str, str]:
@@ -1391,13 +1459,12 @@ def fallback_social_copy(novel: str, abbr: str, day: str, filename: str) -> dict
             "",
             cta,
             "",
-            platform_links_block(abbr),
+            audience_hub_line(abbr),
             "",
             tags,
         ]
     )
-    x_link = linktree_url()
-    x_text = f"{profile['emoji']} {hook}\n{x_link}\n{x_tags}"
+    x_text = f"{profile['emoji']} {hook}\nRead now: link in bio.\n{x_tags}"
     if len(x_text) > 260:
         x_text = x_text[:257].rsplit(" ", 1)[0] + "..."
     facebook = "\n\n".join(
@@ -1406,14 +1473,14 @@ def fallback_social_copy(novel: str, abbr: str, day: str, filename: str) -> dict
             hook,
             cta,
             "Follow the story updates across the main channels.",
-            platform_links_block(abbr),
+            audience_hub_line(abbr),
             tags,
         ]
     )
     return {
         "instagram": with_instagram_links(instagram, abbr),
         "x": x_text,
-        "facebook": facebook,
+        "facebook": public_copy_without_links(facebook, "facebook"),
         "alt_text": f"Promotional image for {profile['name']}, scheduled for {day}.",
         "post_focus": focus,
         "caption_style": style,

@@ -2117,7 +2117,7 @@ def generated_weekly_promo_images_dir() -> Path:
 
 INSTAGRAM_LINK_FOOTER = "\n".join(
     [
-        "Read, watch, and follow Azure Inkblade: https://linktr.ee/azureinkblade",
+        "Read, watch, and follow Azure Inkblade through the link in bio.",
     ]
 )
 
@@ -2133,14 +2133,12 @@ def tracked_url(*args, **kwargs):
 def track_copy_links(*args, **kwargs):
     return promo_copy.track_copy_links(*args, **kwargs)
 def youtube_links_block(story: str = "") -> str:
-    # Lead with Linktree as the single hub (all links + next-chapter hub), keep the
-    # read link (Royal Road) and the support link (Patreon). Drop the self-referential
-    # YouTube/TikTok/X links -- they are noise on a YouTube video and bury the hub.
-    lines = [f"All links & next chapters: {linktree_url()}"]
+    # Public descriptions should point to the profile hub without exposing raw URLs.
+    lines = ["All links and next chapters are in bio."]
     royal_road_url = royal_road_url_for_story(story)
     if royal_road_url:
-        lines.append(f"Read {NOVEL_NAMES.get(story_key(story), 'this web novel')} free on Royal Road: {royal_road_url}")
-    lines.append(f"Support the release schedule on Patreon: {PATREON_URL}")
+        lines.append(f"Read {NOVEL_NAMES.get(story_key(story), 'this web novel')} free on Royal Road through the link in bio.")
+    lines.append("Support the release schedule on Patreon through the link in bio.")
     return "\n".join(lines)
 
 
@@ -3349,6 +3347,60 @@ def make_experiment_variant(
     }
 
 
+# --- Hermes agent post copy: acquisition + provenance -----------------------------
+# One adapter for all five call sites. The agent's structured result is converted
+# here into (copy, metadata); callers keep their own fail-soft try/except.
+
+def agent_posts_enabled() -> bool:
+    """True when ENABLE_AGENT_POSTS opts in. Default OFF."""
+    return str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {
+        "", "0", "false", "no", "off",
+    }
+
+
+def resolve_agent_post_copy(abbr, title, chapter, hook, material):
+    """Run the agent and return (copy_or_None, metadata).
+
+    `copy` is the validated agent copy, or None to fall back to the template
+    engine. `metadata` is internal provenance (`_agent_*`) that must never reach
+    public post copy. `_agent_used` comes back provisional (False); the call site
+    sets it from actual downstream consumption.
+    """
+    from tools.agent_post_writer import generate_post_result, agent_result_metadata
+
+    result = generate_post_result(abbr, title, chapter, hook, material)
+    # Presence of validated copy decides consumption; status remains provenance.
+    copy = result.copy if result.copy is not None else None
+    return copy, agent_result_metadata(result)
+
+
+def record_generated_social_posts(agent_meta, posts):
+    """Correlate the built platform posts back to their agent run (diagnostics only).
+
+    Never raises: a diagnostics write must not be able to break a post build.
+    """
+    run_id = (agent_meta or {}).get("_agent_run_id")
+    if not run_id:
+        return
+    try:
+        automation_db.insert_generated_social_posts(
+            ROOT,
+            run_id,
+            [
+                (platform, str(posts.get(key) or ""), bool(agent_meta.get("_agent_used")),
+                 agent_meta.get("_agent_fallback_reason"))
+                for platform, key in (
+                    ("instagram", "caption"),
+                    ("x", "x_post"),
+                    ("facebook", "facebook_post"),
+                    ("patreon", "patreon_note"),
+                )
+            ],
+        )
+    except Exception as exc:  # diagnostics must never break a build
+        print(f"[agent-post] generated_social_posts write failed: {exc}", file=sys.stderr)
+
+
 def structured_chapter_package_fallback(
     abbr: str,
     chapter_number: str,
@@ -3390,11 +3442,11 @@ def structured_chapter_package_fallback(
     # Flip ENABLE_AGENT_POSTS=1 to replace template prose with agent-generated copy.
     # Any failure returns None -> build_platform_posts uses the template engine (fail-soft).
     agent_copy = None
-    if str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"} and abbr:
+    agent_meta = {}
+    if agent_posts_enabled() and abbr:
         try:
-            from tools.agent_post_writer import generate_post_copy as _agent_gen
             _agent_hook = " ".join(str(p) for p in material.get("phrases", [])[:3]).strip()
-            agent_copy = _agent_gen(
+            agent_copy, agent_meta = resolve_agent_post_copy(
                 abbr,
                 title,
                 str(material.get("chapter", chapter_number) or chapter_number),
@@ -3407,9 +3459,16 @@ def structured_chapter_package_fallback(
                 f"agent_post_writer skipped: {_agent_exc}"
             )
     posts = build_platform_posts(title, body, material, agent_copy=agent_copy)
+    if agent_meta:
+        # Truth-in-phase: the agent was USED only if its copy actually reached the post.
+        agent_meta["_agent_used"] = (
+            agent_copy is not None and posts.get("_agent_source") == "hermes_agent"
+        )
+        posts.update(agent_meta)
+        record_generated_social_posts(agent_meta, posts)
     agent_post_copy_status = {
-        "enabled": str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"},
-        "used": isinstance(agent_copy, dict) and bool(posts.get("_agent_source") or agent_copy.get("caption")),
+        "enabled": agent_posts_enabled(),
+        "used": bool(agent_meta.get("_agent_used")),
         "source": str(posts.get("_agent_source") or ""),
     }
     image_prompts = make_chapter_image_prompts(title, body, list(hook_map.values())[:3], novel)[:5]
@@ -6422,8 +6481,43 @@ def set_pack_image_approval(folder: str, image: str, approved: bool = True) -> d
         approved_images = [item for item in approved_images if str(Path(item).resolve()).lower() != image_key]
         if image_key not in rejected_keys:
             rejected_images.append(image_text)
+        selected_images = [
+            str(Path(str(item)).resolve())
+            for item in metadata.get("images", []) or []
+            if str(item or "").strip() and Path(str(item)).exists() and str(Path(str(item)).resolve()).lower() != image_key
+        ]
+        candidate_images = [
+            str(Path(str(item)).resolve())
+            for item in metadata.get("candidate_images", []) or []
+            if str(item or "").strip() and Path(str(item)).exists() and str(Path(str(item)).resolve()).lower() != image_key
+        ]
+        deleted_images = metadata.get("deleted_images") if isinstance(metadata.get("deleted_images"), list) else []
+        deleted_record = {
+            "image": image_text,
+            "filename": image_path.name,
+            "deletedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "reason": "rejected_bad_image",
+        }
+        deleted_record["retiredBankImages"] = retire_rejected_image_from_bank(image_path, metadata)
+        if image_path.exists() and image_path.is_file() and image_path.suffix.lower() in IMAGE_EXTENSIONS:
+            try:
+                image_path.unlink()
+                deleted_record["deleted"] = True
+            except OSError as exc:
+                deleted_record["deleted"] = False
+                deleted_record["error"] = str(exc)
+        else:
+            deleted_record["deleted"] = False
+            deleted_record["error"] = "Image file was already missing."
+        deleted_images.append(deleted_record)
+        metadata["images"] = selected_images
+        metadata["candidate_images"] = candidate_images
+        metadata["deleted_images"] = deleted_images[-250:]
     metadata["approved_images"] = approved_images
-    metadata["rejected_images"] = rejected_images
+    metadata["rejected_images"] = [
+        path for path in rejected_images
+        if str(Path(str(path)).resolve()).lower() != image_key or Path(str(path)).exists()
+    ]
     metadata["approvalManual"] = True
     metadata["imageReviewApprovedAt"] = time.strftime("%Y-%m-%d %H:%M:%S") if approved else metadata.get("imageReviewApprovedAt", "")
     metadata["lastApprovalAction"] = {
@@ -9412,11 +9506,11 @@ def build_resurfacing_post(abbr: str, chapter: int | str, reason: str = "back_ca
     # Flip ENABLE_AGENT_POSTS=1 to replace template prose with agent-generated copy.
     # Any failure returns None -> build_platform_posts uses the template engine (fail-soft).
     agent_copy = None
-    if str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"} and abbr:
+    agent_meta = {}
+    if agent_posts_enabled() and abbr:
         try:
-            from tools.agent_post_writer import generate_post_copy as _agent_gen
             _agent_hook = " ".join(str(p) for p in material.get("phrases", [])[:3]).strip()
-            agent_copy = _agent_gen(
+            agent_copy, agent_meta = resolve_agent_post_copy(
                 abbr,
                 title,
                 str(material.get("chapter", chapter_number) or chapter_number),
@@ -9429,6 +9523,12 @@ def build_resurfacing_post(abbr: str, chapter: int | str, reason: str = "back_ca
                 f"agent_post_writer skipped: {_agent_exc}"
             )
     copy = build_platform_posts(title, text, material, "catch_up_archive", agent_copy=agent_copy)
+    if agent_meta:
+        # Truth-in-phase: used only if the agent copy actually reached the post.
+        agent_meta["_agent_used"] = (
+            agent_copy is not None and copy.get("_agent_source") == "hermes_agent"
+        )
+        record_generated_social_posts(agent_meta, copy)
     image = folder / f"{abbr}_{chapter_number}_resurface.png"
     image_source = create_fresh_social_image_from_caption(
         image,
@@ -9455,6 +9555,9 @@ def build_resurfacing_post(abbr: str, chapter: int | str, reason: str = "back_ca
         "facebook": copy["facebook_post"],
         "createdAt": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
+    # Internal provenance: reaches metadata.json only. The .txt writes below read
+    # explicitly named keys, so no _agent_* value can enter public copy.
+    payload.update(agent_meta)
     (folder / "instagram.txt").write_text(payload["instagram"] + "\n", encoding="utf-8")
     (folder / "x.txt").write_text(payload["x"] + "\n", encoding="utf-8")
     (folder / "facebook.txt").write_text(payload["facebook"] + "\n", encoding="utf-8")
@@ -9617,9 +9720,9 @@ def build_comment_content_post(comment_id: str) -> dict[str, Any]:
     prompt = f"Reader question inspired social artwork for {novel}: {hook}. No text or typography."
     image = folder / f"{abbr or 'AzureInkblade'}_reader_question.png"
     source = create_fresh_social_image_from_caption(image, abbr=abbr, novel=novel, title="Reader Question", caption=hook, hook=hook, visual_brief=prompt)
-    links = track_copy_links(platform_links_block(abbr), abbr, "reader-question", f"comment-{abbr}-{str(comment_id)[:8]}", str(comment_id))
+    links = "Find the story and all reader links in bio."
     instagram = f"Reader question: {hook}\n\nWhat do you think?\n\n{links}\n\n{social_profile(abbr)['hashtags']}"
-    x_destination = tracked_url(royal_road_url_for_story(abbr) or PATREON_URL, "x", f"comment-{abbr or 'azureinkblade'}", str(comment_id))
+    x_destination = "Read now: link in bio."
     x_text = f"Reader question: {hook}\n{x_destination}\n#AzureInkblade"
     if len(x_text) > 275:
         x_text = f"{hook[:100]}\n{x_destination}"
@@ -9722,9 +9825,9 @@ def arc_campaign_plans(build_drafts: bool = False, only_abbr: str = "") -> dict[
             reset_generated_folder(folder)
             image = folder / f"{abbr}_arc.png"
             source = create_fresh_social_image_from_caption(image, abbr=abbr, novel=novel, title=arc, caption=plan["hook"], hook=plan["hook"])
-            links = track_copy_links(platform_links_block(abbr), abbr, "arc-campaign", f"{abbr}-{arc}", "arc")
+            links = "Start the arc through the link in bio."
             instagram = f"{novel}: {arc}\n\n{plan['hook']}\n\nStart the arc on Royal Road.\n\n{links}\n\n{social_profile(abbr)['hashtags']}"
-            payload = {**plan, "kind": "arc_campaign", "folder": str(folder), "image": str(image), "image_source": source, "instagram": instagram, "x": f"{novel}: {arc}\n{plan['hook']}\n{tracked_url(royal_road_url_for_story(abbr), 'x', f'arc-{abbr}', 'arc')}", "facebook": instagram, "createdAt": time.strftime("%Y-%m-%d %H:%M:%S")}
+            payload = {**plan, "kind": "arc_campaign", "folder": str(folder), "image": str(image), "image_source": source, "instagram": instagram, "x": f"{novel}: {arc}\n{plan['hook']}\nRead now: link in bio.", "facebook": instagram, "createdAt": time.strftime("%Y-%m-%d %H:%M:%S")}
             for name, value in [("instagram.txt", payload["instagram"]), ("x.txt", payload["x"]), ("facebook.txt", payload["facebook"])]:
                 (folder / name).write_text(value + "\n", encoding="utf-8")
             (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -10676,7 +10779,7 @@ def build_manual_video_pack(title: str, abbr: str, image_input: str, duration: i
     script = write_manual_video_builder(folder, [item["packImage"] for item in selected], soundtrack, duration)
     tags = youtube_tag_list(["web novel", "fantasy audiobook", "progression fantasy", "Azure Inkblade", NOVEL_NAMES.get(abbr, "")])
     desc = description.strip() or f"Manual Azure Inkblade video built from approved, banked images for {NOVEL_NAMES.get(abbr, 'Azure Inkblade')}."
-    desc = f"{desc}\n\n{platform_links_block(abbr)}".strip()
+    desc = social_caption_link_in_bio(desc, "youtube")
     metadata = {
         "kind": "manual_video_pack",
         "title": title,
@@ -10856,13 +10959,12 @@ def pinned_asset_caption(asset: dict[str, Any]) -> str:
         base = "Listen to full chapter narrations and story hooks on YouTube."
     else:
         base = title
-    links = destination.replace(" | ", "\n") if destination else platform_links_block(str(asset.get("source") or ""))
     if platform == "x":
-        text = f"{base}\n{links}\n#AzureInkblade"
+        text = f"{base}\nRead now: link in bio.\n#AzureInkblade"
         return text[:275]
     if platform == "youtube":
-        return f"{base}\n\nStart here:\n{links}\n\nWhich series should get the next spotlight?"
-    return f"{base}\n\nStart here:\n{links}\n\n#AzureInkblade #RoyalRoadFantasy #WebNovelCommunity #ProgressionFantasy"
+        return f"{base}\n\nStart here through the link in bio.\n\nWhich series should get the next spotlight?"
+    return f"{base}\n\nStart here through the link in bio.\n\n#AzureInkblade #RoyalRoadFantasy #WebNovelCommunity #ProgressionFantasy"
 
 
 def draw_centered_wrapped_text(draw: Any, box: tuple[int, int, int, int], text: str, font: Any, fill: tuple[int, int, int], spacing: int = 12) -> None:
@@ -12409,7 +12511,7 @@ def variant_platform_copy(experiment: dict[str, Any], variant: dict[str, Any]) -
             profile["hashtags"],
         ]
     ).replace("\n\n\n", "\n\n").strip()
-    x_destination = tracked_url(linktree_url(), "x", campaign_key, variant_id)
+    x_destination = "Read now: link in bio."
     x = "\n\n".join([opening, x_destination, profile["x_hashtags"]]).strip()
     if len(x) > 275:
         available = max(24, 275 - len(x_destination) - len("\n#AzureInkblade") - 1)
@@ -13715,8 +13817,8 @@ def platform_copy(
         "catch_up": f"Catch up on {profile['name']} before the next release lands.",
     }.get(style, f"{chapter_label} is ready.")
     lines, x_hook = caption_style_lines(abbr or novel, profile["name"], f"Chapter {chapter}", hook_seed, focus, style, cta, status_line, f"release_{target}_{chapter}", "release")
-    instagram = "\n".join(lines + ["", platform_links_block(abbr or novel), "", profile["hashtags"]])
-    x_link = linktree_url()
+    instagram = "\n".join(lines + ["", "Read now. Link in bio.", "", profile["hashtags"]])
+    x_link = "Read now: link in bio."
     x_text = f"{profile['emoji']} {x_hook}\n{x_link}\n{profile['x_hashtags']}"
     if len(x_text) > 260:
         x_text = x_text[:257].rsplit(" ", 1)[0] + "..."
@@ -14375,9 +14477,9 @@ def default_social_prompt() -> str:
         Image filename: {filename}
 
         Return JSON with:
-        - instagram: an Instagram caption using this structure: fresh hook line, one engagement prompt, one Linktree CTA, hashtags
-        - x: a concise X post under 260 characters with one Linktree CTA and 2-4 hashtags
-        - facebook: a slightly fuller Facebook post with a fresh hook, one engagement prompt, one Linktree CTA, and hashtags
+        - instagram: an Instagram caption using this structure: fresh hook line, one engagement prompt, one link-in-bio CTA, hashtags
+        - x: a concise X post under 260 characters with one link-in-bio CTA and 2-4 hashtags
+        - facebook: a slightly fuller Facebook post with a fresh hook, one engagement prompt, one link-in-bio CTA, and hashtags
         - alt_text: accessible image alt text
 
         Style:
@@ -14385,7 +14487,7 @@ def default_social_prompt() -> str:
         - energetic but not spammy
         - no fake chapter number unless one is supplied
         - mention the novel name naturally
-        - use this one public hub link instead of listing every social link: https://linktr.ee/azureinkblade
+        - never include raw URLs or full links; use "link in bio" for the public hub CTA
         - rotate the CTA intent between start reading, read ahead, watch/listen, follow for next chapter, and comment with a prediction
         - do not include an X link in Instagram or Facebook copy
         """
@@ -14862,7 +14964,7 @@ def tiktok_caption(novel: str, chapter: str) -> str:
     question = platform_engagement_prompt_line(story_key(novel), "short_reel", "tiktok", context=f"caption-{chapter}")
     # Plain novel name in the body for TikTok search indexing (viewers search book
     # names like 'soul forged novel', 'avure ink', 'Eternalnexus').
-    return "\n".join(
+    return social_caption_link_in_bio("\n".join(
         [
             f"{profile['emoji']} {short_platform_intro(novel, chapter, 'tiktok')}",
             f"This is {profile['name']}.",
@@ -14873,7 +14975,7 @@ def tiktok_caption(novel: str, chapter: str) -> str:
             "",
             hashtags,
         ]
-    )
+    ), "tiktok")
 
 
 def instagram_reel_caption(novel: str, chapter: str) -> str:
@@ -14881,7 +14983,7 @@ def instagram_reel_caption(novel: str, chapter: str) -> str:
     destination = short_destination_copy(novel, chapter, source="instagram-reel")
     # Engagement question for IG too (saves/comments loop).
     question = platform_engagement_prompt_line(story_key(novel), "short_reel", "instagram", context=f"caption-{chapter}")
-    return "\n".join(
+    return social_caption_link_in_bio("\n".join(
         [
             f"{profile['emoji']} {short_platform_intro(novel, chapter, 'instagram-reel')}",
             f"This is {profile['name']}.",
@@ -14892,7 +14994,7 @@ def instagram_reel_caption(novel: str, chapter: str) -> str:
             "",
             profile["hashtags"],
         ]
-    )
+    ), "instagram")
 
 
 def youtube_shorts_metadata(novel: str, chapter: str) -> dict[str, str]:
@@ -15585,10 +15687,12 @@ def deep_tiktok_chapter_moments(chapter_text: str, abbr: str, count: int = 8) ->
 
 
 DEEP_TIKTOK_BAD_OVERLAY_RE = re.compile(
-    r"(establishing world shot|protagonist in motion|tense confrontation|intimate emotional beat|"
+    r"(establishing|world shot|wide shot|close[- ]?up|camera|scene focus|scene \d+|"
+    r"visual beat|visual prompt|image prompt|prompt:|panel|frame|storyboard|"
+    r"protagonist in motion|tense confrontation|intimate emotional beat|"
     r"startling revelation|dangerous environment|quiet character moment|haunting closing image|"
-    r"realistic cinematic|promotional image|scene focus|theme:|photorealistic|no text|"
-    r"typography|logo|web novel|chapter \d+ teaser)",
+    r"realistic cinematic|promotional image|theme:|photorealistic|no text|"
+    r"typography|logo|web novel|novel title|chapter title|chapter \d+ teaser)",
     re.IGNORECASE,
 )
 
@@ -15597,14 +15701,20 @@ def sanitize_deep_tiktok_overlay(text: str, novel: str = "", fallback: str = "")
     cleaned = clean_teaser_text(str(text or ""), limit=110, max_words=12)
     lower = cleaned.lower()
     novel_lower = str(novel or "").strip().lower()
+    if ":" in cleaned and DEEP_TIKTOK_BAD_OVERLAY_RE.search(cleaned.split(":", 1)[0]):
+        cleaned = cleaned.split(":", 1)[1].strip()
+        lower = cleaned.lower()
     invalid = (
         not cleaned
         or bool(DEEP_TIKTOK_BAD_OVERLAY_RE.search(cleaned))
         or (novel_lower and lower == novel_lower)
+        or (novel_lower and lower.startswith(novel_lower))
         or len(cleaned.split()) < 3
     )
     if invalid:
         cleaned = fallback or "A hidden choice changes everything."
+    if DEEP_TIKTOK_BAD_OVERLAY_RE.search(cleaned):
+        cleaned = "A hidden choice changes everything."
     return reel_overlay_text(cleaned, limit=58)
 
 
@@ -15680,13 +15790,27 @@ def repair_deep_tiktok_metadata(folder: Path, metadata: dict[str, Any] | None = 
     novel = NOVEL_NAMES.get(abbr, abbr)
     overlays_file = folder / "video-overlays.txt"
     overlays = [line.strip() for line in overlays_file.read_text(encoding="utf-8").splitlines() if line.strip()] if overlays_file.exists() else []
+    scene_fallbacks = deep_tiktok_chapter_moments(chapter_text, abbr, max(8, len(overlays))) if chapter_text else []
+    if not scene_fallbacks:
+        scene_fallbacks = deep_tiktok_novel_overlay_fallbacks(novel, max(8, len(overlays) or 8))
+    sanitized_overlays: list[str] = []
+    for index, line in enumerate(overlays):
+        fallback = scene_fallbacks[index % len(scene_fallbacks)] if scene_fallbacks else ""
+        sanitized_overlays.append(sanitize_deep_tiktok_overlay(line, novel, fallback))
+    if sanitized_overlays and sanitized_overlays != overlays:
+        overlays = sanitized_overlays
+        overlays_file.write_text("\n".join(overlays) + "\n", encoding="utf-8")
     if not overlays and chapter_text:
-        overlays = [reel_overlay_text(moment, limit=58) for moment in deep_tiktok_chapter_moments(chapter_text, abbr, 8)]
-        overlays.append(reel_overlay_text(f"READ {novel} ON ROYAL ROAD", limit=62))
+        overlays = [
+            sanitize_deep_tiktok_overlay(moment, novel, deep_tiktok_novel_overlay_fallbacks(novel, 1)[0])
+            for moment in deep_tiktok_chapter_moments(chapter_text, abbr, 8)
+        ]
+        overlays.append(reel_overlay_text("Read the next chapter. Link in bio.", limit=62))
         overlays_file.write_text("\n".join(overlays) + "\n", encoding="utf-8")
     hook = (overlays[0].replace("\n", " ") if overlays else f"A deeper look at {novel}").strip()
     chapter_label = "Prologue" if str(chapter).strip() in {"0", "prologue", "Prologue"} else f"Chapter {chapter}"
     caption = str(metadata.get("caption") or "").strip() or deep_tiktok_caption(abbr, str(chapter), title, hook)
+    caption = social_caption_link_in_bio(caption, "tiktok")
     if f"{chapter_label}: {chapter_label}" in caption:
         caption = caption.replace(f"{chapter_label}: {chapter_label}", chapter_label)
     metadata["tiktok_title"] = deep_tiktok_title(abbr, str(chapter), title)
@@ -15697,10 +15821,10 @@ def repair_deep_tiktok_metadata(folder: Path, metadata: dict[str, Any] | None = 
             "novel": novel,
             "chapter": str(chapter),
             "title": title,
-            "description": str(metadata.get("description") or "").strip() or caption,
+            "description": social_caption_link_in_bio(str(metadata.get("description") or "").strip() or caption, "tiktok"),
             "caption": caption,
             "tiktok_title": str(metadata.get("tiktok_title") or "").strip() or deep_tiktok_title(abbr, str(chapter), title),
-            "video_overlays": metadata.get("video_overlays") or overlays,
+            "video_overlays": overlays or metadata.get("video_overlays") or [],
             "duration_target": metadata.get("duration_target") or 68,
             "platforms": metadata.get("platforms") or ["tiktok"],
             "folder": str(folder),
@@ -16241,7 +16365,7 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
     overlays = [reel_overlay_text(moment, limit=58) for moment in moments]
     overlays.append(reel_overlay_text(f"READ {novel} ON ROYAL ROAD", limit=62))
     hook = overlays[0].replace("\n", " ") if overlays else f"A deeper look at {novel}"
-    caption = deep_tiktok_caption(abbr, chapter, title, hook)
+    caption = social_caption_link_in_bio(deep_tiktok_caption(abbr, chapter, title, hook), "tiktok")
     # Voice the long/deep TikTok with the natural caption sentence (NOT the
     # overlay sticker). Fail-soft: if TTS is unavailable the video still
     # builds with music only.
@@ -16383,10 +16507,12 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
             novel_tags = f"{novel_tags} {_anchor}".strip()
     rr_link = ""
     agent = None
-    if str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"}:
+    agent_meta = {}
+    if agent_posts_enabled():
         try:
-            from tools.agent_post_writer import generate_post_copy as _agent_gen
-            agent = _agent_gen(abbr, novel, "", prompt, {"prompt": prompt, "mode": "novel_highlight"})
+            agent, agent_meta = resolve_agent_post_copy(
+                abbr, novel, "", prompt, {"prompt": prompt, "mode": "novel_highlight"}
+            )
         except Exception as exc:
             print(f"[deep-tiktok-novel] agent post writer failed: {exc}", file=sys.stderr)
     if agent and agent.get("caption"):
@@ -16475,6 +16601,12 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
         "youtube_shorts_disabled": True,
         "youtube_shorts_reason": "Deep chapter TikToks are reserved for TikTok growth testing.",
     }
+    if agent_meta:
+        # Internal provenance only: reaches metadata.json, never the .txt writes
+        # below (which use the locally assembled caption/title strings).
+        # Consumption test for this bespoke path is whether the caption was used.
+        agent_meta["_agent_used"] = bool(agent and agent.get("caption"))
+        payload.update(agent_meta)
     (folder / "caption.txt").write_text(caption + "\n", encoding="utf-8")
     (folder / "description.txt").write_text(caption + "\n", encoding="utf-8")
     (folder / "tiktok-title.txt").write_text(tiktok_title + "\n", encoding="utf-8")
@@ -17092,7 +17224,7 @@ def weekend_social_copy(abbr: str, day: str) -> dict[str, str]:
         ]
     )
     if len(x_text) > 275:
-        x_text = "\n".join([hook, linktree_url(), profile["x_hashtags"]])
+        x_text = "\n".join([hook, "Read now: link in bio.", profile["x_hashtags"]])
     if len(x_text) > 275:
         x_text = x_text[:272].rsplit(" ", 1)[0].rstrip() + "..."
     facebook = "\n\n".join(
@@ -17105,9 +17237,9 @@ def weekend_social_copy(abbr: str, day: str) -> dict[str, str]:
         ]
     )
     return {
-        "instagram": instagram,
-        "x": x_text,
-        "facebook": facebook,
+        "instagram": social_caption_link_in_bio(instagram, "instagram"),
+        "x": social_caption_link_in_bio(x_text, "x"),
+        "facebook": social_caption_link_in_bio(facebook, "facebook"),
         "alt_text": f"Weekend promotional image for {profile['name']}.",
         "post_focus": focus,
         "caption_style": style,
@@ -17202,11 +17334,13 @@ def make_weekend_social_post(abbr: str, day: str) -> dict[str, Any]:
     # Optional Hermes agent post copy (dynamic, research-aware). Default OFF.
     # Flip ENABLE_AGENT_POSTS=1 to replace template prose with agent-generated copy.
     # Any failure -> keep the template copy (fail-soft).
-    if str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"}:
+    _agent_meta = {}
+    if agent_posts_enabled():
         try:
-            from tools.agent_post_writer import generate_post_copy as _agent_gen
             _wk_hook = rotating_weekend_hook(abbr, day)
-            _agent = _agent_gen(abbr, f"Weekend {day}", day, _wk_hook, {"abbr": abbr, "novel": NOVEL_NAMES.get(abbr, "")})
+            _agent, _agent_meta = resolve_agent_post_copy(
+                abbr, f"Weekend {day}", day, _wk_hook, {"abbr": abbr, "novel": NOVEL_NAMES.get(abbr, "")}
+            )
             if _agent and _agent.get("caption"):
                 _ag_cap = str(_agent["caption"]).strip()
                 _ag_cta = str(_agent.get("cta") or "").strip()
@@ -17233,13 +17367,21 @@ def make_weekend_social_post(abbr: str, day: str) -> dict[str, Any]:
                     "alt_text": copy.get("alt_text", f"Weekend promotional image for {_profile.get('name', abbr)}."),
                     "post_focus": copy.get("post_focus", ""),
                     "caption_style": copy.get("caption_style", "") + "+agent",
-                    "_agent_source": _agent.get("_source"),
                 }
         except Exception as _agent_exc:
             copy.setdefault("warnings", []).append(f"agent_post_writer skipped: {_agent_exc}")
+    if _agent_meta:
+        # Consumption test for this bespoke path: the agent caption was assembled in.
+        _agent_meta["_agent_used"] = bool(copy.get("caption_style", "").endswith("+agent"))
+        # Keep _agent_source consistent with _agent_used: if the agent copy was
+        # not actually consumed, do not advertise it as the source. (An exception
+        # inside the consume block above leaves copy as the template dict.)
+        if not _agent_meta["_agent_used"]:
+            _agent_meta["_agent_source"] = None
     payload = {
         **item,
         **copy,
+        **_agent_meta,
         "source": "weekend-rotation",
         "kind": "weekend",
         "folder": str(folder),
@@ -20700,23 +20842,23 @@ def release_copy(abbr: str, chapter: int, title: str, decision: str) -> dict[str
     rr = royal_road_url_for_story(abbr)
     if decision == "update_existing":
         hook = f"{profile['emoji']} {profile['name']} Chapter {chapter} has an updated version ready."
-        instagram = "\n".join([hook, title, "Latest text is ready for platform review.", platform_links_block(abbr), "", profile["hashtags"]])
-        x_text = f"{profile['emoji']} {profile['name']} Ch. {chapter} has been refreshed.\n{rr}\n{profile['x_hashtags']}"
+        instagram = "\n".join([hook, title, "Latest text is ready for platform review.", "Read now. Link in bio.", "", profile["hashtags"]])
+        x_text = f"{profile['emoji']} {profile['name']} Ch. {chapter} has been refreshed.\nRead now: link in bio.\n{profile['x_hashtags']}"
     elif decision in {"social_only", "royal_road_ready"}:
         hook = f"{profile['emoji']} {profile['name']} Chapter {chapter} is live on Royal Road!"
-        instagram = "\n".join([hook, title, platform_links_block(abbr), "", profile["hashtags"]])
-        x_text = f"{profile['emoji']} {profile['name']} Ch. {chapter} is live on Royal Road.\n{rr}\n{profile['x_hashtags']}"
+        instagram = "\n".join([hook, title, "Read now. Link in bio.", "", profile["hashtags"]])
+        x_text = f"{profile['emoji']} {profile['name']} Ch. {chapter} is live on Royal Road.\nRead now: link in bio.\n{profile['x_hashtags']}"
     elif decision in {"patreon_only", "patreon_ready"}:
         hook = f"{profile['emoji']} {profile['name']} Chapter {chapter} is available early on Patreon."
-        instagram = "\n".join([hook, title, platform_links_block(abbr), "", profile["hashtags"]])
-        x_text = f"{profile['emoji']} {profile['name']} Ch. {chapter} is on Patreon early.\n{PATREON_URL}\n{profile['x_hashtags']}"
+        instagram = "\n".join([hook, title, "Read ahead. Link in bio.", "", profile["hashtags"]])
+        x_text = f"{profile['emoji']} {profile['name']} Ch. {chapter} is on Patreon early.\nRead ahead: link in bio.\n{profile['x_hashtags']}"
     else:
         hook = f"{profile['emoji']} {profile['name']} Chapter {chapter} is not ready for public posting yet."
-        instagram = "\n".join([hook, "Hold this post until Patreon/Royal Road status is ready.", platform_links_block(abbr)])
+        instagram = "\n".join([hook, "Hold this post until Patreon/Royal Road status is ready."])
         x_text = f"{profile['name']} Ch. {chapter} is queued for a later release check."
     if len(x_text) > 275:
         x_text = x_text[:272].rsplit(" ", 1)[0].rstrip() + "..."
-    facebook = "\n\n".join([instagram.split("\n\n")[0], "Follow the story updates here:", platform_links_block(abbr), profile["hashtags"]])
+    facebook = "\n\n".join([instagram.split("\n\n")[0], "Follow the story updates through the link in bio.", profile["hashtags"]])
     return {
         "instagram": with_instagram_links(instagram, abbr),
         "x": x_text,
@@ -25005,7 +25147,7 @@ def mark_image_review_approved(folder: str) -> dict[str, Any]:
         "rejectedImageCount": len(rejected_keys),
         "message": (
             f"{len(approved_images)} image(s) are approved for this pack; {len(newly_approved)} changed in this action."
-            + (" Rejected images remain selected and must be regenerated before posting." if rejected_keys else " Buffer upload can continue after other pack requirements pass.")
+            + (" Rejected images were left out and must be regenerated before posting." if rejected_keys else " Buffer upload can continue after other pack requirements pass.")
         ),
     }
 
@@ -25874,21 +26016,36 @@ def social_post_preview(
     def wants(platform: str) -> bool:
         return requested_platforms is None or platform in requested_platforms
 
+    def preview_text(platform: str, *metadata_keys: str) -> str:
+        file_candidates = {
+            "x": ("x.txt", "x-post.txt", "x_post.txt"),
+            "facebook": ("facebook.txt", "facebook-post.txt", "facebook_post.txt"),
+        }.get(platform, (f"{platform}.txt",))
+        for filename in file_candidates:
+            candidate = post_folder / filename
+            if candidate.exists():
+                text = candidate.read_text(encoding="utf-8").strip()
+                if text:
+                    return text
+        for key in metadata_keys:
+            text = str(metadata.get(key) or "").strip()
+            if text:
+                return text
+        return ""
+
     specs = []
+    x_text = preview_text("x", "x", "x_post")
     if wants("x") and str(metadata.get("kind") or "") != "royal-road":
         specs.append(
             {
                 "key": "x",
                 "label": "X",
                 "url": "https://x.com/compose/post",
-                "text": str(metadata.get("x") or ""),
+                "text": x_text,
                 "media_path": str(image_path) if image_path.exists() else "",
             }
         )
-    facebook_text = str(metadata.get("facebook") or "").strip()
-    facebook_file = post_folder / "facebook.txt"
-    if facebook_file.exists():
-        facebook_text = facebook_file.read_text(encoding="utf-8").strip()
+    facebook_text = preview_text("facebook", "facebook", "facebook_post")
     if wants("facebook") and facebook_text:
         specs.append(
             {
@@ -29294,7 +29451,7 @@ def story_hook_youtube_description(title: str, story_text: str, abbr: str = "", 
         f"{clean_title} is an original Azure Inkblade story hook connected to {novel}, "
         f"created for readers and listeners who enjoy {discovery}.{cue}\n\n"
         f"{question}\n\n"
-        f"Read the novels, watch more stories, and find author resources: {linktree_url()}"
+        "Read the novels, watch more stories, and find author resources through the link in bio."
     ).strip()
     # Limitation fix #7: explicit YouTube 5,000-char guard.
     if len(description) > 5000:
@@ -29303,20 +29460,14 @@ def story_hook_youtube_description(title: str, story_text: str, abbr: str = "", 
 
 
 def story_hook_single_hub_description(value: str) -> str:
-    hub = linktree_url()
-    hub_line = f"Read the novels, watch more stories, and find author resources: {hub}"
-    legacy_hosts = ("patreon.com", "royalroad.com", "youtube.com", "tiktok.com", "x.com")
+    hub_line = "Read the novels, watch more stories, and find author resources through the link in bio."
+    legacy_hosts = ("linktr.ee", "patreon.com", "royalroad.com", "youtube.com", "youtu.be", "tiktok.com", "x.com", "twitter.com", "instagram.com")
     lines: list[str] = []
     hub_added = False
     for raw_line in str(value or "").splitlines():
         line = raw_line.strip()
         lowered = line.lower()
         if any(host in lowered for host in legacy_hosts):
-            continue
-        if hub.lower() in lowered:
-            if not hub_added:
-                lines.append(hub_line)
-                hub_added = True
             continue
         lines.append(raw_line.rstrip())
     cleaned = "\n".join(lines).strip()
@@ -29340,7 +29491,7 @@ def normalize_story_hook_description(folder: Path, metadata: dict[str, Any] | No
     description = story_hook_youtube_description(title, story_text, abbr, tags)
     (folder / "youtube-description.txt").write_text(description + "\n", encoding="utf-8")
     metadata["description"] = description
-    metadata["descriptionFormat"] = "linktree_v1"
+    metadata["descriptionFormat"] = "link_in_bio_v1"
     metadata["descriptionUpdatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
     (folder / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return {"folder": str(folder), "description": description, "metadata": metadata}
@@ -29380,7 +29531,7 @@ def story_hook_metadata_variants(folder_value: str) -> dict[str, Any]:
     story_text = (folder / "story-script.txt").read_text(encoding="utf-8", errors="replace") if (folder / "story-script.txt").exists() else ""
     hook = youtube_chapter_summary(title, story_text)
     visual_terms = chapter_keywords(title, story_text, 10)
-    hub_line = f"Read the novels, watch more stories, and find author resources: {linktree_url()}"
+    hub_line = "Read the novels, watch more stories, and find author resources through the link in bio."
     variants = [
         {
             "variantId": "curiosity_revenge",
@@ -31646,6 +31797,9 @@ def create_fallback_image(query: str, target: Path, index: int, size: tuple[int,
 
 
 SOCIAL_LINK_LABEL_RE = re.compile(r"(?im)^\s*(rr|royal road|patreon|youtube|tik\s*tok|tiktok|instagram|x|twitter)\b.*$")
+PUBLIC_URL_RE = re.compile(
+    r"(?i)\b(?:https?://|www\.)?\S*(?:linktr\.ee|royalroad\.com|patreon\.com|youtube\.com|youtu\.be|tiktok\.com|x\.com|twitter\.com|instagram\.com)\S*"
+)
 
 
 def link_in_bio_cta(platform: str = "") -> str:
@@ -31656,9 +31810,11 @@ def link_in_bio_cta(platform: str = "") -> str:
 
 
 def social_caption_link_in_bio(text: str, platform: str = "") -> str:
-    cleaned = re.sub(r"https?://\S+", "", str(text or ""))
+    cleaned = PUBLIC_URL_RE.sub("", str(text or ""))
+    cleaned = re.sub(r"https?://\S+", "", cleaned)
     cleaned = re.sub(r"(?m)^\s*[^\w#\n]{1,12}\s*$", "", cleaned)
     cleaned = SOCIAL_LINK_LABEL_RE.sub("", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     cta = link_in_bio_cta(platform)
@@ -32239,11 +32395,11 @@ def make_campaign(
     # Flip ENABLE_AGENT_POSTS=1 to replace template prose with agent-generated copy.
     # Any failure returns None -> build_platform_posts uses the template engine (fail-soft).
     agent_copy = None
-    if str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"} and abbr:
+    agent_meta = {}
+    if agent_posts_enabled() and abbr:
         try:
-            from tools.agent_post_writer import generate_post_copy as _agent_gen
             _agent_hook = " ".join(str(p) for p in material.get("phrases", [])[:3]).strip()
-            agent_copy = _agent_gen(
+            agent_copy, agent_meta = resolve_agent_post_copy(
                 abbr,
                 title,
                 str(material.get("chapter", chapter_id) or chapter_id),
@@ -32256,10 +32412,17 @@ def make_campaign(
                 f"agent_post_writer skipped: {_agent_exc}"
             )
     platform_posts = build_platform_posts(title, chapter, material, post_focus, agent_copy=agent_copy)
+    if agent_meta:
+        # Truth-in-phase: used only if the agent copy actually reached the post.
+        agent_meta["_agent_used"] = (
+            agent_copy is not None and platform_posts.get("_agent_source") == "hermes_agent"
+        )
+        platform_posts.update(agent_meta)
+        record_generated_social_posts(agent_meta, platform_posts)
     material.update(platform_posts)
     material["agent_post_copy"] = {
-        "enabled": str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"},
-        "used": isinstance(agent_copy, dict) and bool(platform_posts.get("_agent_source") or agent_copy.get("caption")),
+        "enabled": agent_posts_enabled(),
+        "used": bool(agent_meta.get("_agent_used")),
         "source": str(platform_posts.get("_agent_source") or ""),
     }
     write_text_artifacts(folder, material)
@@ -39790,6 +39953,36 @@ ${escapeHtml(report.safety || data.note || 'No publish or queue action is run he
       `;
     }
 
+    function renderAgentProvenanceBadge(data) {
+      // Hermes provenance badge. Reads the _agent_* keys the campaign builder
+      // attaches to the post payload. Renders nothing when the agent was not
+      // requested, so template-only builds look exactly as before.
+      if (!data || !data._agent_requested) return '';
+      const used = data._agent_used === true;
+      const status = escapeHtml(String(data._agent_status || 'unknown'));
+      const label = used ? 'Agent Copy &#10003;' : `Template Fallback &mdash; ${status}`;
+      const tone = used ? '#1a7f37' : '#8a6d00';
+      const durationMs = Number(data._agent_duration_ms);
+      const seconds = Number.isFinite(durationMs) ? (durationMs / 1000).toFixed(1) + 's' : 'n/a';
+      const rows = [
+        ['Run ID', data._agent_run_id || 'n/a'],
+        ['Status', data._agent_status || 'n/a'],
+        ['Model', data._agent_model || 'unknown'],
+        ['Duration', seconds],
+        ['Parse mode', data._agent_parse_mode || 'n/a'],
+      ];
+      if (data._agent_fallback_reason) rows.push(['Fallback reason', data._agent_fallback_reason]);
+      const detail = rows
+        .map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(String(v))}`)
+        .join('\n');
+      return `
+        <details class="copy" style="border-left:3px solid ${tone}">
+          <summary style="cursor:pointer;color:${tone}"><strong>${label}</strong></summary>
+${escapeHtml(detail)}
+        </details>
+      `;
+    }
+
     function renderResults(data) {
       statusEl.textContent = data.source === 'openai' ? 'Promo pack created with OpenAI.' : 'Promo pack created with fallback image sources.';
       const videoBuilds = (data.video_builds?.builds || []).map(build => {
@@ -39807,6 +40000,7 @@ ${escapeHtml(report.safety || data.note || 'No publish or queue action is run he
       results.innerHTML = `
         <div class="grid">${cards}</div>
         ${renderPackImageReviewBlock(data, {textKind: 'instagram'})}
+        ${renderAgentProvenanceBadge(data)}
         <div class="copy">${escapeHtml(data.caption || '')}</div>
         <div class="copy"><strong>Patreon</strong>\n${escapeHtml(data.patreon_note || '')}</div>
         <div class="copy"><strong>X</strong>\n${escapeHtml(data.x_post || data.x || '')}</div>
@@ -41260,7 +41454,8 @@ ${data.message || 'Builder finished.'}`;
             if (!response.ok) throw new Error(data.error || 'Could not refresh pack preview');
             renderGenericPackPreview(data);
           })
-          .catch(error => { statusEl.textContent = error.message; button.disabled = false; });
+          .catch(error => { statusEl.textContent = error.message; })
+          .finally(() => { button.disabled = false; });
       } else if (regeneratePackImages) {
         button.disabled = true;
         currentFolder = regeneratePackImages;
@@ -42184,8 +42379,22 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(data)
             return
         if parsed.path == "/api/agent-posts-status":
-            cur = str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower()
-            self.send_json({"enabled": cur not in ("", "0", "false", "no", "off")})
+            self.send_json({"enabled": agent_posts_enabled()})
+            return
+        if parsed.path == "/api/runtime-provenance":
+            try:
+                from tools.agent_post_writer import runtime_provenance
+                self.send_json(runtime_provenance())
+            except Exception as exc:
+                self.send_json({"error": str(exc)}, 500)
+            return
+        if parsed.path == "/api/agent-post-runs":
+            try:
+                query = urllib.parse.parse_qs(parsed.query)
+                limit = int(query.get("limit", ["20"])[0] or 20)
+                self.send_json({"runs": automation_db.list_agent_post_runs(ROOT, limit)})
+            except Exception as exc:
+                self.send_json({"error": str(exc)}, 400)
             return
         if parsed.path == "/api/examples":
             self.send_json({"examples": find_examples()})
@@ -43560,8 +43769,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": True, "enabled": enabled})
                 return
             if self.path == "/api/agent-posts-status":
-                cur = str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower()
-                self.send_json({"enabled": cur not in ("", "0", "false", "no", "off")})
+                self.send_json({"enabled": agent_posts_enabled()})
                 return
             if self.path == "/api/local-sd-status":
                 _sd = local_stable_diffusion_status()

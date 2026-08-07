@@ -16,3 +16,4 @@ Style:
 - energetic but not spammy
 - no fake chapter number unless one is supplied
 - mention the novel name naturally
+- do not include raw URLs or full links; use "link in bio" for the public hub CTA
