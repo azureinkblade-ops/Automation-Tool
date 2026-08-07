@@ -351,6 +351,58 @@ def test_write_text_artifacts_boundary():
     return ok
 
 
+# Exact Hermes output from the live EN 37 failure (run
+# agentpost_EN_37_20260807T142006_ad54a0): valid-looking final block whose
+# `hashtags` array had two elements with a trailing quote but no opening quote
+# (`#AzureInkblade"`, `#Cyberpunk"`). Strict JSON parse failed -> template fallback.
+# The bounded repair pass must recover it.
+EN37_MALFORMED_FINAL_BLOCK = (
+    '{\n'
+    '  "hook": "In a city built of glass code, only two things grant power: numbers on your screen.",\n'
+    '  "caption": "When the Neon rain stops screaming and Kael\'s system finally accepts his offer as its own, he finds himself not in control\\u2014but becoming something else entirely. The Soulblade wakes where it should never have been born.",\n'
+    '  "cta": "The soulblade cuts next chapter\\u2014read ahead on Patreon.",\n'
+    '  "hashtags": [ "#EternalNexus", #AzureInkblade", "#LitRPG", #Cyberpunk", "#Soulblade", "#NeonProgression", "#SciFiFantasy" ],\n'
+    '  "content_angle": "The system merging with the protagonist through cyber-dystopian horror.",\n'
+    '  "intended_audience": "LitRPG readers who prefer hard sci-fi elements to traditional RPG progression."\n'
+    '}'
+)
+
+
+def test_en37_malformed_block_repaired_end_to_end():
+    print("[8] EN37 malformed Hermes block -> bounded repair -> SUCCESS, balanced_repair, _agent_used True")
+    ok = True
+    with _Sandbox() as box:
+        agent_post_writer.subprocess.run = lambda argv, **kw: _FakeProc(
+            stdout=EN37_MALFORMED_FINAL_BLOCK.encode("utf-8")
+        )
+        result = generate_post_result("EN", "Eternal Nexus", "37", "", _material())
+        ok &= _assert(result.status is AgentPostStatus.SUCCESS,
+                      f"status SUCCESS (got {result.status.value})")
+        ok &= _assert(result.parse_mode == "balanced_repair",
+                      f"parse_mode balanced_repair (got {result.parse_mode})")
+        ok &= _assert("quoted_unquoted_hashtag_elements" in result.normalizations,
+                      f"repair normalization recorded ({result.normalizations})")
+        ok &= _assert(result.copy is not None, "copy populated after repair")
+        ok &= _assert(
+            result.copy["caption"].startswith("When the Neon rain stops screaming"),
+            "differentiated EN caption reaches copy",
+        )
+        ok &= _assert(
+            result.copy["hashtags"] == [
+                "#EternalNexus", "#AzureInkblade", "#LitRPG", "#Cyberpunk",
+                "#Soulblade", "#NeonProgression", "#SciFiFantasy",
+            ],
+            f"all 7 hashtags recovered ({result.copy['hashtags']})",
+        )
+
+        meta = agent_result_metadata(result)
+        posts = _build_posts(result.copy)
+        meta["_agent_used"] = result.copy is not None and posts.get("_agent_source") == "hermes_agent"
+        ok &= _assert(meta["_agent_used"] is True, "_agent_used True after real consumption")
+        ok &= _assert_no_leakage(posts, "en37-repair")
+    return ok
+
+
 def main():
     _assert.failed = 0
     results = [
@@ -361,6 +413,7 @@ def main():
         test_run_id_uniqueness(),
         test_metadata_contract_shape(),
         test_write_text_artifacts_boundary(),
+        test_en37_malformed_block_repaired_end_to_end(),
     ]
     print()
     if _assert.failed == 0 and all(results):

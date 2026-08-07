@@ -286,6 +286,30 @@ def _repair_json_body(body: str) -> tuple[str | None, tuple[str, ...]]:
     if trimmed != candidate:
         normalizations.append("removed_trailing_comma")
         candidate = trimmed
+    # Quote unquoted hashtag array elements. Observed Hermes defect: a hashtag
+    # element with a trailing quote but no opening quote, e.g. `#AzureInkblade"`.
+    # Also handle a fully-unquoted element `#Cyberpunk`. Repair is scoped to ARRAY
+    # CONTEXT only (a `[` or `,` immediately precedes the `#`), so it can never
+    # touch a properly-quoted string's interior content. Syntax only; the tag
+    # text itself is preserved verbatim.
+    quoted_tags = re.sub(
+        r'([\[,]\s*)#([A-Za-z0-9_]+)"([\],])',
+        r'\1"#\2"\3',
+        candidate,
+    )
+    if quoted_tags != candidate:
+        normalizations.append("quoted_unquoted_hashtag_elements")
+        candidate = quoted_tags
+    # Fully-unquoted hashtag element (no quotes at all) inside an array.
+    fully_unquoted = re.sub(
+        r'([\[,]\s*)#([A-Za-z0-9_]+)([,\]])',
+        r'\1"#\2"\3',
+        candidate,
+    )
+    if fully_unquoted != candidate:
+        if "quoted_unquoted_hashtag_elements" not in normalizations:
+            normalizations.append("quoted_unquoted_hashtag_elements")
+        candidate = fully_unquoted
     try:
         json.loads(candidate)
         return candidate, tuple(normalizations)
