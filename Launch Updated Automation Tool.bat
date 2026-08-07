@@ -1,3 +1,3 @@
 @echo off
-cd /d "%~dp0"
-call start.bat
+call powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\launch_automation_tool.ps1" -UpdateFirst
+pause

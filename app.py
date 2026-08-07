@@ -1924,6 +1924,48 @@ def chrome_debug_available() -> tuple[bool, str]:
         return False, f"Existing Chrome is not reachable at {url}. Close Chrome, restart it with --remote-debugging-port=9222, then retry. Details: {exc}"
 
 
+def _resolve_runtime_provenance() -> dict[str, Any]:
+    branch = "unknown"
+    commit = "unknown"
+    try:
+        branch = subprocess.check_output(
+            ["git", "-C", str(ROOT), "rev-parse", "--abbrev-ref", "HEAD"],
+            stderr=subprocess.DEVNULL,
+        ).decode("utf-8").strip() or branch
+    except Exception:
+        pass
+    try:
+        commit = subprocess.check_output(
+            ["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL,
+        ).decode("utf-8").strip() or commit
+    except Exception:
+        pass
+    app_py = Path(__file__).resolve()
+    helper_dir = ROOT / "chrome-helper"
+    return {
+        "root": str(ROOT),
+        "branch": branch,
+        "commit": commit,
+        "pid": os.getpid(),
+        "app_port": PORT,
+        "python": sys.executable,
+        "app_py": str(app_py),
+        "chrome_helper_dir": str(helper_dir) if helper_dir.exists() else "",
+        "started_at": APP_PROCESS_STARTED_AT,
+    }
+
+
+_RUNTIME_PROVENANCE: dict[str, Any] | None = None
+
+
+def runtime_provenance() -> dict[str, Any]:
+    global _RUNTIME_PROVENANCE
+    if _RUNTIME_PROVENANCE is None:
+        _RUNTIME_PROVENANCE = _resolve_runtime_provenance()
+    return _RUNTIME_PROVENANCE
+
+
 def open_url_once(url: str) -> bool:
     parsed = None
     target_host = ""
@@ -11337,7 +11379,7 @@ def prepare_pinned_profile_asset_pin(asset_id: str) -> dict[str, Any]:
         target_url = pinned_asset_pin_url(str(asset.get("platform") or "")) or str(asset.get("url") or "")
         if target_url:
             open_url_once(target_url)
-        message = f"Chrome helper bridge is not reachable. Caption was copied and the asset folder is ready. {chrome_message}"
+        message = f"Chrome helper unavailable on port 9222. Launch the Automation Tool with Chrome helper enabled. Caption was copied and the asset folder is ready. {chrome_message}"
     asset.update(
         {
             **pinned_asset_pin_capability(str(asset.get("platform") or "")),
@@ -42416,6 +42458,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/health":
             self.send_json(app_health())
+            return
+        if parsed.path == "/api/runtime-provenance":
+            self.send_json(runtime_provenance())
             return
         if parsed.path == "/api/regression-dashboard":
             self.send_json(regression_dashboard_status())
