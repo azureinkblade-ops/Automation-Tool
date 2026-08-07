@@ -24,7 +24,7 @@ $Root = Resolve-Path "$PSScriptRoot\.."
 $RootPath = $Root.Path
 $AppPy = Join-Path $RootPath "app.py"
 $HelperDir = Join-Path $RootPath "chrome-helper"
-$BundledPy = "$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
+$BundledPy = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
 $GpuPython = Join-Path $RootPath ".venv-gpu\Scripts\python.exe"
 $ChromePort = 9222
 $HelperProfile = "$env:LOCALAPPDATA\AzureInkbladeAutomationChrome"
@@ -222,8 +222,7 @@ if ($HelperEnabled) {
         "--remote-debugging-port=$ChromePort",
         "--remote-allow-origins=*",
         "--disable-background-mode",
-        "--load-extension=`"$HelperDir`"",
-        "http://127.0.0.1:$Port/"
+        "--load-extension=`"$HelperDir`""
       )
       try {
         Start-Process -FilePath $chromeExe -ArgumentList $cdpArgs -WindowStyle Normal
