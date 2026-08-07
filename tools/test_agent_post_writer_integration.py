@@ -75,7 +75,7 @@ DRAFT_IN_BLOCK = (
 
 def _pipeline(stdout_text):
     """Mirror generate_post_result's pure path (no subprocess)."""
-    data = _extract_json(stdout_text)
+    data, _parse_mode, _normalizations = _extract_json(stdout_text)
     normalized = _unwrap_variation(data)
     if normalized is None:
         if isinstance(data, dict):

@@ -25,6 +25,7 @@ import re
 import shutil
 import subprocess
 import sys
+import uuid
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -81,6 +82,7 @@ class AgentPostResult:
     status: AgentPostStatus
     copy: dict[str, Any] | None
     raw_response_path: Path | None
+    run_id: str = ""
     parse_mode: str | None = None
     normalizations: tuple[str, ...] = ()
     validation_errors: tuple[str, ...] = ()
@@ -316,7 +318,7 @@ def _looks_like_draft(markup: str) -> bool:
     return any(m in lowered for m in markers)
 
 
-def _extract_json(stdout_text: str) -> dict | None:
+def _extract_json(stdout_text: str) -> tuple[dict | None, str | None, tuple[str, ...]]:
     """Select the final usable JSON payload from Hermes stdout.
 
     Selection order (per the reliability plan, Task 4):
@@ -326,13 +328,18 @@ def _extract_json(stdout_text: str) -> dict | None:
 
     NEVER slices first-brace-to-last-brace across candidates. Each balanced object
     is evaluated individually. The selected block must not contain draft/analysis
-    markers. Returns the parsed dict, or None when no usable block exists.
+    markers.
+
+    Returns `(payload, parse_mode, normalizations)` where `parse_mode` is one of
+    "whole_text" | "fenced_json" | "balanced_repair", or None when no usable block
+    exists. `normalizations` records the repairs applied on the balanced_repair
+    path (empty otherwise), so a repaired parse stays diagnosable.
     """
     # 1) Direct whole-text parse (most outputs are already valid JSON).
     # Reject outright if the whole response is a draft/analysis section.
     if not _looks_like_draft(stdout_text):
         try:
-            return json.loads(stdout_text.strip())
+            return json.loads(stdout_text.strip()), "whole_text", ()
         except json.JSONDecodeError:
             pass
     # 2) Fenced block (```json ... ```). Take the LAST complete fence.
@@ -350,7 +357,7 @@ def _extract_json(stdout_text: str) -> dict | None:
             if _looks_like_draft(inner):
                 continue
             try:
-                return json.loads(inner)
+                return json.loads(inner), "fenced_json", ()
             except json.JSONDecodeError:
                 pass
     # 3) Last complete balanced {...} object that parses and is not a draft.
@@ -358,14 +365,14 @@ def _extract_json(stdout_text: str) -> dict | None:
     for body in reversed(objects):
         if _looks_like_draft(body):
             continue
-        repaired, _ = _repair_json_body(body)
+        repaired, normalizations = _repair_json_body(body)
         if repaired is None:
             continue
         try:
-            return json.loads(repaired)
+            return json.loads(repaired), "balanced_repair", tuple(normalizations or ())
         except json.JSONDecodeError:
             continue
-    return None
+    return None, None, ()
 
 
 def _unwrap_variation(payload: dict | None) -> dict | None:
@@ -432,47 +439,68 @@ def _validate_contract(copy: dict | None) -> tuple[list[str], list[str]]:
     return missing, errors
 
 
-def runtime_provenance() -> dict:
-    """Report what is actually imported/running, for runtime verification.
+_GIT_PROVENANCE_CACHE: dict[str, object] | None = None
 
-    Uses module.__file__ so it reports the imported path, not just what is on
-    disk. Safe to call from app.py (no Hermes invocation).
+
+def _git_provenance() -> dict[str, object]:
+    """(git_commit, git_dirty) for the repo this module lives in, cached per process.
+
+    Shelling out to git on every request is slow and this changes at most once per
+    deploy, so the result is computed once and reused for the process lifetime.
     """
-    import subprocess as _sp
-
+    global _GIT_PROVENANCE_CACHE
+    if _GIT_PROVENANCE_CACHE is not None:
+        return _GIT_PROVENANCE_CACHE
+    root = str(Path(__file__).resolve().parent.parent)
     try:
-        head = _sp.run(
+        head = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            capture_output=True, text=True, cwd=str(Path(__file__).resolve().parent.parent),
-            check=False,
+            capture_output=True, text=True, cwd=root, check=False,
         )
         git_commit = head.stdout.strip() or None
-        dirty = bool(_sp.run(
+        dirty = bool(subprocess.run(
             ["git", "status", "--porcelain"],
-            capture_output=True, text=True, cwd=str(Path(__file__).resolve().parent.parent),
-            check=False,
+            capture_output=True, text=True, cwd=root, check=False,
         ).stdout.strip())
     except Exception:
         git_commit, dirty = None, False
+    _GIT_PROVENANCE_CACHE = {"git_commit": git_commit, "git_dirty": dirty}
+    return _GIT_PROVENANCE_CACHE
+
+
+def runtime_provenance() -> dict:
+    """Report what is actually imported/running, for runtime verification.
+
+    Uses the imported module's own `__file__` (via sys.modules) so it reports the
+    path that is genuinely loaded -- a wrong path here means a stale import, e.g.
+    the app running from a different worktree than the one being edited. Safe to
+    call from app.py (no Hermes invocation).
+    """
+    git = _git_provenance()
+    # Import-and-report rather than returning None: promo_copy is always imported by
+    # app.py, and reporting its real loaded path is the point of this endpoint.
+    try:
+        promo_copy_path = str(__import__("promo_copy").__file__)
+    except Exception:
+        promo_copy_path = None
+    this_module = sys.modules.get(__name__)
+    agent_post_writer_path = str(getattr(this_module, "__file__", "") or Path(__file__).resolve())
+    hermes = _resolve_hermes()
     return {
-        "git_commit": git_commit,
-        "git_dirty": dirty,
-        "promo_copy_path": str(__import__("promo_copy").__file__) if _module_loaded("promo_copy") else None,
-        "agent_post_writer_path": str(Path(__file__).resolve()),
-        "agent_posts_enabled": bool(_resolve_hermes()),
+        "git_commit": git.get("git_commit"),
+        "git_dirty": git.get("git_dirty"),
+        "promo_copy_path": promo_copy_path,
+        "agent_post_writer_path": agent_post_writer_path,
+        "agent_posts_enabled": bool(hermes),
         "prompt_contract_version": "social-post-v1",
-        "hermes_path": _resolve_hermes(),
+        "hermes_path": hermes,
         "hermes_flags": "-Q --reasoning none",
-        "pid": __import__("os").getpid(),
+        "reasoning": "none",
+        "max_turns": 500,
+        "pid": os.getpid(),
         "process_start_time": _process_start_time(),
         "cwd": str(Path.cwd()),
     }
-
-
-def _module_loaded(name: str) -> bool:
-    import sys as _sys
-
-    return name in _sys.modules
 
 
 def _process_start_time() -> str:
@@ -501,14 +529,31 @@ def generate_post_result(
     caller can fall back to the template engine with precise diagnostics.
     """
     material = material or {}
+    # Mint the run id ONCE, before any terminal return, so every outcome -- including
+    # HERMES_NOT_ENABLED -- carries a stable identity and persists a lifecycle row.
+    # The uuid4 suffix prevents a same-second PK collision silently UPSERTing over an
+    # earlier run for the same novel/chapter.
+    run_id = (
+        f"agentpost_{abbr}_{chapter}_"
+        f"{__import__('time').strftime('%Y%m%dT%H%M%S')}_{uuid.uuid4().hex[:6]}"
+    )
     hermes = _resolve_hermes()
     if not hermes:
         _log("FAIL: hermes CLI not resolvable", abbr=abbr)
-        return AgentPostResult(
-            status=AgentPostStatus.HERMES_NOT_ENABLED,
-            copy=None,
-            raw_response_path=None,
-            fallback_reason="hermes CLI not resolvable",
+        # Not a bare early return: this terminal outcome persists a run row like
+        # every other branch, so "received a result" implies "row exists".
+        return _finalize(
+            AgentPostResult(
+                status=AgentPostStatus.HERMES_NOT_ENABLED,
+                copy=None,
+                raw_response_path=None,
+                run_id=run_id,
+                fallback_reason="hermes CLI not resolvable",
+            ),
+            run_id=run_id,
+            abbr=abbr, novel=title, chapter=chapter,
+            stdout_text="", stdout_raw=b"", stderr_text="", normalized=None,
+            execution=None,
         )
     brief_path = _brief_for_abbr(abbr)
     brief_text = ""
@@ -547,6 +592,7 @@ def generate_post_result(
                 status=AgentPostStatus.HERMES_TIMEOUT,
                 copy=None,
                 raw_response_path=None,
+                run_id=run_id,
                 fallback_reason="hermes subprocess timed out",
                 execution=HermesExecution(
                     command_flags=tuple(argv), exit_code=None, duration_ms=duration_ms,
@@ -555,6 +601,7 @@ def generate_post_result(
                     stdout_replacement_count=0, error=repr(exc),
                 ),
             ),
+            run_id=run_id,
             abbr=abbr, novel=title, chapter=chapter,
             stdout_text="", stdout_raw=b"", stderr_text="", normalized=None,
             execution=HermesExecution(
@@ -573,6 +620,7 @@ def generate_post_result(
                 status=AgentPostStatus.HERMES_PROCESS_FAILED,
                 copy=None,
                 raw_response_path=None,
+                run_id=run_id,
                 fallback_reason=f"hermes subprocess error: {exc!r}",
                 execution=HermesExecution(
                     command_flags=tuple(argv), exit_code=None, duration_ms=duration_ms,
@@ -580,6 +628,7 @@ def generate_post_result(
                     skills=skills, max_turns=str(max_turns), error=repr(exc),
                 ),
             ),
+            run_id=run_id,
             abbr=abbr, novel=title, chapter=chapter,
             stdout_text="", stdout_raw=b"", stderr_text="", normalized=None,
             execution=HermesExecution(
@@ -616,9 +665,11 @@ def generate_post_result(
                 status=AgentPostStatus.HERMES_PROCESS_FAILED,
                 copy=None,
                 raw_response_path=None,
+                run_id=run_id,
                 fallback_reason=f"hermes rc={proc.returncode}",
                 execution=execution,
             ),
+            run_id=run_id,
             abbr=abbr, novel=title, chapter=chapter,
             stdout_text=stdout_text, stdout_raw=stdout_raw,
             stderr_text=stderr_text, normalized=None, execution=execution,
@@ -630,14 +681,16 @@ def generate_post_result(
                 status=AgentPostStatus.HERMES_EMPTY_OUTPUT,
                 copy=None,
                 raw_response_path=None,
+                run_id=run_id,
                 fallback_reason="hermes produced no output",
                 execution=execution,
             ),
+            run_id=run_id,
             abbr=abbr, novel=title, chapter=chapter,
             stdout_text=stdout_text, stdout_raw=stdout_raw,
             stderr_text=stderr_text, normalized=None, execution=execution,
         )
-    data = _extract_json(stdout_text)
+    data, parse_mode, parse_normalizations = _extract_json(stdout_text)
     # Normalize to the flat consumer contract. Accepts both the wrapped skill
     # output ({"variations":[...]}) and the legacy flat response. None => the
     # final block was not found / not parseable.
@@ -661,11 +714,15 @@ def generate_post_result(
                         status=AgentPostStatus.CONTRACT_VALIDATION_FAILED,
                         copy=None,
                         raw_response_path=None,
+                        run_id=run_id,
+                        parse_mode=parse_mode,
+                        normalizations=parse_normalizations,
                         validation_errors=tuple(validation_errors),
                         missing_fields=tuple(missing),
                         fallback_reason=f"contract validation failed: missing={missing}",
                         execution=execution,
                     ),
+                    run_id=run_id,
                     abbr=abbr, novel=title, chapter=chapter,
                     stdout_text=stdout_text, stdout_raw=stdout_raw,
                     stderr_text=stderr_text, normalized=None, execution=execution,
@@ -681,9 +738,13 @@ def generate_post_result(
                 status=AgentPostStatus.FINAL_BLOCK_NOT_FOUND,
                 copy=None,
                 raw_response_path=None,
+                run_id=run_id,
+                parse_mode=parse_mode,
+                normalizations=parse_normalizations,
                 fallback_reason="reasoning transcript contained no complete final block",
                 execution=execution,
             ),
+            run_id=run_id,
             abbr=abbr, novel=title, chapter=chapter,
             stdout_text=stdout_text, stdout_raw=stdout_raw,
             stderr_text=stderr_text, normalized=None, execution=execution,
@@ -701,11 +762,15 @@ def generate_post_result(
                 status=AgentPostStatus.CONTRACT_VALIDATION_FAILED,
                 copy=None,
                 raw_response_path=None,
+                run_id=run_id,
+                parse_mode=parse_mode,
+                normalizations=parse_normalizations,
                 validation_errors=tuple(validation_errors),
                 missing_fields=tuple(missing),
                 fallback_reason=f"contract validation failed: missing={missing}",
                 execution=execution,
             ),
+            run_id=run_id,
             abbr=abbr, novel=title, chapter=chapter,
             stdout_text=stdout_text, stdout_raw=stdout_raw,
             stderr_text=stderr_text, normalized=None, execution=execution,
@@ -716,8 +781,12 @@ def generate_post_result(
             status=AgentPostStatus.SUCCESS,
             copy=normalized,
             raw_response_path=None,
+            run_id=run_id,
+            parse_mode=parse_mode,
+            normalizations=parse_normalizations,
             execution=execution,
         ),
+        run_id=run_id,
         abbr=abbr, novel=title, chapter=chapter,
         stdout_text=stdout_text, stdout_raw=stdout_raw,
         stderr_text=stderr_text, normalized=normalized, execution=execution,
@@ -727,6 +796,7 @@ def generate_post_result(
 def _finalize(
     result: AgentPostResult,
     *,
+    run_id: str,
     abbr: str,
     novel: str,
     chapter: str,
@@ -742,12 +812,14 @@ def _finalize(
     generation whose record fails to persist must NOT silently proceed: it is
     downgraded to DATABASE_PERSIST_FAILED and falls back to the template, with an
     emergency file log (never re-entering the unavailable DB).
+
+    `run_id` is minted by the caller before the subprocess launch so it is stable
+    across every terminal path and can be returned on the result.
     """
     try:
         import automation_db  # local import keeps the module boundary clean
 
         root = Path(__file__).resolve().parent.parent
-        run_id = f"agentpost_{abbr}_{chapter}_{__import__('time').strftime('%Y%m%dT%H%M%S')}"
         fields: list[tuple[int, str, str | None]] = []
         if isinstance(normalized, dict):
             for i, fld in enumerate(_REQUIRED_FIELDS):
@@ -789,6 +861,9 @@ def _finalize(
                 status=AgentPostStatus.DATABASE_PERSIST_FAILED,
                 copy=None,
                 raw_response_path=None,
+                run_id=run_id,
+                parse_mode=result.parse_mode,
+                normalizations=result.normalizations,
                 fallback_reason=f"generation succeeded but persistence failed: {exc!r}",
                 execution=execution,
             )
@@ -810,21 +885,36 @@ def _emergency_log(abbr: str, novel: str, chapter: str, result: AgentPostResult,
         pass
 
 
-def agent_fallback_metadata(result: AgentPostResult) -> dict[str, object]:
-    """Internal metadata for a bundle when the agent did not supply copy.
+def agent_result_metadata(result: AgentPostResult) -> dict[str, object]:
+    """Internal provenance metadata for a bundle, for BOTH success and failure.
 
-    A successful fallback is still an agent-generation failure; never conflate
-    the two. Internal metadata only — never public copy.
+    Always returns the same key set so downstream artifacts have a stable shape.
+    Internal metadata only -- never public copy.
+
+    `_agent_used` is deliberately provisional (False) here: this function cannot
+    know whether the caller actually consumed the copy. Each call site overwrites
+    it based on real downstream consumption. Do not derive it from `status`.
     """
+    execution = result.execution
     return {
         "_agent_requested": True,
-        "_agent_used": result.status is AgentPostStatus.SUCCESS,
+        "_agent_used": False,  # provisional; the call site sets the truth
         "_agent_status": result.status.value,
-        "_agent_fallback_reason": result.fallback_reason or "",
-        "_agent_model": (result.execution.resolved_model if result.execution else "unknown"),
+        "_agent_run_id": result.run_id,
+        "_agent_source": "hermes_agent" if result.copy else None,
+        "_agent_fallback_reason": result.fallback_reason,
+        "_agent_model": execution.resolved_model if execution else "unknown",
+        "_agent_provider": execution.resolved_provider if execution else "unknown",
+        "_agent_reasoning": execution.reasoning if execution else "none",
+        "_agent_parse_mode": result.parse_mode,
+        "_agent_duration_ms": execution.duration_ms if execution else None,
         "_agent_schema_version": "social-post-v1",
-        "_agent_run_id": "",
     }
+
+
+# Backward-compatible alias. Nothing in-repo imports this name any more; kept so an
+# external caller does not break on the rename.
+agent_fallback_metadata = agent_result_metadata
 
 
 def generate_post_copy(

@@ -38,7 +38,8 @@ SAMPLE_WRAPPED = {
 
 
 def main():
-    copy = _unwrap_variation(_extract_json(json.dumps(SAMPLE_WRAPPED)))
+    _data, _parse_mode, _norms = _extract_json(json.dumps(SAMPLE_WRAPPED))
+    copy = _unwrap_variation(_data)
     assert copy is not None, "sample wrapped payload must normalize"
     assert copy.get("_source") == "hermes_agent"
 

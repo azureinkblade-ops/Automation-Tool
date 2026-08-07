@@ -3347,6 +3347,60 @@ def make_experiment_variant(
     }
 
 
+# --- Hermes agent post copy: acquisition + provenance -----------------------------
+# One adapter for all five call sites. The agent's structured result is converted
+# here into (copy, metadata); callers keep their own fail-soft try/except.
+
+def agent_posts_enabled() -> bool:
+    """True when ENABLE_AGENT_POSTS opts in. Default OFF."""
+    return str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {
+        "", "0", "false", "no", "off",
+    }
+
+
+def resolve_agent_post_copy(abbr, title, chapter, hook, material):
+    """Run the agent and return (copy_or_None, metadata).
+
+    `copy` is the validated agent copy, or None to fall back to the template
+    engine. `metadata` is internal provenance (`_agent_*`) that must never reach
+    public post copy. `_agent_used` comes back provisional (False); the call site
+    sets it from actual downstream consumption.
+    """
+    from tools.agent_post_writer import generate_post_result, agent_result_metadata
+
+    result = generate_post_result(abbr, title, chapter, hook, material)
+    # Presence of validated copy decides consumption; status remains provenance.
+    copy = result.copy if result.copy is not None else None
+    return copy, agent_result_metadata(result)
+
+
+def record_generated_social_posts(agent_meta, posts):
+    """Correlate the built platform posts back to their agent run (diagnostics only).
+
+    Never raises: a diagnostics write must not be able to break a post build.
+    """
+    run_id = (agent_meta or {}).get("_agent_run_id")
+    if not run_id:
+        return
+    try:
+        automation_db.insert_generated_social_posts(
+            ROOT,
+            run_id,
+            [
+                (platform, str(posts.get(key) or ""), bool(agent_meta.get("_agent_used")),
+                 agent_meta.get("_agent_fallback_reason"))
+                for platform, key in (
+                    ("instagram", "caption"),
+                    ("x", "x_post"),
+                    ("facebook", "facebook_post"),
+                    ("patreon", "patreon_note"),
+                )
+            ],
+        )
+    except Exception as exc:  # diagnostics must never break a build
+        print(f"[agent-post] generated_social_posts write failed: {exc}", file=sys.stderr)
+
+
 def structured_chapter_package_fallback(
     abbr: str,
     chapter_number: str,
@@ -3388,11 +3442,11 @@ def structured_chapter_package_fallback(
     # Flip ENABLE_AGENT_POSTS=1 to replace template prose with agent-generated copy.
     # Any failure returns None -> build_platform_posts uses the template engine (fail-soft).
     agent_copy = None
-    if str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"} and abbr:
+    agent_meta = {}
+    if agent_posts_enabled() and abbr:
         try:
-            from tools.agent_post_writer import generate_post_copy as _agent_gen
             _agent_hook = " ".join(str(p) for p in material.get("phrases", [])[:3]).strip()
-            agent_copy = _agent_gen(
+            agent_copy, agent_meta = resolve_agent_post_copy(
                 abbr,
                 title,
                 str(material.get("chapter", chapter_number) or chapter_number),
@@ -3405,9 +3459,16 @@ def structured_chapter_package_fallback(
                 f"agent_post_writer skipped: {_agent_exc}"
             )
     posts = build_platform_posts(title, body, material, agent_copy=agent_copy)
+    if agent_meta:
+        # Truth-in-phase: the agent was USED only if its copy actually reached the post.
+        agent_meta["_agent_used"] = (
+            agent_copy is not None and posts.get("_agent_source") == "hermes_agent"
+        )
+        posts.update(agent_meta)
+        record_generated_social_posts(agent_meta, posts)
     agent_post_copy_status = {
-        "enabled": str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"},
-        "used": isinstance(agent_copy, dict) and bool(posts.get("_agent_source") or agent_copy.get("caption")),
+        "enabled": agent_posts_enabled(),
+        "used": bool(agent_meta.get("_agent_used")),
         "source": str(posts.get("_agent_source") or ""),
     }
     image_prompts = make_chapter_image_prompts(title, body, list(hook_map.values())[:3], novel)[:5]
@@ -9445,11 +9506,11 @@ def build_resurfacing_post(abbr: str, chapter: int | str, reason: str = "back_ca
     # Flip ENABLE_AGENT_POSTS=1 to replace template prose with agent-generated copy.
     # Any failure returns None -> build_platform_posts uses the template engine (fail-soft).
     agent_copy = None
-    if str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"} and abbr:
+    agent_meta = {}
+    if agent_posts_enabled() and abbr:
         try:
-            from tools.agent_post_writer import generate_post_copy as _agent_gen
             _agent_hook = " ".join(str(p) for p in material.get("phrases", [])[:3]).strip()
-            agent_copy = _agent_gen(
+            agent_copy, agent_meta = resolve_agent_post_copy(
                 abbr,
                 title,
                 str(material.get("chapter", chapter_number) or chapter_number),
@@ -9462,6 +9523,12 @@ def build_resurfacing_post(abbr: str, chapter: int | str, reason: str = "back_ca
                 f"agent_post_writer skipped: {_agent_exc}"
             )
     copy = build_platform_posts(title, text, material, "catch_up_archive", agent_copy=agent_copy)
+    if agent_meta:
+        # Truth-in-phase: used only if the agent copy actually reached the post.
+        agent_meta["_agent_used"] = (
+            agent_copy is not None and copy.get("_agent_source") == "hermes_agent"
+        )
+        record_generated_social_posts(agent_meta, copy)
     image = folder / f"{abbr}_{chapter_number}_resurface.png"
     image_source = create_fresh_social_image_from_caption(
         image,
@@ -9488,6 +9555,9 @@ def build_resurfacing_post(abbr: str, chapter: int | str, reason: str = "back_ca
         "facebook": copy["facebook_post"],
         "createdAt": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
+    # Internal provenance: reaches metadata.json only. The .txt writes below read
+    # explicitly named keys, so no _agent_* value can enter public copy.
+    payload.update(agent_meta)
     (folder / "instagram.txt").write_text(payload["instagram"] + "\n", encoding="utf-8")
     (folder / "x.txt").write_text(payload["x"] + "\n", encoding="utf-8")
     (folder / "facebook.txt").write_text(payload["facebook"] + "\n", encoding="utf-8")
@@ -16437,10 +16507,12 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
             novel_tags = f"{novel_tags} {_anchor}".strip()
     rr_link = ""
     agent = None
-    if str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"}:
+    agent_meta = {}
+    if agent_posts_enabled():
         try:
-            from tools.agent_post_writer import generate_post_copy as _agent_gen
-            agent = _agent_gen(abbr, novel, "", prompt, {"prompt": prompt, "mode": "novel_highlight"})
+            agent, agent_meta = resolve_agent_post_copy(
+                abbr, novel, "", prompt, {"prompt": prompt, "mode": "novel_highlight"}
+            )
         except Exception as exc:
             print(f"[deep-tiktok-novel] agent post writer failed: {exc}", file=sys.stderr)
     if agent and agent.get("caption"):
@@ -16529,6 +16601,12 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
         "youtube_shorts_disabled": True,
         "youtube_shorts_reason": "Deep chapter TikToks are reserved for TikTok growth testing.",
     }
+    if agent_meta:
+        # Internal provenance only: reaches metadata.json, never the .txt writes
+        # below (which use the locally assembled caption/title strings).
+        # Consumption test for this bespoke path is whether the caption was used.
+        agent_meta["_agent_used"] = bool(agent and agent.get("caption"))
+        payload.update(agent_meta)
     (folder / "caption.txt").write_text(caption + "\n", encoding="utf-8")
     (folder / "description.txt").write_text(caption + "\n", encoding="utf-8")
     (folder / "tiktok-title.txt").write_text(tiktok_title + "\n", encoding="utf-8")
@@ -17256,11 +17334,13 @@ def make_weekend_social_post(abbr: str, day: str) -> dict[str, Any]:
     # Optional Hermes agent post copy (dynamic, research-aware). Default OFF.
     # Flip ENABLE_AGENT_POSTS=1 to replace template prose with agent-generated copy.
     # Any failure -> keep the template copy (fail-soft).
-    if str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"}:
+    _agent_meta = {}
+    if agent_posts_enabled():
         try:
-            from tools.agent_post_writer import generate_post_copy as _agent_gen
             _wk_hook = rotating_weekend_hook(abbr, day)
-            _agent = _agent_gen(abbr, f"Weekend {day}", day, _wk_hook, {"abbr": abbr, "novel": NOVEL_NAMES.get(abbr, "")})
+            _agent, _agent_meta = resolve_agent_post_copy(
+                abbr, f"Weekend {day}", day, _wk_hook, {"abbr": abbr, "novel": NOVEL_NAMES.get(abbr, "")}
+            )
             if _agent and _agent.get("caption"):
                 _ag_cap = str(_agent["caption"]).strip()
                 _ag_cta = str(_agent.get("cta") or "").strip()
@@ -17287,13 +17367,21 @@ def make_weekend_social_post(abbr: str, day: str) -> dict[str, Any]:
                     "alt_text": copy.get("alt_text", f"Weekend promotional image for {_profile.get('name', abbr)}."),
                     "post_focus": copy.get("post_focus", ""),
                     "caption_style": copy.get("caption_style", "") + "+agent",
-                    "_agent_source": _agent.get("_source"),
                 }
         except Exception as _agent_exc:
             copy.setdefault("warnings", []).append(f"agent_post_writer skipped: {_agent_exc}")
+    if _agent_meta:
+        # Consumption test for this bespoke path: the agent caption was assembled in.
+        _agent_meta["_agent_used"] = bool(copy.get("caption_style", "").endswith("+agent"))
+        # Keep _agent_source consistent with _agent_used: if the agent copy was
+        # not actually consumed, do not advertise it as the source. (An exception
+        # inside the consume block above leaves copy as the template dict.)
+        if not _agent_meta["_agent_used"]:
+            _agent_meta["_agent_source"] = None
     payload = {
         **item,
         **copy,
+        **_agent_meta,
         "source": "weekend-rotation",
         "kind": "weekend",
         "folder": str(folder),
@@ -32307,11 +32395,11 @@ def make_campaign(
     # Flip ENABLE_AGENT_POSTS=1 to replace template prose with agent-generated copy.
     # Any failure returns None -> build_platform_posts uses the template engine (fail-soft).
     agent_copy = None
-    if str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"} and abbr:
+    agent_meta = {}
+    if agent_posts_enabled() and abbr:
         try:
-            from tools.agent_post_writer import generate_post_copy as _agent_gen
             _agent_hook = " ".join(str(p) for p in material.get("phrases", [])[:3]).strip()
-            agent_copy = _agent_gen(
+            agent_copy, agent_meta = resolve_agent_post_copy(
                 abbr,
                 title,
                 str(material.get("chapter", chapter_id) or chapter_id),
@@ -32324,10 +32412,17 @@ def make_campaign(
                 f"agent_post_writer skipped: {_agent_exc}"
             )
     platform_posts = build_platform_posts(title, chapter, material, post_focus, agent_copy=agent_copy)
+    if agent_meta:
+        # Truth-in-phase: used only if the agent copy actually reached the post.
+        agent_meta["_agent_used"] = (
+            agent_copy is not None and platform_posts.get("_agent_source") == "hermes_agent"
+        )
+        platform_posts.update(agent_meta)
+        record_generated_social_posts(agent_meta, platform_posts)
     material.update(platform_posts)
     material["agent_post_copy"] = {
-        "enabled": str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower() not in {"", "0", "false", "no", "off"},
-        "used": isinstance(agent_copy, dict) and bool(platform_posts.get("_agent_source") or agent_copy.get("caption")),
+        "enabled": agent_posts_enabled(),
+        "used": bool(agent_meta.get("_agent_used")),
         "source": str(platform_posts.get("_agent_source") or ""),
     }
     write_text_artifacts(folder, material)
@@ -39858,6 +39953,36 @@ ${escapeHtml(report.safety || data.note || 'No publish or queue action is run he
       `;
     }
 
+    function renderAgentProvenanceBadge(data) {
+      // Hermes provenance badge. Reads the _agent_* keys the campaign builder
+      // attaches to the post payload. Renders nothing when the agent was not
+      // requested, so template-only builds look exactly as before.
+      if (!data || !data._agent_requested) return '';
+      const used = data._agent_used === true;
+      const status = escapeHtml(String(data._agent_status || 'unknown'));
+      const label = used ? 'Agent Copy &#10003;' : `Template Fallback &mdash; ${status}`;
+      const tone = used ? '#1a7f37' : '#8a6d00';
+      const durationMs = Number(data._agent_duration_ms);
+      const seconds = Number.isFinite(durationMs) ? (durationMs / 1000).toFixed(1) + 's' : 'n/a';
+      const rows = [
+        ['Run ID', data._agent_run_id || 'n/a'],
+        ['Status', data._agent_status || 'n/a'],
+        ['Model', data._agent_model || 'unknown'],
+        ['Duration', seconds],
+        ['Parse mode', data._agent_parse_mode || 'n/a'],
+      ];
+      if (data._agent_fallback_reason) rows.push(['Fallback reason', data._agent_fallback_reason]);
+      const detail = rows
+        .map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(String(v))}`)
+        .join('\n');
+      return `
+        <details class="copy" style="border-left:3px solid ${tone}">
+          <summary style="cursor:pointer;color:${tone}"><strong>${label}</strong></summary>
+${escapeHtml(detail)}
+        </details>
+      `;
+    }
+
     function renderResults(data) {
       statusEl.textContent = data.source === 'openai' ? 'Promo pack created with OpenAI.' : 'Promo pack created with fallback image sources.';
       const videoBuilds = (data.video_builds?.builds || []).map(build => {
@@ -39875,6 +40000,7 @@ ${escapeHtml(report.safety || data.note || 'No publish or queue action is run he
       results.innerHTML = `
         <div class="grid">${cards}</div>
         ${renderPackImageReviewBlock(data, {textKind: 'instagram'})}
+        ${renderAgentProvenanceBadge(data)}
         <div class="copy">${escapeHtml(data.caption || '')}</div>
         <div class="copy"><strong>Patreon</strong>\n${escapeHtml(data.patreon_note || '')}</div>
         <div class="copy"><strong>X</strong>\n${escapeHtml(data.x_post || data.x || '')}</div>
@@ -42253,8 +42379,22 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(data)
             return
         if parsed.path == "/api/agent-posts-status":
-            cur = str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower()
-            self.send_json({"enabled": cur not in ("", "0", "false", "no", "off")})
+            self.send_json({"enabled": agent_posts_enabled()})
+            return
+        if parsed.path == "/api/runtime-provenance":
+            try:
+                from tools.agent_post_writer import runtime_provenance
+                self.send_json(runtime_provenance())
+            except Exception as exc:
+                self.send_json({"error": str(exc)}, 500)
+            return
+        if parsed.path == "/api/agent-post-runs":
+            try:
+                query = urllib.parse.parse_qs(parsed.query)
+                limit = int(query.get("limit", ["20"])[0] or 20)
+                self.send_json({"runs": automation_db.list_agent_post_runs(ROOT, limit)})
+            except Exception as exc:
+                self.send_json({"error": str(exc)}, 400)
             return
         if parsed.path == "/api/examples":
             self.send_json({"examples": find_examples()})
@@ -43629,8 +43769,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": True, "enabled": enabled})
                 return
             if self.path == "/api/agent-posts-status":
-                cur = str(os.environ.get("ENABLE_AGENT_POSTS", "0")).strip().lower()
-                self.send_json({"enabled": cur not in ("", "0", "false", "no", "off")})
+                self.send_json({"enabled": agent_posts_enabled()})
                 return
             if self.path == "/api/local-sd-status":
                 _sd = local_stable_diffusion_status()

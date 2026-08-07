@@ -129,8 +129,9 @@ def test_5_fenced_and_prose_extraction():
         + "\n```\n"
         "session_id: 20260805_145356_ae39a8\n"
     )
-    parsed = _extract_json(fenced)
+    parsed, parse_mode, _norms = _extract_json(fenced)
     ok &= _assert(isinstance(parsed, dict), "fenced JSON parsed")
+    ok &= _assert(parse_mode is not None, "parse mode reported")
     out = _unwrap_variation(parsed)
     ok &= _assert(out is not None and out["caption"] == "Wrapped caption body.", "fenced wrapped payload normalizes")
 
@@ -139,15 +140,16 @@ def test_5_fenced_and_prose_extraction():
         + json.dumps(WRAPPED, ensure_ascii=False)
         + "\nLet me know if you need changes.\nsession_id: 20260805_145356_ae39a8\n"
     )
-    parsed2 = _extract_json(prose)
+    parsed2, parse_mode2, _norms2 = _extract_json(prose)
     ok &= _assert(isinstance(parsed2, dict), "prose-wrapped JSON parsed")
+    ok &= _assert(parse_mode2 is not None, "parse mode reported")
     out2 = _unwrap_variation(parsed2)
     ok &= _assert(out2 is not None and out2["caption"] == "Wrapped caption body.", "prose-wrapped normalizes")
 
     flat_prose = (
         "payload below\n" + json.dumps(FLAT, ensure_ascii=False) + "\nsession_id: 20260805_145356_ae39a8\n"
     )
-    out3 = _unwrap_variation(_extract_json(flat_prose))
+    out3 = _unwrap_variation(_extract_json(flat_prose)[0])
     ok &= _assert(out3 is not None and out3["caption"] == "Caption body.", "flat prose-wrapped normalizes")
     return ok
 
@@ -177,8 +179,9 @@ def test_6_malformed_json_recovered():
         ),
     }
     for label, raw in samples.items():
-        parsed = _extract_json(raw)
+        parsed, parse_mode, norms = _extract_json(raw)
         ok &= _assert(isinstance(parsed, dict), f"parsed: {label}")
+        ok &= _assert(parse_mode == "balanced_repair", f"balanced_repair mode reported: {label}")
         out = _unwrap_variation(parsed)
         ok &= _assert(out is not None, f"normalizes to usable post: {label}")
         if out is not None:
@@ -186,7 +189,7 @@ def test_6_malformed_json_recovered():
             ok &= _assert(out["hook"] == "h", f"hook intact: {label}")
     # Truncated output (no closing brace) must remain unrecoverable -> None.
     truncated = '{ "hook": "h", "caption": "Liang walks the hundredfold path and finds his'
-    ok &= _assert(_extract_json(truncated) is None, "truncated output stays None (fallback)")
+    ok &= _assert(_extract_json(truncated)[0] is None, "truncated output stays None (fallback)")
     return ok
 
 

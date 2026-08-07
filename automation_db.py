@@ -730,6 +730,9 @@ def init_db(root: Path) -> Path:
                     created_at        TEXT
                 );
 
+                CREATE INDEX IF NOT EXISTS idx_agent_post_runs_created
+                    ON agent_post_runs(created_at DESC);
+
                 CREATE TABLE IF NOT EXISTS agent_post_fields (
                     run_id    TEXT NOT NULL,
                     position INTEGER NOT NULL,
@@ -1927,6 +1930,52 @@ def replace_agent_post_fields(root: Path, run_id: str, fields: list[tuple[int, s
                     (str(run_id), int(position), str(field), None if value is None else str(value)),
                 )
             conn.commit()
+
+
+def list_agent_post_runs(root: Path, limit: int = 20) -> list[dict]:
+    """Recent agent post runs for diagnostics, newest first.
+
+    Deliberately selects only small columns: `decoded_stdout`, `raw_stdout`, and
+    `stderr_text` are large blobs and must never be returned by a list endpoint.
+    `agent_used` is derived from whether any correlated generated post actually
+    consumed the agent copy. `limit` is clamped to 1..200.
+    """
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = 20
+    limit = max(1, min(200, limit))
+    init_db(root)
+    with _LOCK:
+        with connect(root) as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    r.run_id, r.novel, r.chapter, r.status, r.fallback_reason,
+                    r.duration_ms, r.created_at,
+                    EXISTS (
+                        SELECT 1 FROM generated_social_posts g
+                        WHERE g.run_id = r.run_id AND g.agent_used = 1
+                    ) AS agent_used
+                FROM agent_post_runs r
+                ORDER BY r.created_at DESC, r.rowid DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+    return [
+        {
+            "run_id": row["run_id"],
+            "novel": row["novel"],
+            "chapter": row["chapter"],
+            "status": row["status"],
+            "fallback_reason": row["fallback_reason"],
+            "duration_ms": row["duration_ms"],
+            "created_at": row["created_at"],
+            "agent_used": bool(row["agent_used"]),
+        }
+        for row in rows
+    ]
 
 
 def insert_generated_social_posts(
