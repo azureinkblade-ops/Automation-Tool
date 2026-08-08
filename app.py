@@ -15685,6 +15685,35 @@ def make_or_generate_tiktok_pack(
 ) -> dict[str, Any]:
     if not abbr or not str(chapter).strip():
         raise RuntimeError("Choose a novel and enter a chapter number for TikTok.")
+    # Optional Hermes agent short-form copy (Reel + Shorts). Default OFF.
+    # Flip ENABLE_AGENT_POSTS=1 to inject agent copy into the pack. Any failure
+    # returns None -> promo_builder falls back to the template engine (fail-soft).
+    # Resolve authoritative chapter text first: an empty material["text"] would
+    # hash to the empty-string sha (e3b0c442...), collapsing every chapter onto
+    # one memo entry. Resolve via docs_chapter_text like the deep/SEO paths do.
+    agent_copy: dict | None = None
+    agent_meta: dict = {}
+    if agent_posts_enabled() and abbr and str(chapter).strip():
+        try:
+            _resolved_text = chapter_text or ""
+            if not _resolved_text.strip() and str(chapter).isdigit():
+                try:
+                    _cd = docs_chapter_text(abbr, int(chapter))
+                    _resolved_text = str(_cd.get("text") or _cd.get("raw_text") or "")
+                except Exception:
+                    _resolved_text = ""
+            _agent_hook = (_resolved_text.strip().split("\n", 1)[0].strip() or f"Chapter {chapter}")[:240]
+            _material = {"text": _resolved_text, "abbr": abbr, "chapter": str(chapter)}
+            agent_copy, agent_meta = resolve_agent_post_copy_cached(
+                abbr,
+                NOVEL_NAMES.get(abbr, abbr),
+                str(chapter),
+                _agent_hook,
+                _material,
+            )
+        except Exception as _agent_exc:  # never let the agent block a pack build
+            agent_copy = None
+            agent_meta = {}
     assets = list_tiktok_assets()
     matching_groups = [group for group in assets["imageGroups"] if group["abbr"] == abbr and group["chapter"] == str(chapter)]
     complete = any(int(group.get("count", 0)) >= 3 for group in matching_groups)
@@ -15707,7 +15736,20 @@ def make_or_generate_tiktok_pack(
         visual_prompt=visual_prompt,
         chapter_text=chapter_text,
         style=style,
+        agent_copy=agent_copy,
+        agent_meta=agent_meta,
     )
+    # promo_builder stamps truth-in-phase _agent_used onto agent_meta; record the
+    # two disjoint short-form platforms. De-dup is handled inside the recorder.
+    if agent_meta:
+        _agent_used = bool(agent_meta.get("_agent_used"))
+        record_generated_shortform_posts(
+            agent_meta,
+            [
+                ("instagram_reel", result.get("instagram_reel_caption") or "", _agent_used),
+                ("youtube_short", result.get("youtube_shorts_description") or "", _agent_used),
+            ],
+        )
     if generation:
         result["image_sources"] = generation.get("image_sources", [])
         result["image_prompts"] = generation.get("image_prompts", [])
@@ -16764,6 +16806,26 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
     if not chapter_text.strip():
         raise RuntimeError("The selected GitHub chapter is empty.")
     novel = NOVEL_NAMES.get(abbr, abbr)
+    # Optional Hermes agent copy for the deep pack (caption/title). Default OFF.
+    # Flip ENABLE_AGENT_POSTS=1. Any failure returns None -> the template caption
+    # below is used unchanged (fail-soft). Resolved via the short-TTL per-chapter
+    # memo so the Reel/Short pack and this deep build share ONE Hermes run.
+    agent_copy: dict | None = None
+    agent_meta: dict = {}
+    if agent_posts_enabled():
+        try:
+            _agent_hook = (chapter_text.strip().split("\n", 1)[0].strip() or title)[:240]
+            _material = {"text": chapter_text, "abbr": abbr, "chapter": chapter, "title": title}
+            agent_copy, agent_meta = resolve_agent_post_copy_cached(
+                abbr,
+                novel,
+                chapter,
+                _agent_hook,
+                _material,
+            )
+        except Exception as _agent_exc:  # never let the agent block a pack build
+            agent_copy = None
+            agent_meta = {}
     source_hash = content_hash(chapter_text)
     folder = TIKTOK_OUTPUT_DIR / f"{abbr.lower()}-{slugify(chapter)}-deep"
     existing = reusable_pack_result(folder, expected_hash=source_hash, required_files=["caption.txt", "video-overlays.txt"])
@@ -16816,11 +16878,21 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
     overlays.append(reel_overlay_text(f"READ {novel} ON ROYAL ROAD", limit=62))
     hook = overlays[0].replace("\n", " ") if overlays else f"A deeper look at {novel}"
     caption = social_caption_link_in_bio(deep_tiktok_caption(abbr, chapter, title, hook), "tiktok")
+    # When the agent produced a usable caption, let it reach the public caption so
+    # provenance is truth-in-phase (the copy is actually published, not merely fetched).
+    _agent_caption = (agent_copy or {}).get("caption") if agent_copy else None
+    if _agent_caption and str(_agent_caption).strip():
+        caption = social_caption_link_in_bio(str(_agent_caption).strip(), "tiktok")
     # Voice the long/deep TikTok with the natural caption sentence (NOT the
     # overlay sticker). Fail-soft: if TTS is unavailable the video still
     # builds with music only.
     narration_target = generate_deep_tiktok_narration(folder, abbr, tiktok_narration_text({"caption": caption}, overlays)) if caption else None
     tiktok_title = deep_tiktok_title(abbr, chapter, title)
+    # Let an agent-supplied title reach the public title (truth-in-phase).
+    if _agent_caption and str(_agent_caption).strip():
+        _agent_title = (agent_copy or {}).get("tiktok_title") or (agent_copy or {}).get("title")
+        if _agent_title and str(_agent_title).strip():
+            tiktok_title = str(_agent_title).strip()
     sound_source = choose_rotating_weekly_promo_audio()
     if not sound_source:
         sounds = [Path(item["path"]) for item in list_tiktok_assets().get("sounds", []) if Path(item["path"]).exists()]
@@ -16851,6 +16923,16 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
         "youtube_shorts_disabled": True,
         "youtube_shorts_reason": "Deep chapter TikToks are reserved for TikTok growth testing.",
     }
+    # Internal provenance only: reaches metadata.json, never the public .txt writes
+    # below (which use the locally assembled caption/title). Truth-in-phase: the
+    # agent copy must actually have reached the public caption to count as used.
+    if agent_meta:
+        agent_meta["_agent_used"] = bool(agent_copy) and bool(_agent_caption) and bool(caption)
+        payload.update(agent_meta)
+        record_generated_shortform_posts(
+            agent_meta,
+            [("tiktok_long", caption, bool(agent_meta["_agent_used"]))],
+        )
     (folder / "caption.txt").write_text(caption + "\n", encoding="utf-8")
     (folder / "description.txt").write_text(caption + "\n", encoding="utf-8")
     (folder / "tiktok-title.txt").write_text(tiktok_title + "\n", encoding="utf-8")
