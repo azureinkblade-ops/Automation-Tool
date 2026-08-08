@@ -73,6 +73,8 @@ REQUIRED_COLLABORATORS = [
     "tiktok_caption",            # pure: caption string
     "instagram_reel_caption",    # pure: caption string
     "youtube_shorts_metadata",   # pure: title/description
+    "build_reel_short_copy",     # pure: agent-aware Reel/Short copy (hook/body/caption/title)
+    "shortform_seo_keywords",    # pure: deterministic SEO keyword set
     "prepare_tiktok_outro_image",# side-effect: writes outro image
     "tiktok_chapter_teaser_overlays",  # pure: overlay list
     "write_tiktok_video_helper", # side-effect: ffmpeg video
@@ -115,6 +117,80 @@ def _get(collab: dict[str, Any], name: str):
     return fn
 
 
+def _shortform_copy_bundle(
+    collab: dict[str, Any],
+    abbr: str,
+    novel: str,
+    chapter: str,
+    agent_copy: dict | None,
+) -> dict[str, Any]:
+    """Assemble the Reel / Shorts copy for one pack.
+
+    When validated agent copy is present (a non-empty caption), the Reel caption and the
+    Shorts title/description are sourced from the injected ``build_reel_short_copy``
+    collaborator; otherwise the pre-existing generic collaborators are called unchanged so
+    the fallback output stays byte-identical.
+
+    This module never calls Hermes: ``agent_copy`` arrives already resolved from app.py.
+    """
+    agent_consumed = bool(agent_copy) and bool(str((agent_copy or {}).get("caption") or "").strip())
+    if not agent_consumed:
+        shorts = _get(collab, "youtube_shorts_metadata")(novel, chapter)
+        return {
+            "agent_used": False,
+            "seo_keywords": [],
+            "instagram_reel_caption": copy.public_copy_without_links(
+                _get(collab, "instagram_reel_caption")(novel, chapter), "instagram"
+            ),
+            "youtube_shorts_title": shorts["title"],
+            "youtube_shorts_description": copy.public_copy_without_links(shorts["description"], "youtube"),
+        }
+    keywords = _get(collab, "shortform_seo_keywords")(abbr, chapter, agent_copy)
+    seo_context = {"abbr": abbr, "keywords": keywords}
+    reel = _get(collab, "build_reel_short_copy")(
+        agent_copy, novel, chapter, seo_context, platform="instagram_reel"
+    )
+    short = _get(collab, "build_reel_short_copy")(
+        agent_copy, novel, chapter, seo_context, platform="youtube_short"
+    )
+    return {
+        "agent_used": True,
+        "seo_keywords": list(keywords or []),
+        "instagram_reel_caption": copy.public_copy_without_links(reel["caption"], "instagram"),
+        "youtube_shorts_title": short["title"],
+        "youtube_shorts_description": copy.public_copy_without_links(short["caption"], "youtube"),
+    }
+
+
+def _stamp_agent_meta(agent_meta: dict[str, Any] | None, agent_used: bool, agent_copy: dict | None) -> None:
+    """Record truthful short-form provenance on the shared `agent_meta` dict.
+
+    Single source of truth for the otherwise-triplicated (_shortform_copy_bundle reuse +
+    fresh, and the daily-post path) stamping logic. `_agent_used` reflects ACTUAL
+    downstream consumption, never merely "agent_copy is not None". `_agent_source` is
+    pinned to the Hermes boundary only when copy was consumed.
+    """
+    if agent_meta is None:
+        return
+    agent_meta["_agent_used"] = bool(agent_used)
+    if agent_used:
+        agent_meta.setdefault("_agent_source", (agent_copy or {}).get("_source") or "hermes_agent")
+
+
+def _apply_agent_provenance(target: dict[str, Any], agent_meta: dict[str, Any] | None) -> None:
+    """Project internal `_agent_*` keys onto a pack `metadata.json` payload.
+
+    Strips any pre-existing `_agent_*` keys first so a flag-off rebuild of an earlier
+    agent-enabled pack returns to a clean, agent-free metadata state (no stale
+    `_agent_run_id` / `_agent_source` left behind to mis-attribute template copy).
+    """
+    for key in [k for k in target if str(k).startswith("_agent_")]:
+        del target[key]
+    for key, value in (agent_meta or {}).items():
+        if str(key).startswith("_agent_"):
+            target[key] = value
+
+
 def make_tiktok_pack(
     abbr: str,
     chapter: str | None = None,
@@ -122,6 +198,8 @@ def make_tiktok_pack(
     visual_prompt: str = "",
     chapter_text: str = "",
     style: str = "main-posts",
+    agent_copy: dict | None = None,
+    agent_meta: dict | None = None,
     *,
     collaborators: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -158,10 +236,17 @@ def make_tiktok_pack(
     if not force_new_images and reused and reused.get("chapter") == group["chapter"] and reused.get("abbr") == abbr:
         novel = NOVEL_NAMES.get(abbr, abbr)
         reused["caption"] = copy.public_copy_without_links(_get(collab, "tiktok_caption")(novel, group["chapter"]), "tiktok")
-        reused["instagram_reel_caption"] = copy.public_copy_without_links(_get(collab, "instagram_reel_caption")(novel, group["chapter"]), "instagram")
-        shorts = _get(collab, "youtube_shorts_metadata")(novel, group["chapter"])
-        reused["youtube_shorts_title"] = shorts["title"]
-        reused["youtube_shorts_description"] = copy.public_copy_without_links(shorts["description"], "youtube")
+        # Reused packs must NOT silently revert to generic copy: apply the same
+        # agent-aware assembly the fresh branch uses.
+        bundle = _shortform_copy_bundle(collab, abbr, novel, group["chapter"], agent_copy)
+        reused["instagram_reel_caption"] = bundle["instagram_reel_caption"]
+        reused["youtube_shorts_title"] = bundle["youtube_shorts_title"]
+        reused["youtube_shorts_description"] = bundle["youtube_shorts_description"]
+        reused["seo_keywords"] = bundle["seo_keywords"]
+        # Stamp truthful provenance and strip any stale _agent_* left by an earlier
+        # agent-enabled build so a flag-off rebuild is clean (no mis-attribution).
+        _stamp_agent_meta(agent_meta, bundle["agent_used"], agent_copy)
+        _apply_agent_provenance(reused, agent_meta)
         (folder / "caption.txt").write_text(reused["caption"] + "\n", encoding="utf-8")
         (folder / "instagram-reel-caption.txt").write_text(reused["instagram_reel_caption"] + "\n", encoding="utf-8")
         (folder / "youtube-shorts-title.txt").write_text(reused["youtube_shorts_title"] + "\n", encoding="utf-8")
@@ -211,9 +296,12 @@ def make_tiktok_pack(
     shutil.copy2(sound_source, sound_target)
     novel = NOVEL_NAMES.get(abbr, abbr)
     caption = copy.public_copy_without_links(_get(collab, "tiktok_caption")(novel, group["chapter"]), "tiktok")
-    reel_caption = copy.public_copy_without_links(_get(collab, "instagram_reel_caption")(novel, group["chapter"]), "instagram")
-    shorts = _get(collab, "youtube_shorts_metadata")(novel, group["chapter"])
-    shorts_description = copy.public_copy_without_links(shorts["description"], "youtube")
+    bundle = _shortform_copy_bundle(collab, abbr, novel, group["chapter"], agent_copy)
+    reel_caption = bundle["instagram_reel_caption"]
+    shorts_title = bundle["youtube_shorts_title"]
+    shorts_description = bundle["youtube_shorts_description"]
+    # Stamp truthful provenance (single source of truth) before building the payload.
+    _stamp_agent_meta(agent_meta, bundle["agent_used"], agent_copy)
     copied_images.append(_get(collab, "prepare_tiktok_outro_image")(folder, abbr, novel, group["chapter"], style=pack_track))
     overlays = _get(collab, "tiktok_chapter_teaser_overlays")(abbr, group["chapter"], novel, chapter_text=chapter_text, fallback_text=visual_prompt or caption)
     payload = {
@@ -225,15 +313,18 @@ def make_tiktok_pack(
         "sound": str(sound_target),
         "caption": caption,
         "instagram_reel_caption": reel_caption,
-        "youtube_shorts_title": shorts["title"],
+        "youtube_shorts_title": shorts_title,
         "youtube_shorts_description": shorts_description,
         "folder": str(folder),
         "visual_prompt": visual_prompt,
         "video_overlays": overlays,
     }
+    payload["seo_keywords"] = bundle["seo_keywords"]
+    # Provenance is internal-only: metadata.json, never public post copy.
+    _apply_agent_provenance(payload, agent_meta)
     (folder / "caption.txt").write_text(caption + "\n", encoding="utf-8")
     (folder / "instagram-reel-caption.txt").write_text(reel_caption + "\n", encoding="utf-8")
-    (folder / "youtube-shorts-title.txt").write_text(shorts["title"] + "\n", encoding="utf-8")
+    (folder / "youtube-shorts-title.txt").write_text(shorts_title + "\n", encoding="utf-8")
     (folder / "youtube-shorts-description.txt").write_text(shorts_description + "\n", encoding="utf-8")
     (folder / "sound.txt").write_text(str(sound_target) + "\n", encoding="utf-8")
     (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
