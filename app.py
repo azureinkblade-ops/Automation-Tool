@@ -68,7 +68,7 @@ import approval_inbox
 import release_automation
 import buffer_publish
 import browser_publish
-# §2 TTS service (lazy-imports app inside functions, so safe at module load).
+# Â§2 TTS service (lazy-imports app inside functions, so safe at module load).
 from tts_service import generate_post_audio
 
 import youtube_pipeline
@@ -110,7 +110,7 @@ try:
         print(f"[image-pipeline] diffusers local SDXL enabled (torch/diffusers/transformers/PIL importable)", flush=True)
         print(
             f"[image-pipeline] external stock fallback policy: "
-            f"{'ALLOWED (ALLOW_EXTERNAL_IMAGE_FALLBACK=1)' if ALLOW_EXTERNAL_IMAGE_FALLBACK else 'DISABLED — local SDXL failure will NOT substitute Pexels/Pixabay'}",
+            f"{'ALLOWED (ALLOW_EXTERNAL_IMAGE_FALLBACK=1)' if ALLOW_EXTERNAL_IMAGE_FALLBACK else 'DISABLED â€” local SDXL failure will NOT substitute Pexels/Pixabay'}",
             flush=True,
         )
     else:
@@ -224,15 +224,15 @@ LOCAL_IMAGE_GENERATOR_SCRIPT = ROOT / "local_image_generator.py"
 LORA_TRAINING_DIR = ROOT / "lora-training"
 
 # Feature flags for post-build improvements (2026-07-20 plan: voice variants, TTS, smart overlay).
-# Start §3 (smart overlay) and §1 (voice variants) ON; §2 (post audio) OFF until validated.
+# Start Â§3 (smart overlay) and Â§1 (voice variants) ON; Â§2 (post audio) OFF until validated.
 ENABLE_SMART_OVERLAY_SELECTION = str(os.environ.get("ENABLE_SMART_OVERLAY_SELECTION", "true")).strip().lower() in ("1", "true", "yes", "on")
 ENABLE_NOVEL_VOICE_VARIANTS = str(os.environ.get("ENABLE_NOVEL_VOICE_VARIANTS", "true")).strip().lower() in ("1", "true", "yes", "on")
 ENABLE_POST_AUDIO = str(os.environ.get("ENABLE_POST_AUDIO", "false")).strip().lower() in ("1", "true", "yes", "on")
-# §2 TTS orchestration flags. GENERATE_POST_AUDIO gates the feature; POST_AUDIO_BLOCKING
+# Â§2 TTS orchestration flags. GENERATE_POST_AUDIO gates the feature; POST_AUDIO_BLOCKING
 # controls whether audio synthesis blocks post creation (False = deferred/async-safe).
 GENERATE_POST_AUDIO = str(os.environ.get("GENERATE_POST_AUDIO", "false")).strip().lower() in ("1", "true", "yes", "on")
 POST_AUDIO_BLOCKING = str(os.environ.get("POST_AUDIO_BLOCKING", "false")).strip().lower() in ("1", "true", "yes", "on")
-# Artifact schema version for post payloads that gain audio/overlay structures (§4 migration safety).
+# Artifact schema version for post payloads that gain audio/overlay structures (Â§4 migration safety).
 ARTIFACT_SCHEMA_VERSION = 2
 
 LORA_MODEL_DIR = ROOT / "loras"
@@ -3416,6 +3416,111 @@ def resolve_agent_post_copy(abbr, title, chapter, hook, material):
     return copy, agent_result_metadata(result)
 
 
+# Short-TTL, in-process memo so ONE validated Hermes run per chapter can feed every
+# downstream product (Instagram/X/Facebook, the Reel/Short, and the 60s TikTok) without
+# re-invoking the agent. Deliberately in-process only: rehydrating an older run from
+# SQLite could resurrect copy written against a stale chapter revision.
+_AGENT_COPY_MEMO: dict[tuple[str, str, str], tuple[float, dict | None, dict]] = {}
+_AGENT_COPY_MEMO_TTL = 900  # seconds
+_AGENT_COPY_MEMO_LOCK = threading.Lock()
+# (run_id, platform) pairs already recorded this process, so a downstream product that
+# shares the memoized run_id still records its OWN provenance row (the upsert is keyed on
+# (run_id, platform), so disjoint platforms never collide). Cleared with the memo.
+_AGENT_RECORDED_PLATFORMS: set[tuple[str, str]] = set()
+
+
+def _memo_key(abbr, chapter, material) -> tuple[str, str, str]:
+    # Include a cheap revision discriminator so a chapter edited and re-promoted
+    # inside the TTL is NOT served agent copy from the previous revision (the
+    # architecture's whole reason for avoiding SQLite rehydration).
+    return (
+        story_key(abbr),
+        str(chapter or "").strip(),
+        str(content_hash(str((material or {}).get("text") or ""))),
+    )
+
+
+def resolve_agent_post_copy_cached(abbr, title, chapter, hook, material):
+    """`resolve_agent_post_copy` plus a short-TTL per-(abbr, chapter, revision) memo.
+
+    Returns the same `(copy_or_None, metadata)` pair, with one extra provenance flag:
+    `meta["_agent_memo_hit"]` is True when the result came from the cache.
+
+    Only *successful* results are memoized (stored as copies, never by reference, so a
+    caller's per-platform `_agent_used` mutation cannot poison the cache). A transient
+    agent failure stays retryable instead of pinning a fallback for the whole TTL.
+    Chapterless runs (the novel-highlight path) are never cached. Expired entries are
+    swept on write so the dict stays bounded by the TTL window in a long-running daemon.
+
+    The lock guards only the dict mutations, NOT the agent subprocess, so unrelated
+    chapters build in parallel and a cached read never blocks behind an in-flight call.
+    """
+    key = _memo_key(abbr, chapter, material)
+    cacheable = bool(key[0] and key[1])
+    if cacheable:
+        with _AGENT_COPY_MEMO_LOCK:
+            hit = _AGENT_COPY_MEMO.get(key)
+        if hit and (time.time() - hit[0]) < _AGENT_COPY_MEMO_TTL:
+            # Return independent copies: the caller may mutate `_agent_used`, and we must
+            # not let that leak back into the shared cache entry.
+            meta = dict(hit[2])
+            meta["_agent_memo_hit"] = True
+            print(
+                f"[agent-post] memo HIT for {key[0]} ch{key[1]} rev {key[2][:8]}",
+                file=sys.stderr,
+            )
+            return dict(hit[1]), meta
+    # Cache miss (or uncacheable): invoke the agent OUTSIDE the lock.
+    copy, meta = resolve_agent_post_copy(abbr, title, chapter, hook, material)
+    meta = dict(meta or {})
+    meta["_agent_memo_hit"] = False
+    if cacheable and copy is not None and str(copy.get("caption") or "").strip():
+        stamp = time.time()
+        with _AGENT_COPY_MEMO_LOCK:
+            # Drop entries that can no longer produce a hit so the memo stays bounded by
+            # the TTL window instead of growing for the daemon's whole lifetime.
+            for stale in [k for k, v in _AGENT_COPY_MEMO.items() if (stamp - v[0]) >= _AGENT_COPY_MEMO_TTL]:
+                del _AGENT_COPY_MEMO[stale]
+            _AGENT_COPY_MEMO[key] = (stamp, dict(copy), dict(meta))
+    return copy, meta
+
+
+def record_generated_shortform_posts(agent_meta, rows):
+    """Correlate short-form products back to their agent run (diagnostics only).
+
+    `rows` is a list of `(platform, post_text, agent_used)` where platform is one of
+    `instagram_reel`, `youtube_short`, or `tiktok_long`. Kept separate from
+    `record_generated_social_posts` because that one is bound to the 4-platform daily
+    post shape and a single `_agent_used` flag; short-form consumption is per-product.
+
+    Platform-scoped de-duplication: one Hermes run is shared across the Reel/Short pack
+    AND the 60s TikTok, so the second build hits the memo. But its rows are DISJOINT
+    platforms, and the upsert is keyed on (run_id, platform), so they never collide.
+    We record every platform exactly once per process and skip only a platform already
+    written -- never suppress a whole product's row.
+
+    Never raises: a diagnostics write must not be able to break a pack build.
+    """
+    run_id = (agent_meta or {}).get("_agent_run_id")
+    if not run_id:
+        return
+    rows = [(str(p), str(t or ""), bool(u)) for (p, t, u) in rows]
+    pending = [(p, t, u) for (p, t, u) in rows if (run_id, p) not in _AGENT_RECORDED_PLATFORMS]
+    if not pending:
+        return
+    try:
+        fallback_reason = (agent_meta or {}).get("_agent_fallback_reason")
+        automation_db.insert_generated_social_posts(
+            ROOT, run_id, [(p, t, u, fallback_reason) for (p, t, u) in pending]
+        )
+    except Exception as exc:  # diagnostics must never break a build
+        print(f"[agent-post] generated_shortform_posts write failed: {exc}", file=sys.stderr)
+        return
+    with _AGENT_COPY_MEMO_LOCK:
+        for p, _t, _u in pending:
+            _AGENT_RECORDED_PLATFORMS.add((run_id, p))
+
+
 def record_generated_social_posts(agent_meta, posts):
     """Correlate the built platform posts back to their agent run (diagnostics only).
 
@@ -5286,7 +5391,7 @@ async function collectXMessageCandidates(page) {{
       const blocked = new Set([
         'messages', 'new message', 'search direct messages', 'settings', 'requests',
         'compose message', 'send', 'add emoji', 'add photo', 'start a new message',
-        'you don’t have any messages', 'you do not have any messages'
+        'you donâ€™t have any messages', 'you do not have any messages'
       ]);
       const nodes = [
         ...document.querySelectorAll('[data-testid="messageEntry"]'),
@@ -13870,35 +13975,35 @@ def platform_copy(
             early_label = early_access_label(int(early_access_days or 14))
             early_description = early_access_description(int(early_access_days or 14))
             instagram = (
-                f"{profile['emoji']} {profile['patreon']} — {profile['name']} Ch. {chapter} is live now for {early_label} on Patreon ({early_description})!\n"
+                f"{profile['emoji']} {profile['patreon']} â€” {profile['name']} Ch. {chapter} is live now for {early_label} on Patreon ({early_description})!\n"
                 f"RR {royal_road_url}\n"
                 f"Patreon {PATREON_URL}\n"
                 f"YouTube {YOUTUBE_SOCIAL_URL}\n"
                 f"TikTok {TIKTOK_URL}\n\n"
                 f"{profile['hashtags']}"
             )
-            x_text = f"{profile['emoji']} {profile['name']} Ch. {chapter} is live for {early_label} on Patreon.\n👉 {PATREON_URL}\n{profile['x_hashtags']}"
+            x_text = f"{profile['emoji']} {profile['name']} Ch. {chapter} is live for {early_label} on Patreon.\nðŸ‘‰ {PATREON_URL}\n{profile['x_hashtags']}"
         else:
             instagram = (
                 f"{profile['emoji']} {profile['name']} Chapter {chapter} is live on Royal Road!\n"
-                "🎥 YouTube release included.\n"
+                "ðŸŽ¥ YouTube release included.\n"
                 f"RR {royal_road_url}\n"
                 f"Patreon {PATREON_URL}\n"
                 f"YouTube {YOUTUBE_SOCIAL_URL}\n"
                 f"TikTok {TIKTOK_URL}\n\n"
                 f"{profile['hashtags']}"
             )
-            x_text = f"{profile['emoji']} {profile['name']} Ch. {chapter} live on Royal Road! 🎥 YouTube included.\n👉 {royal_road_url}\n{profile['x_hashtags']}"
+            x_text = f"{profile['emoji']} {profile['name']} Ch. {chapter} live on Royal Road! ðŸŽ¥ YouTube included.\nðŸ‘‰ {royal_road_url}\n{profile['x_hashtags']}"
     else:
         instagram = (
-            f"{profile['emoji']} {profile['patreon']} — {profile['name']} has chapters waiting on Patreon!\n"
+            f"{profile['emoji']} {profile['patreon']} â€” {profile['name']} has chapters waiting on Patreon!\n"
             f"RR {royal_road_url}\n"
             f"Patreon {PATREON_URL}\n"
             f"YouTube {YOUTUBE_SOCIAL_URL}\n"
             f"TikTok {TIKTOK_URL}\n\n"
             f"{profile['hashtags']}"
         )
-        x_text = f"{profile['emoji']} {profile['name']} early chapters are on Patreon.\n👉 {PATREON_URL}\n{profile['x_hashtags']}"
+        x_text = f"{profile['emoji']} {profile['name']} early chapters are on Patreon.\nðŸ‘‰ {PATREON_URL}\n{profile['x_hashtags']}"
     if len(x_text) > 260:
         x_text = x_text[:257].rsplit(" ", 1)[0] + "..."
     return {"instagram": instagram, "x": x_text}
@@ -14075,18 +14180,18 @@ def remove_leading_chapter_heading(text: str, title: str, chapter: int) -> str:
 def post_chapter_author_note(current_abbr: str = "") -> str:
     current_title = NOVEL_NAMES.get(story_key(current_abbr), "").strip() or "[Novel Title]"
     series_links = [
-        ("⚔️", "The Hundredfold Path", ROYAL_ROAD_URLS["HP"]),
-        ("🌌", "Eternal Nexus", ROYAL_ROAD_URLS["EN"]),
-        ("🔥", "Soulforge Era", ROYAL_ROAD_URLS["SF"]),
-        ("🌠", "Heavenly Ascension System", ROYAL_ROAD_URLS["HA"]),
+        ("âš”ï¸", "The Hundredfold Path", ROYAL_ROAD_URLS["HP"]),
+        ("ðŸŒŒ", "Eternal Nexus", ROYAL_ROAD_URLS["EN"]),
+        ("ðŸ”¥", "Soulforge Era", ROYAL_ROAD_URLS["SF"]),
+        ("ðŸŒ ", "Heavenly Ascension System", ROYAL_ROAD_URLS["HA"]),
     ]
     series_lines = "\n".join(
-        f"{icon} {name} → Read on Royal Road: {url}"
+        f"{icon} {name} â†’ Read on Royal Road: {url}"
         for icon, name, url in series_links
     )
     return f"""A note from azure inkblade
 
-✦ Author's Note ✦
+âœ¦ Author's Note âœ¦
 Thanks for reading this chapter of {current_title}!
 
 If you're enjoying the story, don't forget to check out my other ongoing series:
@@ -14094,15 +14199,15 @@ If you're enjoying the story, don't forget to check out my other ongoing series:
 {series_lines}
 
 For early access chapters, exclusive lore, and bonus content, join us on Patreon:
-👉 Patreon - Azure Inkblade: {PATREON_URL}
+ðŸ‘‰ Patreon - Azure Inkblade: {PATREON_URL}
 
 Stay connected and catch news, teasers, and updates here:
-🎥 YouTube: {YOUTUBE_SOCIAL_URL}
-🎵 TikTok: {TIKTOK_URL}
-📸 Instagram: {INSTAGRAM_URL}
-✦ X (Twitter): {X_URL}
+ðŸŽ¥ YouTube: {YOUTUBE_SOCIAL_URL}
+ðŸŽµ TikTok: {TIKTOK_URL}
+ðŸ“¸ Instagram: {INSTAGRAM_URL}
+âœ¦ X (Twitter): {X_URL}
 
-Your support-whether through comments, ratings, or favorites-keeps these stories alive. Let's continue this journey together toward ascension! ✨"""
+Your support-whether through comments, ratings, or favorites-keeps these stories alive. Let's continue this journey together toward ascension! âœ¨"""
 
 
 def royal_road_chapter_rating_cta(abbr: str, chapter: int | str = "", title: str = "", text: str = "") -> str:
@@ -14377,7 +14482,7 @@ def append_post_chapter_author_note(text: str, current_abbr: str = "", chapter: 
     text = text.rstrip()
     text = strip_existing_post_chapter_author_note(text)
     return f"{text}\n\n{enhanced_post_chapter_author_note(current_abbr, chapter, title, text).strip()}\n"
-    if "✦ Author's Note ✦" in text or "✦ Author’s Note ✦" in text:
+    if "âœ¦ Author's Note âœ¦" in text or "âœ¦ Authorâ€™s Note âœ¦" in text:
         return text + "\n"
     return f"{text}\n\n{post_chapter_author_note(current_abbr).strip()}\n"
 
@@ -15080,6 +15185,309 @@ def youtube_shorts_hook(abbr: str) -> str:
     abbr = story_key(abbr)
     return SHORT_HOOK_TEMPLATES.get(abbr, "Stop here if you like fantasy where one bad choice changes the whole arc.")
 
+# --- Agent-aware short-form copy (Reels / Shorts / 60s TikTok) ---------------------
+# Division of labour, deliberately strict:
+#   Hermes owns creative only  -> hook, caption, content_angle, intended_audience.
+#   Python owns everything factual -> novel title, chapter number, Royal Road / live
+#   state, CTA, hashtags, SEO keywords, platform limits and description structure.
+# This is what stops the agent from asserting an incorrect release state. These builders
+# are PURE: no Hermes call, no DB, no filesystem. Acquisition lives in the callers so
+# `promo_builder` can stay Hermes-unaware.
+
+def shortform_seo_keywords(abbr: str, chapter: str, agent_copy: dict | None = None, limit: int = 16) -> list[str]:
+    """Deterministic SEO keyword set for short-form. Python-owned; Hermes never invents SEO tags.
+
+    Merge order (deduped case-insensitively, order preserved):
+      1. novel profile keywords, 2. agent `content_angle`, 3. agent `intended_audience`,
+      4. chapter keywords. The agent's creative signal is inserted before the chapter
+      keywords so it survives the limit cap (each novel's profile set alone is ~12 tags);
+      it must never be pushed out by the always-present novel/chapter base. Pure and
+      total: with `agent_copy=None` it still returns the novel/chapter set.
+    """
+    abbr_key = story_key(abbr)
+    novel = NOVEL_NAMES.get(abbr_key, abbr_key or "Azure Inkblade")
+    profile = social_profile(abbr_key or novel)
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def _add(value: Any) -> None:
+        for piece in re.split(r"[,;/|]+", str(value or "")):
+            token = re.sub(r"\s+", " ", piece.replace("#", " ")).strip(" -_.").strip()
+            if not token or len(token) < 3:
+                continue
+            marker = token.lower()
+            if marker in seen:
+                continue
+            seen.add(marker)
+            ordered.append(token)
+
+    # 1. Novel profile keywords (brand + novel tags carry the durable search intent).
+    _add(novel)
+    for tag in re.findall(r"#(\w+)", str(profile.get("hashtags") or "")):
+        _add(re.sub(r"(?<=[a-z])(?=[A-Z])", " ", tag))
+    # 2-3. Creative signal from the agent (never a factual claim). Inserted before chapter
+    #    keywords so it survives the cap instead of being pushed out by the base set.
+    if agent_copy:
+        _add(agent_copy.get("content_angle"))
+        _add(agent_copy.get("intended_audience"))
+    # 4. Chapter keywords.
+    chapter_value = str(chapter or "").strip()
+    if chapter_value:
+        _add(f"{novel} chapter {chapter_value}")
+    return ordered[:limit]
+
+
+def shortform_seo_hashtags(keywords: list[str], limit: int = 6) -> str:
+    """Render SEO keywords as a hashtag run. Pure; deterministic in keyword order."""
+    tags: list[str] = []
+    seen: set[str] = set()
+    for keyword in keywords or []:
+        tag = "#" + re.sub(r"[^0-9A-Za-z]+", "", str(keyword).title())
+        if len(tag) <= 2 or tag.lower() in seen:
+            continue
+        seen.add(tag.lower())
+        tags.append(tag)
+        if len(tags) >= limit:
+            break
+    return " ".join(tags)
+
+
+def _merge_seo_hashtags(tag_block: str, keywords: list[str], limit: int = 6) -> str:
+    """Append SEO-derived hashtags to a base `tag_block` without duplicating tags.
+
+    Single source of truth for the SEO hashtag merge so the Reel and the 60s TikTok
+    cannot drift. Pure; deterministic. Leaves `tag_block` untouched when there is nothing
+    to add. Only keywords NOT already represented in the base block count toward `limit`,
+    so the novel's own tags don't consume the new-addition budget.
+    """
+    existing = {tag.lower() for tag in re.findall(r"#\w+", tag_block)}
+    new_keywords = [
+        k for k in keywords
+        if "#" + re.sub(r"[^0-9A-Za-z]+", "", str(k).title()).lower() not in existing
+    ]
+    if not new_keywords:
+        return tag_block
+    added = shortform_seo_hashtags(new_keywords, limit)
+    if not added:
+        return tag_block
+    return f"{tag_block} {added}".strip()
+
+
+def _strip_title_links(text: str) -> str:
+    """URL/link-strip a title string WITHOUT appending a "link in bio" CTA.
+
+    Titles are derived from the LLM hook, so any hallucinated promo URL must be removed
+    before the value reaches a publishing surface. Kept distinct from
+    `public_copy_without_links` because a title must not gain a link-in-bio suffix. Uses
+    the hardened, case-insensitive project pattern so capitalized / shortener domains are
+    also stripped.
+    """
+    cleaned = promo_copy.DIRECT_PUBLIC_URL_RE.sub("", str(text or ""))
+    cleaned = re.sub(r"(?i)\bhttps?://\S+", "", cleaned)
+    cleaned = re.sub(r"(?i)\b(?:www\.)?\w[\w-]*(?:\.[\w-]+)*\.[a-z]{2,24}\b(?:/\S*)?", "", cleaned)
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
+def shortform_title_from_hook(hook: str, limit: int = 90, suffix: str = "") -> str:
+    """Condense an agent hook into a Shorts title. Pure; Python owns the length cap."""
+    text = re.sub(r"\s+", " ", str(hook or "")).strip()
+    if not text:
+        return ""
+    # Prefer the first clause so the title stays punchy rather than a truncated sentence.
+    clause = re.split(r"(?<=[.!?])\s|[,;:\u2013\u2014]", text)[0].strip() or text
+    clause = clause.strip(" '\"“”").rstrip(".,;:!?\u2026 ").strip()
+    if not clause:
+        return ""
+    clause = clause[:1].upper() + clause[1:]
+    tail = f" | {suffix}".rstrip() if suffix else ""
+    if len(clause) + len(tail) <= limit:
+        return f"{clause}{tail}"
+    room = max(0, limit - len(tail))
+    trimmed = clause[:room].rsplit(" ", 1)[0].rstrip(".,;:!?\u2026 ").strip()
+    if not trimmed:
+        return clause[:limit].strip()
+    return f"{trimmed}{tail}"[:limit]
+
+
+def build_reel_short_copy(
+    agent_copy: dict | None,
+    novel: str,
+    chapter: str,
+    seo_context: dict | None = None,
+    *,
+    platform: str = "instagram_reel",
+) -> dict[str, str]:
+    """Return {'hook','body','caption','title'} for Instagram Reels / YouTube Shorts.
+
+    The tight short-form product. When validated agent copy is present its hook and
+    caption replace the generic `SHORT_HOOK_TEMPLATES` prose; otherwise the existing
+    generic output is reproduced byte-identically. Royal Road / live state, CTA,
+    hashtags and the 90-char title cap always come from Python state, never from the
+    agent. Pure: no Hermes, no DB, no I/O.
+    """
+    seo_context = dict(seo_context or {})
+    abbr = story_key(novel) or story_key(str(seo_context.get("abbr") or "")) or next(
+        (key for key, name in NOVEL_NAMES.items() if name.lower() == str(novel).lower()), ""
+    )
+    profile = social_profile(abbr or novel)
+    name = profile["name"]
+    chapter_value = str(chapter or "").strip()
+    chapter_text = f" Chapter {chapter_value}" if chapter_value else ""
+    is_short = platform in {"youtube_short", "youtube_shorts", "short"}
+
+    caption_text = str((agent_copy or {}).get("caption") or "").strip()
+    agent_used = bool(caption_text)
+    if not agent_used:
+        # No usable agent copy: delegate to the existing generic builders so the
+        # fallback output stays byte-identical (including SHORT_HOOK_TEMPLATES and the
+        # rotating intro state). Do NOT re-implement their structure here.
+        if is_short:
+            generic = youtube_shorts_metadata(novel, chapter_value)
+            return {
+                "hook": youtube_shorts_hook(abbr),
+                "body": generic["description"],
+                "caption": generic["description"],
+                "title": generic["title"],
+            }
+        generic_caption = instagram_reel_caption(novel, chapter_value)
+        return {
+            "hook": youtube_shorts_hook(abbr),
+            "body": generic_caption,
+            "caption": generic_caption,
+            "title": f"{name}{chapter_text}"[:90],
+        }
+
+    short_hook = str((agent_copy or {}).get("hook") or "").strip() or youtube_shorts_hook(abbr)
+    short_body = caption_text
+
+    # Python-owned facts: release/destination state comes from app state only.
+    source = "youtube-shorts" if is_short else "instagram-reel"
+    destination = short_destination_copy(abbr or novel, chapter_value, source=source)
+    keywords = seo_context.get("keywords")
+    if keywords is None:
+        keywords = shortform_seo_keywords(abbr or novel, chapter_value, agent_copy)
+
+    if is_short:
+        title = shortform_title_from_hook(
+            str((agent_copy or {}).get("hook") or "").strip(), limit=90, suffix=name
+        )
+        if not title:
+            title = f"{name}{chapter_text} Promo #Shorts"[:90]
+        # The title is derived from the LLM hook, so strip any URLs/links from it
+        # (no leaked promo links in the publish title). Kept title-safe: unlike
+        # public_copy_without_links it does not append a "link in bio" CTA.
+        title = _strip_title_links(title)[:90]
+        tag_block = f"#Shorts #ShortsFeed {name} {profile['hashtags']}".strip()
+        tag_block = _merge_seo_hashtags(tag_block, keywords)
+        caption = "\n".join(
+            [
+                short_hook,
+                short_body,
+                destination["hook"],
+                destination["links"],
+                "",
+                tag_block,
+            ]
+        )
+    else:
+        title = f"{name}{chapter_text}"[:90]
+        question = platform_engagement_prompt_line(
+            abbr or story_key(novel), "short_reel", "instagram", context=f"caption-{chapter_value}"
+        )
+        caption = "\n".join(
+            [
+                f"{profile['emoji']} {short_hook}",
+                short_body,
+                destination["hook"],
+                destination["links"],
+                "",
+                question,
+                "",
+                profile["hashtags"],
+            ]
+        )
+        caption = social_caption_link_in_bio(caption, "instagram")
+        caption = _merge_seo_hashtags(caption, keywords, limit=8)
+    return {"hook": short_hook, "body": short_body, "caption": caption, "title": title}
+
+
+def build_long_tiktok_copy(
+    agent_copy: dict | None,
+    novel: str,
+    chapter: str,
+    seo_context: dict | None = None,
+    *,
+    title: str = "",
+    hook: str = "",
+) -> str:
+    """Return the 60+ second TikTok caption (narrative setup + stakes + engagement).
+
+    A separate adaptation from the Reel/Short: this is NOT the reel caption lengthened.
+    Structure: hook / chapter-specific setup / mini stakes section / reader question /
+    CTA / SEO hashtags. With no usable agent copy it reproduces `deep_tiktok_caption`
+    byte-identically. Pure: no Hermes, no DB, no I/O.
+    """
+    abbr = story_key(novel) or story_key(str((seo_context or {}).get("abbr") or ""))
+    chapter_value = str(chapter or "").strip()
+    caption_text = str((agent_copy or {}).get("caption") or "").strip()
+    if not caption_text:
+        # Byte-identical generic fallback.
+        return deep_tiktok_caption(abbr, chapter_value, title, hook)
+
+    name = NOVEL_NAMES.get(abbr, abbr or novel)
+    profile = social_profile(abbr or novel)
+    chapter_label = "Prologue" if chapter_value in {"0", "prologue", "Prologue"} else f"Chapter {chapter_value}"
+    title_tail = re.sub(
+        rf"^{re.escape(chapter_label)}\s*[:.\-\u2013\u2014]?\s*", "", str(title or "").strip(), flags=re.IGNORECASE
+    ).strip()
+    title_suffix = f": {title_tail}" if title_tail else ""
+
+    agent_hook = str((agent_copy or {}).get("hook") or "").strip() or hook
+    setup = f"A deeper look at {name} {chapter_label}{title_suffix}"
+    question = platform_engagement_prompt_line(
+        abbr or story_key(novel), "short_reel", "tiktok", context=f"deep-{chapter_value}"
+    )
+    keywords = (seo_context or {}).get("keywords")
+    if keywords is None:
+        keywords = shortform_seo_keywords(abbr or novel, chapter_value, agent_copy)
+    tag_block = _merge_seo_hashtags(profile["hashtags"], keywords)
+
+    # Mini story-stakes section (2-4 sentences). This is what makes the 60s product a
+    # genuinely different adaptation rather than a lengthened Reel caption: the agent's
+    # caption is the opening beat, then Python adds deterministic stakes framing built
+    # from its own state (never a release-state claim from the agent).
+    stakes: list[str] = [caption_text]
+    angle = str((agent_copy or {}).get("content_angle") or "").strip()
+    audience = str((agent_copy or {}).get("intended_audience") or "").strip()
+    if angle:
+        stakes.append(f"This beat turns on {angle.rstrip('.').lower()}, and it does not resolve cleanly.")
+    stakes.append(
+        f"{chapter_label} is where the cost stops being theoretical: the choice made here follows "
+        f"{name} into everything that comes next."
+    )
+    if audience:
+        stakes.append(f"If you read for {audience.rstrip('.').lower()}, this is the chapter to start on.")
+    else:
+        stakes.append("Watch the whole beat before you decide who was right.")
+    stakes_block = " ".join(stakes)
+
+    return "\n".join(
+        part for part in [
+            agent_hook,
+            setup,
+            "",
+            stakes_block,
+            "",
+            question,
+            "Watch the full story beat, then continue the chapter.",
+            "Read now. Link in bio.",
+            "",
+            tag_block,
+        ] if part is not None
+    )
+
+
 
 def tiktok_chapter_teaser_overlays(
     abbr: str,
@@ -15277,6 +15685,35 @@ def make_or_generate_tiktok_pack(
 ) -> dict[str, Any]:
     if not abbr or not str(chapter).strip():
         raise RuntimeError("Choose a novel and enter a chapter number for TikTok.")
+    # Optional Hermes agent short-form copy (Reel + Shorts). Default OFF.
+    # Flip ENABLE_AGENT_POSTS=1 to inject agent copy into the pack. Any failure
+    # returns None -> promo_builder falls back to the template engine (fail-soft).
+    # Resolve authoritative chapter text first: an empty material["text"] would
+    # hash to the empty-string sha (e3b0c442...), collapsing every chapter onto
+    # one memo entry. Resolve via docs_chapter_text like the deep/SEO paths do.
+    agent_copy: dict | None = None
+    agent_meta: dict = {}
+    if agent_posts_enabled() and abbr and str(chapter).strip():
+        try:
+            _resolved_text = chapter_text or ""
+            if not _resolved_text.strip() and str(chapter).isdigit():
+                try:
+                    _cd = docs_chapter_text(abbr, int(chapter))
+                    _resolved_text = str(_cd.get("text") or _cd.get("raw_text") or "")
+                except Exception:
+                    _resolved_text = ""
+            _agent_hook = (_resolved_text.strip().split("\n", 1)[0].strip() or f"Chapter {chapter}")[:240]
+            _material = {"text": _resolved_text, "abbr": abbr, "chapter": str(chapter)}
+            agent_copy, agent_meta = resolve_agent_post_copy_cached(
+                abbr,
+                NOVEL_NAMES.get(abbr, abbr),
+                str(chapter),
+                _agent_hook,
+                _material,
+            )
+        except Exception as _agent_exc:  # never let the agent block a pack build
+            agent_copy = None
+            agent_meta = {}
     assets = list_tiktok_assets()
     matching_groups = [group for group in assets["imageGroups"] if group["abbr"] == abbr and group["chapter"] == str(chapter)]
     complete = any(int(group.get("count", 0)) >= 3 for group in matching_groups)
@@ -15299,7 +15736,20 @@ def make_or_generate_tiktok_pack(
         visual_prompt=visual_prompt,
         chapter_text=chapter_text,
         style=style,
+        agent_copy=agent_copy,
+        agent_meta=agent_meta,
     )
+    # promo_builder stamps truth-in-phase _agent_used onto agent_meta; record the
+    # two disjoint short-form platforms. De-dup is handled inside the recorder.
+    if agent_meta:
+        _agent_used = bool(agent_meta.get("_agent_used"))
+        record_generated_shortform_posts(
+            agent_meta,
+            [
+                ("instagram_reel", result.get("instagram_reel_caption") or "", _agent_used),
+                ("youtube_short", result.get("youtube_shorts_description") or "", _agent_used),
+            ],
+        )
     if generation:
         result["image_sources"] = generation.get("image_sources", [])
         result["image_prompts"] = generation.get("image_prompts", [])
@@ -16356,6 +16806,26 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
     if not chapter_text.strip():
         raise RuntimeError("The selected GitHub chapter is empty.")
     novel = NOVEL_NAMES.get(abbr, abbr)
+    # Optional Hermes agent copy for the deep pack (caption/title). Default OFF.
+    # Flip ENABLE_AGENT_POSTS=1. Any failure returns None -> the template caption
+    # below is used unchanged (fail-soft). Resolved via the short-TTL per-chapter
+    # memo so the Reel/Short pack and this deep build share ONE Hermes run.
+    agent_copy: dict | None = None
+    agent_meta: dict = {}
+    if agent_posts_enabled():
+        try:
+            _agent_hook = (chapter_text.strip().split("\n", 1)[0].strip() or title)[:240]
+            _material = {"text": chapter_text, "abbr": abbr, "chapter": chapter, "title": title}
+            agent_copy, agent_meta = resolve_agent_post_copy_cached(
+                abbr,
+                novel,
+                chapter,
+                _agent_hook,
+                _material,
+            )
+        except Exception as _agent_exc:  # never let the agent block a pack build
+            agent_copy = None
+            agent_meta = {}
     source_hash = content_hash(chapter_text)
     folder = TIKTOK_OUTPUT_DIR / f"{abbr.lower()}-{slugify(chapter)}-deep"
     existing = reusable_pack_result(folder, expected_hash=source_hash, required_files=["caption.txt", "video-overlays.txt"])
@@ -16407,12 +16877,26 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
     overlays = [reel_overlay_text(moment, limit=58) for moment in moments]
     overlays.append(reel_overlay_text(f"READ {novel} ON ROYAL ROAD", limit=62))
     hook = overlays[0].replace("\n", " ") if overlays else f"A deeper look at {novel}"
-    caption = social_caption_link_in_bio(deep_tiktok_caption(abbr, chapter, title, hook), "tiktok")
+    # The 60s TikTok is its OWN adaptation, not a lengthened Reel caption. Route the
+    # agent copy (or None) through build_long_tiktok_copy: with a usable agent caption
+    # it produces the structured hook/setup/stakes/CTA adaptation; with None it reproduces
+    # deep_tiktok_caption byte-identically (fail-soft, no agent dependency).
+    seo_context = {"abbr": abbr, "keywords": shortform_seo_keywords(abbr, chapter, agent_copy)}
+    caption = social_caption_link_in_bio(
+        build_long_tiktok_copy(agent_copy, novel, chapter, seo_context, title=title, hook=hook),
+        "tiktok",
+    )
     # Voice the long/deep TikTok with the natural caption sentence (NOT the
     # overlay sticker). Fail-soft: if TTS is unavailable the video still
     # builds with music only.
     narration_target = generate_deep_tiktok_narration(folder, abbr, tiktok_narration_text({"caption": caption}, overlays)) if caption else None
     tiktok_title = deep_tiktok_title(abbr, chapter, title)
+    # Let an agent-supplied title reach the public title (truth-in-phase).
+    _agent_caption = (agent_copy or {}).get("caption") if agent_copy else None
+    if _agent_caption and str(_agent_caption).strip():
+        _agent_title = (agent_copy or {}).get("tiktok_title") or (agent_copy or {}).get("title")
+        if _agent_title and str(_agent_title).strip():
+            tiktok_title = str(_agent_title).strip()
     sound_source = choose_rotating_weekly_promo_audio()
     if not sound_source:
         sounds = [Path(item["path"]) for item in list_tiktok_assets().get("sounds", []) if Path(item["path"]).exists()]
@@ -16443,6 +16927,16 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
         "youtube_shorts_disabled": True,
         "youtube_shorts_reason": "Deep chapter TikToks are reserved for TikTok growth testing.",
     }
+    # Internal provenance only: reaches metadata.json, never the public .txt writes
+    # below (which use the locally assembled caption/title). Truth-in-phase: the
+    # agent copy must actually have reached the public caption to count as used.
+    if agent_meta:
+        agent_meta["_agent_used"] = bool(agent_copy) and bool(_agent_caption) and bool(caption)
+        payload.update(agent_meta)
+        record_generated_shortform_posts(
+            agent_meta,
+            [("tiktok_long", caption, bool(agent_meta["_agent_used"]))],
+        )
     (folder / "caption.txt").write_text(caption + "\n", encoding="utf-8")
     (folder / "description.txt").write_text(caption + "\n", encoding="utf-8")
     (folder / "tiktok-title.txt").write_text(tiktok_title + "\n", encoding="utf-8")
@@ -16580,7 +17074,7 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
     caption = "\n\n".join(
         part for part in [
             body,
-            f"{cta}\n👉 {rr_link}" if cta else f"👉 {rr_link}",
+            f"{cta}\nðŸ‘‰ {rr_link}" if cta else f"ðŸ‘‰ {rr_link}",
             novel_tags,
         ] if part and part.strip()
     ).strip()
@@ -16746,7 +17240,7 @@ def chapter_number_from_label(label: str) -> int:
 
 def clean_chapter_title(label: str, tail: str) -> str:
     tail = re.split(r"\s{2,}", tail.strip(), maxsplit=1)[0].strip()
-    tail = re.sub(r"^\s*[:.\-–]\s*", "", tail).strip()
+    tail = re.sub(r"^\s*[:.\-â€“]\s*", "", tail).strip()
     tail = re.sub(r"^(?:\s*[:.\-\u2013\u2014]\s*)+", "", tail).strip()
     patch_match = re.match(r"^(Patch\s+\d+(?:\.\d+)+)", tail, re.IGNORECASE)
     if patch_match:
@@ -17289,7 +17783,7 @@ def weekend_social_copy(abbr: str, day: str) -> dict[str, str]:
 
 
 def attach_post_audio(payload: dict[str, Any], abbr: str, text: str, folder: "Path") -> dict[str, Any]:
-    """Attach a generated voiceover to a post payload (2026-07-20 plan §2).
+    """Attach a generated voiceover to a post payload (2026-07-20 plan Â§2).
 
     Gated by GENERATE_POST_AUDIO. When off, the payload keeps its existing
     (or empty) audio field and the post is unaffected. On any failure the post
@@ -17396,7 +17890,7 @@ def make_weekend_social_post(abbr: str, day: str) -> dict[str, Any]:
                 _fb_body = _ag_cap + (f"\n\n{_ag_cta}" if _ag_cta else "")
                 _ig_body = _ag_cap + (f"\n\n{_ag_cta}" if _ag_cta else "")
                 # X: keep a real body (never collapse to tags-only). Trim cta first,
-                # then caption, to fit 280 — mirrors weekend_social_copy's X handling.
+                # then caption, to fit 280 â€” mirrors weekend_social_copy's X handling.
                 _x_full = f"{_ig_body}\n\n{_ag_tags}"
                 if len(_x_full) > 280:
                     _x_full = f"{_ag_cap}\n\n{_ag_tags}"
@@ -17429,7 +17923,7 @@ def make_weekend_social_post(abbr: str, day: str) -> dict[str, Any]:
         "folder": str(folder),
         "image": str(image_target),
     }
-    # §2 TTS: attach a voiceover to the post record (non-blocking; post stays
+    # Â§2 TTS: attach a voiceover to the post record (non-blocking; post stays
     # usable if audio generation fails). Uses the Instagram caption as the
     # narration source with hashtags removed.
     _narration = re.sub(r"#\w+", "", copy.get("instagram", "")).strip()
@@ -21062,8 +21556,8 @@ function hasChapter(text, title, chapter) {{
   if (lower.includes(`chapter ${{chapter}}`) || lower.includes(`ch. ${{chapter}}`) || lower.includes(`ch ${{chapter}}`)) return true;
   if (titleLower && lower.includes(titleLower.slice(0, 80))) return true;
   const patterns = [
-    /(?:chapter|chapters|ch\\.?|chs\\.?)\\s*(\\d+)\\s*[-–—]\\s*(\\d+)/gi,
-    /\\b(\\d+)\\s*[-–—]\\s*(\\d+)\\b/g
+    /(?:chapter|chapters|ch\\.?|chs\\.?)\\s*(\\d+)\\s*[-â€“â€”]\\s*(\\d+)/gi,
+    /\\b(\\d+)\\s*[-â€“â€”]\\s*(\\d+)\\b/g
   ];
   for (const pattern of patterns) {{
     for (const match of lower.matchAll(pattern)) {{
@@ -21080,19 +21574,19 @@ function hasChapter(text, title, chapter) {{
 function stripAuthorNote(text) {{
   return String(text || '')
     .replace(/A note from azure inkblade[\\s\\S]*$/i, '')
-    .replace(/✦\\s*Author['’]s Note\\s*✦[\\s\\S]*$/i, '')
+    .replace(/âœ¦\\s*Author['â€™]s Note\\s*âœ¦[\\s\\S]*$/i, '')
     .trim();
 }}
 
 function normalizeForCompare(text, title, chapter) {{
   let value = stripAuthorNote(text);
   value = value.replace(new RegExp('^\\\\s*' + String(title || '').replace(/[.*+?^${{}}()|[\\]\\\\]/g, '\\\\$&') + '\\\\s*', 'i'), '');
-  value = value.replace(new RegExp('^\\\\s*chapter\\\\s+' + chapter + '[a-z]?\\\\s*[:.\\\\-–—]?\\\\s*', 'i'), '');
+  value = value.replace(new RegExp('^\\\\s*chapter\\\\s+' + chapter + '[a-z]?\\\\s*[:.\\\\-â€“â€”]?\\\\s*', 'i'), '');
   return value
     .toLowerCase()
-    .replace(/[“”]/g, '"')
-    .replace(/[‘’]/g, "'")
-    .replace(/[–—]/g, '-')
+    .replace(/[â€œâ€]/g, '"')
+    .replace(/[â€˜â€™]/g, "'")
+    .replace(/[â€“â€”]/g, '-')
     .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\\s+/g, ' ')
     .trim();
@@ -21152,7 +21646,7 @@ async function extractRoyalRoadChapterText(page) {{
 }}
 
 async function findRoyalRoadChapterUrl(page, title, chapter) {{
-  const titleLower = compact(title).toLowerCase().replace(/^chapter\\s+\\d+[a-z]?\\s*[:\\-–—]?\\s*/i, '');
+  const titleLower = compact(title).toLowerCase().replace(/^chapter\\s+\\d+[a-z]?\\s*[:\\-â€“â€”]?\\s*/i, '');
   const anchors = await page.evaluate(() => [...document.querySelectorAll('a[href*="/chapter/"]')].map(a => ({{
     href: a.href,
     text: (a.innerText || a.textContent || '').trim()
@@ -21216,7 +21710,7 @@ async function searchPatreon(page, title, chapter) {{
     `Chapter ${{chapter}}`,
     `Ch. ${{chapter}}`,
     String(chapter),
-    compact(title).replace(/^chapter\\s+\\d+\\s*[:\\-–—]?\\s*/i, '').slice(0, 80)
+    compact(title).replace(/^chapter\\s+\\d+\\s*[:\\-â€“â€”]?\\s*/i, '').slice(0, 80)
   ].filter(Boolean);
   for (const term of terms) {{
     const selectors = [
@@ -27279,7 +27773,7 @@ async function markNotMadeForKids(page, timeout = 90000) {{
     }}
   }}
 
-  await clickText(page, [\"No, it's not made for kids\", 'No, it’s not made for kids'], 1500);
+  await clickText(page, [\"No, it's not made for kids\", 'No, itâ€™s not made for kids'], 1500);
   const result = {{
     browserMode: context.__browserMode || 'unknown',
     pageUrl: page.url(),
@@ -29510,7 +30004,7 @@ def story_hook_youtube_description(title: str, story_text: str, abbr: str = "", 
     if ch and abbr in NOVEL_NAMES:
         try:
             if chapter_is_live_on_royal_road(abbr, ch):
-                cue = "\n\nThe full chapter is already live on Royal Road — start reading free."
+                cue = "\n\nThe full chapter is already live on Royal Road â€” start reading free."
         except Exception:
             cue = ""
     # Limitation fix #6: per-novel engagement question.
@@ -31610,7 +32104,7 @@ def create_prompt_fallback_image(
                     # function falls through to the local emergency fallback image instead.
                     provider_trace["refusedExternalFallback"] = True
                     provider_trace.setdefault("notes", []).append(
-                        "local SDXL failed; external stock fallback DISABLED (ALLOW_EXTERNAL_IMAGE_FALLBACK unset) — using local emergency fallback"
+                        "local SDXL failed; external stock fallback DISABLED (ALLOW_EXTERNAL_IMAGE_FALLBACK unset) â€” using local emergency fallback"
                     )
                     print(
                         f"[image-pipeline] WARNING local SDXL generation failed and external "
@@ -31895,7 +32389,7 @@ def social_caption_link_in_bio(text: str, platform: str = "") -> str:
 def write_text_artifacts(folder: Path, payload: dict[str, Any]) -> None:
     story = str(payload.get("abbr") or payload.get("novel") or payload.get("title") or "")
     # links stripped - link-in-bio only
-    # strip all tracked links — link-in-bio only, bio already has Linktree
+    # strip all tracked links â€” link-in-bio only, bio already has Linktree
     payload.setdefault("x_post", str(payload.get("x", "")).strip())
     payload.setdefault("facebook_post", str(payload.get("caption", "")).strip())
     for key, platform in (("caption", "instagram"), ("x_post", "x"), ("facebook_post", "facebook")):
@@ -34529,7 +35023,7 @@ HTML = r"""<!doctype html>
             <button id="arcCampaignBtn" class="secondary" type="button">Build Arc Drafts</button>
             <button id="imageLabPlanBtn" class="secondary" type="button">Image Lab Plan</button>
             <button id="imageLabGenerateBtn" class="secondary" type="button">Generate Image Candidates</button>
-            <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checking…</span>
+            <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checkingâ€¦</span>
             <button id="analyticsLabBtn" class="secondary" type="button">Analytics Lab</button>
             <button id="thumbnailTestsBtn" class="secondary" type="button">Thumbnail Tests</button>
             <button id="pinnedAssetsBtn" class="secondary" type="button">Pinned Assets</button>
@@ -34557,7 +35051,7 @@ HTML = r"""<!doctype html>
           </div>
           <div class="row">
             <button id="weekendBtn" type="button">Build Weekend Posts</button>
-            <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checking…</span>
+            <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checkingâ€¦</span>
           </div>
         </div>
         <div id="royalRoadToolsPanel" class="option-panel" data-option-panel="royal-road">
@@ -35332,7 +35826,7 @@ HTML = r"""<!doctype html>
           <button class="secondary" type="button" data-pack-health-approve-images="${escapeHtml(folder)}">Approve Images</button>
           ${item.canPushToBuffer ? `<button type="button" data-pack-buffer-folder="${escapeHtml(folder)}" data-pack-buffer-kind="${escapeHtml(item.bufferTextKind || 'instagram')}">${escapeHtml(item.bufferLabel || 'Push to Buffer')}</button>` : ''}
           <button class="secondary" type="button" data-regenerate-pack-images="${escapeHtml(folder)}">Regenerate Images In This Pack</button>
-          <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checking…</span>
+          <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checkingâ€¦</span>
           <button class="secondary" type="button" data-pack-health-refresh="${escapeHtml(folder)}">Refresh Pack State</button>
         </article>`;
       }).join('');
@@ -35618,7 +36112,7 @@ File: ${escapeHtml(data.file || '')}</div>
       return parts.length ? `<p class="meta">${escapeHtml(parts.join(' | '))}</p>` : '';
     }
 
-    // §2 TTS UI hook: render an inline voiceover player for a post card.
+    // Â§2 TTS UI hook: render an inline voiceover player for a post card.
     // Reads the structured audio status written by attach_post_audio into
     // metadata.json (carried on item._metadata.audio). Shows the player only
     // when synthesis succeeded; a "Generating..." badge while pending; nothing
@@ -35990,8 +36484,8 @@ Generated: ${escapeHtml(data.generatedAt || '')}</div>
           if (response.patreon?.length) parts.push(`${response.patreon.length} Patreon draft(s)`);
           if (response.x?.length) parts.push(`${response.x.length} X`);
           if (response.facebook?.length) parts.push(`${response.facebook.length} FB`);
-          if (response.shorts_buffer?.length) parts.push(`${response.shorts_buffer.length} Shorts→Buffer`);
-          if (response.instagram_buffer?.length) parts.push(`${response.instagram_buffer.length} IG→Buffer`);
+          if (response.shorts_buffer?.length) parts.push(`${response.shorts_buffer.length} Shortsâ†’Buffer`);
+          if (response.instagram_buffer?.length) parts.push(`${response.instagram_buffer.length} IGâ†’Buffer`);
           statusEl.textContent = `Upload All done: ${parts.join(', ') || 'nothing to do'}.${response.errors?.length ? ' Errors: ' + response.errors.length : ''}`;
         }
         await showApprovalInbox();
@@ -38548,10 +39042,10 @@ ${escapeHtml(snapshot.next_chapter_setup || '')}</div>`;
       badge.classList.remove('busy', 'idle', 'off');
       if (st.busy) {
         badge.classList.add('busy');
-        badge.textContent = '● Image gen running…';
+        badge.textContent = 'â— Image gen runningâ€¦';
       } else if (st.ready || st.enabled) {
         badge.classList.add('idle');
-        badge.textContent = '○ GPU idle';
+        badge.textContent = 'â—‹ GPU idle';
       } else {
         badge.classList.add('off');
         badge.textContent = 'Image gen off';
@@ -39507,7 +40001,7 @@ ${escapeHtml([duplicateLines, orphanLines, remoteOrphanLines].filter(Boolean).jo
     }
 
     async function loadSchedule(todayOnly) {
-      statusEl.textContent = todayOnly ? 'Loading today’s posts...' : 'Loading upcoming schedule...';
+      statusEl.textContent = todayOnly ? 'Loading todayâ€™s posts...' : 'Loading upcoming schedule...';
       results.innerHTML = '';
       const response = await fetch(todayOnly ? '/api/schedule?today=1' : '/api/schedule');
       const data = await response.json();
@@ -39924,7 +40418,7 @@ ${escapeHtml(report.safety || data.note || 'No publish or queue action is run he
             <div class="row">
               <button type="button" data-open-pack="${escapeHtml(folder)}">Review Images</button>
               <button class="secondary" type="button" data-regenerate-pack-images="${escapeHtml(folder)}">Regenerate Weak Images</button>
-              <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checking…</span>
+              <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checkingâ€¦</span>
             </div>
           </section>
         `;
@@ -39939,7 +40433,7 @@ ${escapeHtml(report.safety || data.note || 'No publish or queue action is run he
           <div class="row">
             <button type="button" data-image-review-approve="${escapeHtml(folder)}">Approve Pack After Review</button>
             <button class="secondary" type="button" data-regenerate-pack-images="${escapeHtml(folder)}">Regenerate Rejected/Weak Images</button>
-            <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checking…</span>
+            <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checkingâ€¦</span>
             ${isShortsPack ? `<button class="secondary" type="button" data-rebuild-part="shorts" data-rebuild-folder="${escapeHtml(folder)}">Rebuild This MP4</button>` : ''}
             ${canPush ? `<button type="button" data-pack-buffer-folder="${escapeHtml(folder)}" data-pack-buffer-kind="${escapeHtml(pushKind)}">${escapeHtml(pushLabel)}</button>` : ''}
           </div>
@@ -40088,7 +40582,7 @@ ${escapeHtml(detail)}
           <button id="oneClickCampaignUploadBtn" type="button">One-Click Daily Upload</button>
           <button id="qualityGateBtn" class="secondary" type="button">Run Quality Gate</button>
           <button id="regenerateWeakImagesBtn" class="secondary" type="button">Regenerate Weak Images</button>
-          <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checking…</span>
+          <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checkingâ€¦</span>
           <button id="githubMediaBtn" class="secondary" type="button">Copy Media to GitHub</button>
         </div>
         <div class="copy"><strong>YouTube backgrounds</strong>\n${escapeHtml((data.background_videos || []).map(path => path.split(/[\\\\/]/).pop()).join('\n') || 'No background videos found.')}</div>
@@ -41175,7 +41669,7 @@ Newer 60-75 second TikTok packs that still need review or posting are listed her
         <div class="copy"><strong>Background videos</strong>\n${escapeHtml((data.background_videos || []).map(path => path.split(/[\\\\/]/).pop()).join('\n'))}</div>
         <div class="row">
           <button id="rebuildYoutubeThumbnailBtn" class="secondary" type="button">Rebuild Thumbnail</button>
-          <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checking…</span>
+          <span class="status-badge sd-status-badge" title="Local image generation (GPU) status">checkingâ€¦</span>
           <button id="importStoryHookThumbnailBtn" class="secondary" type="button">Import Thumbnail Art</button>
           <button id="youtubeEngagementPlanBtn" class="secondary" type="button">Engagement Plan</button>
           <button id="youtubeMetadataTestsBtn" class="secondary" type="button">Metadata Tests</button>
@@ -41624,7 +42118,7 @@ ${data.message || 'Builder finished.'}`;
       }
       results.innerHTML = tasks.map(task => `
         <article class="card" style="margin-bottom:14px;">
-          <p>${escapeHtml(task.date)} · ${escapeHtml(task.abbr)} · ${escapeHtml(task.platform)}${task.tier ? ' · ' + escapeHtml(task.tier) : ''}${task.chapter ? ' · Chapter ' + escapeHtml(task.chapter) : ''}${task.royalRoadDate && task.platform === 'Patreon' ? ' · RR ' + escapeHtml(task.royalRoadDate) : ''}</p>
+          <p>${escapeHtml(task.date)} Â· ${escapeHtml(task.abbr)} Â· ${escapeHtml(task.platform)}${task.tier ? ' Â· ' + escapeHtml(task.tier) : ''}${task.chapter ? ' Â· Chapter ' + escapeHtml(task.chapter) : ''}${task.royalRoadDate && task.platform === 'Patreon' ? ' Â· RR ' + escapeHtml(task.royalRoadDate) : ''}</p>
           <div class="copy"><strong>Instagram</strong>\n${escapeHtml(task.instagram || '')}</div>
           <div class="copy"><strong>X</strong>\n${escapeHtml(task.x || '')}</div>
         </article>
