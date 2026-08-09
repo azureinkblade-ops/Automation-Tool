@@ -16877,18 +16877,22 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
     overlays = [reel_overlay_text(moment, limit=58) for moment in moments]
     overlays.append(reel_overlay_text(f"READ {novel} ON ROYAL ROAD", limit=62))
     hook = overlays[0].replace("\n", " ") if overlays else f"A deeper look at {novel}"
-    caption = social_caption_link_in_bio(deep_tiktok_caption(abbr, chapter, title, hook), "tiktok")
-    # When the agent produced a usable caption, let it reach the public caption so
-    # provenance is truth-in-phase (the copy is actually published, not merely fetched).
-    _agent_caption = (agent_copy or {}).get("caption") if agent_copy else None
-    if _agent_caption and str(_agent_caption).strip():
-        caption = social_caption_link_in_bio(str(_agent_caption).strip(), "tiktok")
+    # The 60s TikTok is its OWN adaptation, not a lengthened Reel caption. Route the
+    # agent copy (or None) through build_long_tiktok_copy: with a usable agent caption
+    # it produces the structured hook/setup/stakes/CTA adaptation; with None it reproduces
+    # deep_tiktok_caption byte-identically (fail-soft, no agent dependency).
+    seo_context = {"abbr": abbr, "keywords": shortform_seo_keywords(abbr, chapter, agent_copy)}
+    caption = social_caption_link_in_bio(
+        build_long_tiktok_copy(agent_copy, novel, chapter, seo_context, title=title, hook=hook),
+        "tiktok",
+    )
     # Voice the long/deep TikTok with the natural caption sentence (NOT the
     # overlay sticker). Fail-soft: if TTS is unavailable the video still
     # builds with music only.
     narration_target = generate_deep_tiktok_narration(folder, abbr, tiktok_narration_text({"caption": caption}, overlays)) if caption else None
     tiktok_title = deep_tiktok_title(abbr, chapter, title)
     # Let an agent-supplied title reach the public title (truth-in-phase).
+    _agent_caption = (agent_copy or {}).get("caption") if agent_copy else None
     if _agent_caption and str(_agent_caption).strip():
         _agent_title = (agent_copy or {}).get("tiktok_title") or (agent_copy or {}).get("title")
         if _agent_title and str(_agent_title).strip():
