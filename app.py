@@ -194,6 +194,11 @@ CLOUDFLARE_MEDIA_DIR = Path(os.environ.get("CLOUDFLARE_MEDIA_DIR", r"C:\Users\Da
 PROMO_IMAGES_DIR = Path(os.environ.get("PROMO_IMAGES_DIR", str(CLOUDFLARE_MEDIA_DIR if CLOUDFLARE_MEDIA_DIR.exists() else Path(r"C:\Users\David\Documents\Promo Images"))))
 GENERATED_PROMO_IMAGES_DIR = PROMO_IMAGES_DIR / "Generated"
 TIKTOK_ASSET_DIR = Path(os.environ.get("TIKTOK_ASSET_DIR", str(CLOUDFLARE_MEDIA_DIR if CLOUDFLARE_MEDIA_DIR.exists() else PROMO_IMAGES_DIR / "TIkTok")))
+# Canonical read-only bank of reusable TikTok soundtrack MP3s. This lives under the
+# project root so sound discovery no longer depends on CloudFlare being present or
+# populated. Nothing in the app writes into this directory; generated TikTok assets
+# continue to be written to TIKTOK_ASSET_DIR.
+TIKTOK_SOUND_BANK_DIR = Path(os.environ.get("TIKTOK_SOUND_BANK_DIR", str(ROOT / "tiktok-sound-bank")))
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".svg"}
 IMAGE_PASSABLE_SCORE = int(os.environ.get("IMAGE_PASSABLE_SCORE", "70"))
@@ -15003,15 +15008,39 @@ def choose_rotating_daily_promo_image(abbr: str = "") -> Path | None:
     return Path(choice)
 
 
-def weekly_promo_audio_files() -> list[Path]:
-    weekly_dir = generated_weekly_promo_images_dir()
-    if not weekly_dir.exists():
+def tiktok_sound_bank_files() -> list[Path]:
+    """Read-only listing of reusable soundtrack files in the canonical sound bank.
+
+    The sound bank is never written to; it is a discovery source only.
+    """
+    bank_dir = TIKTOK_SOUND_BANK_DIR
+    if not bank_dir.exists():
         return []
     return [
         path
-        for path in sorted(weekly_dir.iterdir())
+        for path in sorted(bank_dir.iterdir())
         if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS
     ]
+
+
+def weekly_promo_audio_files() -> list[Path]:
+    weekly_dir = generated_weekly_promo_images_dir()
+    files: list[Path] = []
+    if weekly_dir.exists():
+        files.extend(
+            path
+            for path in sorted(weekly_dir.iterdir())
+            if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS
+        )
+    # Include the canonical read-only sound bank so reusable audio is discoverable
+    # even when the generated weekly folder is empty or missing.
+    seen = {path.resolve() for path in files}
+    for path in tiktok_sound_bank_files():
+        resolved = path.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            files.append(path)
+    return files
 
 
 def choose_rotating_weekly_promo_audio() -> Path | None:
@@ -15040,9 +15069,23 @@ def choose_rotating_weekly_promo_audio() -> Path | None:
 
 
 def list_tiktok_assets() -> dict[str, Any]:
+    # Sounds come from the canonical read-only bank plus any audio still sitting in
+    # the asset dir, so discovery works even when TIKTOK_ASSET_DIR is missing.
+    bank_sounds = tiktok_sound_bank_files()
     if not TIKTOK_ASSET_DIR.exists():
-        return {"sounds": [], "imageGroups": [], "videos": []}
-    sounds = [path for path in sorted(TIKTOK_ASSET_DIR.iterdir()) if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS]
+        return {
+            "sounds": [{"name": path.name, "path": str(path)} for path in bank_sounds],
+            "imageGroups": [],
+            "videos": [],
+        }
+    asset_sounds = [path for path in sorted(TIKTOK_ASSET_DIR.iterdir()) if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS]
+    sounds = list(bank_sounds)
+    seen_sounds = {path.resolve() for path in sounds}
+    for path in asset_sounds:
+        resolved = path.resolve()
+        if resolved not in seen_sounds:
+            seen_sounds.add(resolved)
+            sounds.append(path)
     videos = [path for path in sorted(TIKTOK_ASSET_DIR.iterdir()) if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS]
     groups: dict[tuple[str, str], list[Path]] = {}
     raster_exts = {".png", ".jpg", ".jpeg", ".webp"}

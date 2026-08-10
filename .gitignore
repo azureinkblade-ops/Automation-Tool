@@ -182,3 +182,9 @@ lora-training/realistic-posts/train-1024/extra-tiktok-ch20plus/
 tests/render_ab/output/
 tools/loras/
 
+# Local runtime sound bank for TikTok promo audio. This is a machine-local
+# runtime dependency (the eight reusable MP3s), NOT source code, and must
+# not be committed. A fresh clone requires this directory to be populated
+# separately before TikTok audio generation will work.
+tiktok-sound-bank/
+
