@@ -51,7 +51,7 @@ The normalized finding key is `finding-<first 16 hex of sha256>` over the canoni
 
 Canonicalization rules:
 
-- `summary` is stripped, internal whitespace is collapsed to single spaces, and the identity form is casefolded. The first-seen original stripped summary is preserved for display.
+- `summary` is stripped, internal whitespace is collapsed to single spaces, and the identity form is casefolded. When reviewers word the same finding with different casing or spacing, the lexicographically smallest stripped variant is chosen as the display summary, so the representative text does not depend on report ordering.
 - `evidence_refs` are deduplicated and sorted.
 - Serialization uses the existing `canonical_json` helper (sorted keys, compact separators, ASCII) and the existing `sha256_payload` helper, matching the `review-session-<hash16>` convention already used by the review session envelope.
 - No timestamp and no runtime object identity participate in the key.

@@ -1,6 +1,12 @@
 """Hermes governance validation helpers."""
 
 from .hashing import canonical_json, sha256_file, sha256_payload, sha256_text
+from .consensus_evaluator import (
+    ConsensusEvaluation,
+    ConsensusEvaluationError,
+    ConsensusEvaluator,
+    FindingAgreement,
+)
 from .evidence import EvidencePackage, EvidencePackageBuilder, EvidencePackageError
 from .evidence_recorder import EvidenceLedgerRecorder, RecordedEvidence
 from .evidence_staleness import (
@@ -44,6 +50,9 @@ __all__ = [
     "ArtifactRegistryError",
     "ArtifactBundle",
     "ArtifactStaleness",
+    "ConsensusEvaluation",
+    "ConsensusEvaluationError",
+    "ConsensusEvaluator",
     "EvidencePackage",
     "EvidencePackageBuilder",
     "EvidencePackageError",
@@ -51,6 +60,7 @@ __all__ = [
     "EvidenceStalenessChecker",
     "EvidenceStalenessReport",
     "EventLedger",
+    "FindingAgreement",
     "FindingNormalizationError",
     "FindingNormalizer",
     "FindingSource",

@@ -50,6 +50,7 @@ This handbook is intended for:
 | [hermes-review-runner-stub.md](hermes-review-runner-stub.md) | Non-executing boundary for future reviewer model runners |
 | [hermes-review-outcome-record.md](hermes-review-outcome-record.md) | Local review outcome record bound to frozen evidence and validated review reports |
 | [hermes-finding-normalizer.md](hermes-finding-normalizer.md) | Deterministic normalized finding set built from validated review reports |
+| [hermes-consensus-evaluator.md](hermes-consensus-evaluator.md) | Deterministic agreement/disagreement classification over a normalized finding set |
 | [glossary.md](glossary.md) | Canonical terminology |
 | [architecture-roadmap.md](architecture-roadmap.md) | Phased implementation sequence and exit criteria |
 | [component-model.md](component-model.md) | Component responsibilities and interfaces |
