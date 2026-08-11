@@ -18,6 +18,7 @@ from .review_assignment import (
 )
 from .review_gate import ReviewEligibilityDecision, ReviewEligibilityGate
 from .review_report import ReviewReportError, ReviewReportValidation, ReviewReportValidator
+from .review_runner import ReviewRunnerError, ReviewRunnerResult, ReviewRunnerStub
 from .review_session import ReviewSessionBuilder, ReviewSessionEnvelope, ReviewSessionError
 from .reviewer_registry import ReviewerAgent, ReviewerRegistry, ReviewerRegistryError
 from .schemas import SchemaCatalog, SchemaValidationError, load_schema_catalog
@@ -54,6 +55,9 @@ __all__ = [
     "ReviewReportError",
     "ReviewReportValidation",
     "ReviewReportValidator",
+    "ReviewRunnerError",
+    "ReviewRunnerResult",
+    "ReviewRunnerStub",
     "ReviewSessionBuilder",
     "ReviewSessionEnvelope",
     "ReviewSessionError",
