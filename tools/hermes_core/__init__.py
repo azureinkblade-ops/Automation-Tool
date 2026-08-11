@@ -8,6 +8,13 @@ from .evidence_staleness import (
     EvidenceStalenessChecker,
     EvidenceStalenessReport,
 )
+from .finding_normalizer import (
+    FindingNormalizationError,
+    FindingNormalizer,
+    FindingSource,
+    NormalizedFinding,
+    NormalizedFindingSet,
+)
 from .ledger import EventLedger, LedgerEntry, LedgerError
 from .registry import ArtifactRecord, ArtifactRegistry, ArtifactRegistryError
 from .review_assignment import (
@@ -44,8 +51,13 @@ __all__ = [
     "EvidenceStalenessChecker",
     "EvidenceStalenessReport",
     "EventLedger",
+    "FindingNormalizationError",
+    "FindingNormalizer",
+    "FindingSource",
     "LedgerEntry",
     "LedgerError",
+    "NormalizedFinding",
+    "NormalizedFindingSet",
     "RecordedTransition",
     "RecordedEvidence",
     "ReviewEligibilityDecision",

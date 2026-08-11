@@ -49,6 +49,7 @@ This handbook is intended for:
 | [hermes-review-session-envelope.md](hermes-review-session-envelope.md) | Frozen read-only input package for future reviewer runners |
 | [hermes-review-runner-stub.md](hermes-review-runner-stub.md) | Non-executing boundary for future reviewer model runners |
 | [hermes-review-outcome-record.md](hermes-review-outcome-record.md) | Local review outcome record bound to frozen evidence and validated review reports |
+| [hermes-finding-normalizer.md](hermes-finding-normalizer.md) | Deterministic normalized finding set built from validated review reports |
 | [glossary.md](glossary.md) | Canonical terminology |
 | [architecture-roadmap.md](architecture-roadmap.md) | Phased implementation sequence and exit criteria |
 | [component-model.md](component-model.md) | Component responsibilities and interfaces |
