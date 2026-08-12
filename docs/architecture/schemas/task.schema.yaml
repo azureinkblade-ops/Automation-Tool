@@ -1,0 +1,92 @@
+schema: hermes.task
+schema_version: "1.0"
+status: proposed
+description: >
+  A task is the top-level governed work item. It records intent, scope, state,
+  evidence requirements, and authorization requirements without granting
+  execution authority by itself.
+
+required:
+  - task_id
+  - title
+  - created_at
+  - requested_by
+  - current_state
+  - scope
+  - authority
+
+fields:
+  task_id:
+    type: string
+    format: uuid
+  title:
+    type: string
+  objective:
+    type: string
+  created_at:
+    type: string
+    format: date-time
+  requested_by:
+    type: string
+  current_state:
+    type: string
+    enum:
+      - DRAFT
+      - READY_FOR_REVIEW
+      - UNDER_REVIEW
+      - CONSENSUS_CALCULATED
+      - ACCEPTED
+      - REJECTED
+      - INCONCLUSIVE
+      - AWAITING_EXECUTION_AUTHORIZATION
+      - AUTHORIZED
+      - EXECUTING
+      - VALIDATION_PENDING
+      - VALIDATED
+      - FAILED
+      - CLOSED
+  scope:
+    type: object
+    required:
+      - project_id
+      - permitted_read_paths
+      - permitted_write_paths
+      - network_policy
+    fields:
+      project_id:
+        type: string
+      repository:
+        type: string
+      permitted_read_paths:
+        type: array
+        items: string
+      permitted_write_paths:
+        type: array
+        items: string
+      prohibited_paths:
+        type: array
+        items: string
+      network_policy:
+        type: string
+        enum: [none, local_only, approved_hosts, unrestricted]
+  authority:
+    type: object
+    required:
+      - governance_owner
+      - execution_requires_authorization
+    fields:
+      governance_owner:
+        type: string
+        const: hermes
+      execution_requires_authorization:
+        type: boolean
+        const: true
+  evidence_requirements:
+    type: array
+    items: string
+  parent_task_id:
+    type: string
+    nullable: true
+  tags:
+    type: array
+    items: string

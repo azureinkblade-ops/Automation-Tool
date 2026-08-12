@@ -1,0 +1,47 @@
+schema: hermes.evidence
+schema_version: "1.0"
+status: proposed
+description: >
+  Evidence is the frozen material reviewed by agents and validators. Accepted
+  decisions must reference immutable evidence identities.
+
+required:
+  - evidence_package_id
+  - task_id
+  - created_at
+  - inventory
+  - package_sha256
+  - frozen
+
+fields:
+  evidence_package_id:
+    type: string
+  task_id:
+    type: string
+    format: uuid
+  created_at:
+    type: string
+    format: date-time
+  inventory:
+    type: array
+    items:
+      type: object
+      required: [artifact_id, path_or_uri, sha256]
+      fields:
+        artifact_id:
+          type: string
+        path_or_uri:
+          type: string
+        sha256:
+          type: string
+        artifact_type:
+          type: string
+  package_sha256:
+    type: string
+  frozen:
+    type: boolean
+    const: true
+  generated_by:
+    type: string
+  notes:
+    type: string

@@ -1,0 +1,52 @@
+schema: hermes.consensus
+schema_version: "1.0"
+status: proposed
+description: >
+  Consensus is a deterministic calculation over validated review reports and
+  frozen policy. It may produce acceptance, rejection, escalation, blocked, or
+  inconclusive outcomes. It never authorizes execution.
+
+required:
+  - consensus_id
+  - task_id
+  - policy_id
+  - input_review_ids
+  - calculated_at
+  - result
+  - authority
+
+fields:
+  consensus_id:
+    type: string
+    format: uuid
+  task_id:
+    type: string
+    format: uuid
+  policy_id:
+    type: string
+  input_review_ids:
+    type: array
+    items: string
+  calculated_at:
+    type: string
+    format: date-time
+  result:
+    type: string
+    enum: [ACCEPTED, REJECTED, ESCALATED, BLOCKED, INCONCLUSIVE]
+  normalized_findings:
+    type: array
+    items: object
+  disagreement_summary:
+    type: string
+  authority:
+    type: object
+    fields:
+      can_generate_acceptance:
+        type: boolean
+        const: true
+      can_authorize_execution:
+        type: boolean
+        const: false
+      can_execute:
+        type: boolean
+        const: false

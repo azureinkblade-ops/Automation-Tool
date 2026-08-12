@@ -1,0 +1,62 @@
+schema: hermes.authorization
+schema_version: "1.0"
+status: proposed
+description: >
+  Authorization is a bounded permission object that allows a specific operation
+  after an accepted artifact exists. It must reference the parent acceptance hash.
+
+required:
+  - authorization_id
+  - task_id
+  - authorized_phase
+  - parent_acceptance_sha256
+  - allowed_operations
+  - prohibited_operations
+  - permitted_read_paths
+  - permitted_write_paths
+  - network_policy
+  - fixture_policy
+  - expires_at
+  - issuing_authority
+  - authorization_sha256
+
+fields:
+  authorization_id:
+    type: string
+    format: uuid
+  task_id:
+    type: string
+    format: uuid
+  authorized_phase:
+    type: string
+  parent_acceptance_sha256:
+    type: string
+  allowed_operations:
+    type: array
+    items: string
+  prohibited_operations:
+    type: array
+    items: string
+  permitted_read_paths:
+    type: array
+    items: string
+  permitted_write_paths:
+    type: array
+    items: string
+  network_policy:
+    type: string
+    enum: [none, local_only, approved_hosts, unrestricted]
+  fixture_policy:
+    type: string
+    enum: [no_fixtures, read_only_fixtures, write_temp_fixtures, approved_live_fixture]
+  expires_at:
+    type: string
+    format: date-time
+  issuing_authority:
+    type: string
+    enum: [human_owner, hermes_validated_policy]
+  authorization_sha256:
+    type: string
+  constraints:
+    type: array
+    items: string

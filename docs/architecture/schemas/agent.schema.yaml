@@ -1,0 +1,50 @@
+schema: hermes.agent
+schema_version: "1.0"
+status: proposed
+description: >
+  An agent record defines identity, role, model binding, and authority limits.
+  Agent registration never grants governance authority unless Hermes policy allows it.
+
+required:
+  - agent_id
+  - display_name
+  - role
+  - model_id
+  - authority
+  - status
+
+fields:
+  agent_id:
+    type: string
+  display_name:
+    type: string
+  role:
+    type: string
+    enum: [architect, librarian, reviewer, engineer, verifier, publisher, observer]
+  model_id:
+    type: string
+  authority:
+    type: object
+    required:
+      - can_review
+      - can_modify_governance_state
+      - can_authorize_execution
+      - can_execute
+    fields:
+      can_review:
+        type: boolean
+      can_modify_governance_state:
+        type: boolean
+      can_authorize_execution:
+        type: boolean
+      can_execute:
+        type: boolean
+  allowed_tools:
+    type: array
+    items: string
+  denied_tools:
+    type: array
+    items: string
+  status:
+    type: string
+    enum: [active, paused, revoked, pending_review]

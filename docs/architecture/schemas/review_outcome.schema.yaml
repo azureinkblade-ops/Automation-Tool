@@ -1,0 +1,49 @@
+schema: hermes.review_outcome
+schema_version: "1.0"
+status: proposed
+description: >
+  A reviewed outcome is a bounded, non-authoritative record that binds a
+  frozen evidence package to one or more validated review reports and records
+  an explicit local disposition for the task.
+
+required:
+  - review_outcome_id
+  - task_id
+  - evidence_package_id
+  - review_ids
+  - recorded_at
+  - status
+  - authority
+
+fields:
+  review_outcome_id:
+    type: string
+    format: uuid
+  task_id:
+    type: string
+    format: uuid
+  evidence_package_id:
+    type: string
+  review_ids:
+    type: array
+    items: string
+  recorded_at:
+    type: string
+    format: date-time
+  status:
+    type: string
+    enum: [accepted, rejected, inconclusive, escalated, blocked]
+  summary:
+    type: string
+  authority:
+    type: object
+    fields:
+      can_modify_state:
+        type: boolean
+        const: false
+      can_authorize_execution:
+        type: boolean
+        const: false
+      can_execute:
+        type: boolean
+        const: false
