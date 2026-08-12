@@ -117,6 +117,30 @@ status = get_task_governance_status(task_id)
   `accepted = False`.
 - No worker launch, no execution authorization, no state transition.
 
+### Integration proof: real review orchestration path
+
+`tools/hermes_core/review_runner.py` (`ReviewRunnerStub.prepare()`) is a real,
+non-executing orchestration path that already owns the governance `task_id` and
+returns a status object ("Model execution is not authorized in this phase"). As
+the Governance Consumer Integration Proof, `prepare()` now enriches its
+`ReviewRunnerResult` with the read-only `governance` field by calling the
+existing public consumer `get_task_governance_status(task_id)`:
+
+```python
+result = ReviewRunnerStub().prepare(session)
+# result.governance: TaskGovernanceStatus | None
+# result.governance.governance_state: "ACCEPTED" | None | ...
+# result.governance.accepted: bool
+# result.governance.can_authorize_execution: bool  (always False)
+```
+
+This proves deterministic governance truth enters one real application workflow
+while remaining observational. The `governance` field is strictly additive
+(backward compatible with existing `test_review_runner.py`). Integrity failures
+propagate as `GovernanceIntegrityError` (fail-closed), never downgraded to
+`accepted = False`. A negative-authority mutation (`can_authorize_execution =
+governance.accepted`) breaks the integration test, confirming the boundary.
+
 ## Verification
 
 - `tests/hermes_core/test_governance_runtime_config.py` — path resolution,
@@ -128,6 +152,10 @@ status = get_task_governance_status(task_id)
 - `tests/hermes_core/test_governance_consumer.py` — unknown task, in-processing
   (non-accepted), accepted (`accepted=True` / `can_authorize_execution=False`),
   tamper fail-closed, no execution side effects.
+- `tests/hermes_core/test_review_runner_governance_integration.py` — real
+  orchestration path (`ReviewRunnerStub.prepare`) consumes governance status:
+  unknown / in-processing / accepted / tamper fail-closed / no worker side
+  effects / accepted-true-distinct-from-can-authorize-false.
 - Mutation testing: 8/8 runtime mutants each cause >=1 targeted test failure;
   source restored byte-exactly.
 
