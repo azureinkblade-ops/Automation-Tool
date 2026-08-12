@@ -81,6 +81,11 @@ from .runtime import (
     set_governance_db_path_override,
     verify_governance_integrity,
 )
+from .governance_consumer import (
+    CAN_AUTHORIZE_EXECUTION,
+    TaskGovernanceStatus,
+    get_task_governance_status,
+)
 
 __all__ = [
     "ArtifactRecord",
@@ -157,4 +162,7 @@ __all__ = [
     "reset_governance_store_cache",
     "set_governance_db_path_override",
     "verify_governance_integrity",
+    "CAN_AUTHORIZE_EXECUTION",
+    "TaskGovernanceStatus",
+    "get_task_governance_status",
 ]

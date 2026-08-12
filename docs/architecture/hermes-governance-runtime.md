@@ -91,6 +91,32 @@ bypasses execution authorization.
 authorization and invokes no worker. Reading `ACCEPTED` never transitions to
 `AUTHORIZED` or `EXECUTING`.
 
+## First real governance consumer
+
+`tools/hermes_core/governance_consumer.py` is the first narrow production-facing
+consumer of the governance runtime. It sits between application orchestration
+and the runtime provider and answers one question: what is the authoritative
+governance status of a task?
+
+```python
+from tools.hermes_core import get_task_governance_status
+
+status = get_task_governance_status(task_id)
+# status.governance_state: "ACCEPTED" | "CONSENSUS_CALCULATED" | ... | None
+# status.accepted: bool
+# status.can_authorize_execution: bool  (always False this milestone)
+```
+
+- `get_task_governance_status(task_id)` reads through `get_governance_store()`
+  and returns a frozen `TaskGovernanceStatus`.
+- `can_authorize_execution` is a **hard architectural declaration of `False`**
+  (`CAN_AUTHORIZE_EXECUTION` constant), NOT derived from governance state.
+  Logic like `can_authorize_execution = (state == "ACCEPTED")` is forbidden.
+- Integrity is fail-closed: if the authoritative store is tampered,
+  `GovernanceIntegrityError` propagates and is NOT downgraded to
+  `accepted = False`.
+- No worker launch, no execution authorization, no state transition.
+
 ## Verification
 
 - `tests/hermes_core/test_governance_runtime_config.py` — path resolution,
@@ -99,6 +125,9 @@ authorization and invokes no worker. Reading `ACCEPTED` never transitions to
 - `tests/hermes_core/test_governance_runtime.py` — provider bootstrap/reopen,
   first-consumer query surface, tamper fail-closed, execution-boundary
   regression.
+- `tests/hermes_core/test_governance_consumer.py` — unknown task, in-processing
+  (non-accepted), accepted (`accepted=True` / `can_authorize_execution=False`),
+  tamper fail-closed, no execution side effects.
 - Mutation testing: 8/8 runtime mutants each cause >=1 targeted test failure;
   source restored byte-exactly.
 
