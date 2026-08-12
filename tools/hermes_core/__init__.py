@@ -12,6 +12,11 @@ from .consensus_disposition import (
     ConsensusDispositionEngine,
     ConsensusDispositionError,
 )
+from .acceptance_artifact import (
+    AcceptanceArtifact,
+    AcceptanceArtifactBuilder,
+    AcceptanceArtifactError,
+)
 from .evidence import EvidencePackage, EvidencePackageBuilder, EvidencePackageError
 from .evidence_recorder import EvidenceLedgerRecorder, RecordedEvidence
 from .evidence_staleness import (
@@ -61,6 +66,9 @@ __all__ = [
     "ConsensusDisposition",
     "ConsensusDispositionEngine",
     "ConsensusDispositionError",
+    "AcceptanceArtifact",
+    "AcceptanceArtifactBuilder",
+    "AcceptanceArtifactError",
     "EvidencePackage",
     "EvidencePackageBuilder",
     "EvidencePackageError",
