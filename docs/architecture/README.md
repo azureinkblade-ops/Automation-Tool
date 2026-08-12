@@ -54,6 +54,7 @@ This handbook is intended for:
 | [hermes-consensus-disposition.md](hermes-consensus-disposition.md) | Deterministic terminal consensus disposition mapping under frozen ADR-0003 policy |
 | [hermes-acceptance-artifact.md](hermes-acceptance-artifact.md) | Immutable acceptance artifact binding the full evidence chain from a verified 6C ACCEPTED disposition |
 | [hermes-governance-store.md](hermes-governance-store.md) | SQLite authoritative governance store, hash-linked ledger, and governed state integration (Phase 6E) |
+| [hermes-governance-runtime.md](hermes-governance-runtime.md) | Runtime store wiring seam: `get_governance_store()`, DB path resolution, read-only query surface, execution-boundary preservation (Phase 6 runtime integration) |
 | [glossary.md](glossary.md) | Canonical terminology |
 | [architecture-roadmap.md](architecture-roadmap.md) | Phased implementation sequence and exit criteria |
 | [component-model.md](component-model.md) | Component responsibilities and interfaces |

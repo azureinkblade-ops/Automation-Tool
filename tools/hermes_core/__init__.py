@@ -66,6 +66,21 @@ from .state_machine import (
     validate_transition,
 )
 from .transition_recorder import RecordedTransition, TransitionRecorder
+from .runtime_config import (
+    GovernanceRuntimeConfigError,
+    default_governance_db_path,
+    resolve_governance_db_path,
+)
+from .runtime import (
+    close_governance_store,
+    get_governance_chain,
+    get_governance_state,
+    get_governance_store,
+    is_governance_accepted,
+    reset_governance_store_cache,
+    set_governance_db_path_override,
+    verify_governance_integrity,
+)
 
 __all__ = [
     "ArtifactRecord",
@@ -131,4 +146,15 @@ __all__ = [
     "sha256_payload",
     "sha256_text",
     "validate_transition",
+    "GovernanceRuntimeConfigError",
+    "default_governance_db_path",
+    "resolve_governance_db_path",
+    "close_governance_store",
+    "get_governance_chain",
+    "get_governance_state",
+    "get_governance_store",
+    "is_governance_accepted",
+    "reset_governance_store_cache",
+    "set_governance_db_path_override",
+    "verify_governance_integrity",
 ]
