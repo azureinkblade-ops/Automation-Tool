@@ -7,6 +7,11 @@ from .consensus_evaluator import (
     ConsensusEvaluator,
     FindingAgreement,
 )
+from .consensus_disposition import (
+    ConsensusDisposition,
+    ConsensusDispositionEngine,
+    ConsensusDispositionError,
+)
 from .evidence import EvidencePackage, EvidencePackageBuilder, EvidencePackageError
 from .evidence_recorder import EvidenceLedgerRecorder, RecordedEvidence
 from .evidence_staleness import (
@@ -53,6 +58,9 @@ __all__ = [
     "ConsensusEvaluation",
     "ConsensusEvaluationError",
     "ConsensusEvaluator",
+    "ConsensusDisposition",
+    "ConsensusDispositionEngine",
+    "ConsensusDispositionError",
     "EvidencePackage",
     "EvidencePackageBuilder",
     "EvidencePackageError",
