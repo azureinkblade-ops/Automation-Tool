@@ -264,7 +264,8 @@ EXECUTION_CLAIMED, EXECUTION_STARTED, EXECUTION_COMPLETED, EXECUTION_FAILED
 ```
 
 Each entry: `payload_sha256`, `previous_entry_sha256`, `entry_sha256`, actor
-identity, timestamp (monotonic local clock; see §13), artifact hash. Replay
+identity, timestamp (**absolute UTC RFC 3339 / ISO-8601**; see §15), artifact
+hash. Replay
 handling: ledger is append-only; a `CONSUMED` entry for a single-use auth makes
 any later `CLAIM` fail closed.
 
@@ -291,13 +292,39 @@ Two callers claim the same one-use authorization concurrently:
 
 ## 15. Expiry
 
+- `issued_at` and `expires_at` are persisted as **absolute UTC RFC 3339 /
+  ISO-8601 timestamps** (e.g. `issued_at = 2026-08-12T21:30:00Z`,
+  `expires_at = 2026-08-12T22:00:00Z`). They are the authoritative, auditable
+  source of truth across application restart, machine reboot, persisted
+  authorization reload, and multi-process audit reconstruction.
+- **Clock distinction (mandatory):**
+  - *Persisted / auditable time* = absolute UTC wall-clock timestamp.
+  - *Optional in-process elapsed-time enforcement* = a monotonic clock MAY be
+    used only for measuring elapsed time **after** an authorization has been
+    loaded or claimed, never as the persisted source of `issued_at` /
+    `expires_at`. A monotonic clock is process/boot-relative and cannot provide a
+    stable persisted timestamp.
 - `expires_at` is **mandatory for human-issued authorizations**; system/policy
   low-risk scopes MAY set `expires_at = null` only when a separate policy gate
   explicitly permits open duration (rare; policy-version-bound).
-- Authoritative clock: monotonic local system clock; persisted `issued_at` /
-  `expires_at` are ISO-8601.
-- Expiry after claim but before execution: the claim is invalidated; a new
-  authorization is required (claims do not extend expiry).
+- **Validation:** `trusted_current_utc >= expires_at` → authorization expired
+  (DENY). Use a trusted current UTC source, not a boot-relative monotonic value.
+- **Clock-failure semantics (fail-closed):** if authorization validation cannot
+  establish valid time — clock unavailable, timestamp unparsable,
+  `expires_at < issued_at`, or a material clock rollback is detected where
+  detectable — then **do not authorize execution**; raise an explicit
+  authorization-validation / integrity error. Malformed expiration metadata is
+  NEVER silently treated as an unexpired authorization.
+- **Before `ExecutionClaim`:** authorization expiration blocks creation of a
+  claim (`expires_at` must be in the future at claim time).
+- **After a valid atomic `ExecutionClaim`:** the authorization has already been
+  consumed for that claim. Subsequent expiration does **not** retroactively
+  invalidate an already-issued claim. Whether a claimed-but-not-started execution
+  has its own claim/start deadline belongs to `ExecutionClaim` policy, not
+  authorization expiration (see §16). `ExecutionAuthorization.expires_at` must
+  NOT be overloaded to govern both issuance/claim eligibility and execution
+  runtime; if needed, introduce a separate `claim_expires_at` / `must_start_by`
+  on the claim.
 - After execution begins: in-flight execution is permitted to complete under its
   already-validated claim; expiry does not abort a started, claimed execution.
 - Renewal: requires a new `ExecutionAuthorizationRequest` (no silent extension).
@@ -421,8 +448,11 @@ still forbidden from issuing authority.
 
 ## 26. Explicit unresolved questions
 
-- Final clock-sync policy for `expires_at` across multi-process deployments
-  (local monotonic clock assumed for v1).
+- Final clock-sync policy for `expires_at` across multi-process deployments:
+  persisted timestamps are absolute UTC (§15); the only open question is which
+  trusted UTC source / skew-tolerance governs `trusted_current_utc` comparison
+  (single-machine local UTC acceptable for v1; NTP/authorized-time source for
+  distributed deployment). Monotonic clocks remain in-process elapsed-time only.
 - Exact policy thresholds distinguishing human-required vs system-eligible
   scopes (left to the EA-3 policy service design).
 - Whether `automation_state.db` later hosts any execution *runtime* state (out of
