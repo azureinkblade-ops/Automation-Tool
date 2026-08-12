@@ -53,6 +53,7 @@ This handbook is intended for:
 | [hermes-consensus-evaluator.md](hermes-consensus-evaluator.md) | Deterministic agreement/disagreement classification over a normalized finding set |
 | [hermes-consensus-disposition.md](hermes-consensus-disposition.md) | Deterministic terminal consensus disposition mapping under frozen ADR-0003 policy |
 | [hermes-acceptance-artifact.md](hermes-acceptance-artifact.md) | Immutable acceptance artifact binding the full evidence chain from a verified 6C ACCEPTED disposition |
+| [hermes-governance-store.md](hermes-governance-store.md) | SQLite authoritative governance store, hash-linked ledger, and governed state integration (Phase 6E) |
 | [glossary.md](glossary.md) | Canonical terminology |
 | [architecture-roadmap.md](architecture-roadmap.md) | Phased implementation sequence and exit criteria |
 | [component-model.md](component-model.md) | Component responsibilities and interfaces |
