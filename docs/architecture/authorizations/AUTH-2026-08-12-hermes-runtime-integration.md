@@ -39,7 +39,7 @@ store, following the approved `HERMES_RUNTIME_INTEGRATION_PLAN.md`.
 
 ## Verification requirements
 
-- 21 new runtime tests pass; full Hermes core suite green (272).
+- 21 new runtime tests pass; full Hermes core suite green (273).
 - 8/8 runtime integration mutants have teeth; source restored byte-exactly.
 - Ad-hoc override probe passes and removes its temporary DB.
 - `git diff --check` clean; unrelated `main` edits untouched.
