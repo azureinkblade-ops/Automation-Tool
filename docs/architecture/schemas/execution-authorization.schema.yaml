@@ -1,0 +1,89 @@
+schema: hermes.execution_authorization
+schema_version: "1.0"
+status: proposed
+description: >-
+  Immutable execution-authorization artifact (EA-1 domain model). Binds to an
+  immutable governance AcceptanceArtifact via accepted_governance_artifact_id /
+  accepted_governance_hash. Authorizes nothing on its own; the future EA-3
+  issuance service is the only component permitted to create real authority.
+  Distinct from the legacy hermes.authorization envelope schema.
+
+required:
+  - authorization_id
+  - task_id
+  - accepted_governance_artifact_id
+  - accepted_governance_hash
+  - authorization_actor
+  - authorized_scope
+  - authorization_reason
+  - authorization_policy
+  - issued_at
+  - nonce
+  - artifact_version
+  - artifact_hash
+
+fields:
+  authorization_id:
+    type: string
+    # execution-authorization-<16 hex>
+  task_id:
+    type: string
+  accepted_governance_artifact_id:
+    type: string
+  accepted_governance_hash:
+    type: string
+  authorization_actor:
+    type: object
+    required: [actor_id, actor_type, authority_role]
+    fields:
+      actor_id:
+        type: string
+      actor_type:
+        type: string
+        enum: [HUMAN, POLICY_SERVICE, SYSTEM]
+      authority_role:
+        type: string
+      authentication_context:
+        type: string
+        nullable: true
+  authorized_scope:
+    type: object
+    required: [operation, input_hash, attempt_limit]
+    fields:
+      operation:
+        type: string
+      worker_class:
+        type: string
+        nullable: true
+      input_hash:
+        type: string
+      attempt_limit:
+        type: integer
+        minimum: 1
+      max_runtime_seconds:
+        type: integer
+        minimum: 1
+        nullable: true
+  authorization_reason:
+    type: string
+  authorization_policy:
+    type: object
+    required: [policy_id, policy_version]
+    fields:
+      policy_id:
+        type: string
+      policy_version:
+        type: string
+  issued_at:
+    type: string
+    format: date-time
+  expires_at:
+    type: string
+    format: date-time
+    nullable: true
+  nonce:
+    type: string
+  artifact_version:
+    type: string
+  artifact_hash:
+    type: string

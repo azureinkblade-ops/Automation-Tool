@@ -55,7 +55,8 @@ This handbook is intended for:
 | [hermes-acceptance-artifact.md](hermes-acceptance-artifact.md) | Immutable acceptance artifact binding the full evidence chain from a verified 6C ACCEPTED disposition |
 | [hermes-governance-store.md](hermes-governance-store.md) | SQLite authoritative governance store, hash-linked ledger, and governed state integration (Phase 6E) |
 | [hermes-governance-runtime.md](hermes-governance-runtime.md) | Runtime store wiring seam + first real governance consumer: `get_governance_store()`, `get_task_governance_status()`, DB path resolution, runtime integration + consumer integration proof |
-| [hermes-execution-authorization-handoff.md](hermes-execution-authorization-handoff.md) | DESIGN-ONLY: future boundary taking ACCEPTED → explicit ExecutionAuthorization (separate authority domain + execution_authority.db + atomic claim); preserves `ACCEPTED != EXECUTION AUTHORIZATION` (ADR-0013) |
+| [hermes-execution-authorization-handoff.md](hermes-execution-authorization-handoff.md) | Execution Authorization Handoff design + EA-1 implementation status: separate authority domain from governance acceptance; ExecutionAuthorization artifact binds to AcceptanceArtifact; ExecutionClaim; separate execution_authority.db; fail-closed integrity; EA-1 (domain model + schemas) COMPLETE, EA-2..EA-7 future |
+
 | [decisions/ADR-0013-execution-authority-separate-from-governance.md](decisions/ADR-0013-execution-authority-separate-from-governance.md) | ADR-0013: execution authority is a separate domain/persistence (Option B) bound by hash to AcceptanceArtifact; fail-closed integrity |
 | [glossary.md](glossary.md) | Canonical terminology |
 | [architecture-roadmap.md](architecture-roadmap.md) | Phased implementation sequence and exit criteria |

@@ -468,3 +468,55 @@ revocation, input-mutation protection, and fail-closed integrity. Workers receiv
 validated `ExecutionClaim`s, never derived authority. This preserves
 `ACCEPTED != EXECUTION AUTHORIZATION` and extends ADR-0004 without weakening any
 Phase 6 boundary.
+
+## 27. Implementation status (EA-1)
+
+**EA-1 is COMPLETE (domain model + schemas only).** Commit: local `main`,
+authored `Add Hermes execution authorization domain model`.
+
+Implemented:
+
+- `tools/hermes_core/execution_authorization.py` — immutable frozen dataclasses
+  `ExecutionAuthorization`, `ExecutionAuthorizationRequest`,
+  `ExecutionAuthorizationDecision`, plus structured `ExecutionAuthorizationScope`,
+  `ExecutionAuthorizationActor`, `ExecutionAuthorizationPolicyRef`; `(str, Enum)`
+  `ExecutionAuthorizationActorType` (HUMAN / POLICY_SERVICE / SYSTEM) and
+  `ExecutionAuthorizationDecisionOutcome` (GRANTED / DENIED).
+- Deterministic canonicalization reused from `tools/hermes_core/hashing.py`
+  (`canonical_json` + `sha256_payload`); `artifact_hash` excludes itself;
+  `to_canonical_dict()` / `canonical_json()` / `verify_hash()` semantics mirror
+  `AcceptanceArtifact`.
+- Pure builders (`build_execution_authorization[_request|_decision]`), domain
+  validation, and hash verification. Bare `task_id` is never sufficient:
+  `accepted_governance_artifact_id` + `accepted_governance_hash` are required.
+- `(str, Enum)` actor type and decision outcome are constrained; GRANTED requires
+  `authorization_id`, DENIED forbids it (cross-field invariant enforced).
+- YAML schemas `docs/architecture/schemas/execution-authorization*.schema.yaml`
+  (distinct schema names `hermes.execution_authorization[_request|_decision]`,
+  no collision with legacy `hermes.authorization`). Validated via
+  `SchemaCatalog.validate()`.
+- 39 focused tests green (domain + schema parity + hashing + negative + safety).
+- Mutation tooth: a DENIED decision permitted to carry `authorization_id`
+  breaks the targeted invariant; source restored byte-exactly.
+
+**NOT implemented (by design):**
+
+- `execution_authority.db` / `ExecutionAuthorizationStore` / `SQLite` persistence.
+- Authorization issuance / grant / revocation persistence.
+- `ExecutionClaim` / `ExecutionAttempt` / `WorkerRouter`.
+- Worker launch / enqueue / dispatch.
+- `AUTHORIZED_FOR_EXECUTION` / `EXECUTING` / `AWAITING_EXECUTION_AUTHORIZATION`
+  transitions.
+- `ExecutionAuthorizationIntegrityError` (reserved for EA-2 persisted-tamper
+  semantics); EA-1 uses only `ExecutionAuthorizationError(ValueError)` /
+  `ExecutionAuthorizationValidationError(ValueError)`.
+
+**Preserved invariant:** `ACCEPTED != EXECUTION AUTHORIZATION`. The artifacts
+here are representations only; no production code consumes them to grant
+authority. `app.py` unchanged; `automation_state.db` untouched.
+
+**Schema-engine limitation (documented):** the shared `SchemaCatalog` validator
+does not enforce `minimum` on integer-typed fields and does not require a
+trailing `Z` for `date-time`. `attempt_limit >= 1` and absolute-UTC timestamps
+are therefore enforced in the Python domain model and tested there; the schema
+gap is documented, not worked around by weakening Python validation.

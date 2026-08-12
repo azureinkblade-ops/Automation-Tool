@@ -134,9 +134,12 @@ class HermesStateMachineTests(unittest.TestCase):
         cls.catalog = load_schema_catalog(Path(__file__).resolve().parents[2])
 
     def test_schema_catalog_loads_all_foundation_contracts(self) -> None:
-        self.assertEqual(len(self.catalog.schemas), 10)
+        self.assertEqual(len(self.catalog.schemas), 13)
         self.assertIn("hermes.task", self.catalog.schemas)
         self.assertIn("hermes.authorization", self.catalog.schemas)
+        self.assertIn("hermes.execution_authorization", self.catalog.schemas)
+        self.assertIn("hermes.execution_authorization_request", self.catalog.schemas)
+        self.assertIn("hermes.execution_authorization_decision", self.catalog.schemas)
 
     def test_task_schema_validates_required_scope_and_authority(self) -> None:
         self.catalog.validate("hermes.task", task_doc())

@@ -1,0 +1,78 @@
+schema: hermes.execution_authorization_request
+schema_version: "1.0"
+status: proposed
+description: >-
+  Immutable request for execution authority (EA-1 domain model). Carries ZERO
+  execution authority. Distinct from hermes.execution_authorization.
+
+required:
+  - request_id
+  - task_id
+  - accepted_governance_artifact_id
+  - accepted_governance_hash
+  - requested_scope
+  - requesting_actor
+  - authorization_policy
+  - requested_at
+  - request_reason
+  - artifact_version
+  - artifact_hash
+
+fields:
+  request_id:
+    type: string
+  task_id:
+    type: string
+  accepted_governance_artifact_id:
+    type: string
+  accepted_governance_hash:
+    type: string
+  requested_scope:
+    type: object
+    required: [operation, input_hash, attempt_limit]
+    fields:
+      operation:
+        type: string
+      worker_class:
+        type: string
+        nullable: true
+      input_hash:
+        type: string
+      attempt_limit:
+        type: integer
+        minimum: 1
+      max_runtime_seconds:
+        type: integer
+        minimum: 1
+        nullable: true
+  requesting_actor:
+    type: object
+    required: [actor_id, actor_type, authority_role]
+    fields:
+      actor_id:
+        type: string
+      actor_type:
+        type: string
+        enum: [HUMAN, POLICY_SERVICE, SYSTEM]
+      authority_role:
+        type: string
+      authentication_context:
+        type: string
+        nullable: true
+  authorization_policy:
+    type: object
+    required: [policy_id, policy_version]
+    fields:
+      policy_id:
+        type: string
+      policy_version:
+        type: string
+  requested_at:
+    type: string
+    format: date-time
+  request_reason:
+    type: string
+  artifact_version:
+    type: string
+  artifact_hash:
+    type: string
