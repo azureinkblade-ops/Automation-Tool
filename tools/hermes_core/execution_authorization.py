@@ -689,3 +689,70 @@ def verify_execution_authorization_request_hash(artifact: ExecutionAuthorization
 
 def verify_execution_authorization_decision_hash(artifact: ExecutionAuthorizationDecision) -> bool:
     return artifact.verify_hash()
+
+
+def _actor_from_dict(d: Mapping[str, Any]) -> ExecutionAuthorizationActor:
+    actor_type = d.get("actor_type")
+    if isinstance(actor_type, str):
+        actor_type = ExecutionAuthorizationActorType(actor_type)
+    return ExecutionAuthorizationActor(
+        actor_id=d["actor_id"],
+        actor_type=actor_type,
+        authority_role=d["authority_role"],
+        authentication_context=d.get("authentication_context"),
+    )
+
+
+def _scope_from_dict(d: Mapping[str, Any]) -> ExecutionAuthorizationScope:
+    return ExecutionAuthorizationScope(
+        operation=d["operation"],
+        worker_class=d.get("worker_class"),
+        input_hash=d.get("input_hash"),
+        attempt_limit=d.get("attempt_limit"),
+        max_runtime_seconds=d.get("max_runtime_seconds"),
+    )
+
+
+def _policy_from_dict(d: Mapping[str, Any]) -> ExecutionAuthorizationPolicyRef:
+    return ExecutionAuthorizationPolicyRef(
+        policy_id=d["policy_id"],
+        policy_version=d["policy_version"],
+    )
+
+
+def reconstruct_authorization(payload: Mapping[str, Any]) -> ExecutionAuthorization:
+    """Rebuild an immutable ExecutionAuthorization from its canonical dict (EA-2 reload).
+
+    The canonical dict stores enums as their string values and nested dataclasses
+    as plain dicts; this restores the domain objects without re-deriving the
+    artifact id/hash (those are taken verbatim, and verify_hash re-checks them).
+    """
+    d = dict(payload)
+    d.pop("artifact_hash", None)
+    d.pop("authorization_id", None)
+    d["authorization_actor"] = _actor_from_dict(d["authorization_actor"])
+    d["authorized_scope"] = _scope_from_dict(d["authorized_scope"])
+    d["authorization_policy"] = _policy_from_dict(d["authorization_policy"])
+    return build_execution_authorization(**d)
+
+
+def reconstruct_request(payload: Mapping[str, Any]) -> ExecutionAuthorizationRequest:
+    d = dict(payload)
+    d.pop("artifact_hash", None)
+    d.pop("request_id", None)
+    d["requested_scope"] = _scope_from_dict(d["requested_scope"])
+    d["requesting_actor"] = _actor_from_dict(d["requesting_actor"])
+    d["authorization_policy"] = _policy_from_dict(d["authorization_policy"])
+    return build_execution_authorization_request(**d)
+
+
+def reconstruct_decision(payload: Mapping[str, Any]) -> ExecutionAuthorizationDecision:
+    d = dict(payload)
+    d.pop("artifact_hash", None)
+    d.pop("decision_id", None)
+    d["decision_actor"] = _actor_from_dict(d["decision_actor"])
+    d["authorization_policy"] = _policy_from_dict(d["authorization_policy"])
+    outcome = d.get("outcome")
+    if isinstance(outcome, str):
+        d["outcome"] = ExecutionAuthorizationDecisionOutcome(outcome)
+    return build_execution_authorization_decision(**d)

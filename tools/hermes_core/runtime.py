@@ -142,3 +142,69 @@ def is_governance_accepted(task_id: str) -> bool:
     authorize execution.
     """
     return get_governance_state(task_id) == "ACCEPTED"
+
+
+# ---------------------------------------------------------------------------
+# Execution-authority provider seam (EA-2)
+# ---------------------------------------------------------------------------
+# This mirrors the governance provider but for the SEPARATE execution-authority
+# store. It returns the store only; it never authorizes, issues, claims, or
+# executes. The store persists EA-1 immutable representations and verifies their
+# integrity. ACCEPTED != EXECUTION AUTHORIZATION is preserved: the provider owns
+# no execution authority.
+
+_authority_cache: Optional["ExecutionAuthorizationStore"] = None
+_authority_override_db_path: Optional[Path] = None
+
+
+def _build_authority_store(db_path: Path) -> "ExecutionAuthorizationStore":
+    from tools.hermes_core.sqlite_execution_authorization_store import (
+        SQLiteExecutionAuthorizationStore,
+    )
+
+    return SQLiteExecutionAuthorizationStore(db_path)
+
+
+def get_execution_authorization_store() -> "ExecutionAuthorizationStore":
+    """Return the process-wide execution-authority store.
+
+    DB path resolves via :func:`resolve_execution_authority_db_path` unless a
+    test override is active. Bootstrap (schema v1, version assert, integrity
+    guard) happens inside ``SQLiteExecutionAuthorizationStore.__init__``; any
+    failure propagates as an ``ExecutionAuthorizationStoreError`` (fail-closed).
+
+    The returned store only persists/verifies EA-1 artifacts. It grants no
+    execution authority and invokes no worker.
+    """
+    global _authority_cache
+    if _authority_cache is not None:
+        return _authority_cache
+    from tools.hermes_core.runtime_config import resolve_execution_authority_db_path
+
+    db_path = _authority_override_db_path or resolve_execution_authority_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    _authority_cache = _build_authority_store(db_path)
+    return _authority_cache
+
+
+def close_execution_authorization_store() -> None:
+    """Close the cached authority store and release the connection, if open."""
+    global _authority_cache
+    if _authority_cache is not None:
+        try:
+            _authority_cache.close()
+        finally:
+            _authority_cache = None
+
+
+def reset_execution_authorization_store_cache() -> None:
+    """Drop the cached authority instance WITHOUT closing (test isolation)."""
+    global _authority_cache
+    _authority_cache = None
+
+
+def set_execution_authority_db_path_override(path: Optional[Path]) -> None:
+    """Override the authority DB path for tests. Pass ``None`` to clear."""
+    global _authority_override_db_path
+    _authority_override_db_path = Path(path) if path is not None else None
+    reset_execution_authorization_store_cache()

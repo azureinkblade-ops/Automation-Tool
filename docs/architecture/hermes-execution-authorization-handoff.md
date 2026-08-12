@@ -507,7 +507,7 @@ Implemented:
 - Worker launch / enqueue / dispatch.
 - `AUTHORIZED_FOR_EXECUTION` / `EXECUTING` / `AWAITING_EXECUTION_AUTHORIZATION`
   transitions.
-- `ExecutionAuthorizationIntegrityError` (reserved for EA-2 persisted-tamper
+- `ExecutionAuthorizationIntegrityError` (introduced in EA-2 for persisted-tamper
   semantics); EA-1 uses only `ExecutionAuthorizationError(ValueError)` /
   `ExecutionAuthorizationValidationError(ValueError)`.
 
@@ -520,3 +520,67 @@ does not enforce `minimum` on integer-typed fields and does not require a
 trailing `Z` for `date-time`. `attempt_limit >= 1` and absolute-UTC timestamps
 are therefore enforced in the Python domain model and tested there; the schema
 gap is documented, not worked around by weakening Python validation.
+
+## 28. Implementation status (EA-2)
+
+**EA-2 is COMPLETE (persistence + integrity ledger only).** Commit: local `main`,
+authored `Add Hermes execution authority persistence`.
+
+Implemented:
+
+- `tools/hermes_core/execution_authorization_store.py` — abstract
+  `ExecutionAuthorizationStore` interface plus the EA-2 error hierarchy:
+  `ExecutionAuthorizationStoreError(RuntimeError)` →
+  `ExecutionAuthorizationIntegrityError` (persisted tamper / chain break, distinct
+  from `ExecutionAuthorizationValidationError` and `GovernanceIntegrityError`),
+  `ExecutionAuthorizationSchemaError`, `ExecutionAuthorizationConflictError`.
+- `tools/hermes_core/sqlite_execution_authorization_store.py` —
+  `SQLiteExecutionAuthorizationStore`. Separate `execution_authority.db` (NOT
+  governance.db, NOT automation_state.db). Schema version 1 with fail-closed
+  version guard. `PRAGMA journal_mode = DELETE` (+ `foreign_keys = ON`,
+  `busy_timeout = 5000`), mirroring the governance store.
+- Three artifact tables (`execution_authorization_requests`,
+  `execution_authorization_decisions`, `execution_authorizations`) storing the
+  canonical JSON payload + `artifact_hash`; reconstruction rebuilds nested
+  dataclasses/enums via `reconstruct_*` helpers in `execution_authorization.py`.
+- Hash verification BEFORE write (`artifact.verify_hash()`) and ON load
+  (recompute vs stored `artifact_hash`); corruption raises
+  `ExecutionAuthorizationIntegrityError`. Missing record returns `None`
+  (distinguishable from corruption).
+- Append-only, hash-linked authority ledger (`authority_ledger`) in the same DB;
+  `event_id / event_type / artifact_type / artifact_id / artifact_hash /
+  payload_sha256 / previous_entry_sha256 / entry_sha256 / timestamp`, mirroring
+  repository `LedgerEntry` conventions. Artifact row + ledger event are committed
+  transactionally (`BEGIN IMMEDIATE` / rollback on failure). One global chain.
+- Idempotent duplicate persistence (identical id + canonical payload → no-op, no
+  duplicate ledger event); conflicting immutable artifact →
+  `ExecutionAuthorizationConflictError` (never silent overwrite).
+- `tools/hermes_core/runtime_config.py` —
+  `resolve_execution_authority_db_path()` with `HERMES_EXECUTION_AUTHORITY_DB`
+  override → `%LOCALAPPDATA%\Hermes\execution_authority.db`; resolver has NO
+  filesystem side effect (parent/database created only at store open).
+- `tools/hermes_core/runtime.py` — `get_execution_authorization_store()` provider
+  (process-wide cache, test override seams). Returns the store ONLY; grants no
+  execution authority, invokes no worker.
+- 17 focused EA-2 tests green (persistence, reload/restart proof, idempotent +
+  conflict semantics, artifact/ledger tamper, schema-version guard, journal mode,
+  resolver side-effect + env override, runtime provider). Full Hermes core suite
+  340/340.
+- Mutation tooth: disabling the on-load hash check causes the integrity check to
+  fail to fire (TOOTH-PASS); restored source re-raises (TARGETED-OK); source
+  restored byte-exactly.
+
+**NOT implemented (by design — deferred to EA-3 / later):**
+
+- Authorization issuance service / `grant_execution_authorization(...)` /
+  `authorize(...)` / policy evaluation that grants authority.
+- `ExecutionClaim` / `ExecutionAttempt` / authorization or attempt consumption.
+- Worker routing / launch / enqueue / dispatch.
+- `AWAITING_EXECUTION_AUTHORIZATION` / `AUTHORIZED_FOR_EXECUTION` /
+  `EXECUTION_CLAIMED` / `EXECUTING` transitions.
+
+**Preserved invariant:** `ACCEPTED != EXECUTION AUTHORIZATION`. The store persists
+representations and answers "what was persisted / does it still verify / is the
+chain intact" — it never decides whether authority SHOULD be granted. `app.py`
+unchanged; `automation_state.db` untouched; governance.db not extended for
+execution authority.

@@ -109,6 +109,16 @@ from .execution_authorization import (
     verify_execution_authorization_hash,
     verify_execution_authorization_request_hash,
 )
+from .execution_authorization_store import (
+    ExecutionAuthorityLedgerEntry,
+    ExecutionAuthorizationConflictError,
+    ExecutionAuthorizationIntegrityError,
+    ExecutionAuthorizationSchemaError,
+    ExecutionAuthorizationStore,
+    ExecutionAuthorizationStoreError,
+    IntegrityReport,
+)
+from .sqlite_execution_authorization_store import SQLiteExecutionAuthorizationStore
 
 __all__ = [
     "ArtifactRecord",
@@ -209,4 +219,17 @@ __all__ = [
     "verify_execution_authorization_decision_hash",
     "verify_execution_authorization_hash",
     "verify_execution_authorization_request_hash",
+    "ExecutionAuthorizationStore",
+    "ExecutionAuthorizationStoreError",
+    "ExecutionAuthorizationIntegrityError",
+    "ExecutionAuthorizationSchemaError",
+    "ExecutionAuthorizationConflictError",
+    "ExecutionAuthorityLedgerEntry",
+    "IntegrityReport",
+    "SQLiteExecutionAuthorizationStore",
+    "get_execution_authorization_store",
+    "close_execution_authorization_store",
+    "reset_execution_authorization_store_cache",
+    "set_execution_authority_db_path_override",
+    "resolve_execution_authority_db_path",
 ]

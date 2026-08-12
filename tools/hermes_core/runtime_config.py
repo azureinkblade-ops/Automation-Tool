@@ -91,3 +91,37 @@ def resolve_governance_db_path(
 def default_governance_db_path(env: dict[str, str] | None = None) -> Path:
     """Return only the default production path (no override consulted)."""
     return (_resolve_localappdata(env) / "Hermes" / "governance.db").resolve()
+
+
+class ExecutionAuthorityRuntimeConfigError(RuntimeError):
+    """Raised when the execution-authority DB path cannot be resolved safely."""
+
+
+def resolve_execution_authority_db_path(
+    env: dict[str, str] | None = None,
+    *,
+    require_absolute: bool = True,
+) -> Path:
+    """Resolve the execution-authority DB path.
+
+    Resolution order (mirrors the governance resolver):
+        1. HERMES_EXECUTION_AUTHORITY_DB if explicitly set (absolute, non-empty)
+        2. %LOCALAPPDATA%\\Hermes\\execution_authority.db
+
+    The resolver has NO filesystem side effect. The parent directory and DB file
+    are created only when the runtime store is opened. Empty/whitespace/relative
+    overrides are rejected. The execution-authority DB is runtime state and must
+    never be committed; it is separate from governance.db and automation_state.db.
+    """
+    env = os.environ if env is None else env
+    override = env.get("HERMES_EXECUTION_AUTHORITY_DB")
+    if override is not None and override.strip():
+        candidate = Path(override.strip())
+        if require_absolute and not candidate.is_absolute():
+            raise ExecutionAuthorityRuntimeConfigError(
+                f"HERMES_EXECUTION_AUTHORITY_DB override must be an absolute path, "
+                f"got relative: {override!r}"
+            )
+        return candidate.resolve()
+    localappdata = _resolve_localappdata(env)
+    return (localappdata / "Hermes" / "execution_authority.db").resolve()
