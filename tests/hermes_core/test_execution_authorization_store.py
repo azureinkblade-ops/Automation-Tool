@@ -91,6 +91,36 @@ def make_req(**o):
     return build_execution_authorization_request(**k)
 
 
+def make_acceptance_artifact_for_request(task_id, acceptance_id, acceptance_hash):
+    """Build a read-only AcceptanceArtifact for EA-3I.1 prerequisite tests.
+
+    This is a standalone, in-memory artifact (no governance.db access) used only
+    to exercise verify_acceptance_prerequisite. The disposition is ACCEPTED so
+    is_accepted() is True.
+    """
+    from tools.hermes_core.acceptance_artifact import AcceptanceArtifact
+    from tools.hermes_core.consensus_disposition import DISPOSITION_ACCEPTED
+    return AcceptanceArtifact(
+        acceptance_id=acceptance_id,
+        task_id=task_id,
+        evidence_package_id="evidence-" + "a" * 16,
+        consensus_id="consensus-" + "a" * 16,
+        finding_set_sha256=acceptance_hash,
+        evaluation_sha256=acceptance_hash,
+        disposition_sha256=acceptance_hash,
+        disposition=DISPOSITION_ACCEPTED,
+        reason_codes=("accepted",),
+        relevant_finding_keys=(),
+        blocking_finding_keys=(),
+        blocking_severities=(),
+        review_ids=(),
+        finding_keys=(),
+        accepted_at="2026-08-12T21:00:00Z",
+        authority={},
+        acceptance_sha256=acceptance_hash,
+    )
+
+
 def make_dec(**o):
     k = dict(request_id="execution-authorization-request-" + "c" * 16,
              request_hash="c" * 64, task_id="task-1",

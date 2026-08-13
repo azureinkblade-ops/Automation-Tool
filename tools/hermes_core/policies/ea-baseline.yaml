@@ -1,0 +1,37 @@
+# Baseline execution-authorization policy (EA-3I.1 seed).
+#
+# Conservative default posture:
+#  - POLICY_SERVICE auto-authorizable scopes = NONE (any automation requires
+#    explicit human decision unless enumerated in auto_scopes).
+#  - SYSTEM cannot grant by default (no entry permits SYSTEM -> ALLOW).
+#  - unknown operations / worker classes fail closed.
+#  - requested authority is never widened; attempt/runtime ceilings constrain.
+#  - null expiry prohibited by default.
+policy_id: ea-baseline
+policy_version: "1.0"
+description: >-
+  Baseline execution-authorization eligibility policy. Human operators with an
+  authorized role may be eligible (ALLOW); policy-service automation requires
+  explicit human decision unless an operation/worker_class is enumerated in
+  auto_scopes; system actors are never eligible by default.
+allowed_actor_types:
+  - HUMAN
+  - POLICY_SERVICE
+  - SYSTEM
+allowed_roles:
+  - operator
+  - execution-admin
+  - policy-service
+auto_scopes: []
+known_operations:
+  - run-sandboxed
+  - run-restricted
+  - inspect
+known_worker_classes:
+  - restricted-sandbox
+  - ollama-reviewer
+  - null
+max_attempt_limit: 1
+max_runtime_seconds: 600
+null_expiry_allowed: false
+max_authorization_lifetime_seconds: 3600

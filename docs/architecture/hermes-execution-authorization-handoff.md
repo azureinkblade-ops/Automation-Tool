@@ -724,3 +724,52 @@ remote checkpoint authorization, per the EA-3B milestone authorization).
 validates cross-artifact consistency only; it does not evaluate governance
 acceptance, actor authority, authorization policy, expiry, or nonce, and it
 creates no claim, attempt, or worker behavior. No issuance service exists.
+
+## 29.3 EA-3I.1 policy + authority evaluation contracts (implementation, COMPLETE)
+
+**EA-3I.1 is COMPLETE (pre-capability evaluation contracts only).** Commit:
+local `main` only (not yet pushed — push requires a separate pre-push audit +
+remote checkpoint authorization, per the EA-3I.1 milestone authorization).
+
+- New modules:
+  - `tools/hermes_core/execution_authorization_policy.py` — deterministic,
+    versioned `ExecutionAuthorizationPolicy` model; registry loaded from
+    `tools/hermes_core/policies/*.yaml`; `resolve_policy(policy_id, version)`
+    raises `ExecutionAuthorizationPolicyNotFoundError` (unknown id) or
+    `ExecutionAuthorizationPolicyVersionError` (known id, unsupported version).
+    Neither error is a DENY.
+  - `tools/hermes_core/execution_authorization_evaluation.py` — pure/read-only
+    `evaluate_execution_authorization_policy(...)`,
+    `ExecutionAuthorizationActorContext` (identity / authentication / authority
+    kept separate), structured `ExecutionAuthorizationEvaluationResult` /
+    `ExecutionAuthorizationPolicyEvaluation` carrying NO capability-bearing
+    identifiers (no authorization_id, decision_id, nonce, issued_at).
+- Explicit `ALLOW` / `DENY` / `REQUIRES_HUMAN` decision enum. None create
+  authority.
+- Authority-principal posture: HUMAN eligible only when authenticated +
+  recognized role; POLICY_SERVICE requires explicit human decision unless an
+  (operation, worker_class) is enumerated in `auto_scopes` (default NONE);
+  SYSTEM can never grant by default (DENY).
+- Fail-closed: unknown operation -> DENY; unknown worker_class -> DENY;
+  `worker_class = None` -> REQUIRES_HUMAN (deferred/unresolved, not
+  unrestricted). Attempt-limit / runtime ceilings CONSTRAIN, never widen
+  (input_hash preserved).
+- Read-only `verify_acceptance_prerequisite(request, acceptance)`: validates
+  request acceptance binding against an already-loaded `AcceptanceArtifact`
+  (no governance.db access, no mutation). ACCEPTED is a prerequisite only, not
+  authorization.
+- Deterministic: identical immutable (request, actor_context, policy) inputs
+  yield identical results. No wall-clock, randomness, or mutable global policy
+  state.
+- Negative-capability tests prove no `ExecutionAuthorization`, no GRANTED/DENIED
+  Decision, no `record_granted_decision_and_authorization(...)` call, no nonce /
+  issued_at / expires_at, no claim / worker / execution in the evaluation code.
+- Tests: 19 focused EA-3I.1 tests (policy decision matrix, errors vs DENY,
+  acceptance prerequisite, scope narrowing, determinism, negative capability,
+  AST capability scan). Three mutation teeth (POLICY_SERVICE default -> ALLOW;
+  remove authority-role validation; scope widening) each kill a targeted test,
+  with byte-exact source restoration. Full hermes_core suite: 398/398.
+
+**Preserved invariant:** `ACCEPTED != EXECUTION AUTHORIZATION`. EA-3I.1 is
+evaluation only; it creates zero real execution authorization. The
+capability-bearing issuance slice (EA-3I.2+) remains separately authorized.

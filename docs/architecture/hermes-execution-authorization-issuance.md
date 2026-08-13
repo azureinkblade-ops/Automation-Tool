@@ -43,6 +43,33 @@ version, concurrency, idempotency, and two mutation teeth (decision_hash check,
 rollback split) all green. The absolute invariant `ACCEPTED != EXECUTION
 AUTHORIZATION` is preserved.
 
+EA-3I.1 COMPLETE (2026-08-13): pre-capability policy + authority evaluation
+contracts, **no real `ExecutionAuthorization` created or persisted**. New
+modules `tools/hermes_core/execution_authorization_policy.py` (deterministic,
+versioned `ExecutionAuthorizationPolicy` model + registry loaded from
+`tools/hermes_core/policies/*.yaml`; `resolve_policy` fails as
+`ExecutionAuthorizationPolicyNotFoundError` / `...VersionError`, never as DENY)
+and `tools/hermes_core/execution_authorization_evaluation.py` (pure/read-only
+`evaluate_execution_authorization_policy`, `ExecutionAuthorizationActorContext`
+separating identity/authentication/authority, structured
+`ExecutionAuthorizationEvaluationResult` / `ExecutionAuthorizationPolicyEvaluation`
+with NO capability-bearing identifiers). Explicit
+`ALLOW` / `DENY` / `REQUIRES_HUMAN` decision enum. Authority-principal posture:
+HUMAN eligible only when authenticated + recognized role; POLICY_SERVICE
+requires explicit human decision unless an operation/worker_class is enumerated
+in `auto_scopes` (default NONE); SYSTEM can never grant by default (DENY).
+Unknown operation / unknown worker_class fail closed (DENY); `worker_class =
+None` is deferred/unresolved, not unrestricted (REQUIRES_HUMAN). Attempt/runtime
+ceilings constrain, never widen. Read-only `verify_acceptance_prerequisite`
+checks request acceptance binding against an already-loaded `AcceptanceArtifact`
+(no governance.db access, no mutation); ACCEPTED is prerequisite only, not
+authorization. Deterministic: identical immutable inputs yield identical
+results. No DB writes, no EA-3B atomic-grant call, no claim/worker/execution.
+19 focused tests; three mutation teeth (POLICY_SERVICE default -> ALLOW, remove
+role validation, scope widening) all kill a targeted test with byte-exact
+restore. Full hermes_core suite: 398/398. The absolute invariant `ACCEPTED !=
+EXECUTION AUTHORIZATION` is preserved.
+
 This document freezes the trust boundary and issuance contract before any
 callable component can create a real `ExecutionAuthorization`. It is grounded in
 the implemented EA-1 domain model and EA-2 persistence layer and does not
