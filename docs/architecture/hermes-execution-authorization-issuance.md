@@ -845,4 +845,57 @@ amendments MUST land with tests: (1) EA-1 domain amendment adding
 `ExecutionAuthorization` (and `request_hash` to `ExecutionAuthorizationDecision`);
 (2) EA-2 store atomic method + request-keyed reads. With those in place, EA-3I
 slices can create real authority under the fail-closed rules above. Until then,
-no `ExecutionAuthorization` is created by production code.
+no `ExecutionAuthorization` is created by production code. (This final
+recommendation was written before EA-3I.2 shipped; as of EA-3I.2, real
+execution authorization IS created by the issuance service under the contracts
+above.)
+
+## 81. EA-3I.2 status (COMPLETE)
+
+**EA-3I.2 COMPLETE (first capability-bearing issuance slice).** Committed as
+a single narrow local commit per the EA-3I.2 milestone authorization.
+
+This slice creates REAL execution authority under the EA-3D / EA-3A / EA-3B /
+EA-3I.1 contracts:
+
+- Issuance reads an already-persisted `ExecutionAuthorizationRequest`
+  (`store.get_request`), verifies its hash, and checks for existing terminal
+  evidence before any new issuance (replay idempotency).
+- Acceptance is verified exactly via the governance store's
+  `load_task_governance_chain(task_id).acceptance`, then
+  `verify_acceptance_prerequisite(request, acceptance)` (exact
+  acceptance_id + acceptance_sha256 + task_id + `is_accepted()`); bare task_id
+  equivalence is insufficient, so acceptance substitution fails with an ERROR
+  and zero issuance writes.
+- The deciding actor is authenticated and authority-validated; the request's
+  requesting actor is never silently substituted for the deciding actor.
+- Policy resolves deterministically from the request's exact
+  policy_id/policy_version (unknown/unsupported -> ERROR, never silent
+  fallback).
+- The EA-3I.1 evaluator is reused (no duplicated policy logic). ALLOW /
+  DENY / REQUIRES_HUMAN mappings are explicit; REQUIRES_HUMAN never silently
+  becomes ALLOW.
+- DENY persists a terminal DENIED Decision only (authorization_id None) via the
+  safe `record_decision` path.
+- ALLOW constructs a matching GRANTED Decision + ExecutionAuthorization using
+  the evaluator's constrained scope (never the raw requested scope, never wider)
+  and persists only through `record_granted_decision_and_authorization(...)` (EA-3B
+  atomic grant, one transaction, rollback zero-residue).
+- Clock/expiry/nonce: `issued_at` from an injected UTC clock seam; `expires_at`
+  non-null, `> issued_at`, within policy lifetime; clock failure fails closed;
+  nonce service-generated via `secrets.token_hex`, independent per new
+  authorization, never regenerated on replay.
+- No `ExecutionClaim`, no `ExecutionAttempt`, no worker, no execution state
+  transition, no `app.py` integration. `AUTHORIZED_FOR_EXECUTION` remains a
+  derived condition, not stored state.
+
+**Preserved invariant:** `ACCEPTED != EXECUTION AUTHORIZATION`. EA-3I.2 creates
+durable, replay-safe, policy-bound execution authorization evidence and nowhere
+beyond. EA-4 (claim/consumption) remains separately authorized.
+
+Tests: 21 focused EA-3I.2 tests (happy HUMAN authorize, POLICY_SERVICE
+REQUIRES_HUMAN, SYSTEM DENY, errors, acceptance substitution, constrained scope,
+clock/expiry/nonce, replay idempotency, actor-substitution-after-terminal,
+atomic rollback through issuance, static execution-boundary scan) plus 5
+mutation teeth (acceptance bypass, scope widening, replay minting, expiry
+bypass, actor-role bypass) — all PASS, byte-exact restoration.

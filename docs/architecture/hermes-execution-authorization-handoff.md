@@ -773,3 +773,37 @@ remote checkpoint authorization, per the EA-3I.1 milestone authorization).
 **Preserved invariant:** `ACCEPTED != EXECUTION AUTHORIZATION`. EA-3I.1 is
 evaluation only; it creates zero real execution authorization. The
 capability-bearing issuance slice (EA-3I.2+) remains separately authorized.
+
+## 29.4 EA-3I.2 capability-bearing issuance (implementation, COMPLETE)
+
+**EA-3I.2 is COMPLETE (first capability-bearing issuance slice).**
+
+This milestone is the first permitted to create real execution authority. It
+introduces `tools/hermes_core/execution_authorization_issuance.py` with
+`issue_execution_authorization(...)` orchestrating, in strict order:
+
+1. persisted `ExecutionAuthorizationRequest` retrieval (`store.get_request`);
+   missing -> ERROR, not DENY.
+2. request hash verification (`request.verify_hash()`); corrupt -> ERROR.
+3. existing terminal-evidence check before new issuance (replay idempotency).
+4. exact acceptance verification via `load_task_governance_chain(task_id)
+   .acceptance` + `verify_acceptance_prerequisite`; mismatch/substitution ->
+   ERROR, zero writes.
+5. actor authentication + authority-role validation; failure -> ERROR.
+6. deterministic policy resolution from the request's exact policy reference;
+   unknown/unsupported -> ERROR.
+7. EA-3I.1 evaluator reuse; explicit ALLOW / DENY / REQUIRES_HUMAN mapping.
+8. DENY -> terminal DENIED Decision only (`record_decision`, authorization_id
+   None). REQUIRES_HUMAN -> no Decision/Authorization. ALLOW -> matched GRANTED
+   Decision + ExecutionAuthorization via the evaluator's constrained scope,
+   persisted only through `record_granted_decision_and_authorization(...)`.
+9. clock/expiry/nonce: injected UTC clock, non-null `expires_at > issued_at`
+   within policy lifetime, `secrets.token_hex` nonce, no replay regeneration.
+
+Forbidden in EA-3I.2: `ExecutionClaim`, `ExecutionAttempt`, `WorkerRouter`,
+worker launch/enqueue/dispatch, execution state transitions, `app.py`
+integration. `AUTHORIZED_FOR_EXECUTION` remains a derived condition.
+
+**Preserved invariant:** `ACCEPTED != EXECUTION AUTHORIZATION`. EA-3I.2 ends at
+durable, replay-safe, policy-bound execution authorization evidence. EA-4
+(claim/consumption) remains separately authorized.

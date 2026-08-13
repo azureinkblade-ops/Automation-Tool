@@ -92,11 +92,12 @@ def make_req(**o):
 
 
 def make_acceptance_artifact_for_request(task_id, acceptance_id, acceptance_hash):
-    """Build a read-only AcceptanceArtifact for EA-3I.1 prerequisite tests.
+    """Build an in-memory ACCEPTED AcceptanceArtifact.
 
-    This is a standalone, in-memory artifact (no governance.db access) used only
-    to exercise verify_acceptance_prerequisite. The disposition is ACCEPTED so
-    is_accepted() is True.
+    ``acceptance_sha256`` is set to the caller-supplied ``acceptance_hash`` so
+    EA-3I.1 prerequisite tests can control exact/mismatched bindings. This
+    artifact is NOT persisted to the governance store (which would re-verify the
+    hash); EA-3I.2 issuance tests use ``make_persisted_acceptance`` instead.
     """
     from tools.hermes_core.acceptance_artifact import AcceptanceArtifact
     from tools.hermes_core.consensus_disposition import DISPOSITION_ACCEPTED
@@ -119,6 +120,46 @@ def make_acceptance_artifact_for_request(task_id, acceptance_id, acceptance_hash
         authority={},
         acceptance_sha256=acceptance_hash,
     )
+
+
+def make_persisted_acceptance(task_id, acceptance_id):
+    """Build an AcceptanceArtifact whose acceptance_sha256 is derived from the
+    canonical document shape (matching the governance store's re-verification),
+    so it can be persisted via ``record_acceptance`` and later read back through
+    ``load_task_governance_chain(...).acceptance``.
+    """
+    from tools.hermes_core.acceptance_artifact import AcceptanceArtifact
+    from tools.hermes_core.consensus_disposition import DISPOSITION_ACCEPTED
+    from tools.hermes_core.hashing import sha256_payload
+    from tools.hermes_core.acceptance_artifact import _acceptance_document
+
+    base = AcceptanceArtifact(
+        acceptance_id=acceptance_id,
+        task_id=task_id,
+        evidence_package_id="evidence-" + "a" * 16,
+        consensus_id="consensus-" + "a" * 16,
+        finding_set_sha256="a" * 64,
+        evaluation_sha256="a" * 64,
+        disposition_sha256="a" * 64,
+        disposition=DISPOSITION_ACCEPTED,
+        reason_codes=("accepted",),
+        relevant_finding_keys=(),
+        blocking_finding_keys=(),
+        blocking_severities=(),
+        review_ids=(),
+        finding_keys=(),
+        accepted_at="2026-08-12T21:00:00Z",
+        authority={},
+        acceptance_sha256="",
+    )
+    derived = sha256_payload(_acceptance_document(base))
+    return base.__class__(**{
+        **{f.name: getattr(base, f.name) for f in base.__dataclass_fields__.values()},
+        # Only acceptance_sha256 is derived; the other *_sha256 fields remain as
+        # bound hash strings (they are not part of the acceptance identity hash
+        # recomputation beyond their literal inclusion, which is unchanged).
+        "acceptance_sha256": derived,
+    })
 
 
 def make_dec(**o):
