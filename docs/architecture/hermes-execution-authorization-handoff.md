@@ -673,3 +673,54 @@ version is 2.
 Identity DAG preserved: Request -> Decision -> Authorization (acyclic).
 No issuance API, no atomic grant API, no request-keyed reads, no
 `ExecutionClaim`/`ExecutionAttempt`, no worker behavior. Not pushed.
+
+## 29.2 EA-3B atomic store amendment (implementation, COMPLETE)
+
+**EA-3B is COMPLETE (persistence-contract strengthening only).** Commit: local
+`main` only (not yet pushed — push requires a separate pre-push audit +
+remote checkpoint authorization, per the EA-3B milestone authorization).
+
+- New atomic store method `record_granted_decision_and_authorization(decision,
+  authorization)` persists a GRANTED decision and its `ExecutionAuthorization`
+  in a single SQLite transaction (BEGIN IMMEDIATE -> decision row +
+  DECISION_RECORDED -> authorization row + AUTHORIZATION_RECORDED -> COMMIT).
+  Any failure rolls back with zero residue.
+- Fail-closed cross-artifact consistency checks (storage-only; does NOT decide
+  authority): `decision.outcome == GRANTED`, `authorization_id`, `request_id`,
+  `request_hash`, `decision_id`, `decision_hash`, `task_id`, policy reference,
+  and acceptance binding (request <-> authorization).
+- Request prerequisite: the referenced `ExecutionAuthorizationRequest` must
+  already be persisted; its hash and task identity must agree with the decision.
+- Standalone `record_decision(GRANTED)` and `record_authorization()` are now
+  REJECTED (half-grant / orphan-authorization bypass eliminated). DENIED
+  decisions persist via `record_decision` (one terminal decision per request).
+- Request-keyed reads: `get_decision_for_request(request_id)` and
+  `get_authorization_for_request(request_id)` query by physical `request_id`
+  with integrity-verified reconstruction; missing -> None, multiple -> fail
+  closed.
+- `UNIQUE(request_id)` on decisions and authorizations enforces one terminal
+  decision per request and one authorization per request. Identical grant
+  replay is idempotent; conflicting replay fails closed; DENIED-then-grant is
+  blocked (EA-3D requires a new request after denial).
+- `request_linkage_sha256` tamper envelope (decisions + authorizations);
+  verified on load and in `verify_integrity`. Physical `request_id` tampering
+  is detected on read and on `verify_integrity`.
+- `verify_integrity()` extended: physical request_id == canonical request_id;
+  uniqueness invariants; orphan detection (GRANTED decision without
+  authorization, authorization without GRANTED decision).
+- Authority DB schema bumped `2 -> 3`. Physical change: `request_id` columns
+  (UNIQUE) + `request_linkage_sha256` on decisions and authorizations. Opening
+  a pre-EA-3B (EA-3A) schema-v2 DB, or a pre-EA-3A schema-v1 DB, fails closed
+  (`ExecutionAuthorizationSchemaError`). NO silent migration, NO auto-migrate.
+- Tests: 18 new EA-3B store tests (atomic success, mismatch matrix,
+  zero-write guarantee, missing/wrong request, denied-then-grant, idempotent /
+  conflicting replay, request-keyed read + tamper, rollback-injection
+  zero-residue, standalone bypass elimination, DENIED standalone, orphan
+  detection, concurrency). Plus 2 schema-version tests. Two mutation teeth
+  (decision_hash cross-check removal; rollback commit split) pass with
+  byte-exact restore. Full hermes_core suite: 379/379.
+
+**Preserved invariant:** `ACCEPTED != EXECUTION AUTHORIZATION`. The store
+validates cross-artifact consistency only; it does not evaluate governance
+acceptance, actor authority, authorization policy, expiry, or nonce, and it
+creates no claim, attempt, or worker behavior. No issuance service exists.

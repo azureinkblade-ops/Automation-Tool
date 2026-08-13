@@ -30,6 +30,7 @@ from tools.hermes_core.execution_authorization_store import (
     ExecutionAuthorizationConflictError,
     ExecutionAuthorizationIntegrityError,
     ExecutionAuthorizationSchemaError,
+    ExecutionAuthorizationStoreError,
     ExecutionAuthorityLedgerEntry,
 )
 from tools.hermes_core.runtime import (
@@ -101,6 +102,57 @@ def make_dec(**o):
     return build_execution_authorization_decision(**k)
 
 
+def make_grant_pair(**o):
+    """Build a mutually consistent (request, GRANTED decision, authorization)
+    triple suitable for record_granted_decision_and_authorization.
+
+    The decision's authorization_id is aligned to the (derived) authorization
+    id, and the authorization's decision_hash is aligned to the decision's
+    artifact_hash. Because authorization_id is excluded from the decision hash
+    preimage (EA-3A Model A), aligning authorization_id leaves the decision's
+    decision_id/artifact_hash stable.
+    """
+    req = make_req()
+    dec = build_execution_authorization_decision(
+        request_id=req.request_id,
+        request_hash=req.artifact_hash,
+        task_id=req.task_id,
+        decision_actor=make_actor(),
+        outcome=ExecutionAuthorizationDecisionOutcome.GRANTED,
+        decision_reason="approved",
+        authorization_id="execution-authorization-" + "d" * 16,
+        authorization_policy=req.authorization_policy,
+    )
+    auth = build_execution_authorization(
+        task_id=req.task_id,
+        accepted_governance_artifact_id=req.accepted_governance_artifact_id,
+        accepted_governance_hash=req.accepted_governance_hash,
+        authorization_actor=make_actor(),
+        authorized_scope=make_scope(),
+        authorization_reason="approved",
+        authorization_policy=req.authorization_policy,
+        issued_at="2026-08-12T21:30:00Z",
+        expires_at="2026-08-12T22:00:00Z",
+        nonce="nonce-1",
+        request_id=req.request_id,
+        request_hash=req.artifact_hash,
+        decision_id=dec.decision_id,
+        decision_hash=dec.artifact_hash,
+    )
+    # Align the decision's authorization_id to the derived authorization id.
+    dec = build_execution_authorization_decision(
+        request_id=req.request_id,
+        request_hash=req.artifact_hash,
+        task_id=req.task_id,
+        decision_actor=make_actor(),
+        outcome=ExecutionAuthorizationDecisionOutcome.GRANTED,
+        decision_reason="approved",
+        authorization_id=auth.authorization_id,
+        authorization_policy=req.authorization_policy,
+    )
+    return req, dec, auth
+
+
 class TestStorePersistence(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -124,21 +176,23 @@ class TestStorePersistence(unittest.TestCase):
 
     def test_record_and_get_decision(self):
         store = get_execution_authorization_store()
-        dec = make_dec()
-        store.record_decision(dec)
+        req, dec, auth = make_grant_pair()
+        store.record_request(req)
+        store.record_granted_decision_and_authorization(dec, auth)
         got = store.get_decision(dec.decision_id)
         self.assertIsNotNone(got)
         self.assertEqual(got.outcome, ExecutionAuthorizationDecisionOutcome.GRANTED)
         self.assertEqual(got.authorization_id, dec.authorization_id)
 
     def _persist_granted_and_tamper_linkage(self, new_auth_id):
-        """Persist a GRANTED decision, close, directly tamper the persisted
-        authorization_id column, reopen, and return (store, decision_id)."""
+        """Persist a GRANTED decision + authorization atomically, close, directly
+        tamper the persisted authorization_id column, reopen, return (store, decision_id)."""
         tmp = tempfile.mkdtemp()
         db = os.path.join(tmp, "ea.db")
         s = SQLiteExecutionAuthorizationStore(db)
-        dec = make_dec()  # GRANTED with a non-empty authorization_id
-        s.record_decision(dec)
+        req, dec, auth = make_grant_pair()
+        s.record_request(req)
+        s.record_granted_decision_and_authorization(dec, auth)
         s.close()
         conn = sqlite3.connect(db)
         conn.execute(
@@ -177,8 +231,14 @@ class TestStorePersistence(unittest.TestCase):
         tmp = tempfile.mkdtemp()
         db = os.path.join(tmp, "ea.db")
         s = SQLiteExecutionAuthorizationStore(db)
-        dec = make_dec(outcome=ExecutionAuthorizationDecisionOutcome.DENIED,
-                       authorization_id=None)
+        req = make_req()
+        s.record_request(req)
+        dec = build_execution_authorization_decision(
+            request_id=req.request_id, request_hash=req.artifact_hash,
+            task_id=req.task_id, decision_actor=make_actor(),
+            outcome=ExecutionAuthorizationDecisionOutcome.DENIED,
+            decision_reason="no", authorization_id=None,
+            authorization_policy=req.authorization_policy)
         s.record_decision(dec)
         s.close()
         conn = sqlite3.connect(db)
@@ -215,8 +275,9 @@ class TestStorePersistence(unittest.TestCase):
 
     def test_record_and_get_authorization(self):
         store = get_execution_authorization_store()
-        auth = make_auth()
-        store.record_authorization(auth)
+        req, auth_dec, auth = make_grant_pair()
+        store.record_request(req)
+        store.record_granted_decision_and_authorization(auth_dec, auth)
         got = store.get_authorization(auth.authorization_id)
         self.assertIsNotNone(got)
         self.assertEqual(got.accepted_governance_hash, VALID_HASH)
@@ -229,19 +290,21 @@ class TestStorePersistence(unittest.TestCase):
 
     def test_idempotent_duplicate(self):
         store = get_execution_authorization_store()
-        auth = make_auth()
-        store.record_authorization(auth)
-        store.record_authorization(auth)  # no-op, no error
-        self.assertEqual(len(store.get_authority_events()), 1)
+        req, dec, auth = make_grant_pair()
+        store.record_request(req)
+        store.record_granted_decision_and_authorization(dec, auth)
+        store.record_granted_decision_and_authorization(dec, auth)  # idempotent, no error
+        self.assertEqual(len(store.get_authority_events()), 3)
 
     def test_conflicting_immutable_fails_closed(self):
         import sqlite3
 
         store = get_execution_authorization_store()
-        auth = make_auth()
-        store.record_authorization(auth)
+        req, dec, auth = make_grant_pair()
+        store.record_request(req)
+        store.record_granted_decision_and_authorization(dec, auth)
         # Simulate a conflicting immutable record: same artifact id but a different
-        # canonical payload already persisted. Re-recording the original must be
+        # canonical payload already persisted. Re-granting the original must be
         # rejected as a conflict (never silently overwritten).
         conn = sqlite3.connect(store._db_path)
         conn.execute(
@@ -251,7 +314,7 @@ class TestStorePersistence(unittest.TestCase):
         conn.commit()
         conn.close()
         with self.assertRaises(ExecutionAuthorizationConflictError):
-            store.record_authorization(auth)
+            store.record_granted_decision_and_authorization(dec, auth)
 
 
 class TestStoreReload(unittest.TestCase):
@@ -260,12 +323,9 @@ class TestStoreReload(unittest.TestCase):
         db = os.path.join(tmp, "ea.db")
         # First process: persist + close.
         s1 = SQLiteExecutionAuthorizationStore(db)
-        auth = make_auth()
-        req = make_req()
-        dec = make_dec()
-        s1.record_authorization(auth)
+        req, dec, auth = make_grant_pair()
         s1.record_request(req)
-        s1.record_decision(dec)
+        s1.record_granted_decision_and_authorization(dec, auth)
         self.assertTrue(s1.verify_integrity().ok)
         s1.close()
         # Second process: reopen, reload.
@@ -287,16 +347,16 @@ class TestStoreIntegrity(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.db = os.path.join(self.tmp, "ea.db")
         s = SQLiteExecutionAuthorizationStore(self.db)
-        s.record_authorization(make_auth())
-        s.record_request(make_req())
-        s.record_decision(make_dec())
+        req, self.dec, self.auth = make_grant_pair()
+        s.record_request(req)
+        s.record_granted_decision_and_authorization(self.dec, self.auth)
         s.close()
 
     def _conn(self):
         return sqlite3.connect(self.db)
 
     def test_artifact_payload_tamper_detected(self):
-        auth_id = make_auth().authorization_id
+        auth_id = self.auth.authorization_id
         conn = self._conn()
         conn.execute(
             "UPDATE execution_authorizations SET canonical_payload = "
@@ -312,7 +372,7 @@ class TestStoreIntegrity(unittest.TestCase):
         store.close()
 
     def test_artifact_hash_tamper_detected(self):
-        auth_id = make_auth().authorization_id
+        auth_id = self.auth.authorization_id
         conn = self._conn()
         conn.execute(
             "UPDATE execution_authorizations SET artifact_hash = '0' * 64"
@@ -358,21 +418,46 @@ class TestSchemaVersion(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.db = os.path.join(self.tmp, "ea.db")
 
-    def test_default_version_is_two(self):
-        # EA-3A added physical columns (authorization_id, decision_linkage_sha256)
-        # to the decisions table; the schema version MUST advance with that
-        # physical change rather than silently stay at v1.
+    def test_default_version_is_three(self):
+        # EA-3B added physical request_id columns (UNIQUE) plus
+        # request_linkage_sha256 envelopes to the decisions and authorizations
+        # tables; the schema version MUST advance with that physical change.
         store = SQLiteExecutionAuthorizationStore(self.db)
-        self.assertEqual(SCHEMA_VERSION, 2)
+        self.assertEqual(SCHEMA_VERSION, 3)
         self.assertTrue(store.verify_integrity().ok)
         store.close()
 
+    def test_pre_ea3b_v2_schema_fails_closed(self):
+        # Opening a pre-EA-3B (EA-3A) schema-version-2 authority DB whose
+        # decisions/authorizations tables lack the EA-3B request_id columns
+        # must NOT silently migrate or "no such column" at read time. It must
+        # fail closed as an unsupported old schema pending a separately
+        # authorized migration.
+        conn = sqlite3.connect(self.db)
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("CREATE TABLE authority_schema_version (version INTEGER)")
+        conn.execute("INSERT INTO authority_schema_version (version) VALUES (2)")
+        conn.execute(
+            """
+            CREATE TABLE execution_authorization_decisions (
+                artifact_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                artifact_type TEXT NOT NULL,
+                artifact_hash TEXT NOT NULL,
+                authorization_id TEXT,
+                decision_linkage_sha256 TEXT NOT NULL,
+                canonical_payload TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
+        conn.close()
+        with self.assertRaises(ExecutionAuthorizationSchemaError):
+            SQLiteExecutionAuthorizationStore(self.db)
+
     def test_pre_ea3a_v1_schema_fails_closed(self):
         # Opening a pre-EA-3A (EA-2) schema-version-1 authority DB whose
-        # decisions table lacks the EA-3A columns must NOT silently migrate or
-        # "no such column" at read time. It must fail closed as an unsupported
-        # old schema pending a separately authorized migration.
-        # Build a genuine EA-2 v1 DB from scratch.
+        # decisions table lacks the EA-3A columns must NOT silently migrate.
         conn = sqlite3.connect(self.db)
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute(
@@ -394,7 +479,6 @@ class TestSchemaVersion(unittest.TestCase):
         )
         conn.commit()
         conn.close()
-        # Reopening under EA-3A must refuse the v1 schema fail-closed.
         with self.assertRaises(ExecutionAuthorizationSchemaError):
             SQLiteExecutionAuthorizationStore(self.db)
 
@@ -458,6 +542,413 @@ class TestRuntimeProvider(unittest.TestCase):
         )
         self.assertFalse(os.path.exists(target))
         self.assertFalse(os.path.exists(os.path.dirname(target)))
+
+
+class TestEA3BAtomicGrant(unittest.TestCase):
+    """EA-3B atomic grant persistence + request-keyed reads (storage-only)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.db = os.path.join(self.tmp, "ea.db")
+
+    def tearDown(self):
+        pass
+
+    # -- atomic success -----------------------------------------------------
+    def test_atomic_grant_success(self):
+        store = SQLiteExecutionAuthorizationStore(self.db)
+        req, dec, auth = make_grant_pair()
+        store.record_request(req)
+        store.record_granted_decision_and_authorization(dec, auth)
+        got_d = store.get_decision_for_request(req.request_id)
+        got_a = store.get_authorization_for_request(req.request_id)
+        self.assertIsNotNone(got_d)
+        self.assertIsNotNone(got_a)
+        events = [e.event_type for e in store.get_authority_events()]
+        self.assertEqual(events, ["REQUEST_RECORDED", "DECISION_RECORDED",
+                                   "AUTHORIZATION_RECORDED"])
+        self.assertTrue(store.verify_integrity().ok)
+        store.close()
+
+    # -- mismatch matrix (zero writes) --------------------------------------
+    def _grant_with(self, decision_overrides=None, authorization_overrides=None):
+        store = SQLiteExecutionAuthorizationStore(self.db)
+        req, dec, auth = make_grant_pair()
+        store.record_request(req)
+        if decision_overrides:
+            dec = build_execution_authorization_decision(
+                request_id=dec.request_id, request_hash=dec.request_hash,
+                task_id=dec.task_id, decision_actor=dec.decision_actor,
+                outcome=decision_overrides.get("outcome", dec.outcome),
+                decision_reason=dec.decision_reason,
+                authorization_id=decision_overrides.get(
+                    "authorization_id", dec.authorization_id),
+                authorization_policy=dec.authorization_policy)
+        if authorization_overrides:
+            o = authorization_overrides
+            auth = build_execution_authorization(
+                task_id=o.get("task_id", req.task_id),
+                accepted_governance_artifact_id=o.get(
+                    "accepted_governance_artifact_id",
+                    req.accepted_governance_artifact_id),
+                accepted_governance_hash=o.get(
+                    "accepted_governance_hash", req.accepted_governance_hash),
+                authorization_actor=make_actor(), authorized_scope=make_scope(),
+                authorization_reason="approved",
+                authorization_policy=o.get(
+                    "authorization_policy", req.authorization_policy),
+                issued_at="2026-08-12T21:30:00Z", expires_at="2026-08-12T22:00:00Z",
+                nonce="nonce-1", request_id=o.get("request_id", req.request_id),
+                request_hash=o.get("request_hash", req.artifact_hash),
+                decision_id=o.get("decision_id", dec.decision_id),
+                decision_hash=o.get("decision_hash", dec.artifact_hash))
+            # re-align decision authorization_id to the new derived auth id
+            dec = build_execution_authorization_decision(
+                request_id=dec.request_id, request_hash=dec.request_hash,
+                task_id=dec.task_id, decision_actor=dec.decision_actor,
+                outcome=dec.outcome, decision_reason=dec.decision_reason,
+                authorization_id=auth.authorization_id,
+                authorization_policy=dec.authorization_policy)
+        try:
+            store.record_granted_decision_and_authorization(dec, auth)
+            return True, store
+        except ExecutionAuthorizationStoreError:
+            return False, store
+
+    def test_mismatch_matrix_fails_closed(self):
+        # Each mismatch must be rejected with zero durable writes.
+        outcomes = []
+
+        # decision outcome != GRANTED
+        ok, store = self._grant_with(decision_overrides={
+            "authorization_id": None, "outcome": ExecutionAuthorizationDecisionOutcome.DENIED})
+        outcomes.append((not ok))
+
+        # authorization_id mismatch (decision id differs from auth derived id)
+        ok, store = self._grant_with(decision_overrides={
+            "authorization_id": "execution-authorization-" + "z" * 16})
+        outcomes.append((not ok))
+
+        # request_id mismatch
+        ok, store = self._grant_with(authorization_overrides={
+            "request_id": "execution-authorization-request-" + "z" * 16})
+        outcomes.append((not ok))
+
+        # request_hash mismatch
+        ok, store = self._grant_with(authorization_overrides={
+            "request_hash": "e" * 64})
+        outcomes.append((not ok))
+
+        # decision_id mismatch
+        ok, store = self._grant_with(authorization_overrides={
+            "decision_id": "execution-authorization-decision-" + "e" * 16})
+        outcomes.append((not ok))
+
+        # decision_hash mismatch
+        ok, store = self._grant_with(authorization_overrides={
+            "decision_hash": "e" * 64})
+        outcomes.append((not ok))
+
+        # task_id mismatch
+        ok, store = self._grant_with(authorization_overrides={
+            "task_id": "task-other"})
+        outcomes.append((not ok))
+
+        # acceptance_id mismatch
+        ok, store = self._grant_with(authorization_overrides={
+            "accepted_governance_artifact_id": "acceptance-" + "z" * 16})
+        outcomes.append((not ok))
+
+        # acceptance_hash mismatch
+        ok, store = self._grant_with(authorization_overrides={
+            "accepted_governance_hash": "e" * 64})
+        outcomes.append((not ok))
+
+        # policy mismatch
+        ok, store = self._grant_with(authorization_overrides={
+            "authorization_policy": ExecutionAuthorizationPolicyRef(
+                policy_id="other", policy_version="9.9")})
+        outcomes.append((not ok))
+
+        self.assertTrue(all(outcomes), f"some mismatches were NOT rejected: {outcomes}")
+        store.close()
+
+    def test_mismatch_leaves_zero_writes(self):
+        store = SQLiteExecutionAuthorizationStore(self.db)
+        req, dec, auth = make_grant_pair()
+        store.record_request(req)
+        # Break the authorization request_hash.
+        bad_auth = build_execution_authorization(
+            task_id=req.task_id,
+            accepted_governance_artifact_id=req.accepted_governance_artifact_id,
+            accepted_governance_hash=req.accepted_governance_hash,
+            authorization_actor=make_actor(), authorized_scope=make_scope(),
+            authorization_reason="approved",
+            authorization_policy=req.authorization_policy,
+            issued_at="2026-08-12T21:30:00Z", expires_at="2026-08-12T22:00:00Z",
+            nonce="nonce-1", request_id="execution-authorization-request-" + "z" * 16,
+            request_hash="e" * 64, decision_id=dec.decision_id,
+            decision_hash=dec.artifact_hash)
+        with self.assertRaises(ExecutionAuthorizationStoreError):
+            store.record_granted_decision_and_authorization(dec, bad_auth)
+        # Only the request persisted; no decision, no authorization.
+        self.assertIsNone(store.get_decision_for_request(req.request_id))
+        self.assertIsNone(store.get_authorization_for_request(req.request_id))
+        self.assertEqual(len(store.get_authority_events()), 1)  # only REQUEST_RECORDED
+        store.close()
+
+    # -- missing / wrong request -------------------------------------------
+    def test_missing_request_fails_closed(self):
+        store = SQLiteExecutionAuthorizationStore(self.db)
+        req, dec, auth = make_grant_pair()
+        # Do NOT record the request.
+        with self.assertRaises(ExecutionAuthorizationStoreError):
+            store.record_granted_decision_and_authorization(dec, auth)
+        self.assertEqual(len(store.get_authority_events()), 0)
+        store.close()
+
+    def test_wrong_request_hash_fails_closed(self):
+        store = SQLiteExecutionAuthorizationStore(self.db)
+        req, dec, auth = make_grant_pair()
+        # A different request persisted (same id, wrong hash).
+        wrong_req = build_execution_authorization_request(
+            task_id=req.task_id,
+            accepted_governance_artifact_id=req.accepted_governance_artifact_id,
+            accepted_governance_hash=req.accepted_governance_hash,
+            requested_scope=make_scope(), requesting_actor=make_actor(),
+            authorization_policy=req.authorization_policy,
+            requested_at="2026-08-12T21:25:00Z", request_reason="need exec")
+        # Force a different request hash by tampering the stored request.
+        store.record_request(req)
+        conn = sqlite3.connect(self.db)
+        conn.execute(
+            "UPDATE execution_authorization_requests SET canonical_payload = "
+            "replace(canonical_payload, 'stage2-v1-gpu-execution', 'OTHER-OP')")
+        conn.commit(); conn.close()
+        with self.assertRaises(ExecutionAuthorizationStoreError):
+            store.record_granted_decision_and_authorization(dec, auth)
+        store.close()
+
+    # -- denied then grant --------------------------------------------------
+    def test_denied_then_grant_blocked(self):
+        store = SQLiteExecutionAuthorizationStore(self.db)
+        req = make_req()
+        store.record_request(req)
+        denied = build_execution_authorization_decision(
+            request_id=req.request_id, request_hash=req.artifact_hash,
+            task_id=req.task_id, decision_actor=make_actor(),
+            outcome=ExecutionAuthorizationDecisionOutcome.DENIED,
+            decision_reason="no", authorization_id=None,
+            authorization_policy=req.authorization_policy)
+        store.record_decision(denied)
+        req2, dec, auth = make_grant_pair()
+        # Build a grant that targets the SAME request_id as the denied one.
+        dec = build_execution_authorization_decision(
+            request_id=req.request_id, request_hash=req.artifact_hash,
+            task_id=req.task_id, decision_actor=make_actor(),
+            outcome=ExecutionAuthorizationDecisionOutcome.GRANTED,
+            decision_reason="approved",
+            authorization_id="execution-authorization-" + "d" * 16,
+            authorization_policy=req.authorization_policy)
+        auth = build_execution_authorization(
+            task_id=req.task_id,
+            accepted_governance_artifact_id=req.accepted_governance_artifact_id,
+            accepted_governance_hash=req.accepted_governance_hash,
+            authorization_actor=make_actor(), authorized_scope=make_scope(),
+            authorization_reason="approved",
+            authorization_policy=req.authorization_policy,
+            issued_at="2026-08-12T21:30:00Z", expires_at="2026-08-12T22:00:00Z",
+            nonce="nonce-1", request_id=req.request_id,
+            request_hash=req.artifact_hash, decision_id=dec.decision_id,
+            decision_hash=dec.artifact_hash)
+        dec = build_execution_authorization_decision(
+            request_id=req.request_id, request_hash=req.artifact_hash,
+            task_id=req.task_id, decision_actor=make_actor(),
+            outcome=ExecutionAuthorizationDecisionOutcome.GRANTED,
+            decision_reason="approved", authorization_id=auth.authorization_id,
+            authorization_policy=req.authorization_policy)
+        with self.assertRaises(ExecutionAuthorizationConflictError):
+            store.record_granted_decision_and_authorization(dec, auth)
+        store.close()
+
+    # -- idempotent / conflicting replay ------------------------------------
+    def test_duplicate_exact_grant_idempotent(self):
+        store = SQLiteExecutionAuthorizationStore(self.db)
+        req, dec, auth = make_grant_pair()
+        store.record_request(req)
+        store.record_granted_decision_and_authorization(dec, auth)
+        before = len(store.get_authority_events())
+        store.record_granted_decision_and_authorization(dec, auth)  # idempotent
+        self.assertEqual(len(store.get_authority_events()), before)
+        store.close()
+
+    def test_conflicting_grant_replay_fails_closed(self):
+        store = SQLiteExecutionAuthorizationStore(self.db)
+        req, dec, auth = make_grant_pair()
+        store.record_request(req)
+        store.record_granted_decision_and_authorization(dec, auth)
+        # Different authorization for the same request.
+        other_auth = build_execution_authorization(
+            task_id=req.task_id,
+            accepted_governance_artifact_id=req.accepted_governance_artifact_id,
+            accepted_governance_hash=req.accepted_governance_hash,
+            authorization_actor=make_actor(), authorized_scope=make_scope(),
+            authorization_reason="approved",
+            authorization_policy=req.authorization_policy,
+            issued_at="2026-08-12T21:30:00Z", expires_at="2026-08-12T22:00:00Z",
+            nonce="nonce-2", request_id=req.request_id,
+            request_hash=req.artifact_hash, decision_id=dec.decision_id,
+            decision_hash=dec.artifact_hash)
+        other_dec = build_execution_authorization_decision(
+            request_id=req.request_id, request_hash=req.artifact_hash,
+            task_id=req.task_id, decision_actor=make_actor(),
+            outcome=ExecutionAuthorizationDecisionOutcome.GRANTED,
+            decision_reason="approved",
+            authorization_id=other_auth.authorization_id,
+            authorization_policy=req.authorization_policy)
+        with self.assertRaises(ExecutionAuthorizationConflictError):
+            store.record_granted_decision_and_authorization(other_dec, other_auth)
+        store.close()
+
+    # -- request-keyed reads + tamper ---------------------------------------
+    def test_request_keyed_read_present_and_missing(self):
+        store = SQLiteExecutionAuthorizationStore(self.db)
+        req, dec, auth = make_grant_pair()
+        store.record_request(req)
+        store.record_granted_decision_and_authorization(dec, auth)
+        self.assertIsNotNone(store.get_decision_for_request(req.request_id))
+        self.assertIsNotNone(store.get_authorization_for_request(req.request_id))
+        # Missing request -> None.
+        self.assertIsNone(
+            store.get_decision_for_request("execution-authorization-request-" + "0" * 16))
+        self.assertIsNone(
+            store.get_authorization_for_request("execution-authorization-request-" + "0" * 16))
+        store.close()
+
+    def test_request_id_tamper_detected_decision(self):
+        store = SQLiteExecutionAuthorizationStore(self.db)
+        req, dec, auth = make_grant_pair()
+        store.record_request(req)
+        store.record_granted_decision_and_authorization(dec, auth)
+        store.close()
+        tampered_id = "execution-authorization-request-" + "z" * 16
+        conn = sqlite3.connect(self.db)
+        conn.execute(
+            "UPDATE execution_authorization_decisions SET request_id = ? "
+            "WHERE artifact_id = ?",
+            (tampered_id, dec.decision_id))
+        conn.commit(); conn.close()
+        reopened = SQLiteExecutionAuthorizationStore(self.db)
+        # Reading the row by its tampered physical request_id must fail closed
+        # (request-linkage envelope mismatch).
+        with self.assertRaises(ExecutionAuthorizationIntegrityError):
+            reopened.get_decision_for_request(tampered_id)
+        self.assertFalse(reopened.verify_integrity().ok)
+        reopened.close()
+
+    def test_request_id_tamper_detected_authorization(self):
+        store = SQLiteExecutionAuthorizationStore(self.db)
+        req, dec, auth = make_grant_pair()
+        store.record_request(req)
+        store.record_granted_decision_and_authorization(dec, auth)
+        store.close()
+        tampered_id = "execution-authorization-request-" + "z" * 16
+        conn = sqlite3.connect(self.db)
+        conn.execute(
+            "UPDATE execution_authorizations SET request_id = ? WHERE artifact_id = ?",
+            (tampered_id, auth.authorization_id))
+        conn.commit(); conn.close()
+        reopened = SQLiteExecutionAuthorizationStore(self.db)
+        with self.assertRaises(ExecutionAuthorizationIntegrityError):
+            reopened.get_authorization_for_request(tampered_id)
+        self.assertFalse(reopened.verify_integrity().ok)
+        reopened.close()
+
+    # -- rollback injection seam --------------------------------------------
+    def test_rollback_after_decision_leaves_zero_residue(self):
+        store = SQLiteExecutionAuthorizationStore(self.db)
+        req, dec, auth = make_grant_pair()
+        store.record_request(req)
+        store._fail_after_decision = True
+        with self.assertRaises(ExecutionAuthorizationIntegrityError):
+            store.record_granted_decision_and_authorization(dec, auth)
+        store._fail_after_decision = False
+        # Rollback must leave zero residue: no decision, no authorization,
+        # no DECISION_RECORDED/AUTHORIZATION_RECORDED ledger events.
+        self.assertIsNone(store.get_decision_for_request(req.request_id))
+        self.assertIsNone(store.get_authorization_for_request(req.request_id))
+        events = store.get_authority_events()
+        self.assertEqual([e.event_type for e in events], ["REQUEST_RECORDED"])
+        self.assertTrue(store.verify_integrity().ok)
+        store.close()
+
+    # -- standalone bypass elimination --------------------------------------
+    def test_standalone_granted_decision_rejected(self):
+        store = SQLiteExecutionAuthorizationStore(self.db)
+        req, dec, auth = make_grant_pair()
+        store.record_request(req)
+        with self.assertRaises(ExecutionAuthorizationStoreError):
+            store.record_decision(dec)
+        store.close()
+
+    def test_standalone_authorization_rejected(self):
+        store = SQLiteExecutionAuthorizationStore(self.db)
+        req, dec, auth = make_grant_pair()
+        store.record_request(req)
+        with self.assertRaises(ExecutionAuthorizationStoreError):
+            store.record_authorization(auth)
+        store.close()
+
+    def test_denied_standalone_still_works(self):
+        store = SQLiteExecutionAuthorizationStore(self.db)
+        req = make_req()
+        store.record_request(req)
+        denied = build_execution_authorization_decision(
+            request_id=req.request_id, request_hash=req.artifact_hash,
+            task_id=req.task_id, decision_actor=make_actor(),
+            outcome=ExecutionAuthorizationDecisionOutcome.DENIED,
+            decision_reason="no", authorization_id=None,
+            authorization_policy=req.authorization_policy)
+        store.record_decision(denied)
+        got = store.get_decision(denied.decision_id)
+        self.assertIsNotNone(got)
+        self.assertEqual(got.outcome, ExecutionAuthorizationDecisionOutcome.DENIED)
+        self.assertTrue(store.verify_integrity().ok)
+        store.close()
+
+    # -- orphan detection ---------------------------------------------------
+    def test_orphan_detection(self):
+        store = SQLiteExecutionAuthorizationStore(self.db)
+        req, dec, auth = make_grant_pair()
+        store.record_request(req)
+        store.record_granted_decision_and_authorization(dec, auth)
+        store.close()
+        # Tamper: drop the authorization row but keep the GRANTED decision.
+        conn = sqlite3.connect(self.db)
+        conn.execute("DELETE FROM execution_authorizations")
+        conn.commit(); conn.close()
+        reopened = SQLiteExecutionAuthorizationStore(self.db)
+        report = reopened.verify_integrity()
+        self.assertFalse(report.ok)
+        self.assertTrue(any(
+            "orphan GRANTED decision" in f for f in (report.failures or [])))
+        reopened.close()
+
+    # -- concurrency --------------------------------------------------------
+    def test_concurrent_identical_grant(self):
+        # Two store instances, same temp DB, same grant.
+        req, dec, auth = make_grant_pair()
+        s1 = SQLiteExecutionAuthorizationStore(self.db)
+        s1.record_request(req)
+        s2 = SQLiteExecutionAuthorizationStore(self.db)
+        s1.record_granted_decision_and_authorization(dec, auth)
+        # Second call (same idempotent grant) must succeed without duplicates.
+        s2.record_granted_decision_and_authorization(dec, auth)
+        events = [e.event_type for e in s2.get_authority_events()
+                  if e.event_type in ("DECISION_RECORDED", "AUTHORIZATION_RECORDED")]
+        self.assertEqual(events, ["DECISION_RECORDED", "AUTHORIZATION_RECORDED"])
+        self.assertTrue(s2.verify_integrity().ok)
+        s1.close(); s2.close()
 
 
 if __name__ == "__main__":

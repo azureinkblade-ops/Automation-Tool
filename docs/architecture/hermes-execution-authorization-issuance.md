@@ -18,6 +18,31 @@ closed (no silent migration). No issuance API, atomic grant API, or
 request-keyed store extension was added (those belong to EA-3B). The
 persistence-integrity correction is amended into the same EA-3A commit.
 
+EA-3B COMPLETE (2026-08-13): storage-only atomic store amendment, no issuance
+capability. New `record_granted_decision_and_authorization(decision,
+authorization)` persists a GRANTED decision and its authorization in a single
+SQLite transaction (DECISION_RECORDED then AUTHORIZATION_RECORDED, no unrelated
+event between), with fail-closed cross-artifact consistency checks (outcome,
+authorization_id, request_id, request_hash, decision_id, decision_hash,
+task_id, policy reference, acceptance binding) and a request prerequisite
+(persisted request must exist, request hash and task identity must agree).
+Standalone `record_decision(GRANTED)` and `record_authorization()` are now
+rejected (bypass eliminated); DENIED decisions persist via `record_decision`.
+New `get_decision_for_request(request_id)` and
+`get_authorization_for_request(request_id)` read by physical `request_id` with
+integrity-verified reconstruction. UNIQUE(request_id) enforces one terminal
+decision per request and one authorization per request; replay of an identical
+grant is idempotent, conflicting replay fails closed. A `request_linkage_sha256`
+tamper envelope covers decisions and authorizations. `verify_integrity()`
+extends to request_id physical-vs-canonical checks, uniqueness invariants, and
+orphan detection (GRANTED decision without authorization, authorization without
+GRANTED decision). Authority DB schema is now version `3`; v1/v2 fail closed
+(no silent migration). Tests: 18 new EA-3B store tests; mismatch matrix,
+rollback-injection zero-residue, request_id tamper, orphan detection, schema
+version, concurrency, idempotency, and two mutation teeth (decision_hash check,
+rollback split) all green. The absolute invariant `ACCEPTED != EXECUTION
+AUTHORIZATION` is preserved.
+
 This document freezes the trust boundary and issuance contract before any
 callable component can create a real `ExecutionAuthorization`. It is grounded in
 the implemented EA-1 domain model and EA-2 persistence layer and does not

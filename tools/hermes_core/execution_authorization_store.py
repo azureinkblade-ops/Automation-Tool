@@ -125,6 +125,30 @@ class ExecutionAuthorizationStore:
     ) -> Optional[ExecutionAuthorization]:
         raise NotImplementedError
 
+    # -- atomic grant + request-keyed reads (EA-3B) -------------------------
+    def record_granted_decision_and_authorization(
+        self,
+        decision: ExecutionAuthorizationDecision,
+        authorization: ExecutionAuthorization,
+    ) -> None:
+        """Atomically persist a GRANTED decision with its authorization.
+
+        Storage-only cross-artifact consistency check. Does NOT decide whether
+        the grant is justified; it validates that the two already-built
+        immutable artifacts are mutually consistent enough to persist together.
+        """
+        raise NotImplementedError
+
+    def get_decision_for_request(
+        self, request_id: str
+    ) -> Optional[ExecutionAuthorizationDecision]:
+        raise NotImplementedError
+
+    def get_authorization_for_request(
+        self, request_id: str
+    ) -> Optional[ExecutionAuthorization]:
+        raise NotImplementedError
+
     # -- ledger / integrity -------------------------------------------------
     def get_authority_events(self) -> list[ExecutionAuthorityLedgerEntry]:
         raise NotImplementedError

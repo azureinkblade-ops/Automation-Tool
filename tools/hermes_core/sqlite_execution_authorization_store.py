@@ -1,9 +1,13 @@
-"""SQLite implementation of the execution-authority store (EA-2).
+"""SQLite implementation of the execution-authority store (EA-2 + EA-3B).
 
 Persistence/integrity only. NO issuance, NO claim, NO worker, NO execution
 transition. Stores immutable EA-1 domain artifacts in a database *separate*
 from governance.db, and maintains an append-only, hash-linked authority ledger
 in the same DB.
+
+EA-3B adds atomic grant persistence and request-keyed lookup primitives
+required by the frozen EA-3D issuance design. It does NOT decide whether
+authority should be granted, and adds no issuance/claim/worker behavior.
 
 Conventions mirror the governance store:
 - PRAGMA foreign_keys=ON; journal_mode=DELETE; busy_timeout=5000
@@ -17,6 +21,8 @@ Conventions mirror the governance store:
 Design source of truth:
     docs/architecture/hermes-execution-authorization-handoff.md
     docs/architecture/decisions/ADR-0013-execution-authority-separate-from-governance.md
+    docs/architecture/decisions/ADR-0014-execution-authorization-issuance-trust-boundary.md
+    docs/architecture/hermes-execution-authorization-issuance.md
 """
 
 from __future__ import annotations
@@ -29,6 +35,7 @@ from typing import Any, Optional
 from .execution_authorization import (
     ExecutionAuthorization,
     ExecutionAuthorizationDecision,
+    ExecutionAuthorizationDecisionOutcome,
     ExecutionAuthorizationRequest,
     reconstruct_authorization,
     reconstruct_decision,
@@ -39,12 +46,13 @@ from .execution_authorization_store import (
     ExecutionAuthorizationIntegrityError,
     ExecutionAuthorizationSchemaError,
     ExecutionAuthorizationStore,
+    ExecutionAuthorizationStoreError,
     ExecutionAuthorityLedgerEntry,
     IntegrityReport,
 )
 from .hashing import canonical_json, sha256_payload, sha256_text
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SUPPORTED_SCHEMA_VERSIONS = frozenset({SCHEMA_VERSION})
 
 
@@ -61,6 +69,20 @@ def _hash_decision_linkage(decision_id: str, authorization_id: Optional[str]) ->
     """
     payload = {"decision_id": decision_id, "authorization_id": authorization_id}
     return sha256_text(canonical_json(payload))
+
+
+def _hash_request_linkage(artifact_id: str, request_id: Optional[str]) -> str:
+    """Hash-bound persistence envelope for the physical request_id column.
+
+    EA-3B stores request_id physically (outside the canonical payload) to
+    support UNIQUE(request_id) and request-keyed lookups. The physical value
+    must be tamper-evident, so (artifact_id, request_id) is bound in a dedicated
+    envelope hash verified on load and during verify_integrity. Tampering the
+    physical column breaks the envelope (fail-closed).
+    """
+    payload = {"artifact_id": artifact_id, "request_id": request_id}
+    return sha256_text(canonical_json(payload))
+
 
 LEDGER_EVENTS = (
     "REQUEST_RECORDED",
@@ -94,7 +116,7 @@ def _hash_event(
 
 
 class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
-    """SQLite-backed execution-authority store (EA-2)."""
+    """SQLite-backed execution-authority store (EA-2 + EA-3B)."""
 
     def __init__(self, db_path: Path | str) -> None:
         self._db_path = Path(db_path)
@@ -105,6 +127,11 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA journal_mode = DELETE")
         self._conn.execute("PRAGMA busy_timeout = 5000")
+        # Test-only failure-injection seam: when set, the atomic grant method
+        # raises immediately after the decision row + its ledger event are
+        # written but before the authorization is persisted (to prove rollback
+        # leaves zero residue). Never exposed as public API.
+        self._fail_after_decision = False
         self._initialize()
 
     # -- schema -------------------------------------------------------------
@@ -149,10 +176,12 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
             CREATE TABLE IF NOT EXISTS execution_authorization_decisions (
                 artifact_id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,
+                request_id TEXT NOT NULL UNIQUE,
                 artifact_type TEXT NOT NULL,
                 artifact_hash TEXT NOT NULL,
                 authorization_id TEXT,
                 decision_linkage_sha256 TEXT NOT NULL,
+                request_linkage_sha256 TEXT NOT NULL,
                 canonical_payload TEXT NOT NULL
             )
             """
@@ -162,8 +191,10 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
             CREATE TABLE IF NOT EXISTS execution_authorizations (
                 artifact_id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,
+                request_id TEXT NOT NULL UNIQUE,
                 artifact_type TEXT NOT NULL,
                 artifact_hash TEXT NOT NULL,
+                request_linkage_sha256 TEXT NOT NULL,
                 canonical_payload TEXT NOT NULL
             )
             """
@@ -207,8 +238,24 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
             return artifact.decision_id
         raise TypeError(f"unsupported artifact type: {type(artifact)!r}")
 
+    def _request_id_for(self, artifact: Any) -> Optional[str]:
+        if isinstance(artifact, ExecutionAuthorizationRequest):
+            return None  # request_id IS the artifact_id for requests
+        return getattr(artifact, "request_id", None)
+
+    def _run_atomic(self, fn) -> None:
+        """Own a single SQLite transaction around fn (no nested commits)."""
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            fn()
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+
     def _persist_artifact(self, artifact: Any, table: str) -> bool:
-        """Persist if absent or idempotent-identical. Returns True if a write occurred."""
+        """Persist if absent or idempotent-identical. Returns True if a write
+        occurred. Transaction-neutral: the caller owns the transaction."""
         if not getattr(artifact, "verify_hash", lambda: False)():
             raise ExecutionAuthorizationIntegrityError(
                 f"artifact {self._artifact_id(artifact)} failed hash "
@@ -230,44 +277,79 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
                 f"immutable artifact {artifact_id} already persisted with "
                 f"conflicting content; refusing to overwrite"
             )
-        # EA-3A reconstruction-compat: the Decision's authorization_id is a
-        # non-hash-bound forward linkage (excluded from the canonical payload/
-        # hash preimage to keep the identity graph acyclic). It is persisted in
-        # its own column, and made tamper-evident via a dedicated envelope hash
-        # (decision_linkage_sha256) bound to (decision_id, authorization_id).
-        # The envelope hash is written with the INSERT so the NOT NULL column is
-        # satisfied atomically (no separate UPDATE).
+        # EA-3A: decisions carry a non-hash-bound authorization_id column plus a
+        # tamper-evident envelope (decision_linkage_sha256). EA-3B: decisions and
+        # authorizations carry a physical request_id column (UNIQUE) plus a
+        # tamper-evident envelope (request_linkage_sha256). All envelope hashes
+        # are written with the INSERT so NOT NULL columns are satisfied.
+        # The requests table has no request_id column (request_id IS the
+        # artifact_id for requests).
+        dec_linkage_hash = None
+        req_linkage_hash = None
         auth_id = None
-        linkage_hash = None
+        request_id = self._request_id_for(artifact)
         if table == "execution_authorization_decisions":
             auth_id = getattr(artifact, "authorization_id", None)
-            linkage_hash = _hash_decision_linkage(artifact_id, auth_id)
-        extra_cols = ", authorization_id, decision_linkage_sha256" if linkage_hash is not None else ""
-        extra_vals = (auth_id, linkage_hash) if linkage_hash is not None else ()
-        self._conn.execute(
-            f"INSERT INTO {table} "
-            f"(artifact_id, task_id, artifact_type, artifact_hash, canonical_payload{extra_cols}) "
-            f"VALUES (?, ?, ?, ?, ?{', ?, ?' if linkage_hash is not None else ''})",
-            (
+            dec_linkage_hash = _hash_decision_linkage(artifact_id, auth_id)
+            req_linkage_hash = _hash_request_linkage(artifact_id, request_id)
+            extra_cols = (
+                ", authorization_id, decision_linkage_sha256, request_linkage_sha256"
+            )
+            extra_vals = (auth_id, dec_linkage_hash, req_linkage_hash)
+        elif table == "execution_authorizations":
+            req_linkage_hash = _hash_request_linkage(artifact_id, request_id)
+            extra_cols = ", request_linkage_sha256"
+            extra_vals = (req_linkage_hash,)
+        else:
+            # execution_authorization_requests: no request_id column.
+            extra_cols = ""
+            extra_vals = ()
+            request_id = None
+        # Build the column list without a request_id column for the requests
+        # table (request_id is its PRIMARY KEY artifact_id there).
+        if table == "execution_authorization_requests":
+            col_block = (
+                "artifact_id, task_id, artifact_type, artifact_hash, canonical_payload"
+            )
+            val_block = "?, ?, ?, ?, ?"
+            values = (
                 artifact_id,
                 artifact.task_id,
                 type(artifact).__name__,
                 artifact.artifact_hash,
                 canonical,
                 *extra_vals,
-            ),
+            )
+        else:
+            col_block = (
+                "artifact_id, task_id, request_id, artifact_type, artifact_hash, "
+                f"canonical_payload{extra_cols}"
+            )
+            val_block = f"?, ?, ?, ?, ?, ?{', ?' * len(extra_vals)}"
+            values = (
+                artifact_id,
+                artifact.task_id,
+                request_id if request_id is not None else "",
+                type(artifact).__name__,
+                artifact.artifact_hash,
+                canonical,
+                *extra_vals,
+            )
+        self._conn.execute(
+            f"INSERT INTO {table} ({col_block}) VALUES ({val_block})",
+            values,
         )
         return True
 
     def _load_artifact(self, table: str, artifact_id: str) -> Optional[dict[str, Any]]:
-        # EA-3A: the decisions table carries a dedicated authorization_id column
-        # (non-hash-bound forward linkage) plus a tamper-evident envelope hash
-        # (decision_linkage_sha256). Select them only when present.
-        extra_cols = (
-            ", authorization_id, decision_linkage_sha256"
-            if table == "execution_authorization_decisions"
-            else ""
-        )
+        # Only decisions/authorizations carry physical request_id +
+        # request_linkage_sha256 (and decisions also carry authorization_id +
+        # decision_linkage_sha256). The requests table has none of these.
+        extra_cols = ""
+        if table in ("execution_authorization_decisions", "execution_authorizations"):
+            extra_cols = ", request_id, request_linkage_sha256"
+        if table == "execution_authorization_decisions":
+            extra_cols += ", authorization_id, decision_linkage_sha256"
         row = self._conn.execute(
             f"SELECT artifact_id, task_id, artifact_type, artifact_hash, "
             f"canonical_payload{extra_cols} FROM {table} WHERE artifact_id = ?",
@@ -284,11 +366,17 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
             )
         # Reconstruct the full domain object (canonical dict excludes artifact_hash).
         payload["artifact_hash"] = row["artifact_hash"]
-        # EA-3A reconstruction-compat: recover the non-hash-bound authorization_id
-        # forward linkage from its dedicated column for decisions, and verify its
-        # tamper-evident envelope against the stored linkage hash.
+        if table in ("execution_authorization_decisions", "execution_authorizations"):
+            # Verify the tamper-evident request linkage (physical request_id must
+            # match the canonical artifact request_id).
+            expected_req = _hash_request_linkage(artifact_id, row["request_id"])
+            if expected_req != row["request_linkage_sha256"]:
+                raise ExecutionAuthorizationIntegrityError(
+                    f"artifact {artifact_id} request linkage tamper detected on load "
+                    f"(envelope mismatch)"
+                )
         if table == "execution_authorization_decisions":
-            # Schema v2 always carries these columns for decisions.
+            # Schema v3 always carries these columns for decisions.
             auth_id = row["authorization_id"]
             expected_linkage = row["decision_linkage_sha256"]
             if expected_linkage is not None:
@@ -311,6 +399,7 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
         payload_sha256: str,
         timestamp: str,
     ) -> None:
+        """Append a hash-linked ledger event. Transaction-neutral."""
         prev = self._conn.execute(
             "SELECT entry_sha256 FROM authority_ledger ORDER BY sequence_no DESC LIMIT 1"
         ).fetchone()
@@ -359,13 +448,13 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
         )
 
     def _persist_with_ledger(self, artifact: Any, event_type: str) -> None:
-        table = self._table_for(artifact)
+        """Persist a single artifact + its ledger event in one transaction."""
         canonical = canonical_json(artifact.to_canonical_dict())
         payload_sha256 = sha256_text(canonical)
-        try:
-            self._conn.execute("BEGIN IMMEDIATE")
+        table = self._table_for(artifact)
+
+        def _work() -> None:
             wrote = self._persist_artifact(artifact, table)
-            # Only append a ledger event when an actual write happened.
             if wrote:
                 self._append_ledger(
                     event_type,
@@ -375,10 +464,8 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
                     payload_sha256,
                     self._now_utc(),
                 )
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
+
+        self._run_atomic(_work)
 
     # -- requests -----------------------------------------------------------
     def record_request(self, request: ExecutionAuthorizationRequest) -> None:
@@ -392,6 +479,16 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
 
     # -- decisions ----------------------------------------------------------
     def record_decision(self, decision: ExecutionAuthorizationDecision) -> None:
+        """Persist a decision. A GRANTED decision MUST be persisted together with
+        its authorization via record_granted_decision_and_authorization (never
+        standalone) to prevent a half-grant; only DENIED decisions may be
+        persisted on their own."""
+        if decision.outcome == ExecutionAuthorizationDecisionOutcome.GRANTED:
+            raise ExecutionAuthorizationStoreError(
+                "standalone GRANTED decision persistence is not permitted; use "
+                "record_granted_decision_and_authorization to persist a GRANTED "
+                "decision together with its authorization atomically"
+            )
         self._persist_with_ledger(decision, "DECISION_RECORDED")
 
     def get_decision(
@@ -404,13 +501,192 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
 
     # -- authorizations -----------------------------------------------------
     def record_authorization(self, authorization: ExecutionAuthorization) -> None:
-        self._persist_with_ledger(authorization, "AUTHORIZATION_RECORDED")
+        """Standalone authorization persistence is not permitted. An
+        ExecutionAuthorization is only valid when persisted atomically with its
+        GRANTED decision via record_granted_decision_and_authorization."""
+        raise ExecutionAuthorizationStoreError(
+            "standalone authorization persistence is not permitted; use "
+            "record_granted_decision_and_authorization to persist an "
+            "authorization together with its GRANTED decision atomically"
+        )
 
     def get_authorization(
         self, authorization_id: str
     ) -> Optional[ExecutionAuthorization]:
         payload = self._load_artifact("execution_authorizations", authorization_id)
         return reconstruct_authorization(payload) if payload else None
+
+    # -- atomic grant (EA-3B) ----------------------------------------------
+    def record_granted_decision_and_authorization(
+        self,
+        decision: ExecutionAuthorizationDecision,
+        authorization: ExecutionAuthorization,
+    ) -> None:
+        """Atomically persist a GRANTED decision with its authorization.
+
+        Storage-only cross-artifact consistency check. Does NOT decide whether
+        the grant is justified; it validates that the two already-built
+        immutable artifacts are mutually consistent enough to persist together.
+        One SQLite transaction: decision row + DECISION_RECORDED ledger event,
+        then authorization row + AUTHORIZATION_RECORDED ledger event. Any
+        failure rolls back with zero residue.
+        """
+        # 1) Cross-artifact consistency (fail closed on any mismatch).
+        if decision.outcome != ExecutionAuthorizationDecisionOutcome.GRANTED:
+            raise ExecutionAuthorizationStoreError(
+                "atomic grant requires a GRANTED decision; DENIED decisions must "
+                "be persisted via record_decision"
+            )
+        mismatches = self._cross_artifact_mismatches(decision, authorization)
+        if mismatches:
+            raise ExecutionAuthorizationStoreError(
+                "atomic grant cross-artifact consistency check failed: "
+                + "; ".join(mismatches)
+            )
+
+        # 2) Request prerequisite.
+        request = self.get_request(decision.request_id)
+        if request is None:
+            raise ExecutionAuthorizationStoreError(
+                f"atomic grant requires a persisted request "
+                f"{decision.request_id}; no such request"
+            )
+        if request.artifact_hash != decision.request_hash:
+            raise ExecutionAuthorizationStoreError(
+                f"request {decision.request_id} hash mismatch: stored "
+                f"{request.artifact_hash}, decision references "
+                f"{decision.request_hash}"
+            )
+        if request.task_id != decision.task_id:
+            raise ExecutionAuthorizationStoreError(
+                f"request {decision.request_id} task mismatch: stored "
+                f"{request.task_id}, decision references {decision.task_id}"
+            )
+        # Acceptance binding consistency (request <-> authorization). The Decision
+        # does not carry acceptance fields; the authorization must agree with the
+        # persisted request's governance acceptance binding. Cross-artifact only;
+        # we do NOT open governance.db or judge acceptance validity.
+        if (request.accepted_governance_artifact_id
+                != authorization.accepted_governance_artifact_id):
+            raise ExecutionAuthorizationStoreError(
+                f"request {decision.request_id} acceptance artifact id mismatch: "
+                f"stored {request.accepted_governance_artifact_id}, authorization "
+                f"references {authorization.accepted_governance_artifact_id}"
+            )
+        if (request.accepted_governance_hash
+                != authorization.accepted_governance_hash):
+            raise ExecutionAuthorizationStoreError(
+                f"request {decision.request_id} acceptance hash mismatch: stored "
+                f"{request.accepted_governance_hash}, authorization references "
+                f"{authorization.accepted_governance_hash}"
+            )
+
+        def _work() -> None:
+            # Persist decision (idempotent if identical, conflict if different).
+            wrote_dec = self._persist_artifact(
+                decision, "execution_authorization_decisions"
+            )
+            if wrote_dec:
+                self._append_ledger(
+                    "DECISION_RECORDED",
+                    type(decision).__name__,
+                    decision.decision_id,
+                    decision.artifact_hash,
+                    sha256_text(canonical_json(decision.to_canonical_dict())),
+                    self._now_utc(),
+                )
+            # Test-only rollback seam.
+            if self._fail_after_decision:
+                raise ExecutionAuthorizationIntegrityError(
+                    "injected failure after decision persistence (rollback test)"
+                )
+            # Persist authorization.
+            wrote_auth = self._persist_artifact(
+                authorization, "execution_authorizations"
+            )
+            if wrote_auth:
+                self._append_ledger(
+                    "AUTHORIZATION_RECORDED",
+                    type(authorization).__name__,
+                    authorization.authorization_id,
+                    authorization.artifact_hash,
+                    sha256_text(canonical_json(authorization.to_canonical_dict())),
+                    self._now_utc(),
+                )
+
+        try:
+            self._run_atomic(_work)
+        except sqlite3.IntegrityError as exc:
+            # UNIQUE(request_id) violation: a prior terminal decision or
+            # authorization already exists for this request.
+            raise ExecutionAuthorizationConflictError(
+                f"atomic grant conflicts with an existing terminal decision or "
+                f"authorization for request {decision.request_id}: {exc}"
+            ) from exc
+
+    @staticmethod
+    def _cross_artifact_mismatches(
+        decision: ExecutionAuthorizationDecision,
+        authorization: ExecutionAuthorization,
+    ) -> list[str]:
+        m: list[str] = []
+        if decision.authorization_id != authorization.authorization_id:
+            m.append("authorization_id mismatch")
+        if decision.request_id != authorization.request_id:
+            m.append("request_id mismatch")
+        if decision.request_hash != authorization.request_hash:
+            m.append("request_hash mismatch")
+        if decision.decision_id != authorization.decision_id:
+            m.append("decision_id mismatch")
+        if decision.artifact_hash != authorization.decision_hash:
+            m.append(
+                f"decision_hash mismatch (decision {decision.artifact_hash} vs "
+                f"authorization.decision_hash {authorization.decision_hash})"
+            )
+        if decision.task_id != authorization.task_id:
+            m.append("task_id mismatch")
+        # Policy reference must match (frozen EA-3D design).
+        if decision.authorization_policy != authorization.authorization_policy:
+            m.append("authorization_policy mismatch")
+        return m
+
+    # -- request-keyed reads (EA-3B) ---------------------------------------
+    def _get_for_request(
+        self, table: str, reconstruct_fn, request_id: str
+    ) -> Optional[Any]:
+        rows = self._conn.execute(
+            f"SELECT artifact_id, request_linkage_sha256 FROM {table} "
+            f"WHERE request_id = ?",
+            (request_id,),
+        ).fetchall()
+        if not rows:
+            return None
+        if len(rows) > 1:
+            # UNIQUE(request_id) should prevent this, but corruption/manual
+            # tampering must fail closed rather than pick an arbitrary row.
+            raise ExecutionAuthorizationIntegrityError(
+                f"{table} has multiple rows for request_id {request_id}; "
+                f"refusing ambiguous read"
+            )
+        # Reuse the integrity-verified reconstruction path.
+        payload = self._load_artifact(table, rows[0]["artifact_id"])
+        if payload is None:
+            return None
+        return reconstruct_fn(payload)
+
+    def get_decision_for_request(
+        self, request_id: str
+    ) -> Optional[ExecutionAuthorizationDecision]:
+        return self._get_for_request(
+            "execution_authorization_decisions", reconstruct_decision, request_id
+        )
+
+    def get_authorization_for_request(
+        self, request_id: str
+    ) -> Optional[ExecutionAuthorization]:
+        return self._get_for_request(
+            "execution_authorizations", reconstruct_authorization, request_id
+        )
 
     # -- ledger / integrity -------------------------------------------------
     def get_authority_events(self) -> list[ExecutionAuthorityLedgerEntry]:
@@ -454,9 +730,7 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
                     failures.append(
                         f"{table} {r['artifact_id']} artifact hash mismatch"
                     )
-        # 1b) decision authorization-linkage envelope verification. The
-        # authorization_id column is non-hash-bound (acyclic graph) but MUST be
-        # tamper-evident; verify its envelope hash against the stored value.
+        # 1b) decision authorization-linkage envelope verification.
         for r in self._conn.execute(
             "SELECT artifact_id, authorization_id, decision_linkage_sha256 "
             "FROM execution_authorization_decisions"
@@ -476,6 +750,44 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
                     f"execution_authorization_decisions {r['artifact_id']} "
                     f"authorization linkage tamper detected"
                 )
+        # 1c) request-linkage envelope verification (decisions + authorizations).
+        for table in (
+            "execution_authorization_decisions",
+            "execution_authorizations",
+        ):
+            for r in self._conn.execute(
+                f"SELECT artifact_id, request_id, request_linkage_sha256 FROM {table}"
+            ):
+                try:
+                    expected = _hash_request_linkage(r["artifact_id"], r["request_id"])
+                except Exception as exc:  # noqa: BLE001
+                    failures.append(
+                        f"{table} {r['artifact_id']} request linkage unhashable: {exc}"
+                    )
+                    continue
+                if expected != r["request_linkage_sha256"]:
+                    failures.append(
+                        f"{table} {r['artifact_id']} request linkage tamper detected"
+                    )
+        # 1d) physical request_id must equal the canonical artifact request_id.
+        for table, attr in (
+            ("execution_authorization_decisions", "decision"),
+            ("execution_authorizations", "authorization"),
+        ):
+            for r in self._conn.execute(
+                f"SELECT artifact_id, request_id, canonical_payload FROM {table}"
+            ):
+                try:
+                    payload = json.loads(r["canonical_payload"])
+                except Exception:  # noqa: BLE001
+                    continue
+                canonical_request_id = payload.get("request_id")
+                if canonical_request_id != r["request_id"]:
+                    failures.append(
+                        f"{table} {r['artifact_id']} physical request_id "
+                        f"({r['request_id']}) != canonical request_id "
+                        f"({canonical_request_id})"
+                    )
         # 2) ledger chain verification.
         rows = self._conn.execute(
             "SELECT sequence_no, event_type, artifact_type, artifact_id, "
@@ -505,6 +817,50 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
             if derived != r["entry_sha256"]:
                 failures.append(f"ledger entry hash mismatch at sequence {r['sequence_no']}")
             previous_hash = r["entry_sha256"]
+        # 3) relational invariants: at most one terminal decision per request;
+        # at most one authorization per request; no orphans.
+        decisions = {
+            r["request_id"]: r
+            for r in self._conn.execute(
+                "SELECT request_id, artifact_id, canonical_payload FROM "
+                "execution_authorization_decisions"
+            )
+        }
+        auths = {
+            r["request_id"]: r
+            for r in self._conn.execute(
+                "SELECT request_id, artifact_id, canonical_payload FROM "
+                "execution_authorizations"
+            )
+        }
+        for req_id, d in decisions.items():
+            if req_id in auths:
+                # Must be a GRANTED decision paired with its authorization.
+                try:
+                    d_payload = json.loads(d["canonical_payload"])
+                except Exception:  # noqa: BLE001
+                    d_payload = {}
+                if d_payload.get("outcome") != "GRANTED":
+                    failures.append(
+                        f"request {req_id} has an authorization but a "
+                        f"non-GRANTED decision (orphan authorization)"
+                    )
+            else:
+                try:
+                    d_payload = json.loads(d["canonical_payload"])
+                except Exception:  # noqa: BLE001
+                    d_payload = {}
+                if d_payload.get("outcome") == "GRANTED":
+                    failures.append(
+                        f"request {req_id} has a GRANTED decision with no "
+                        f"matching authorization (orphan GRANTED decision)"
+                    )
+        for req_id, a in auths.items():
+            if req_id not in decisions:
+                failures.append(
+                    f"request {req_id} has an authorization with no decision "
+                    f"(orphan authorization)"
+                )
         if failures:
             return IntegrityReport(ok=False, checked=len(rows), failures=tuple(failures))
         return IntegrityReport(ok=True, checked=len(rows))
