@@ -13,7 +13,7 @@ ACCEPTED != EXECUTION AUTHORIZATION: an ``ExecutionAuthorization`` is a
 structured, hash-verifiable *representation* of an authorization decision. It
 grants nothing on its own and no production code consumes it yet. The future
 issuance service (EA-3) is the only component permitted to create real
-authority, and it does not exist in this milestone.
+authority, and it does not exist in this milestone (EA-3I).
 
 Design source of truth:
     docs/architecture/hermes-execution-authorization-handoff.md
@@ -48,6 +48,7 @@ __all__ = [
     "ExecutionAuthorizationDecision",
     "ARTIFACT_VERSION",
     "SUPPORTED_ARTIFACT_VERSIONS",
+    "AMENDED_ARTIFACT_VERSION",
     "build_execution_authorization",
     "build_execution_authorization_request",
     "build_execution_authorization_decision",
@@ -102,7 +103,13 @@ class ExecutionAuthorizationDecisionOutcome(str, Enum):
 # --------------------------------------------------------------------------- #
 
 ARTIFACT_VERSION = "1"
-SUPPORTED_ARTIFACT_VERSIONS = frozenset({ARTIFACT_VERSION})
+# EA-3A amended Decision + Authorization artifacts (canonical structure changed
+# incompatibly: Decision gained request_hash and dropped authorization_id from its
+# hash preimage; Authorization gained request_id/request_hash/decision_id/
+# decision_hash). Legacy Request artifacts remain at "1"; amended Decision/
+# Authorization artifacts use "2".
+SUPPORTED_ARTIFACT_VERSIONS = frozenset({"1", "2"})
+AMENDED_ARTIFACT_VERSION = "2"
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _AUTHORIZATION_ID_RE = re.compile(r"^execution-authorization-[0-9a-f]{16}$")
@@ -311,6 +318,10 @@ class ExecutionAuthorization:
     task_id: str
     accepted_governance_artifact_id: str
     accepted_governance_hash: str
+    request_id: str
+    request_hash: str
+    decision_id: str
+    decision_hash: str
     authorization_actor: ExecutionAuthorizationActor
     authorized_scope: ExecutionAuthorizationScope
     authorization_reason: str
@@ -325,13 +336,21 @@ class ExecutionAuthorization:
         """Deterministic preimage for hashing.
 
         Excludes ``artifact_hash`` (set after hashing). Includes
-        ``authorization_id`` so the recorded id participates in the hash.
+        ``authorization_id`` so the recorded id participates in the hash, and
+        the EA-3A binding fields (``request_id`` / ``request_hash`` /
+        ``decision_id`` / ``decision_hash``) so the authorization is
+        cryptographically bound to the exact Decision and Request that produced
+        it.
         """
         return {
             "authorization_id": self.authorization_id,
             "task_id": self.task_id,
             "accepted_governance_artifact_id": self.accepted_governance_artifact_id,
             "accepted_governance_hash": self.accepted_governance_hash,
+            "request_id": self.request_id,
+            "request_hash": self.request_hash,
+            "decision_id": self.decision_id,
+            "decision_hash": self.decision_hash,
             "authorization_actor": _actor_to_dict(self.authorization_actor),
             "authorized_scope": _scope_to_dict(self.authorized_scope),
             "authorization_reason": self.authorization_reason,
@@ -393,6 +412,7 @@ class ExecutionAuthorizationDecision:
 
     decision_id: str
     request_id: str
+    request_hash: str
     task_id: str
     decision_actor: ExecutionAuthorizationActor
     outcome: ExecutionAuthorizationDecisionOutcome
@@ -403,14 +423,20 @@ class ExecutionAuthorizationDecision:
     artifact_hash: str
 
     def to_canonical_dict(self) -> dict[str, Any]:
+        # NOTE: authorization_id is intentionally EXCLUDED from the canonical
+        # preimage (EA-3A, acyclic Model A). It remains a non-hash-bound forward
+        # linkage from Decision -> Authorization so that decision_id/decision_hash
+        # depend only on the request + decision content, never on the
+        # authorization identity. This keeps the identity graph a DAG:
+        # Request -> Decision -> Authorization.
         return {
             "decision_id": self.decision_id,
             "request_id": self.request_id,
+            "request_hash": self.request_hash,
             "task_id": self.task_id,
             "decision_actor": _actor_to_dict(self.decision_actor),
             "outcome": self.outcome.value,
             "decision_reason": self.decision_reason,
-            "authorization_id": self.authorization_id,
             "authorization_policy": _policy_to_dict(self.authorization_policy),
             "artifact_version": self.artifact_version,
         }
@@ -440,6 +466,10 @@ def build_execution_authorization(
     task_id: str,
     accepted_governance_artifact_id: str,
     accepted_governance_hash: str,
+    request_id: str,
+    request_hash: str,
+    decision_id: str,
+    decision_hash: str,
     authorization_actor: ExecutionAuthorizationActor,
     authorized_scope: ExecutionAuthorizationScope,
     authorization_reason: str,
@@ -447,10 +477,14 @@ def build_execution_authorization(
     issued_at: str,
     expires_at: Optional[str],
     nonce: str,
-    artifact_version: str = ARTIFACT_VERSION,
+    artifact_version: str = AMENDED_ARTIFACT_VERSION,
 ) -> ExecutionAuthorization:
     _require_nonempty("task_id", task_id)
     _validate_acceptance_binding(accepted_governance_artifact_id, accepted_governance_hash)
+    _require_nonempty("request_id", request_id)
+    _require_sha256("request_hash", request_hash)
+    _require_nonempty("decision_id", decision_id)
+    _require_sha256("decision_hash", decision_hash)
     _validate_actor(authorization_actor)
     _validate_scope(authorized_scope)
     _require_nonempty("authorization_reason", authorization_reason)
@@ -466,6 +500,10 @@ def build_execution_authorization(
         "task_id": task_id,
         "accepted_governance_artifact_id": accepted_governance_artifact_id,
         "accepted_governance_hash": accepted_governance_hash,
+        "request_id": request_id,
+        "request_hash": request_hash,
+        "decision_id": decision_id,
+        "decision_hash": decision_hash,
         "authorization_actor": _actor_to_dict(authorization_actor),
         "authorized_scope": _scope_to_dict(authorized_scope),
         "authorization_reason": authorization_reason,
@@ -487,6 +525,10 @@ def build_execution_authorization(
         task_id=task_id,
         accepted_governance_artifact_id=accepted_governance_artifact_id,
         accepted_governance_hash=accepted_governance_hash,
+        request_id=request_id,
+        request_hash=request_hash,
+        decision_id=decision_id,
+        decision_hash=decision_hash,
         authorization_actor=authorization_actor,
         authorized_scope=authorized_scope,
         authorization_reason=authorization_reason,
@@ -556,15 +598,17 @@ def build_execution_authorization_request(
 def build_execution_authorization_decision(
     *,
     request_id: str,
+    request_hash: str,
     task_id: str,
     decision_actor: ExecutionAuthorizationActor,
     outcome: ExecutionAuthorizationDecisionOutcome,
     decision_reason: str,
     authorization_id: Optional[str],
     authorization_policy: ExecutionAuthorizationPolicyRef,
-    artifact_version: str = ARTIFACT_VERSION,
+    artifact_version: str = AMENDED_ARTIFACT_VERSION,
 ) -> ExecutionAuthorizationDecision:
     _require_nonempty("request_id", request_id)
+    _require_sha256("request_hash", request_hash)
     _require_nonempty("task_id", task_id)
     _validate_actor(decision_actor)
     if not isinstance(outcome, ExecutionAuthorizationDecisionOutcome):
@@ -584,13 +628,16 @@ def build_execution_authorization_decision(
                 "a DENIED decision must not carry an authorization_id"
             )
 
+    # NOTE (EA-3A acyclic Model A): authorization_id is deliberately excluded
+    # from the hash preimage. It is non-hash-bound forward linkage only; the
+    # decision identity depends on request + decision content alone.
     preimage = {
         "request_id": request_id,
+        "request_hash": request_hash,
         "task_id": task_id,
         "decision_actor": _actor_to_dict(decision_actor),
         "outcome": outcome.value,
         "decision_reason": decision_reason,
-        "authorization_id": authorization_id,
         "authorization_policy": _policy_to_dict(authorization_policy),
         "artifact_version": artifact_version,
     }
@@ -604,6 +651,7 @@ def build_execution_authorization_decision(
     return ExecutionAuthorizationDecision(
         decision_id=decision_id,
         request_id=request_id,
+        request_hash=request_hash,
         task_id=task_id,
         decision_actor=decision_actor,
         outcome=outcome,
@@ -625,6 +673,10 @@ def validate_execution_authorization_artifact(artifact: ExecutionAuthorization) 
         raise ExecutionAuthorizationValidationError("expected ExecutionAuthorization")
     if not _AUTHORIZATION_ID_RE.match(artifact.authorization_id):
         raise ExecutionAuthorizationValidationError("authorization_id format invalid")
+    _require_nonempty("request_id", artifact.request_id)
+    _require_sha256("request_hash", artifact.request_hash)
+    _require_nonempty("decision_id", artifact.decision_id)
+    _require_sha256("decision_hash", artifact.decision_hash)
     _validate_acceptance_binding(
         artifact.accepted_governance_artifact_id, artifact.accepted_governance_hash
     )
@@ -664,6 +716,7 @@ def validate_execution_authorization_decision(artifact: ExecutionAuthorizationDe
         raise ExecutionAuthorizationValidationError("expected ExecutionAuthorizationDecision")
     if not _DECISION_ID_RE.match(artifact.decision_id):
         raise ExecutionAuthorizationValidationError("decision_id format invalid")
+    _require_sha256("request_hash", artifact.request_hash)
     _validate_actor(artifact.decision_actor)
     _validate_artifact_version(artifact.artifact_version)
     if artifact.outcome is ExecutionAuthorizationDecisionOutcome.GRANTED:
@@ -750,6 +803,10 @@ def reconstruct_decision(payload: Mapping[str, Any]) -> ExecutionAuthorizationDe
     d = dict(payload)
     d.pop("artifact_hash", None)
     d.pop("decision_id", None)
+    # authorization_id is a non-hash-bound forward linkage (EA-3A acyclic Model
+    # A): it is excluded from the canonical payload/hash preimage, so it may be
+    # absent from a pure canonical dict. Default to None when not supplied.
+    d["authorization_id"] = d.get("authorization_id")
     d["decision_actor"] = _actor_from_dict(d["decision_actor"])
     d["authorization_policy"] = _policy_from_dict(d["authorization_policy"])
     outcome = d.get("outcome")

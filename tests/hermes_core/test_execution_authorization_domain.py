@@ -68,6 +68,10 @@ def make_authorization(**overrides: object) -> ExecutionAuthorization:
         task_id="task-1",
         accepted_governance_artifact_id=VALID_ID,
         accepted_governance_hash=VALID_HASH,
+        request_id="execution-authorization-request-" + "c" * 16,
+        request_hash="c" * 64,
+        decision_id="execution-authorization-decision-" + "d" * 16,
+        decision_hash="d" * 64,
         authorization_actor=make_actor(),
         authorized_scope=make_scope(),
         authorization_reason="operator approved per policy",
@@ -98,6 +102,7 @@ def make_request(**overrides: object) -> ExecutionAuthorizationRequest:
 def make_decision(**overrides: object) -> ExecutionAuthorizationDecision:
     kwargs: dict = dict(
         request_id="execution-authorization-request-" + "c" * 16,
+        request_hash="c" * 64,
         task_id="task-1",
         decision_actor=make_actor(),
         outcome=ExecutionAuthorizationDecisionOutcome.GRANTED,
@@ -287,6 +292,133 @@ class TestNegativeValidation(unittest.TestCase):
             )
 
     def test_denied_decision_cannot_carry_authorization_id(self):
+        with self.assertRaises(ExecutionAuthorizationValidationError):
+            make_decision(
+                outcome=ExecutionAuthorizationDecisionOutcome.DENIED,
+                authorization_id="execution-authorization-" + "d" * 16,
+            )
+
+
+class TestEA3ABinding(unittest.TestCase):
+    """EA-3A cryptographic lineage binding tests.
+
+    Prove the new request/decision binding fields are actually hash-bound, and
+    that invalid bindings are rejected. Cross-artifact equality verification
+    (request_hash matches the referenced request, decision_hash matches the
+    referenced decision) is deferred to EA-3I; here we only prove the fields
+    participate in the canonical digest and are validated in isolation.
+    """
+
+    def test_decision_request_hash_binding_changes_hash(self):
+        base = make_decision()
+        other = make_decision(request_hash="f" * 64)
+        self.assertNotEqual(base.artifact_hash, other.artifact_hash)
+        self.assertTrue(base.verify_hash())
+        self.assertTrue(other.verify_hash())
+
+    def test_authorization_request_id_binding_changes_hash(self):
+        base = make_authorization()
+        other = make_authorization(request_id="execution-authorization-request-" + "e" * 16)
+        self.assertNotEqual(base.artifact_hash, other.artifact_hash)
+
+    def test_authorization_request_hash_binding_changes_hash(self):
+        base = make_authorization()
+        other = make_authorization(request_hash="f" * 64)
+        self.assertNotEqual(base.artifact_hash, other.artifact_hash)
+
+    def test_authorization_decision_id_binding_changes_hash(self):
+        base = make_authorization()
+        other = make_authorization(decision_id="execution-authorization-decision-" + "e" * 16)
+        self.assertNotEqual(base.artifact_hash, other.artifact_hash)
+
+    def test_authorization_decision_hash_binding_changes_hash(self):
+        base = make_authorization()
+        other = make_authorization(decision_hash="f" * 64)
+        self.assertNotEqual(base.artifact_hash, other.artifact_hash)
+
+    def test_decision_missing_request_hash_rejected(self):
+        with self.assertRaises(ExecutionAuthorizationValidationError):
+            make_decision(request_hash="not-a-hash")
+
+    def test_decision_empty_request_hash_rejected(self):
+        with self.assertRaises(ExecutionAuthorizationValidationError):
+            make_decision(request_hash="")
+
+    def test_authorization_missing_request_id_rejected(self):
+        with self.assertRaises(ExecutionAuthorizationValidationError):
+            make_authorization(request_id="")
+
+    def test_authorization_missing_request_hash_rejected(self):
+        with self.assertRaises(ExecutionAuthorizationValidationError):
+            make_authorization(request_hash="not-a-hash")
+
+    def test_authorization_missing_decision_id_rejected(self):
+        with self.assertRaises(ExecutionAuthorizationValidationError):
+            make_authorization(decision_id="")
+
+    def test_authorization_missing_decision_hash_rejected(self):
+        with self.assertRaises(ExecutionAuthorizationValidationError):
+            make_authorization(decision_hash="not-a-hash")
+
+    def test_authorization_round_trip_reconstruct_preserves_bindings(self):
+        from tools.hermes_core.execution_authorization import reconstruct_authorization
+        auth = make_authorization()
+        payload = auth.to_canonical_dict()
+        payload["artifact_hash"] = auth.artifact_hash
+        rebuilt = reconstruct_authorization(payload)
+        self.assertEqual(rebuilt.request_id, auth.request_id)
+        self.assertEqual(rebuilt.request_hash, auth.request_hash)
+        self.assertEqual(rebuilt.decision_id, auth.decision_id)
+        self.assertEqual(rebuilt.decision_hash, auth.decision_hash)
+        self.assertEqual(rebuilt.artifact_hash, auth.artifact_hash)
+        self.assertTrue(rebuilt.verify_hash())
+
+    def test_decision_round_trip_reconstruct_preserves_bindings(self):
+        from tools.hermes_core.execution_authorization import reconstruct_decision
+        dec = make_decision()
+        payload = dec.to_canonical_dict()
+        payload["artifact_hash"] = dec.artifact_hash
+        # The store injects the non-hash-bound authorization_id from its
+        # dedicated column; simulate that here (it is excluded from the
+        # canonical payload/hash preimage by design).
+        payload["authorization_id"] = dec.authorization_id
+        rebuilt = reconstruct_decision(payload)
+        self.assertEqual(rebuilt.request_id, dec.request_id)
+        self.assertEqual(rebuilt.request_hash, dec.request_hash)
+        self.assertEqual(rebuilt.authorization_id, dec.authorization_id)
+        self.assertEqual(rebuilt.artifact_hash, dec.artifact_hash)
+        self.assertTrue(rebuilt.verify_hash())
+
+    def test_amended_artifact_version_is_two(self):
+        self.assertEqual(make_authorization().artifact_version, "2")
+        self.assertEqual(make_decision().artifact_version, "2")
+        # Request artifact is unchanged and remains at version "1".
+        self.assertEqual(make_request().artifact_version, "1")
+
+    def test_decision_authorization_id_excluded_from_hash_preimage(self):
+        # authorization_id must be non-hash-bound forward linkage: changing it
+        # must NOT change the decision hash (acyclic Model A requirement).
+        granted_a = make_decision(authorization_id="execution-authorization-" + "a" * 16)
+        granted_b = make_decision(authorization_id="execution-authorization-" + "b" * 16)
+        self.assertEqual(granted_a.artifact_hash, granted_b.artifact_hash)
+        self.assertEqual(granted_a.decision_id, granted_b.decision_id)
+
+    def test_granted_denied_invariants_preserved(self):
+        granted = make_decision(
+            outcome=ExecutionAuthorizationDecisionOutcome.GRANTED,
+            authorization_id="execution-authorization-" + "d" * 16,
+        )
+        self.assertIsNotNone(granted.authorization_id)
+        with self.assertRaises(ExecutionAuthorizationValidationError):
+            make_decision(
+                outcome=ExecutionAuthorizationDecisionOutcome.GRANTED,
+                authorization_id=None,
+            )
+        denied = make_decision(
+            outcome=ExecutionAuthorizationDecisionOutcome.DENIED,
+            authorization_id=None,
+        )
+        self.assertIsNone(denied.authorization_id)
         with self.assertRaises(ExecutionAuthorizationValidationError):
             make_decision(
                 outcome=ExecutionAuthorizationDecisionOutcome.DENIED,

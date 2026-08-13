@@ -44,8 +44,23 @@ from .execution_authorization_store import (
 )
 from .hashing import canonical_json, sha256_payload, sha256_text
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SUPPORTED_SCHEMA_VERSIONS = frozenset({SCHEMA_VERSION})
+
+
+def _hash_decision_linkage(decision_id: str, authorization_id: Optional[str]) -> str:
+    """Hash-bound persistence envelope for the non-hash-bound authorization_id
+    linkage.
+
+    The Decision artifact hash intentionally excludes authorization_id to keep
+    the identity graph acyclic (EA-3A Model A). The PERSISTED linkage must still
+    be tamper-evident, so the (decision_id, authorization_id) pair is bound in a
+    dedicated envelope hash stored alongside the artifact. Altering the column
+    after the fact breaks the envelope, which is detected on load and during
+    verify_integrity. authorization_id NULL (DENIED) is covered (not a wildcard).
+    """
+    payload = {"decision_id": decision_id, "authorization_id": authorization_id}
+    return sha256_text(canonical_json(payload))
 
 LEDGER_EVENTS = (
     "REQUEST_RECORDED",
@@ -136,6 +151,8 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
                 task_id TEXT NOT NULL,
                 artifact_type TEXT NOT NULL,
                 artifact_hash TEXT NOT NULL,
+                authorization_id TEXT,
+                decision_linkage_sha256 TEXT NOT NULL,
                 canonical_payload TEXT NOT NULL
             )
             """
@@ -213,24 +230,47 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
                 f"immutable artifact {artifact_id} already persisted with "
                 f"conflicting content; refusing to overwrite"
             )
+        # EA-3A reconstruction-compat: the Decision's authorization_id is a
+        # non-hash-bound forward linkage (excluded from the canonical payload/
+        # hash preimage to keep the identity graph acyclic). It is persisted in
+        # its own column, and made tamper-evident via a dedicated envelope hash
+        # (decision_linkage_sha256) bound to (decision_id, authorization_id).
+        # The envelope hash is written with the INSERT so the NOT NULL column is
+        # satisfied atomically (no separate UPDATE).
+        auth_id = None
+        linkage_hash = None
+        if table == "execution_authorization_decisions":
+            auth_id = getattr(artifact, "authorization_id", None)
+            linkage_hash = _hash_decision_linkage(artifact_id, auth_id)
+        extra_cols = ", authorization_id, decision_linkage_sha256" if linkage_hash is not None else ""
+        extra_vals = (auth_id, linkage_hash) if linkage_hash is not None else ()
         self._conn.execute(
             f"INSERT INTO {table} "
-            "(artifact_id, task_id, artifact_type, artifact_hash, canonical_payload) "
-            "VALUES (?, ?, ?, ?, ?)",
+            f"(artifact_id, task_id, artifact_type, artifact_hash, canonical_payload{extra_cols}) "
+            f"VALUES (?, ?, ?, ?, ?{', ?, ?' if linkage_hash is not None else ''})",
             (
                 artifact_id,
                 artifact.task_id,
                 type(artifact).__name__,
                 artifact.artifact_hash,
                 canonical,
+                *extra_vals,
             ),
         )
         return True
 
     def _load_artifact(self, table: str, artifact_id: str) -> Optional[dict[str, Any]]:
+        # EA-3A: the decisions table carries a dedicated authorization_id column
+        # (non-hash-bound forward linkage) plus a tamper-evident envelope hash
+        # (decision_linkage_sha256). Select them only when present.
+        extra_cols = (
+            ", authorization_id, decision_linkage_sha256"
+            if table == "execution_authorization_decisions"
+            else ""
+        )
         row = self._conn.execute(
             f"SELECT artifact_id, task_id, artifact_type, artifact_hash, "
-            f"canonical_payload FROM {table} WHERE artifact_id = ?",
+            f"canonical_payload{extra_cols} FROM {table} WHERE artifact_id = ?",
             (artifact_id,),
         ).fetchone()
         if row is None:
@@ -244,6 +284,22 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
             )
         # Reconstruct the full domain object (canonical dict excludes artifact_hash).
         payload["artifact_hash"] = row["artifact_hash"]
+        # EA-3A reconstruction-compat: recover the non-hash-bound authorization_id
+        # forward linkage from its dedicated column for decisions, and verify its
+        # tamper-evident envelope against the stored linkage hash.
+        if table == "execution_authorization_decisions":
+            # Schema v2 always carries these columns for decisions.
+            auth_id = row["authorization_id"]
+            expected_linkage = row["decision_linkage_sha256"]
+            if expected_linkage is not None:
+                actual_linkage = _hash_decision_linkage(artifact_id, auth_id)
+                if actual_linkage != expected_linkage:
+                    raise ExecutionAuthorizationIntegrityError(
+                        f"decision {artifact_id} authorization linkage tamper "
+                        f"detected on load (envelope mismatch)"
+                    )
+            if auth_id is not None:
+                payload["authorization_id"] = auth_id
         return payload
 
     def _append_ledger(
@@ -398,6 +454,28 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
                     failures.append(
                         f"{table} {r['artifact_id']} artifact hash mismatch"
                     )
+        # 1b) decision authorization-linkage envelope verification. The
+        # authorization_id column is non-hash-bound (acyclic graph) but MUST be
+        # tamper-evident; verify its envelope hash against the stored value.
+        for r in self._conn.execute(
+            "SELECT artifact_id, authorization_id, decision_linkage_sha256 "
+            "FROM execution_authorization_decisions"
+        ):
+            try:
+                expected = _hash_decision_linkage(
+                    r["artifact_id"], r["authorization_id"]
+                )
+            except Exception as exc:  # noqa: BLE001
+                failures.append(
+                    f"execution_authorization_decisions {r['artifact_id']} "
+                    f"linkage unhashable: {exc}"
+                )
+                continue
+            if expected != r["decision_linkage_sha256"]:
+                failures.append(
+                    f"execution_authorization_decisions {r['artifact_id']} "
+                    f"authorization linkage tamper detected"
+                )
         # 2) ledger chain verification.
         rows = self._conn.execute(
             "SELECT sequence_no, event_type, artifact_type, artifact_id, "

@@ -584,3 +584,92 @@ representations and answers "what was persisted / does it still verify / is the
 chain intact" — it never decides whether authority SHOULD be granted. `app.py`
 unchanged; `automation_state.db` untouched; governance.db not extended for
 execution authority.
+
+## 29. Implementation status (EA-3A domain binding amendment)
+
+**EA-3A is COMPLETE (domain binding amendment only).** Commit: local `main`,
+authored `Bind Hermes authorization to request and decision`. No issuance
+capability introduced.
+
+Implemented:
+
+- `tools/hermes_core/execution_authorization.py`
+  - `ExecutionAuthorizationDecision` gained `request_hash` (64-hex SHA-256 of
+    the exact immutable request artifact). It is included in the decision
+    canonical preimage and hash-bound.
+  - `ExecutionAuthorization` gained `request_id`, `request_hash`,
+    `decision_id`, `decision_hash` (all hash-bound in the authorization
+    canonical preimage). The cryptographic lineage
+    Authorization -> exact Decision -> exact Request -> exact
+    AcceptanceArtifact is now complete.
+  - Acyclic identity graph (Model A): `decision_id`/`decision_hash` are derived
+    from a preimage that EXCLUDES `authorization_id` (which stays a non-hash-bound
+    forward linkage). The graph is a strict DAG: Request -> Decision ->
+    Authorization.
+  - Amended Decision/Authorization artifacts use `artifact_version = "2"`
+    (legacy Request artifacts remain at `"1"`); `SUPPORTED_ARTIFACT_VERSIONS`
+    now `{ "1", "2" }`.
+  - Validation rejects malformed/empty `request_hash` / `decision_hash` and
+    empty `request_id` / `decision_id`.
+- `docs/architecture/schemas/execution-authorization-decision.schema.yaml` and
+  `execution-authorization.schema.yaml` — require the new binding fields.
+- `tools/hermes_core/sqlite_execution_authorization_store.py` — reconstruction
+  compatibility ONLY: the `execution_authorization_decisions` table gained a
+  dedicated `authorization_id` column (the non-hash-bound forward linkage is
+  persisted there and re-injected on load) so round-trip reconstruction
+  recovers it without polluting the canonical payload/hash. No atomic grant API
+  and no request-keyed store extension were added (those belong to EA-3B).
+- 16 focused EA-3A binding tests added (hash-binding proofs for all five new
+  fields, invalid-binding rejection, round-trip reconstruction, version check,
+  acyclic `authorization_id` exclusion, GRANTED/DENIED invariant preservation).
+
+Tests: EA-1 focused 55/55 (39 baseline + 16 EA-3A); EA-2 focused 17/17; schema
+9/9; full Hermes core 356/356. Mutation tooth: removing `decision_hash` from the
+Authorization builder preimage fails the targeted binding test (TOOTH-PASS);
+source restored byte-exactly.
+
+**NOT implemented (by design — deferred to EA-3B / EA-3I):**
+
+- Atomic `record_granted_decision_and_authorization(...)` (EA-3B).
+- Request-keyed store reads `get_decision_for_request(...)` /
+  `get_authorization_for_request(...)` (EA-3B).
+- Authorization issuance service / `grant_execution_authorization(...)` (EA-3I).
+- `ExecutionClaim` / `ExecutionAttempt` / worker routing / `AUTHORIZED_FOR_EXECUTION` /
+  `EXECUTING` (later phases).
+
+**Preserved invariant:** `ACCEPTED != EXECUTION AUTHORIZATION`.
+
+## 29.1 EA-3A persistence-integrity correction (amended into the same commit)
+
+Pre-push review of `9b3dc96` found two persistence-integrity gaps from the new
+non-hash-bound `Decision.authorization_id` storage. Both corrected; the
+correction is amended into the single EA-3A commit (no follow-on commit).
+
+Problem 1 - schema version drift. EA-3A added physical columns
+(`authorization_id`, `decision_linkage_sha256`) to
+`execution_authorization_decisions` but left `SCHEMA_VERSION = 1`. A physical
+schema change must not silently keep the same version. Chosen strategy: **A**
+(bump to v2, fail-closed on v1; no silent migrate). `SCHEMA_VERSION` is now `2`,
+`SUPPORTED_SCHEMA_VERSIONS = {2}`. Opening a pre-EA-3A (EA-2) schema-v1 DB
+whose decisions table lacks the new columns raises
+`ExecutionAuthorizationSchemaError` (unsupported old schema, pending a
+separately authorized migration). `CREATE TABLE IF NOT EXISTS` never runs
+against an unknown/old DB.
+
+Problem 2 - `authorization_id` tamper gap. The column was not hash-bound, so
+direct SQL tampering of `execution_authorization_decisions.authorization_id`
+was accepted by `get_decision` and `verify_integrity`. Corrected with a
+separately hash-bound persistence envelope: `decision_linkage_sha256 =
+sha256_text(canonical_json({decision_id, authorization_id}))`, stored in a new
+NOT NULL column and verified on load and during `verify_integrity`. The
+Decision artifact hash stays acyclic (envelope does not feed it); the persisted
+linkage is now tamper-evident, including DENIED (`authorization_id = NULL`).
+
+Tests added (EA-2 store, 5): GRANTED linkage SQL tamper detected on `get_decision`
+and on `verify_integrity`; DENIED linkage SQL tamper (NULL -> valid id)
+detected on both paths; pre-EA-3A schema-v1 DB fails closed; default schema
+version is 2.
+
+Identity DAG preserved: Request -> Decision -> Authorization (acyclic).
+No issuance API, no atomic grant API, no request-keyed reads, no
+`ExecutionClaim`/`ExecutionAttempt`, no worker behavior. Not pushed.

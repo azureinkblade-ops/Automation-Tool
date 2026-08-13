@@ -2,13 +2,18 @@ schema: hermes.execution_authorization_decision
 schema_version: "1.0"
 status: proposed
 description: >-
-  Immutable GRANTED/DENIED decision artifact (EA-1 domain model). Does not issue
-  the referenced authorization. Distinct from the other execution-authorization
-  schemas.
+  Immutable GRANTED/DENIED decision artifact (EA-1 domain model, amended by
+  EA-3A). Binds cryptographically to the exact request via request_id /
+  request_hash. Does not issue the referenced authorization. The authorization_id
+  field is non-hash-bound forward linkage only (excluded from the canonical
+  preimage) so the identity graph stays acyclic
+  (Request -> Decision -> Authorization). Distinct from the other
+  execution-authorization schemas.
 
 required:
   - decision_id
   - request_id
+  - request_hash
   - task_id
   - decision_actor
   - outcome
@@ -22,6 +27,9 @@ fields:
     type: string
   request_id:
     type: string
+  request_hash:
+    type: string
+    # 64-char lowercase hex SHA-256 of the exact immutable request artifact.
   task_id:
     type: string
   decision_actor:

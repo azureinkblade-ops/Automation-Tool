@@ -29,6 +29,7 @@ from tools.hermes_core.execution_authorization import (
 from tools.hermes_core.execution_authorization_store import (
     ExecutionAuthorizationConflictError,
     ExecutionAuthorizationIntegrityError,
+    ExecutionAuthorizationSchemaError,
     ExecutionAuthorityLedgerEntry,
 )
 from tools.hermes_core.runtime import (
@@ -71,7 +72,11 @@ def make_auth(**o):
              accepted_governance_hash=VALID_HASH, authorization_actor=make_actor(),
              authorized_scope=make_scope(), authorization_reason="approved",
              authorization_policy=make_policy(), issued_at="2026-08-12T21:30:00Z",
-             expires_at="2026-08-12T22:00:00Z", nonce="nonce-1")
+             expires_at="2026-08-12T22:00:00Z", nonce="nonce-1",
+             request_id="execution-authorization-request-" + "c" * 16,
+             request_hash="c" * 64,
+             decision_id="execution-authorization-decision-" + "d" * 16,
+             decision_hash="d" * 64)
     k.update(o)
     return build_execution_authorization(**k)
 
@@ -86,7 +91,8 @@ def make_req(**o):
 
 
 def make_dec(**o):
-    k = dict(request_id="execution-authorization-request-" + "c" * 16, task_id="task-1",
+    k = dict(request_id="execution-authorization-request-" + "c" * 16,
+             request_hash="c" * 64, task_id="task-1",
              decision_actor=make_actor(),
              outcome=ExecutionAuthorizationDecisionOutcome.GRANTED,
              decision_reason="approved", authorization_id="execution-authorization-" + "d" * 16,
@@ -124,6 +130,88 @@ class TestStorePersistence(unittest.TestCase):
         self.assertIsNotNone(got)
         self.assertEqual(got.outcome, ExecutionAuthorizationDecisionOutcome.GRANTED)
         self.assertEqual(got.authorization_id, dec.authorization_id)
+
+    def _persist_granted_and_tamper_linkage(self, new_auth_id):
+        """Persist a GRANTED decision, close, directly tamper the persisted
+        authorization_id column, reopen, and return (store, decision_id)."""
+        tmp = tempfile.mkdtemp()
+        db = os.path.join(tmp, "ea.db")
+        s = SQLiteExecutionAuthorizationStore(db)
+        dec = make_dec()  # GRANTED with a non-empty authorization_id
+        s.record_decision(dec)
+        s.close()
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "UPDATE execution_authorization_decisions SET authorization_id = ? "
+            "WHERE artifact_id = ?",
+            (new_auth_id, dec.decision_id),
+        )
+        conn.commit()
+        conn.close()
+        reopened = SQLiteExecutionAuthorizationStore(db)
+        return reopened, dec.decision_id
+
+    def test_granted_linkage_tamper_detected_on_get(self):
+        # Direct SQL tamper of authorization_id (GRANTED) must be detected on read.
+        store, decision_id = self._persist_granted_and_tamper_linkage(
+            "execution-authorization-" + "x" * 16
+        )
+        with self.assertRaises(ExecutionAuthorizationIntegrityError):
+            store.get_decision(decision_id)
+        store.close()
+
+    def test_granted_linkage_tamper_detected_on_verify_integrity(self):
+        store, _ = self._persist_granted_and_tamper_linkage(
+            "execution-authorization-" + "x" * 16
+        )
+        report = store.verify_integrity()
+        self.assertFalse(report.ok)
+        self.assertTrue(
+            any("authorization linkage tamper" in f for f in (report.failures or []))
+        )
+        store.close()
+
+    def _persist_denied_and_tamper_linkage(self, new_auth_id):
+        """Persist a DENIED decision (authorization_id NULL), close, directly
+        tamper the persisted column to a valid id, reopen, return (store, id)."""
+        tmp = tempfile.mkdtemp()
+        db = os.path.join(tmp, "ea.db")
+        s = SQLiteExecutionAuthorizationStore(db)
+        dec = make_dec(outcome=ExecutionAuthorizationDecisionOutcome.DENIED,
+                       authorization_id=None)
+        s.record_decision(dec)
+        s.close()
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "UPDATE execution_authorization_decisions SET authorization_id = ? "
+            "WHERE artifact_id = ?",
+            (new_auth_id, dec.decision_id),
+        )
+        conn.commit()
+        conn.close()
+        reopened = SQLiteExecutionAuthorizationStore(db)
+        return reopened, dec.decision_id
+
+    def test_denied_linkage_tamper_detected_on_get(self):
+        # DENIED must have authorization_id None; tampering it to a valid id is
+        # a violation that must be detected fail-closed.
+        store, decision_id = self._persist_denied_and_tamper_linkage(
+            "execution-authorization-" + "x" * 16
+        )
+        with self.assertRaises(ExecutionAuthorizationIntegrityError):
+            store.get_decision(decision_id)
+        store.close()
+
+    def test_denied_linkage_tamper_detected_on_verify_integrity(self):
+        store, _ = self._persist_denied_and_tamper_linkage(
+            "execution-authorization-" + "x" * 16
+        )
+        report = store.verify_integrity()
+        self.assertFalse(report.ok)
+        self.assertTrue(
+            any("authorization linkage tamper" in f for f in (report.failures or []))
+        )
+        store.close()
 
     def test_record_and_get_authorization(self):
         store = get_execution_authorization_store()
@@ -270,10 +358,45 @@ class TestSchemaVersion(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.db = os.path.join(self.tmp, "ea.db")
 
-    def test_default_version_is_one(self):
+    def test_default_version_is_two(self):
+        # EA-3A added physical columns (authorization_id, decision_linkage_sha256)
+        # to the decisions table; the schema version MUST advance with that
+        # physical change rather than silently stay at v1.
         store = SQLiteExecutionAuthorizationStore(self.db)
+        self.assertEqual(SCHEMA_VERSION, 2)
         self.assertTrue(store.verify_integrity().ok)
         store.close()
+
+    def test_pre_ea3a_v1_schema_fails_closed(self):
+        # Opening a pre-EA-3A (EA-2) schema-version-1 authority DB whose
+        # decisions table lacks the EA-3A columns must NOT silently migrate or
+        # "no such column" at read time. It must fail closed as an unsupported
+        # old schema pending a separately authorized migration.
+        # Build a genuine EA-2 v1 DB from scratch.
+        conn = sqlite3.connect(self.db)
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute(
+            "CREATE TABLE authority_schema_version (version INTEGER)"
+        )
+        conn.execute(
+            "INSERT INTO authority_schema_version (version) VALUES (1)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE execution_authorization_decisions (
+                artifact_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                artifact_type TEXT NOT NULL,
+                artifact_hash TEXT NOT NULL,
+                canonical_payload TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
+        conn.close()
+        # Reopening under EA-3A must refuse the v1 schema fail-closed.
+        with self.assertRaises(ExecutionAuthorizationSchemaError):
+            SQLiteExecutionAuthorizationStore(self.db)
 
     def test_unsupported_version_fails_closed(self):
         # Open once to create, then corrupt the version row.

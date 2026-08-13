@@ -4,6 +4,20 @@ Status: DESIGN ONLY. No production Python is introduced by this document.
 Authorized separately as EA-3D. EA-3I (implementation) requires its own
 explicit authorization.
 
+EA-3A COMPLETE (2026-08-13): the domain binding amendment is implemented and
+verified. `ExecutionAuthorizationDecision` now carries `request_hash`;
+`ExecutionAuthorization` now carries `request_id`, `request_hash`,
+`decision_id`, `decision_hash`. Cryptographic lineage is
+Authorization -> exact Decision -> exact Request -> exact AcceptanceArtifact.
+Amended Decision/Authorization artifacts use `artifact_version = "2"`; the
+Decision's `authorization_id` is intentionally excluded from its hash preimage
+(acyclic Model A) and persisted in a dedicated store column (plus a
+tamper-evident `decision_linkage_sha256` envelope) for round-trip
+reconstruction. Authority DB schema is versioned `2`; a pre-EA-3A v1 DB fails
+closed (no silent migration). No issuance API, atomic grant API, or
+request-keyed store extension was added (those belong to EA-3B). The
+persistence-integrity correction is amended into the same EA-3A commit.
+
 This document freezes the trust boundary and issuance contract before any
 callable component can create a real `ExecutionAuthorization`. It is grounded in
 the implemented EA-1 domain model and EA-2 persistence layer and does not

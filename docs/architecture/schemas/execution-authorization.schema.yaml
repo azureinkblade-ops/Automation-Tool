@@ -13,6 +13,10 @@ required:
   - task_id
   - accepted_governance_artifact_id
   - accepted_governance_hash
+  - request_id
+  - request_hash
+  - decision_id
+  - decision_hash
   - authorization_actor
   - authorized_scope
   - authorization_reason
@@ -32,6 +36,18 @@ fields:
     type: string
   accepted_governance_hash:
     type: string
+  request_id:
+    type: string
+    # execution-authorization-request-<16 hex>
+  request_hash:
+    type: string
+    # 64-char lowercase hex SHA-256 of the exact immutable request artifact.
+  decision_id:
+    type: string
+    # execution-authorization-decision-<16 hex>
+  decision_hash:
+    type: string
+    # 64-char lowercase hex SHA-256 of the exact immutable GRANTED decision artifact.
   authorization_actor:
     type: object
     required: [actor_id, actor_type, authority_role]
