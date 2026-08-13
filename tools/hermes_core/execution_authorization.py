@@ -108,17 +108,22 @@ ARTIFACT_VERSION = "1"
 # hash preimage; Authorization gained request_id/request_hash/decision_id/
 # decision_hash). Legacy Request artifacts remain at "1"; amended Decision/
 # Authorization artifacts use "2".
-SUPPORTED_ARTIFACT_VERSIONS = frozenset({"1", "2"})
+SUPPORTED_ARTIFACT_VERSIONS = frozenset({"1", "2", "4"})
 AMENDED_ARTIFACT_VERSION = "2"
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _AUTHORIZATION_ID_RE = re.compile(r"^execution-authorization-[0-9a-f]{16}$")
+_CLAIM_ID_RE = re.compile(r"^execution-authorization-claim-[0-9a-f]{16}$")
+
+# Conservative frozen claim lifetime (EA-4A). Bounded, non-null.
+DEFAULT_MAX_CLAIM_LIFETIME_SECONDS = 300
 _REQUEST_ID_RE = re.compile(r"^execution-authorization-request-[0-9a-f]{16}$")
 _DECISION_ID_RE = re.compile(r"^execution-authorization-decision-[0-9a-f]{16}$")
 
 _ID_PREFIX = "execution-authorization-"
 _REQUEST_ID_PREFIX = "execution-authorization-request-"
 _DECISION_ID_PREFIX = "execution-authorization-decision-"
+_CLAIM_ID_PREFIX = "execution-authorization-claim-"
 
 
 # --------------------------------------------------------------------------- #
@@ -358,6 +363,99 @@ class ExecutionAuthorization:
             "issued_at": self.issued_at,
             "expires_at": self.expires_at,
             "nonce": self.nonce,
+            "artifact_version": self.artifact_version,
+        }
+
+    def canonical_json(self) -> str:
+        return canonical_json(self.to_canonical_dict())
+
+    def verify_hash(self) -> bool:
+        """Pure domain verification: stored hash vs recomputed canonical hash."""
+        return sha256_payload(self.to_canonical_dict()) == self.artifact_hash
+
+
+@dataclass(frozen=True)
+class ExecutionClaimant:
+    """Structured claimant identity. Does NOT itself authorize execution.
+
+    Examples: worker-manager, scheduler, runtime-orchestrator,
+    operator-mediated-runtime. A claimant is the actor that reserved/consumed
+    the Authorization for a future execution attempt; it is recorded explicitly
+    and never silently substituted.
+    """
+
+    claimant_id: str
+    claimant_type: str
+    claimant_context: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "claimant_id": self.claimant_id,
+            "claimant_type": self.claimant_type,
+            "claimant_context": self.claimant_context,
+        }
+
+
+def _claimant_from_dict(d: Mapping[str, Any]) -> ExecutionClaimant:
+    return ExecutionClaimant(
+        claimant_id=d["claimant_id"],
+        claimant_type=d["claimant_type"],
+        claimant_context=d.get("claimant_context"),
+    )
+
+
+@dataclass(frozen=True)
+class ExecutionClaim:
+    """A durable, immutable reservation of an ExecutionAuthorization for a
+    future execution attempt. Created by EA-4A only.
+
+    CLAIMED != EXECUTING: a persisted Claim means a specific claimant reserved
+    the Authorization; it does NOT mean a process, worker, or command started.
+    The Claim cryptographically binds to the exact Authorization, Request,
+    Decision, and task via the linkage fields below.
+
+    One active Claim per Authorization is enforced at persistence (UNIQUE
+    authorization_id). No worker/execution state is created.
+    """
+
+    claim_id: str
+    authorization_id: str
+    authorization_hash: str
+    request_id: str
+    request_hash: str
+    decision_id: str
+    decision_hash: str
+    task_id: str
+    claimant: ExecutionClaimant
+    claimed_at: str  # absolute UTC RFC3339/ISO ending Z
+    claim_expires_at: str  # absolute UTC RFC3339/ISO ending Z; > claimed_at
+    authorization_policy: ExecutionAuthorizationPolicyRef
+    claim_reason: str
+    artifact_version: str
+    artifact_hash: str
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        """Deterministic preimage for hashing.
+
+        Excludes ``artifact_hash`` (set after hashing). Includes the full
+        cryptographic lineage (authorization_id/hash, request_id/hash,
+        decision_id/hash, task_id) and the claim's own time semantics so the
+        Claim is bound to the exact Authorization and cannot be repurposed.
+        """
+        return {
+            "claim_id": self.claim_id,
+            "authorization_id": self.authorization_id,
+            "authorization_hash": self.authorization_hash,
+            "request_id": self.request_id,
+            "request_hash": self.request_hash,
+            "decision_id": self.decision_id,
+            "decision_hash": self.decision_hash,
+            "task_id": self.task_id,
+            "claimant": self.claimant.to_dict(),
+            "claimed_at": self.claimed_at,
+            "claim_expires_at": self.claim_expires_at,
+            "authorization_policy": _policy_to_dict(self.authorization_policy),
+            "claim_reason": self.claim_reason,
             "artifact_version": self.artifact_version,
         }
 
@@ -813,3 +911,99 @@ def reconstruct_decision(payload: Mapping[str, Any]) -> ExecutionAuthorizationDe
     if isinstance(outcome, str):
         d["outcome"] = ExecutionAuthorizationDecisionOutcome(outcome)
     return build_execution_authorization_decision(**d)
+
+
+def build_execution_claim(
+    *,
+    authorization_id: str,
+    authorization_hash: str,
+    request_id: str,
+    request_hash: str,
+    decision_id: str,
+    decision_hash: str,
+    task_id: str,
+    claimant: ExecutionClaimant,
+    claimed_at: str,  # absolute UTC RFC3339/ISO ending Z
+    claim_expires_at: str,  # absolute UTC RFC3339/ISO ending Z; > claimed_at
+    authorization_policy: ExecutionAuthorizationPolicyRef,
+    claim_reason: str,
+    artifact_version: str = AMENDED_ARTIFACT_VERSION,
+) -> ExecutionClaim:
+    """Build a durable, immutable ExecutionClaim bound to its Authorization.
+
+    The Claim cryptographically binds to the exact Authorization (id + hash),
+    Request (id + hash), Decision (id + hash), and task. ``claim_expires_at``
+    must be absolute UTC ending in ``Z`` and strictly after ``claimed_at``.
+
+    ``claimed_at``/``claim_expires_at`` are supplied by the caller (typically
+    the claim service via an injected clock seam); this builder only validates
+    and derives the deterministic ``claim_id`` from the canonical preimage.
+    """
+    _require_nonempty("authorization_id", authorization_id)
+    _require_sha256("authorization_hash", authorization_hash)
+    _require_nonempty("request_id", request_id)
+    _require_sha256("request_hash", request_hash)
+    _require_nonempty("decision_id", decision_id)
+    _require_sha256("decision_hash", decision_hash)
+    _require_nonempty("task_id", task_id)
+    if not isinstance(claimant, ExecutionClaimant):
+        raise ExecutionAuthorizationValidationError(
+            "claimant must be an ExecutionClaimant"
+        )
+    _require_utc_z_timestamp("claimed_at", claimed_at)
+    _require_utc_z_timestamp("claim_expires_at", claim_expires_at)
+    _validate_timestamp_order(claimed_at, claim_expires_at)
+    _validate_policy(authorization_policy)
+    if not claim_reason:
+        raise ExecutionAuthorizationValidationError("claim_reason must be non-empty")
+    _validate_artifact_version(artifact_version)
+
+    preimage = {
+        "authorization_id": authorization_id,
+        "authorization_hash": authorization_hash,
+        "request_id": request_id,
+        "request_hash": request_hash,
+        "decision_id": decision_id,
+        "decision_hash": decision_hash,
+        "task_id": task_id,
+        "claimant": claimant.to_dict(),
+        "claimed_at": claimed_at,
+        "claim_expires_at": claim_expires_at,
+        "authorization_policy": _policy_to_dict(authorization_policy),
+        "claim_reason": claim_reason,
+        "artifact_version": artifact_version,
+    }
+    claim_id = _derive_id(_CLAIM_ID_PREFIX, preimage)
+    full = {**preimage, "claim_id": claim_id}
+    if not _CLAIM_ID_RE.match(claim_id):
+        raise ExecutionAuthorizationValidationError(
+            f"derived claim_id is malformed: {claim_id!r}"
+        )
+    artifact_hash = sha256_payload(full)
+    return ExecutionClaim(
+        claim_id=claim_id,
+        authorization_id=authorization_id,
+        authorization_hash=authorization_hash,
+        request_id=request_id,
+        request_hash=request_hash,
+        decision_id=decision_id,
+        decision_hash=decision_hash,
+        task_id=task_id,
+        claimant=claimant,
+        claimed_at=claimed_at,
+        claim_expires_at=claim_expires_at,
+        authorization_policy=authorization_policy,
+        claim_reason=claim_reason,
+        artifact_version=artifact_version,
+        artifact_hash=artifact_hash,
+    )
+
+
+def reconstruct_claim(payload: Mapping[str, Any]) -> ExecutionClaim:
+    """Rebuild an immutable ExecutionClaim from its canonical dict (EA-2 reload)."""
+    d = dict(payload)
+    d.pop("artifact_hash", None)
+    d.pop("claim_id", None)
+    d["claimant"] = _claimant_from_dict(d["claimant"])
+    d["authorization_policy"] = _policy_from_dict(d["authorization_policy"])
+    return build_execution_claim(**d)

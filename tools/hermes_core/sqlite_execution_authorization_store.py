@@ -34,10 +34,12 @@ from typing import Any, Optional
 
 from .execution_authorization import (
     ExecutionAuthorization,
+    ExecutionClaim,
     ExecutionAuthorizationDecision,
     ExecutionAuthorizationDecisionOutcome,
     ExecutionAuthorizationRequest,
     reconstruct_authorization,
+    reconstruct_claim,
     reconstruct_decision,
     reconstruct_request,
 )
@@ -52,7 +54,7 @@ from .execution_authorization_store import (
 )
 from .hashing import canonical_json, sha256_payload, sha256_text
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 SUPPORTED_SCHEMA_VERSIONS = frozenset({SCHEMA_VERSION})
 
 
@@ -84,10 +86,41 @@ def _hash_request_linkage(artifact_id: str, request_id: Optional[str]) -> str:
     return sha256_text(canonical_json(payload))
 
 
+def _hash_claim_linkage(
+    artifact_id: str,
+    authorization_id: str,
+    authorization_hash: str,
+    request_id: str,
+    request_hash: str,
+    decision_id: str,
+    decision_hash: str,
+) -> str:
+    """Hash-bound tamper-evident envelope for the claim's cryptographic
+    lineage to its Authorization/Request/Decision.
+
+    The canonical claim payload excludes artifact_hash (set post-hash), but the
+    physical binding columns (authorization_id/hash, request_id/hash,
+    decision_id/hash) live OUTSIDE the canonical hash preimage. They are bound
+    here so tampering any of them after persistence breaks the envelope,
+    detected on load and during verify_integrity.
+    """
+    payload = {
+        "artifact_id": artifact_id,
+        "authorization_id": authorization_id,
+        "authorization_hash": authorization_hash,
+        "request_id": request_id,
+        "request_hash": request_hash,
+        "decision_id": decision_id,
+        "decision_hash": decision_hash,
+    }
+    return sha256_text(canonical_json(payload))
+
+
 LEDGER_EVENTS = (
     "REQUEST_RECORDED",
     "DECISION_RECORDED",
     "AUTHORIZATION_RECORDED",
+    "CLAIM_RECORDED",
 )
 
 
@@ -201,6 +234,28 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
         )
         cur.execute(
             """
+            CREATE TABLE IF NOT EXISTS execution_authorization_claims (
+                artifact_id TEXT PRIMARY KEY,
+                authorization_id TEXT NOT NULL UNIQUE,
+                authorization_hash TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                request_hash TEXT NOT NULL,
+                decision_id TEXT NOT NULL,
+                decision_hash TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                artifact_type TEXT NOT NULL,
+                claimed_at TEXT NOT NULL,
+                claim_expires_at TEXT NOT NULL,
+                claimant_json TEXT NOT NULL,
+                artifact_version TEXT NOT NULL,
+                artifact_hash TEXT NOT NULL,
+                claim_linkage_sha256 TEXT NOT NULL,
+                canonical_payload TEXT NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS authority_ledger (
                 sequence_no INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_id TEXT NOT NULL,
@@ -226,6 +281,8 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
             return "execution_authorization_decisions"
         if isinstance(artifact, ExecutionAuthorization):
             return "execution_authorizations"
+        if isinstance(artifact, ExecutionClaim):
+            return "execution_authorization_claims"
         raise TypeError(f"unsupported artifact type: {type(artifact)!r}")
 
     @staticmethod
@@ -236,6 +293,8 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
             return artifact.request_id
         if isinstance(artifact, ExecutionAuthorizationDecision):
             return artifact.decision_id
+        if isinstance(artifact, ExecutionClaim):
+            return artifact.claim_id
         raise TypeError(f"unsupported artifact type: {type(artifact)!r}")
 
     def _request_id_for(self, artifact: Any) -> Optional[str]:
@@ -350,6 +409,14 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
             extra_cols = ", request_id, request_linkage_sha256"
         if table == "execution_authorization_decisions":
             extra_cols += ", authorization_id, decision_linkage_sha256"
+        if table == "execution_authorization_claims":
+            # Claims carry physical binding columns (outside the canonical
+            # payload hash) bound by a tamper-evident claim_linkage_sha256
+            # envelope; read-path validation must fail closed on tampering.
+            extra_cols = (
+                ", authorization_id, authorization_hash, request_id, "
+                "request_hash, decision_id, decision_hash, claim_linkage_sha256"
+            )
         row = self._conn.execute(
             f"SELECT artifact_id, task_id, artifact_type, artifact_hash, "
             f"canonical_payload{extra_cols} FROM {table} WHERE artifact_id = ?",
@@ -388,6 +455,23 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
                     )
             if auth_id is not None:
                 payload["authorization_id"] = auth_id
+        if table == "execution_authorization_claims":
+            # Verify the tamper-evident claim linkage (physical authorization/
+            # request/decision binding columns must match the envelope).
+            expected_claim = _hash_claim_linkage(
+                artifact_id,
+                row["authorization_id"],
+                row["authorization_hash"],
+                row["request_id"],
+                row["request_hash"],
+                row["decision_id"],
+                row["decision_hash"],
+            )
+            if expected_claim != row["claim_linkage_sha256"]:
+                raise ExecutionAuthorizationIntegrityError(
+                    f"claim {artifact_id} claim linkage tamper detected on load "
+                    f"(envelope mismatch)"
+                )
         return payload
 
     def _append_ledger(
@@ -688,6 +772,216 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
             "execution_authorizations", reconstruct_authorization, request_id
         )
 
+    # -- claims (EA-4A) ----------------------------------------------------
+    def get_claim(
+        self, claim_id: str
+    ) -> Optional[ExecutionClaim]:
+        payload = self._load_artifact("execution_authorization_claims", claim_id)
+        return reconstruct_claim(payload) if payload else None
+
+    def get_claim_for_authorization(
+        self, authorization_id: str
+    ) -> Optional[ExecutionClaim]:
+        row = self._conn.execute(
+            "SELECT artifact_id FROM execution_authorization_claims "
+            "WHERE authorization_id = ?",
+            (authorization_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        payload = self._load_artifact(
+            "execution_authorization_claims", row["artifact_id"]
+        )
+        return reconstruct_claim(payload) if payload else None
+
+    def claim_authorization_atomically(
+        self,
+        authorization_id: str,
+        claim: ExecutionClaim,
+        clock: Optional[Callable[[], str]] = None,
+    ) -> None:
+        """Atomically persist a Claim for a valid, unexpired Authorization.
+
+        Storage-level cross-artifact consistency + one-claim-per-authorization
+        enforcement. Does NOT decide whether the claim is justified; the claim
+        service validates expiry/linkage before calling. One SQLite transaction:
+        verify Authorization, reject an existing Claim (UNIQUE authorization_id),
+        persist Claim row + CLAIM_RECORDED ledger event. Any failure rolls back
+        with zero residue.
+        """
+        if claim.authorization_id != authorization_id:
+            raise ExecutionAuthorizationStoreError(
+                f"claim authorization_id {claim.authorization_id} does not match "
+                f"requested authorization_id {authorization_id}"
+            )
+        if not claim.verify_hash():
+            raise ExecutionAuthorizationIntegrityError(
+                f"claim {claim.claim_id} failed hash verification; refusing to persist"
+            )
+
+        from datetime import datetime
+
+        def _work() -> None:
+            # 1) Integrity-checked Authorization read (do not trust caller).
+            auth = self.get_authorization(authorization_id)
+            if auth is None:
+                raise ExecutionAuthorizationStoreError(
+                    f"claim requires a persisted authorization "
+                    f"{authorization_id}; no such authorization"
+                )
+            if not auth.verify_hash():
+                raise ExecutionAuthorizationIntegrityError(
+                    f"authorization {authorization_id} failed hash verification"
+                )
+            # 2) One active claim per Authorization (fail closed on conflict).
+            existing = self._conn.execute(
+                "SELECT artifact_id FROM execution_authorization_claims "
+                "WHERE authorization_id = ?",
+                (authorization_id,),
+            ).fetchone()
+            if existing is not None:
+                raise ExecutionAuthorizationConflictError(
+                    f"authorization {authorization_id} already has a claim "
+                    f"({existing['artifact_id']}); at most one claim per authorization"
+                )
+            # 3) Authorization linkage must match the Claim exactly.
+            if auth.authorization_id != claim.authorization_id:
+                raise ExecutionAuthorizationIntegrityError("authorization_id mismatch")
+            if auth.artifact_hash != claim.authorization_hash:
+                raise ExecutionAuthorizationIntegrityError("authorization_hash mismatch")
+            if auth.request_id != claim.request_id:
+                raise ExecutionAuthorizationIntegrityError("request_id mismatch")
+            if auth.request_hash != claim.request_hash:
+                raise ExecutionAuthorizationIntegrityError("request_hash mismatch")
+            if auth.decision_id != claim.decision_id:
+                raise ExecutionAuthorizationIntegrityError("decision_id mismatch")
+            if auth.decision_hash != claim.decision_hash:
+                raise ExecutionAuthorizationIntegrityError("decision_hash mismatch")
+            if auth.task_id != claim.task_id:
+                raise ExecutionAuthorizationIntegrityError("task mismatch")
+            # 4) Claim-time expiry: claimed_at must be strictly before the
+            #    Authorization expiry. (Boundary equality is blocked by the
+            #    service; the store re-checks defensively.)
+            if auth.expires_at is None:
+                raise ExecutionAuthorizationIntegrityError(
+                    "authorization expires_at is null; claim blocked"
+                )
+            claim_time = (clock or self._now_utc)()
+            claimed_at_dt = datetime.fromisoformat(claim.claimed_at.replace("Z", "+00:00"))
+            auth_expires_dt = datetime.fromisoformat(auth.expires_at.replace("Z", "+00:00"))
+            if claimed_at_dt >= auth_expires_dt:
+                raise ExecutionAuthorizationIntegrityError(
+                    "authorization expired at claim time; claim blocked"
+                )
+            # 5) Persist Claim + ledger in the same transaction.
+            claimant_json = canonical_json(claim.claimant.to_dict())
+            linkage = _hash_claim_linkage(
+                claim.claim_id,
+                claim.authorization_id,
+                claim.authorization_hash,
+                claim.request_id,
+                claim.request_hash,
+                claim.decision_id,
+                claim.decision_hash,
+            )
+            canonical = canonical_json(claim.to_canonical_dict())
+            payload_sha256 = sha256_text(canonical)
+            self._conn.execute(
+                "INSERT INTO execution_authorization_claims "
+                "(artifact_id, authorization_id, authorization_hash, request_id, "
+                "request_hash, decision_id, decision_hash, task_id, artifact_type, "
+                "claimed_at, claim_expires_at, claimant_json, artifact_version, "
+                "artifact_hash, claim_linkage_sha256, canonical_payload) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    claim.claim_id,
+                    claim.authorization_id,
+                    claim.authorization_hash,
+                    claim.request_id,
+                    claim.request_hash,
+                    claim.decision_id,
+                    claim.decision_hash,
+                    claim.task_id,
+                    "ExecutionClaim",
+                    claim.claimed_at,
+                    claim.claim_expires_at,
+                    claimant_json,
+                    claim.artifact_version,
+                    claim.artifact_hash,
+                    linkage,
+                    canonical,
+                ),
+            )
+            # Test-only seam (EA-4A rollback proof): if set, raise after the
+            # claim row is inserted but before the CLAIM_RECORDED ledger event
+            # and commit, so the rollback leaves zero claim/ledger residue.
+            if getattr(self, "_fail_after_claim_row", False):
+                raise RuntimeError("injected claim-post-insert failure")
+            self._append_ledger(
+                "CLAIM_RECORDED",
+                "ExecutionClaim",
+                claim.claim_id,
+                claim.artifact_hash,
+                payload_sha256,
+                claim_time,
+            )
+
+        self._run_atomic(_work)
+
+    def try_claim_authorization_atomically(
+        self,
+        authorization_id: str,
+        claim: ExecutionClaim,
+        clock: Optional[Callable[[], str]] = None,
+    ) -> tuple[bool, Optional[ExecutionClaim]]:
+        """Concurrency-safe claim persistence.
+
+        Runs ``claim_authorization_atomically`` but converts a lost
+        ``UNIQUE(authorization_id)`` race (another connection committed a claim
+        first) into the correct domain outcome instead of a raw
+        ``sqlite3.IntegrityError``:
+
+        - if the persisted claim matches this claim's identity/linkage -> the
+          existing Claim is returned (idempotent, first-writer-wins), ``(True,
+          existing)``;
+        - if it is a genuinely different claim -> raises
+          ``ExecutionAuthorizationConflictError`` (CONFLICT, no transfer).
+
+        Returns ``(False, claim)`` on the happy first-write path. The caller
+        (claim service) decides whether a same-claimant loser is idempotent or
+        a different-claimant loser is a conflict, using the returned existing
+        claim's claimant.
+        """
+        try:
+            self.claim_authorization_atomically(
+                authorization_id, claim, clock=clock
+            )
+        except sqlite3.IntegrityError as exc:
+            if "UNIQUE" not in str(exc):
+                raise
+            # Lost the race: another connection already claimed this auth.
+            existing = self.get_claim_for_authorization(authorization_id)
+            if existing is None:
+                # Constraint fired but row vanished; re-raise for fail-closed.
+                raise ExecutionAuthorizationConflictError(
+                    f"authorization {authorization_id} could not be claimed "
+                    f"(unique constraint, no surviving claim)"
+                ) from exc
+            # Same claim identity/linkage => idempotent winner result.
+            if (
+                existing.claim_id == claim.claim_id
+                and existing.authorization_id == claim.authorization_id
+                and existing.artifact_hash == claim.artifact_hash
+            ):
+                return True, existing
+            # Different claim => conflict, never silently transfer ownership.
+            raise ExecutionAuthorizationConflictError(
+                f"authorization {authorization_id} already claimed by "
+                f"{existing.claimant.claimant_id}; concurrent conflicting "
+                f"claim rejected"
+            ) from exc
+        return False, claim
+
     # -- ledger / integrity -------------------------------------------------
     def get_authority_events(self) -> list[ExecutionAuthorityLedgerEntry]:
         rows = self._conn.execute(
@@ -788,6 +1082,65 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
                         f"({r['request_id']}) != canonical request_id "
                         f"({canonical_request_id})"
                     )
+        # 1e) claim artifacts: hash re-verification + linkage tamper detection
+        #     + one-claim-per-authorization + orphan detection.
+        for r in self._conn.execute(
+            "SELECT artifact_id, authorization_id, authorization_hash, request_id, "
+            "request_hash, decision_id, decision_hash, artifact_hash, "
+            "claim_linkage_sha256, canonical_payload FROM "
+            "execution_authorization_claims"
+        ):
+            try:
+                payload = json.loads(r["canonical_payload"])
+            except Exception as exc:  # noqa: BLE001
+                failures.append(
+                    f"execution_authorization_claims {r['artifact_id']} "
+                    f"payload unparseable: {exc}"
+                )
+                continue
+            if sha256_payload(payload) != r["artifact_hash"]:
+                failures.append(
+                    f"execution_authorization_claims {r['artifact_id']} "
+                    f"artifact hash mismatch"
+                )
+            expected_linkage = _hash_claim_linkage(
+                r["artifact_id"],
+                r["authorization_id"],
+                r["authorization_hash"],
+                r["request_id"],
+                r["request_hash"],
+                r["decision_id"],
+                r["decision_hash"],
+            )
+            if expected_linkage != r["claim_linkage_sha256"]:
+                failures.append(
+                    f"execution_authorization_claims {r['artifact_id']} "
+                    f"claim linkage tamper detected"
+                )
+        # Multiple claims for one Authorization -> fail closed.
+        for r in self._conn.execute(
+            "SELECT authorization_id, COUNT(*) AS n FROM "
+            "execution_authorization_claims GROUP BY authorization_id"
+        ):
+            if int(r["n"]) > 1:
+                failures.append(
+                    f"authorization {r['authorization_id']} has "
+                    f"{r['n']} claims (at most one allowed)"
+                )
+        # Orphan claim: claim references a missing Authorization.
+        for r in self._conn.execute(
+            "SELECT artifact_id, authorization_id FROM "
+            "execution_authorization_claims"
+        ):
+            auth = self._conn.execute(
+                "SELECT 1 FROM execution_authorizations WHERE artifact_id = ?",
+                (r["authorization_id"],),
+            ).fetchone()
+            if auth is None:
+                failures.append(
+                    f"claim {r['artifact_id']} references missing authorization "
+                    f"{r['authorization_id']} (orphan claim)"
+                )
         # 2) ledger chain verification.
         rows = self._conn.execute(
             "SELECT sequence_no, event_type, artifact_type, artifact_id, "

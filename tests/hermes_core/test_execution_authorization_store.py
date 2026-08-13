@@ -493,8 +493,10 @@ class TestSchemaVersion(unittest.TestCase):
         # EA-3B added physical request_id columns (UNIQUE) plus
         # request_linkage_sha256 envelopes to the decisions and authorizations
         # tables; the schema version MUST advance with that physical change.
+        # EA-4A further adds the execution_authorization_claims table and the
+        # CLAIM_RECORDED ledger event, advancing the schema to v4.
         store = SQLiteExecutionAuthorizationStore(self.db)
-        self.assertEqual(SCHEMA_VERSION, 3)
+        self.assertEqual(SCHEMA_VERSION, 4)
         self.assertTrue(store.verify_integrity().ok)
         store.close()
 

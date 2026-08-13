@@ -807,3 +807,47 @@ integration. `AUTHORIZED_FOR_EXECUTION` remains a derived condition.
 **Preserved invariant:** `ACCEPTED != EXECUTION AUTHORIZATION`. EA-3I.2 ends at
 durable, replay-safe, policy-bound execution authorization evidence. EA-4
 (claim/consumption) remains separately authorized.
+
+## 29.5 EA-4A claim domain + atomic claim persistence (implementation, COMPLETE)
+
+**EA-4A is COMPLETE (first durable ExecutionClaim).** Committed as a single
+narrow local commit per the EA-4A milestone authorization.
+
+This milestone is the first permitted to create a durable `ExecutionClaim`:
+
+- `ExecutionClaim` (immutable) cryptographically binds to the exact
+  `ExecutionAuthorization` (id + hash), `Request` (id + hash), `Decision` (id +
+  hash), and `task_id`. `Claimant` is a structured identity
+  (`claimant_id`/`claimant_type`/`claimant_context`); it records who reserved
+  the Authorization but does not authorize execution.
+- `claimed_at` and `claim_expires_at` are absolute UTC RFC3339/ISO ending `Z`;
+  `claim_expires_at > claimed_at`, non-null, bounded (`<= 300s` frozen max).
+- Claim-time prerequisites: Authorization must exist, pass integrity, and be
+  unexpired (`claimed_at < authorization.expires_at`; equal/later -> BLOCKED).
+- At most one active Claim per Authorization (`UNIQUE(authorization_id)` plus
+  service-layer replay/conflict handling: exact replay returns the existing
+  Claim; different claimant -> CONFLICT, no ownership transfer).
+- Atomic persistence via `claim_authorization_atomically(...)`: one
+  transaction (BEGIN IMMEDIATE ... COMMIT) over the Authorization integrity
+  check, existing-claim check, expiry/linkage checks, Claim row, and the
+  `CLAIM_RECORDED` ledger event. Injected post-row failure leaves zero
+  Claim/ledger residue.
+- Claim reads fail closed on physical linkage tampering (`_load_artifact`
+  validates the `claim_linkage_sha256` envelope).
+- Concurrency is PROVEN, not merely asserted: a lost-racer `UNIQUE` violation
+  during concurrent claim is converted by `try_claim_authorization_atomically`
+  into the correct domain outcome (idempotent first-writer-wins for a matching
+  claim, CONFLICT for a different claimant) rather than a raw
+  `sqlite3.IntegrityError`. Two-connection/two-thread race tests confirm at
+  most one durable Claim and exactly one `CLAIM_RECORDED` event under
+  contention.
+- Authority DB schema advanced to v4; v3/v2/v1/unsupported versions FAIL
+  CLOSED; no silent migration.
+- Forbidden in EA-4A: `ExecutionAttempt`, `WorkerRouter`, worker launch/
+  enqueue/dispatch, `subprocess`, `EXECUTING`, `app.py` integration, automatic
+  claim after issuance.
+
+**Preserved invariants:** `ACCEPTED != EXECUTION AUTHORIZATION` and
+`AUTHORIZED != CLAIMED != EXECUTING`. EA-4A ends at durable, replay-safe,
+tamper-evident `ExecutionClaim` persistence. EA-4B (claim consumption /
+execution attempt) remains separately authorized.

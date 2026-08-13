@@ -899,3 +899,67 @@ clock/expiry/nonce, replay idempotency, actor-substitution-after-terminal,
 atomic rollback through issuance, static execution-boundary scan) plus 5
 mutation teeth (acceptance bypass, scope widening, replay minting, expiry
 bypass, actor-role bypass) — all PASS, byte-exact restoration.
+
+## 82. EA-4A status (COMPLETE)
+
+**EA-4A COMPLETE (ExecutionClaim domain + atomic claim persistence).** This is
+the first milestone permitted to create a durable `ExecutionClaim`. Committed as
+a single narrow local commit per the EA-4A milestone authorization.
+
+EA-4A creates REAL execution-claim evidence under the EA-3D / EA-3A / EA-3B /
+EA-3I.1 / EA-3I.2 contracts:
+
+- `ExecutionClaim` is a first-class immutable artifact that cryptographically
+  binds to its exact `ExecutionAuthorization` (id + hash), `Request` (id +
+  hash), `Decision` (id + hash), and `task_id`. `Claimant` is a structured
+  identity (`claimant_id`, `claimant_type`, `claimant_context`) — it records
+  who reserved the Authorization but does NOT itself authorize execution.
+- `claimed_at` and `claim_expires_at` are absolute UTC RFC3339/ISO ending `Z`;
+  `claim_expires_at > claimed_at`, non-null, bounded by a frozen maximum
+  (`DEFAULT_MAX_CLAIM_LIFETIME_SECONDS = 300`).
+- Claim-time prerequisites are enforced: the Authorization must exist, pass
+  integrity verification, and be unexpired at claim time (`claimed_at <
+  authorization.expires_at`; equal or later -> BLOCKED, no grace).
+- One active Claim per Authorization is enforced at the persistence layer
+  (`UNIQUE(authorization_id)`) and at the service layer (exact replay returns
+  the existing Claim; a different claimant raises CONFLICT, never silently
+  transfers ownership).
+- Atomic persistence: `claim_authorization_atomically(...)` runs one
+  transaction (BEGIN IMMEDIATE ... COMMIT) covering the Authorization
+  integrity check, existing-claim check, expiry/linkage checks, Claim row, and
+  the `CLAIM_RECORDED` ledger event. Injected failure after the Claim row but
+  before the ledger/commit leaves zero Claim/ledger residue and the
+  Authorization intact.
+- Claim reads fail closed on tampering: `_load_artifact` validates both the
+  canonical artifact hash and the tamper-evident `claim_linkage_sha256`
+  envelope, so a physical `authorization_id` / `authorization_hash` /
+  `request_id` / `request_hash` / `decision_id` / `decision_hash` mismatch
+  raises `ExecutionAuthorizationIntegrityError` on both `get_claim(...)` and
+  `verify_integrity()`.
+- Schema advanced to v4 (claims table + `CLAIM_RECORDED` event); v3/v2/v1 and
+  unsupported future versions FAIL CLOSED with no silent migration.
+- No `ExecutionAttempt`, no `WorkerRouter`, no worker launch/enqueue/dispatch,
+  no `subprocess`, no `EXECUTING` transition, no `app.py` integration. Issuance
+  does NOT automatically claim; the two operations remain separate and explicit.
+
+**Preserved invariants:** `ACCEPTED != EXECUTION AUTHORIZATION` and
+`AUTHORIZED != CLAIMED != EXECUTING`. EA-4A ends at durable, replay-safe,
+tamper-evident `ExecutionClaim` persistence and nowhere beyond. EA-4B (claim
+consumption / execution attempt) remains separately authorized.
+
+Tests: 27 focused EA-4A tests (happy claim, claim-time semantics, bounded
+lifetime, missing/expired/boundary-expiry prerequisites, exact replay
+idempotency, conflicting claimant CONFLICT, hash-linkage tamper, orphan
+detection, multiple-claim detection, store-level linkage rejection, atomic
+rollback, six read-path linkage-tamper tests, negative capability scan, five
+schema-compatibility tests, and two real two-connection/two-thread concurrency
+race tests — same-claimant idempotent first-writer-wins, different-claimant
+CONFLICT, exactly one CLAIM_RECORDED) plus 5 mutation teeth (expiry bypass,
+one-claim-per-authorization bypass, authorization-hash/linkage bypass, atomic
+rollback split, claimant replacement) — all PASS, byte-exact restoration.
+
+Concurrency is PROVEN, not merely asserted: a lost-racer `UNIQUE` violation
+during concurrent claim is converted by `try_claim_authorization_atomically`
+into the correct domain outcome (idempotent for a matching claim, CONFLICT for
+a different one) instead of a raw `sqlite3.IntegrityError`. Under contention,
+at most one durable Claim and exactly one `CLAIM_RECORDED` event ever exist.
