@@ -235,7 +235,12 @@ def make_tiktok_pack(
     reused = _get(collab, "reusable_pack_result")(folder, required_files=["caption.txt", "instagram-reel-caption.txt", "youtube-shorts-description.txt"])
     if not force_new_images and reused and reused.get("chapter") == group["chapter"] and reused.get("abbr") == abbr:
         novel = NOVEL_NAMES.get(abbr, abbr)
-        reused["caption"] = copy.public_copy_without_links(_get(collab, "tiktok_caption")(novel, group["chapter"]), "tiktok")
+        # Reused packs must NOT silently revert to generic copy: prefer the
+        # validated agent caption, falling back to the template only when it
+        # is unavailable (fail-soft). Same logic as the fresh branch below.
+        _template_caption = _get(collab, "tiktok_caption")(novel, group["chapter"])
+        _agent_caption = str((agent_copy or {}).get("caption") or "").strip()
+        reused["caption"] = copy.public_copy_without_links(_agent_caption or _template_caption, "tiktok")
         # Reused packs must NOT silently revert to generic copy: apply the same
         # agent-aware assembly the fresh branch uses.
         bundle = _shortform_copy_bundle(collab, abbr, novel, group["chapter"], agent_copy)
@@ -295,7 +300,11 @@ def make_tiktok_pack(
     sound_target = folder / sound_source.name
     shutil.copy2(sound_source, sound_target)
     novel = NOVEL_NAMES.get(abbr, abbr)
-    caption = copy.public_copy_without_links(_get(collab, "tiktok_caption")(novel, group["chapter"]), "tiktok")
+    # Prefer the validated agent caption; fall back to the deterministic
+    # template only when differentiated copy is unavailable (fail-soft).
+    _template_caption = _get(collab, "tiktok_caption")(novel, group["chapter"])
+    _agent_caption = str((agent_copy or {}).get("caption") or "").strip()
+    caption = copy.public_copy_without_links(_agent_caption or _template_caption, "tiktok")
     bundle = _shortform_copy_bundle(collab, abbr, novel, group["chapter"], agent_copy)
     reel_caption = bundle["instagram_reel_caption"]
     shorts_title = bundle["youtube_shorts_title"]

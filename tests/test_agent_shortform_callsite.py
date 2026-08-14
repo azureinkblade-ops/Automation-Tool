@@ -250,6 +250,10 @@ try:
     RECORDED.clear()
     pack = app_mod.make_or_generate_tiktok_pack(ABBR, CHAPTER, chapter_text=CHAPTER_BODY)
     check("A reel/short pack has agent caption", AGENT_CAPTION in pack.get("instagram_reel_caption", ""), True)
+    # FRESH-1: the normal TikTok caption must now consume the differentiated
+    # agent copy (not just the Reel/Short bundle).
+    check("A fresh tiktok pack uses agent caption", AGENT_CAPTION in pack.get("caption", ""), True)
+    check("A fresh youtube short desc uses agent copy", AGENT_CAPTION in pack.get("youtube_shorts_description", ""), True)
     check("A reel/short pack _agent_run_id in metadata",
           json.loads((PACK_FOLDER / "metadata.json").read_text(encoding="utf-8")).get("_agent_run_id"), RUN_ID)
 
@@ -265,6 +269,15 @@ try:
           sorted(["instagram_reel", "tiktok_long", "youtube_short"]))
     # Single Hermes invocation because of the memo (Reel/Short + deep same chapter).
     check("A memoized -> one Hermes call", len(_CALLS), 1)
+
+    # FRESH-2: a REUSED pack must NOT revert TikTok to generic copy. The A build
+    # already wrote a pack to disk; a second build reuses it and must reapply the
+    # differentiated agent caption just like the fresh branch (the reused branch
+    # rebuilds caption fields separately, which is the original defect).
+    app_mod._AGENT_COPY_MEMO.clear()
+    reused_pack = app_mod.make_or_generate_tiktok_pack(ABBR, CHAPTER, chapter_text=CHAPTER_BODY)
+    check("FRESH-2 reused tiktok uses agent caption", AGENT_CAPTION in reused_pack.get("caption", ""), True)
+    check("FRESH-2 reused instagram reel uses agent copy", AGENT_CAPTION in reused_pack.get("instagram_reel_caption", ""), True)
 
     # C. A memo hit does NOT overwrite provenance: a second full build within TTL
     # reuse the memo and must not re-record (de-dup via _AGENT_RECORDED_PLATFORMS).
@@ -312,6 +325,24 @@ try:
     deep_off = app_mod.make_deep_tiktok_pack(ABBR, CHAPTER)
     check("E disabled deep -> no agent caption", AGENT_CAPTION in deep_off.get("caption", ""), False)
     check("E disabled deep -> no provenance", len(RECORDED), 0)
+    # FRESH-3: explicit agent_copy=None (e.g. resolver failure) must still build a
+    # deterministic TikTok caption and must NOT raise. Exercise the promo_builder
+    # path directly with agent_copy=None to prove the fallback is fail-soft.
+    _fresh_none = pb.make_tiktok_pack(
+        ABBR, CHAPTER, chapter_text=CHAPTER_BODY,
+        agent_copy=None, agent_meta={},
+    )
+    _expected_tiktok_fallback = pb.copy.public_copy_without_links(
+        app_mod.tiktok_caption(NOVEL, CHAPTER),
+        "tiktok",
+    )
+    check(
+        "FRESH-3 agent_copy=None uses deterministic tiktok caption",
+        _fresh_none.get("caption"),
+        _expected_tiktok_fallback,
+    )
+    check("FRESH-3 agent_copy=None no agent caption leaked",
+          AGENT_CAPTION in _fresh_none.get("caption", ""), False)
     _restore_deep_stubs(deep_saved3)
 finally:
     apw.generate_post_result = _ORIG_GEN
@@ -320,6 +351,10 @@ finally:
     app_mod._AGENT_COPY_MEMO.clear()
     app_mod._AGENT_RECORDED_PLATFORMS.clear()
     shutil.rmtree(TMP, ignore_errors=True)
+
+
+def test_agent_shortform_callsite_checks():
+    assert not FAILS, "\n\n".join(FAILS)
 
 
 if FAILS:
