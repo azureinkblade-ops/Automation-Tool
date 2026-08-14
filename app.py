@@ -22686,7 +22686,35 @@ async function tryConfigureSchedule(page, draft) {{
   }}
   const dateInput = page.locator('input[type="date"]').first();
   if (await dateInput.count().catch(() => 0)) {{
-    await dateInput.fill(draft.publish_date).then(() => actions.push(`set date ${{draft.publish_date}}`)).catch(() => null);
+    const desiredDate = String(draft.publish_date);
+    const currentDate = await dateInput.inputValue().catch(() => '');
+    if (currentDate !== desiredDate) {{
+      const desiredParts = desiredDate.split('-');
+      const currentParts = currentDate.split('-');
+      const setDateSegment = async (leftPresses, value) => {{
+        // Chromium date inputs are segmented month/day/year controls. Patreon can
+        // visually accept fill() while retaining the old React schedule state, so
+        // send native keystrokes to each changed segment before blurring it.
+        await dateInput.click({{ force: true }});
+        for (let index = 0; index < leftPresses; index += 1) {{
+          await page.keyboard.press('ArrowLeft');
+        }}
+        await page.keyboard.type(String(value));
+      }};
+      if (currentParts.length === 3) {{
+        if (currentParts[0] !== desiredParts[0]) await setDateSegment(0, desiredParts[0]);
+        if (currentParts[1] !== desiredParts[1]) await setDateSegment(2, desiredParts[1]);
+        if (currentParts[2] !== desiredParts[2]) await setDateSegment(1, desiredParts[2]);
+      }} else {{
+        await dateInput.fill(desiredDate).catch(() => null);
+        await setDateSegment(1, desiredParts[2]);
+      }}
+      await page.keyboard.press('Tab').catch(() => null);
+      await page.waitForTimeout(250);
+    }}
+    const configuredDate = await dateInput.inputValue().catch(() => '');
+    if (configuredDate === desiredDate) actions.push(`set date ${{desiredDate}}`);
+    else actions.push(`failed to set date ${{desiredDate}} (found ${{configuredDate || 'blank'}})`);
   }}
   const timeInput = page.locator('input[type="time"]').first();
   if (await timeInput.count().catch(() => 0)) {{

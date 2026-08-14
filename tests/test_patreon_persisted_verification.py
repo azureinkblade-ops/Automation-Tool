@@ -33,6 +33,9 @@ def test_generated_patreon_helper_requires_persisted_content() -> None:
     assert "checks.tiers" in source
     assert "checks.date" in source
     assert "checks.time" in source
+    assert "Chromium date inputs are segmented" in source
+    assert "await page.keyboard.press('ArrowLeft')" in source
+    assert "failed to set date" in source
     assert "persistedVerification" in source
     assert "verified: Boolean(persistedVerification && persistedVerification.ok)" in source
     assert "page.locator('[role=\"alert\"], [role=\"status\"]')" in source
