@@ -8,12 +8,12 @@ capability_created: "ExecutionClaim (first durable execution claim)"
 forbidden_scope: "ExecutionAttempt, authorization execution, WorkerRouter, worker launch, enqueue, dispatch, subprocess, EXECUTING, app.py integration, automatic claim after issuance"
 schema_version: "4"
 invariant_preserved: "ACCEPTED != EXECUTION AUTHORIZATION ; AUTHORIZED != CLAIMED != EXECUTING"
-tests_ea4a_focused: "27/27 PASS"
+tests_ea4a_focused: "29/29 PASS"
 tests_ea3i2_regression: "21/21 PASS"
 tests_ea3i1_regression: "19/19 PASS"
 tests_ea3a_regression: "55/55 PASS"
 tests_ea3b_regression: "40/40 PASS"
-full_hermes_core: "446/446 PASS (in-process loader; test_phase6_end_to_end separate 17/17)"
+full_hermes_core: "448/448 PASS (in-process loader; test_phase6_end_to_end separate 17/17)"
 mutation_teeth: "5/5 PASS (byte-exact restore)"
 claim_read_tamper: "PASS (get_claim fails closed on claim_linkage_sha256 tamper; verify_integrity false)"
 concurrency_proof: "PASS (two-connection/thread race: same-claimant idempotent first-writer-wins, different-claimant CONFLICT; exactly one CLAIM_RECORDED; lost-racer UNIQUE violation converted to domain outcome, no raw sqlite3 error)"
@@ -66,8 +66,8 @@ atomic persistence with CLAIM_RECORDED, read-path tamper detection). Authority
 DB schema advanced to v4; old/unsupported versions fail closed; no silent
 migration.
 
-27 focused EA-4A tests + 5 mutation teeth all PASS with byte-exact source
-restoration. Full comparable Hermes core: 446/446 PASS (in-process loader;
+29 focused EA-4A tests + 5 mutation teeth all PASS with byte-exact source
+restoration. Full comparable Hermes core: 448/448 PASS (in-process loader;
 test_phase6_end_to_end runs separately, 17/17). Concurrency is proven by two
 real two-connection/two-thread claim-race tests (same-claimant idempotent
 first-writer-wins, different-claimant CONFLICT, exactly one CLAIM_RECORDED,

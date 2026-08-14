@@ -936,45 +936,61 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
     ) -> tuple[bool, Optional[ExecutionClaim]]:
         """Concurrency-safe claim persistence.
 
-        Runs ``claim_authorization_atomically`` but converts a lost
-        ``UNIQUE(authorization_id)`` race (another connection committed a claim
-        first) into the correct domain outcome instead of a raw
-        ``sqlite3.IntegrityError``:
+        Converts any concurrent-claim outcome into the correct domain result
+        instead of a raw exception:
 
-        - if the persisted claim matches this claim's identity/linkage -> the
-          existing Claim is returned (idempotent, first-writer-wins), ``(True,
-          existing)``;
-        - if it is a genuinely different claim -> raises
-          ``ExecutionAuthorizationConflictError`` (CONFLICT, no transfer).
-
-        Returns ``(False, claim)`` on the happy first-write path. The caller
-        (claim service) decides whether a same-claimant loser is idempotent or
-        a different-claimant loser is a conflict, using the returned existing
-        claim's claimant.
+        - first successful write -> ``(False, claim)``;
+        - lost ``UNIQUE(authorization_id)`` INSERT race -> re-reads the
+          persisted claim and, if it matches this claim's identity/linkage,
+          returns ``(True, existing)`` (idempotent, first-writer-wins);
+        - in-transaction conflict (the in-transaction ``SELECT`` already sees
+          another connection's committed claim) -> re-reads and routes the same
+          way: matching identity/linkage -> ``(True, existing)``; different ->
+          raises ``ExecutionAuthorizationConflictError`` (CONFLICT, no transfer).
         """
         try:
             self.claim_authorization_atomically(
                 authorization_id, claim, clock=clock
             )
-        except sqlite3.IntegrityError as exc:
-            if "UNIQUE" not in str(exc):
-                raise
-            # Lost the race: another connection already claimed this auth.
+        except ExecutionAuthorizationConflictError as exc:
+            # In-transaction conflict: another connection already committed a
+            # claim for this authorization before this transaction's SELECT
+            # finished. Re-read the winner outside the failing transaction and
+            # route via the same post-conflict logic.
             existing = self.get_claim_for_authorization(authorization_id)
             if existing is None:
-                # Constraint fired but row vanished; re-raise for fail-closed.
                 raise ExecutionAuthorizationConflictError(
                     f"authorization {authorization_id} could not be claimed "
-                    f"(unique constraint, no surviving claim)"
+                    f"(no surviving claim)"
                 ) from exc
-            # Same claim identity/linkage => idempotent winner result.
             if (
                 existing.claim_id == claim.claim_id
                 and existing.authorization_id == claim.authorization_id
                 and existing.artifact_hash == claim.artifact_hash
             ):
                 return True, existing
-            # Different claim => conflict, never silently transfer ownership.
+            raise ExecutionAuthorizationConflictError(
+                f"authorization {authorization_id} already claimed by "
+                f"{existing.claimant.claimant_id}; concurrent conflicting "
+                f"claim rejected"
+            ) from exc
+        except sqlite3.IntegrityError as exc:
+            # Lost the INSERT race: UNIQUE(authorization_id) fired during
+            # insert after the in-transaction SELECT missed the winner's row.
+            if "UNIQUE" not in str(exc):
+                raise
+            existing = self.get_claim_for_authorization(authorization_id)
+            if existing is None:
+                raise ExecutionAuthorizationConflictError(
+                    f"authorization {authorization_id} could not be claimed "
+                    f"(unique constraint, no surviving claim)"
+                ) from exc
+            if (
+                existing.claim_id == claim.claim_id
+                and existing.authorization_id == claim.authorization_id
+                and existing.artifact_hash == claim.artifact_hash
+            ):
+                return True, existing
             raise ExecutionAuthorizationConflictError(
                 f"authorization {authorization_id} already claimed by "
                 f"{existing.claimant.claimant_id}; concurrent conflicting "

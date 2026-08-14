@@ -570,6 +570,50 @@ class TestEA4AClaimConcurrency(_ClaimHarness):
         self.assertEqual(len(events), 1)
         self.assertTrue(self.store.verify_integrity().ok)
 
+    def test_stress_same_claimant(self):
+        """250-run stress test: same-claimant race must converge every time."""
+        from datetime import datetime, timezone
+
+        fixed = (datetime(2026, 8, 12, 21, 27, tzinfo=timezone.utc)
+                 .isoformat().replace("+00:00", "Z"))
+        failures = []
+        for i in range(250):
+            auth, results = self._race(CLAIMANT_A, CLAIMANT_A, fixed)
+            a, b = results["a"], results["b"]
+            if not (a[0] == "ok" and b[0] == "ok"):
+                failures.append({
+                    "trial": i, "verdict": "not-both-ok",
+                    "a": a, "b": b})
+            elif a[1].claim_id != b[1].claim_id:
+                failures.append({
+                    "trial": i, "verdict": "mismatched-claim-ids",
+                    "a": a, "b": b})
+        if failures:
+            self.fail(f"same-claimant stress failures ({len(failures)}/250): {failures[:5]}")
+
+    def test_stress_different_claimant(self):
+        """250-run stress test: different-claimant race must converge every time."""
+        from datetime import datetime, timezone
+
+        fixed = (datetime(2026, 8, 12, 21, 27, tzinfo=timezone.utc)
+                 .isoformat().replace("+00:00", "Z"))
+        failures = []
+        for i in range(250):
+            auth, results = self._race(CLAIMANT_A, CLAIMANT_B, fixed)
+            a, b = results["a"], results["b"]
+            a_ok = a[0] == "ok"
+            b_ok = b[0] == "ok"
+            if a_ok and b_ok:
+                failures.append({
+                    "trial": i, "verdict": "both-ok",
+                    "a": a, "b": b})
+            elif not (a_ok or b_ok):
+                failures.append({
+                    "trial": i, "verdict": "neither-ok",
+                    "a": a, "b": b})
+        if failures:
+            self.fail(f"different-claimant stress failures ({len(failures)}/250): {failures[:5]}")
+
 
 if __name__ == "__main__":
     unittest.main()
