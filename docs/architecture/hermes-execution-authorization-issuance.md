@@ -944,9 +944,12 @@ EA-3I.1 / EA-3I.2 contracts:
 
 **Preserved invariants:** `ACCEPTED != EXECUTION AUTHORIZATION` and
 `AUTHORIZED != CLAIMED != EXECUTING`. EA-4A ends at durable, replay-safe,
-tamper-evident `ExecutionClaim` persistence and nowhere beyond. EA-4B (claim
-consumption / execution attempt) remains separately authorized.
+tamper-evident `ExecutionClaim` persistence and nowhere beyond.
 
+**EA-4B is COMPLETE (atomic Claim -> ExecutionAttempt consumption).**
+Durable ExecutionAttempt with full structured actor identity. Schema v5.
+Concurrency proof: 500 genuine contention trials. 6 mutation teeth.
+No WorkerRouter, no execution, no subprocess, no EXECUTING.
 Tests: 27 focused EA-4A tests (happy claim, claim-time semantics, bounded
 lifetime, missing/expired/boundary-expiry prerequisites, exact replay
 idempotency, conflicting claimant CONFLICT, hash-linkage tamper, orphan

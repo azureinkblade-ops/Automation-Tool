@@ -849,5 +849,80 @@ This milestone is the first permitted to create a durable `ExecutionClaim`:
 
 **Preserved invariants:** `ACCEPTED != EXECUTION AUTHORIZATION` and
 `AUTHORIZED != CLAIMED != EXECUTING`. EA-4A ends at durable, replay-safe,
-tamper-evident `ExecutionClaim` persistence. EA-4B (claim consumption /
-execution attempt) remains separately authorized.
+tamper-evident `ExecutionClaim` persistence.
+
+## 29.6 EA-4B claim consumption + execution attempt (implementation, COMPLETE)
+
+**EA-4B is COMPLETE (atomic Claim -> ExecutionAttempt consumption).**
+Committed as a single narrow local commit per the EA-4B milestone
+authorization. Origin/main remains unchanged; remote push requires separate
+pre-push audit authorization.
+
+This milestone is the first permitted to create a durable `ExecutionAttempt`:
+
+- `ExecutionAttempt` (immutable) cryptographically binds to the exact
+  `ExecutionAuthorization` (id + hash), `Request` (id + hash), `Decision` (id +
+  hash), `ExecutionClaim` (id + hash), `task_id`, and the full structured
+  `ExecutionAttemptActor` (actor_id + actor_type + actor_context). Records
+  `attempt_number`, `attempt_requested_at`, `attempt_recorded_at`,
+  `claim_expires_at`, `must_start_by`, `input_hash`, `operation`,
+  `worker_class`, and `status` (exactly `RECORDED`).
+- `ExecutionAttemptStatus.RECORDED` is the only pre-execution status. No
+  reachable `EXECUTING`/`RUNNING`/`STARTED` states exist in EA-4B.
+- Claim-time prerequisites: Claim must exist, pass integrity, and not be expired
+  (`now <= claim_expires_at`, inclusive boundary).
+- Authorization prerequisite: must exist, pass integrity. Lineage validated
+  (claim belongs to authorization, hashes match).
+- Attempt ceiling derived from persisted `Authorization.authorized_scope.attempt_limit`
+  (NOT caller-supplied). Caller cannot raise the authorized ceiling.
+- Attempt numbering: monotonic (`count + 1`). Single-Claim-per-Authorization
+  constraint means the service path naturally produces at most one Attempt per
+  Authorization (attempt_limit > 1 is schema-supported but NOT reachable
+  through normal Claim consumption without architecture changes).
+- `must_start_by`: defaults to `claim.claim_expires_at`; caller-supplied window
+  clamped to claim expiry; non-positive windows rejected.
+- Atomic consumption via `consume_claim_transaction(...)`: one `BEGIN IMMEDIATE`
+  transaction over replay check, Claim/Authorization validation, expiry check,
+  limit check, attempt-number decision, Attempt INSERT, and `ATTEMPT_RECORDED`
+  ledger event. TOCTOU-safe: concurrent same-claimant consumption converges to
+  exactly one Attempt; conflicting claimant raises `ExecutionAttemptConflictError`.
+- Replay: full structured actor identity required (actor_id + actor_type +
+  actor_context). Any field mismatch -> CONFLICT (no ownership transfer).
+- Rollback atomicity: injected fault after Attempt INSERT but before
+  `ATTEMPT_RECORDED` leaves zero residue (no partial write); next valid consume
+  recovers the slot as attempt_number=1.
+- Concurrency PROVEN: 500 genuine two-connection/two-thread contention trials
+  (250 same-actor + 250 different-actor, zero failures). 5 mutation teeth
+  (expiry bypass, ceiling bypass, lineage bypass, rollback split, actor conflict
+  bypass, numbering bypass) all detected with byte-exact source restoration.
+- Read-path tamper detection: 23 physical columns bound by
+  `attempt_linkage_sha256` envelope; physical mutation fails closed on load and
+  `verify_integrity()`.
+- Authority DB schema advanced to v5; v4/v3/v2/v1/unsupported versions FAIL
+  CLOSED; no silent migration.
+- Forbidden in EA-4B: `WorkerRouter`, worker launch/enqueue/dispatch, `subprocess`,
+  `EXECUTING`, `RUNNING`, `STARTED`, `app.py` integration, automatic claim after
+  issuance, multiple Claims per Authorization.
+
+**Preserved invariants:** `ACCEPTED != EXECUTION AUTHORIZATION` and
+`AUTHORIZED != CLAIMED != EXECUTION_ATTEMPT_RECORDED != EXECUTING`. EA-4B ends
+at durable, atomic, concurrency-proven `ExecutionAttempt` persistence. EA-4C
+(WorkerRouter / execution) remains separately authorized.
+
+### EA-4B test evidence
+
+| Suite | Result |
+|---|---|
+| EA-4B.1 domain | 52/52 PASS |
+| EA-4B.2 persistence | 49/49 PASS |
+| EA-4B.3 atomic consumption | 21/21 PASS |
+| EA-4B.4 concurrency proof | 17/17 PASS |
+| EA-4A concurrency | 29/29 PASS |
+| EA-4A store | 40/40 PASS |
+| EA-3I.2 | 21/21 PASS |
+| EA-3I.1 | 19/19 PASS |
+| EA-3A | 55/55 PASS |
+| EA-3B | 40/40 PASS |
+| Phase 6 | 17/17 PASS |
+| Full hermes_core | 587/587 PASS |
+| Mutation teeth | 6/6 PASS (byte-exact restore) |
