@@ -21426,7 +21426,7 @@ def release_week_key(abbr: str, chapter: int) -> str:
 
 def decision_from_status(status: dict[str, Any], revision: dict[str, Any] | None = None) -> tuple[str, str]:
     revision = revision or {}
-    if revision.get("changed") and (status.get("patreonExists") or status.get("royalRoadExists")):
+    if revision.get("changed") and status.get("royalRoadExists"):
         return "update_existing", "Latest GitHub chapter text differs from the remembered built version."
     if status.get("royalRoadExists") and status.get("royalRoadContentStatus") == "different":
         return "update_existing", "Royal Road chapter exists, but its online text differs from the GitHub chapter."
