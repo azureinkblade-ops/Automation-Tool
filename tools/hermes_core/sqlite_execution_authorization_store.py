@@ -28,20 +28,27 @@ Design source of truth:
 from __future__ import annotations
 
 import json
+import secrets
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .execution_authorization import (
     ExecutionAuthorization,
+    ExecutionAttempt,
+    ExecutionAttemptActor,
+    ExecutionAttemptStatus,
     ExecutionClaim,
     ExecutionAuthorizationDecision,
     ExecutionAuthorizationDecisionOutcome,
     ExecutionAuthorizationRequest,
+    build_execution_attempt,
     reconstruct_authorization,
     reconstruct_claim,
     reconstruct_decision,
     reconstruct_request,
+    reconstruct_attempt,
 )
 from .execution_authorization_store import (
     ExecutionAuthorizationConflictError,
@@ -54,7 +61,7 @@ from .execution_authorization_store import (
 )
 from .hashing import canonical_json, sha256_payload, sha256_text
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 SUPPORTED_SCHEMA_VERSIONS = frozenset({SCHEMA_VERSION})
 
 
@@ -116,11 +123,71 @@ def _hash_claim_linkage(
     return sha256_text(canonical_json(payload))
 
 
+def _hash_attempt_linkage(
+    artifact_id: str,
+    authorization_id: str,
+    authorization_hash: str,
+    request_id: str,
+    request_hash: str,
+    decision_id: str,
+    decision_hash: str,
+    claim_id: str,
+    claim_hash: str,
+    task_id: str,
+    attempt_number: int,
+    attempt_actor_id: str,
+    attempt_actor_type: str,
+    attempt_actor_context: Optional[str],
+    attempt_requested_at: str,
+    attempt_recorded_at: str,
+    claim_expires_at: str,
+    must_start_by: str,
+    input_hash: str,
+    operation: str,
+    worker_class: Optional[str],
+    status: str,
+) -> str:
+    """Hash-bound tamper-evident envelope for the attempt's full cryptographic
+    lineage.
+
+    The canonical attempt payload excludes artifact_hash (set post-hash), but
+    these physical binding columns live OUTSIDE the canonical hash preimage.
+    They are bound here so tampering any of them after persistence breaks
+    the envelope, detected on load and during verify_integrity.
+    """
+    payload = {
+        "artifact_id": artifact_id,
+        "authorization_id": authorization_id,
+        "authorization_hash": authorization_hash,
+        "request_id": request_id,
+        "request_hash": request_hash,
+        "decision_id": decision_id,
+        "decision_hash": decision_hash,
+        "claim_id": claim_id,
+        "claim_hash": claim_hash,
+        "task_id": task_id,
+        "attempt_number": attempt_number,
+        "attempt_actor_id": attempt_actor_id,
+        "attempt_actor_type": attempt_actor_type,
+        "attempt_actor_context": attempt_actor_context,
+        "attempt_requested_at": attempt_requested_at,
+        "attempt_recorded_at": attempt_recorded_at,
+        "claim_expires_at": claim_expires_at,
+        "must_start_by": must_start_by,
+        "input_hash": input_hash,
+        "operation": operation,
+        "worker_class": worker_class,
+        "status": status,
+    }
+    return sha256_text(canonical_json(payload))
+
+
 LEDGER_EVENTS = (
     "REQUEST_RECORDED",
     "DECISION_RECORDED",
     "AUTHORIZATION_RECORDED",
     "CLAIM_RECORDED",
+    "ATTEMPT_RECORDED",
 )
 
 
@@ -160,11 +227,11 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA journal_mode = DELETE")
         self._conn.execute("PRAGMA busy_timeout = 5000")
-        # Test-only failure-injection seam: when set, the atomic grant method
-        # raises immediately after the decision row + its ledger event are
-        # written but before the authorization is persisted (to prove rollback
-        # leaves zero residue). Never exposed as public API.
+        # Test-only failure-injection seams: when set, the atomic methods raise
+        # at specific points to prove rollback leaves zero residue. Never
+        # exposed as public API.
         self._fail_after_decision = False
+        self._fail_after_attempt_insert = False
         self._initialize()
 
     # -- schema -------------------------------------------------------------
@@ -256,6 +323,40 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
         )
         cur.execute(
             """
+            CREATE TABLE IF NOT EXISTS execution_attempts (
+                artifact_id TEXT PRIMARY KEY,
+                authorization_id TEXT NOT NULL,
+                authorization_hash TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                request_hash TEXT NOT NULL,
+                decision_id TEXT NOT NULL,
+                decision_hash TEXT NOT NULL,
+                claim_id TEXT NOT NULL,
+                claim_hash TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                attempt_number INTEGER NOT NULL,
+                attempt_actor_id TEXT NOT NULL,
+                attempt_actor_type TEXT NOT NULL,
+                attempt_actor_context TEXT,
+                attempt_requested_at TEXT NOT NULL,
+                attempt_recorded_at TEXT NOT NULL,
+                claim_expires_at TEXT NOT NULL,
+                must_start_by TEXT NOT NULL,
+                input_hash TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                worker_class TEXT,
+                status TEXT NOT NULL,
+                artifact_type TEXT NOT NULL,
+                artifact_version TEXT NOT NULL,
+                artifact_hash TEXT NOT NULL,
+                attempt_linkage_sha256 TEXT NOT NULL,
+                canonical_payload TEXT NOT NULL,
+                UNIQUE(authorization_id, attempt_number)
+            )
+            """
+        )
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS authority_ledger (
                 sequence_no INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_id TEXT NOT NULL,
@@ -283,6 +384,8 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
             return "execution_authorizations"
         if isinstance(artifact, ExecutionClaim):
             return "execution_authorization_claims"
+        if isinstance(artifact, ExecutionAttempt):
+            return "execution_attempts"
         raise TypeError(f"unsupported artifact type: {type(artifact)!r}")
 
     @staticmethod
@@ -295,6 +398,8 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
             return artifact.decision_id
         if isinstance(artifact, ExecutionClaim):
             return artifact.claim_id
+        if isinstance(artifact, ExecutionAttempt):
+            return artifact.attempt_id
         raise TypeError(f"unsupported artifact type: {type(artifact)!r}")
 
     def _request_id_for(self, artifact: Any) -> Optional[str]:
@@ -302,12 +407,13 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
             return None  # request_id IS the artifact_id for requests
         return getattr(artifact, "request_id", None)
 
-    def _run_atomic(self, fn) -> None:
+    def _run_atomic(self, fn) -> Any:
         """Own a single SQLite transaction around fn (no nested commits)."""
         try:
             self._conn.execute("BEGIN IMMEDIATE")
-            fn()
+            result = fn()
             self._conn.commit()
+            return result
         except Exception:
             self._conn.rollback()
             raise
@@ -417,6 +523,19 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
                 ", authorization_id, authorization_hash, request_id, "
                 "request_hash, decision_id, decision_hash, claim_linkage_sha256"
             )
+        if table == "execution_attempts":
+            # Attempts carry physical binding columns (outside the canonical
+            # payload hash) bound by a tamper-evident attempt_linkage_sha256
+            # envelope; read-path validation must fail closed on tampering.
+            extra_cols = (
+                ", authorization_id, authorization_hash, request_id, "
+                "request_hash, decision_id, decision_hash, claim_id, "
+                "claim_hash, attempt_number, attempt_actor_id, "
+                "attempt_actor_type, attempt_actor_context, "
+                "attempt_requested_at, attempt_recorded_at, "
+                "claim_expires_at, must_start_by, input_hash, operation, "
+                "worker_class, status, attempt_linkage_sha256"
+            )
         row = self._conn.execute(
             f"SELECT artifact_id, task_id, artifact_type, artifact_hash, "
             f"canonical_payload{extra_cols} FROM {table} WHERE artifact_id = ?",
@@ -470,6 +589,38 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
             if expected_claim != row["claim_linkage_sha256"]:
                 raise ExecutionAuthorizationIntegrityError(
                     f"claim {artifact_id} claim linkage tamper detected on load "
+                    f"(envelope mismatch)"
+                )
+        if table == "execution_attempts":
+            # Verify the tamper-evident attempt linkage (physical binding
+            # columns must match the envelope).
+            expected_attempt = _hash_attempt_linkage(
+                artifact_id,
+                row["authorization_id"],
+                row["authorization_hash"],
+                row["request_id"],
+                row["request_hash"],
+                row["decision_id"],
+                row["decision_hash"],
+                row["claim_id"],
+                row["claim_hash"],
+                row["task_id"],
+                row["attempt_number"],
+                row["attempt_actor_id"],
+                row["attempt_actor_type"],
+                row["attempt_actor_context"],
+                row["attempt_requested_at"],
+                row["attempt_recorded_at"],
+                row["claim_expires_at"],
+                row["must_start_by"],
+                row["input_hash"],
+                row["operation"],
+                row["worker_class"],
+                row["status"],
+            )
+            if expected_attempt != row["attempt_linkage_sha256"]:
+                raise ExecutionAuthorizationIntegrityError(
+                    f"attempt {artifact_id} attempt linkage tamper detected on load "
                     f"(envelope mismatch)"
                 )
         return payload
@@ -998,6 +1149,473 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
             ) from exc
         return False, claim
 
+    # -- execution attempts (EA-4B) ------------------------------------------
+    def get_attempt(self, attempt_id: str) -> Optional[ExecutionAttempt]:
+        """Load a single ExecutionAttempt by id.
+
+        Read-path integrity validation: artifact hash + physical lineage
+        columns verified against the tamper-evident envelope. Tampering any
+        physical column after persistence fails closed.
+        """
+        payload = self._load_artifact("execution_attempts", attempt_id)
+        return reconstruct_attempt(payload) if payload else None
+
+    def get_attempts_for_authorization(
+        self, authorization_id: str
+    ) -> list[ExecutionAttempt]:
+        """Load all ExecutionAttempts for an Authorization."""
+        rows = self._conn.execute(
+            "SELECT artifact_id FROM execution_attempts "
+            "WHERE authorization_id = ?",
+            (authorization_id,),
+        ).fetchall()
+        attempts = []
+        for r in rows:
+            payload = self._load_artifact("execution_attempts", r["artifact_id"])
+            if payload is not None:
+                attempts.append(reconstruct_attempt(payload))
+        return attempts
+
+    def get_attempt_for_claim(self, claim_id: str) -> Optional[ExecutionAttempt]:
+        """Load the ExecutionAttempt for a Claim (if exactly one exists)."""
+        rows = self._conn.execute(
+            "SELECT artifact_id FROM execution_attempts WHERE claim_id = ?",
+            (claim_id,),
+        ).fetchall()
+        if not rows:
+            return None
+        if len(rows) > 1:
+            raise ExecutionAuthorizationIntegrityError(
+                f"multiple attempts found for claim {claim_id}"
+            )
+        payload = self._load_artifact("execution_attempts", rows[0]["artifact_id"])
+        return reconstruct_attempt(payload) if payload else None
+
+    def record_attempt(self, attempt: ExecutionAttempt) -> None:
+        """Persist an ExecutionAttempt with exactly one ATTEMPT_RECORDED event.
+
+        Low-level persistence primitive. Verifies structural integrity (artifact
+        hash + linkage envelope) and validates that the referenced
+        Authorization and Claim exist and are integrity-valid. Does NOT decide
+        whether a Claim is eligible for consumption (expiry, limit, actor,
+        replay) — that policy belongs to consume_claim_transaction().
+        """
+        if not attempt.verify_hash():
+            raise ExecutionAuthorizationIntegrityError(
+                f"attempt {attempt.attempt_id} failed hash verification; "
+                f"refusing to persist"
+            )
+
+        canonical = canonical_json(attempt.to_canonical_dict())
+        payload_sha256 = sha256_text(canonical)
+
+        def _work() -> None:
+            # Verify referenced Authorization exists and is integrity-valid.
+            auth = self.get_authorization(attempt.authorization_id)
+            if auth is None:
+                raise ExecutionAuthorizationStoreError(
+                    f"attempt requires a persisted authorization "
+                    f"{attempt.authorization_id}; no such authorization"
+                )
+            if not auth.verify_hash():
+                raise ExecutionAuthorizationIntegrityError(
+                    f"authorization {attempt.authorization_id} failed hash "
+                    f"verification; attempt blocked"
+                )
+
+            # Verify referenced Claim exists and is integrity-valid.
+            # The attempt references a specific claim_id; that exact claim must exist.
+            claim = self.get_claim(attempt.claim_id)
+            if claim is None:
+                raise ExecutionAuthorizationStoreError(
+                    f"attempt requires a persisted claim "
+                    f"{attempt.claim_id}; no such claim"
+                )
+            if not claim.verify_hash():
+                raise ExecutionAuthorizationIntegrityError(
+                    f"claim {attempt.claim_id} failed hash verification; "
+                    f"attempt blocked"
+                )
+
+            # Verify lineage consistency (Claim <-> Attempt).
+            if claim.claim_id != attempt.claim_id:
+                raise ExecutionAuthorizationLineageError(
+                    f"claim_id mismatch: expected {attempt.claim_id}, "
+                    f"got {claim.claim_id}"
+                )
+            # The claim's stored hash is artifact_hash; the attempt references it as claim_hash
+            if claim.artifact_hash != attempt.claim_hash:
+                raise ExecutionAuthorizationLineageError(
+                    f"claim_hash mismatch for claim {attempt.claim_id}"
+                )
+            if claim.authorization_id != attempt.authorization_id:
+                raise ExecutionAuthorizationLineageError(
+                    f"claim {claim.claim_id} belongs to authorization "
+                    f"{claim.authorization_id}, not "
+                    f"{attempt.authorization_id}"
+                )
+            if claim.authorization_hash != attempt.authorization_hash:
+                raise ExecutionAuthorizationLineageError(
+                    f"authorization_hash mismatch for authorization "
+                    f"{attempt.authorization_id}"
+                )
+            if claim.request_id != attempt.request_id:
+                raise ExecutionAuthorizationLineageError(
+                    f"request_id mismatch: claim {claim.request_id}, "
+                    f"attempt {attempt.request_id}"
+                )
+            if claim.request_hash != attempt.request_hash:
+                raise ExecutionAuthorizationLineageError(
+                    f"request_hash mismatch for request {attempt.request_id}"
+                )
+            if claim.decision_id != attempt.decision_id:
+                raise ExecutionAuthorizationLineageError(
+                    f"decision_id mismatch: claim {claim.decision_id}, "
+                    f"attempt {attempt.decision_id}"
+                )
+            if claim.decision_hash != attempt.decision_hash:
+                raise ExecutionAuthorizationLineageError(
+                    f"decision_hash mismatch for decision {attempt.decision_id}"
+                )
+            if claim.task_id != attempt.task_id:
+                raise ExecutionAuthorizationLineageError(
+                    f"task_id mismatch: claim {claim.task_id}, "
+                    f"attempt {attempt.task_id}"
+                )
+
+            linkage = _hash_attempt_linkage(
+                attempt.attempt_id,
+                attempt.authorization_id,
+                attempt.authorization_hash,
+                attempt.request_id,
+                attempt.request_hash,
+                attempt.decision_id,
+                attempt.decision_hash,
+                attempt.claim_id,
+                attempt.claim_hash,
+                attempt.task_id,
+                attempt.attempt_number,
+                attempt.attempt_actor_id,
+                attempt.attempt_actor_type,
+                attempt.attempt_actor_context,
+                attempt.attempt_requested_at,
+                attempt.attempt_recorded_at,
+                attempt.claim_expires_at,
+                attempt.must_start_by,
+                attempt.input_hash,
+                attempt.operation,
+                attempt.worker_class,
+                attempt.status.value,
+            )
+
+            # Transaction-neutral INSERT: caller owns the transaction.
+            self._insert_attempt_rows(attempt, canonical, payload_sha256, linkage)
+
+        try:
+            self._run_atomic(_work)
+        except sqlite3.IntegrityError as exc:
+            raise ExecutionAuthorizationConflictError(
+                f"attempt {attempt.attempt_id} conflicts with an existing "
+                f"attempt: {exc}"
+            ) from exc
+
+    def _insert_attempt_rows(
+        self, attempt: ExecutionAttempt, canonical: str, payload_sha256: str, linkage: str
+    ) -> None:
+        """Transaction-neutral INSERT of attempt + ledger rows.
+
+        Caller owns the transaction. No BEGIN/COMMIT here.
+        """
+        self._conn.execute(
+            "INSERT INTO execution_attempts "
+            "(artifact_id, authorization_id, authorization_hash, request_id, "
+            "request_hash, decision_id, decision_hash, claim_id, claim_hash, "
+            "task_id, attempt_number, attempt_actor_id, attempt_actor_type, "
+            "attempt_actor_context, attempt_requested_at, attempt_recorded_at, "
+            "claim_expires_at, must_start_by, input_hash, operation, "
+            "worker_class, status, artifact_type, artifact_version, artifact_hash, "
+            "attempt_linkage_sha256, canonical_payload) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+            "?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                attempt.attempt_id,
+                attempt.authorization_id,
+                attempt.authorization_hash,
+                attempt.request_id,
+                attempt.request_hash,
+                attempt.decision_id,
+                attempt.decision_hash,
+                attempt.claim_id,
+                attempt.claim_hash,
+                attempt.task_id,
+                attempt.attempt_number,
+                attempt.attempt_actor_id,
+                attempt.attempt_actor_type,
+                attempt.attempt_actor_context,
+                attempt.attempt_requested_at,
+                attempt.attempt_recorded_at,
+                attempt.claim_expires_at,
+                attempt.must_start_by,
+                attempt.input_hash,
+                attempt.operation,
+                attempt.worker_class,
+                attempt.status.value,
+                type(attempt).__name__,
+                attempt.artifact_version,
+                attempt.artifact_hash,
+                linkage,
+                canonical,
+            ),
+        )
+        # Test-only failure-injection point: simulates a crash after the attempt
+        # INSERT but before the ATTEMPT_RECORDED ledger event, proving that
+        # the transaction rolls back to zero residue (no partial write).
+        if self._fail_after_attempt_insert:
+            raise RuntimeError("injected failure after attempt INSERT")
+        self._append_ledger(
+            "ATTEMPT_RECORDED",
+            type(attempt).__name__,
+            attempt.attempt_id,
+            attempt.artifact_hash,
+            payload_sha256,
+            self._now_utc(),
+        )
+
+    def consume_claim_transaction(
+        self,
+        *,
+        authorization_id: str,
+        claim_id: str,
+        claimant: ExecutionAttemptActor,
+        must_start_within_seconds: Optional[int] = None,
+        clock: Callable[[], str],
+    ) -> "ExecutionAttemptResult":
+        """Atomically consume a valid ExecutionClaim into a durable ExecutionAttempt.
+
+        The ENTIRE consume — replay check, claim/auth validation, expiry check,
+        attempt-limit check, attempt-number assignment, persistence, and
+        ATTEMPT_RECORDED ledger event — happens inside a single BEGIN IMMEDIATE
+        transaction. This eliminates the TOCTOU race between the read/count and
+        the write.
+
+        The attempt limit is derived from the persisted Authorization's scope
+        (caller cannot raise the ceiling). Replay identity is the full
+        structured actor (actor_id + actor_type + actor_context); any field
+        change is a CONFLICT.
+        """
+        from .execution_authorization_attempt import (
+            ExecutionAttemptResult,
+            ExecutionAttemptClaimExpiredError,
+            ExecutionAttemptLimitError,
+            ExecutionAttemptConflictError,
+            ExecutionAttemptLineageError,
+            ExecutionAttemptError,
+        )
+
+        # Pre-transaction validation: actor type check (cheap, no DB needed).
+        if not isinstance(claimant, ExecutionAttemptActor):
+            raise ExecutionAttemptError("claimant must be an ExecutionAttemptActor")
+
+        now = clock()
+        now_dt = datetime.fromisoformat(now.replace("Z", "+00:00"))
+
+        def _work() -> ExecutionAttemptResult:
+            # 1) Replay: existing attempt for this claim + full actor identity.
+            existing_attempt = self.get_attempt_for_claim(claim_id)
+            if existing_attempt is not None:
+                # Full structured actor identity must match for replay.
+                if (
+                    existing_attempt.attempt_actor_id == claimant.actor_id
+                    and existing_attempt.attempt_actor_type == claimant.actor_type
+                    and existing_attempt.attempt_actor_context == claimant.actor_context
+                ):
+                    return ExecutionAttemptResult(
+                        authorization_id=authorization_id,
+                        claim_id=claim_id,
+                        attempt_id=existing_attempt.attempt_id,
+                        attempt_hash=existing_attempt.artifact_hash,
+                        attempt_number=existing_attempt.attempt_number,
+                        attempt_recorded_at=existing_attempt.attempt_recorded_at,
+                        must_start_by=existing_attempt.must_start_by,
+                        claimant_id=claimant.actor_id,
+                        persisted=True,
+                        replayed=True,
+                        reason="existing attempt returned (idempotent replay)",
+                    )
+                # Any actor field mismatch: CONFLICT.
+                raise ExecutionAttemptConflictError(
+                    f"claim {claim_id} already consumed by "
+                    f"{existing_attempt.attempt_actor_id} "
+                    f"(type={existing_attempt.attempt_actor_type}, "
+                    f"ctx={existing_attempt.attempt_actor_context}); "
+                    f"conflicting claimant {claimant.actor_id} "
+                    f"(type={claimant.actor_type}, ctx={claimant.actor_context}) rejected"
+                )
+
+            # 2) Claim prerequisite.
+            claim = self.get_claim(claim_id)
+            if claim is None:
+                raise ExecutionAttemptError(
+                    f"attempt requires a persisted claim {claim_id}; no such claim"
+                )
+            if not claim.verify_hash():
+                raise ExecutionAttemptError(
+                    f"claim {claim_id} failed integrity verification"
+                )
+
+            # 3) Claim expiry: now must be <= claim_expires_at (inclusive boundary).
+            claim_expires_dt = datetime.fromisoformat(
+                claim.claim_expires_at.replace("Z", "+00:00")
+            )
+            if now_dt > claim_expires_dt:
+                raise ExecutionAttemptClaimExpiredError(
+                    f"claim {claim_id} expired at attempt-creation time; "
+                    f"attempt blocked"
+                )
+
+            # 4) Authorization prerequisite.
+            auth = self.get_authorization(authorization_id)
+            if auth is None:
+                raise ExecutionAttemptError(
+                    f"attempt requires a persisted authorization "
+                    f"{authorization_id}; no such authorization"
+                )
+            if not auth.verify_hash():
+                raise ExecutionAttemptError(
+                    f"authorization {authorization_id} failed integrity verification"
+                )
+
+            # 5) Lineage: claim must belong to this authorization.
+            if claim.authorization_id != authorization_id:
+                raise ExecutionAttemptLineageError(
+                    f"claim {claim_id} belongs to authorization "
+                    f"{claim.authorization_id}, not {authorization_id}"
+                )
+            if claim.authorization_hash != auth.artifact_hash:
+                raise ExecutionAttemptLineageError(
+                    f"authorization_hash mismatch for authorization "
+                    f"{authorization_id}"
+                )
+
+            # 6) Attempt limit: derived from authorization scope (caller can't raise it).
+            existing_attempts = self.get_attempts_for_authorization(authorization_id)
+            current_count = len(existing_attempts)
+            effective_limit = None
+            if auth.authorized_scope is not None:
+                effective_limit = auth.authorized_scope.attempt_limit
+            if effective_limit is not None and current_count >= effective_limit:
+                raise ExecutionAttemptLimitError(
+                    f"authorization {authorization_id} has reached its attempt limit "
+                    f"({effective_limit}); no more attempts allowed"
+                )
+
+            # 7) Next attempt number (monotonic).
+            next_attempt_number = current_count + 1
+
+            # 8) must_start_by: bounded by claim expiry.
+            if must_start_within_seconds is not None:
+                if must_start_within_seconds <= 0:
+                    raise ExecutionAttemptError(
+                        f"must_start_within_seconds must be positive, "
+                        f"got {must_start_within_seconds}"
+                    )
+                must_start_dt = now_dt + timedelta(seconds=must_start_within_seconds)
+                if must_start_dt > claim_expires_dt:
+                    must_start_dt = claim_expires_dt
+                must_start_by = must_start_dt.isoformat().replace("+00:00", "Z")
+            else:
+                must_start_by = claim.claim_expires_at
+
+            # 9) Build the immutable Attempt.
+            input_hash = (
+                auth.authorized_scope.input_hash
+                if auth.authorized_scope
+                else secrets.token_hex(32)
+            )
+            operation = (
+                auth.authorized_scope.operation
+                if auth.authorized_scope
+                else "run-sandboxed"
+            )
+            worker_class = (
+                auth.authorized_scope.worker_class
+                if auth.authorized_scope
+                else "restricted-sandbox"
+            )
+
+            attempt = build_execution_attempt(
+                authorization_id=authorization_id,
+                authorization_hash=auth.artifact_hash,
+                request_id=auth.request_id,
+                request_hash=auth.request_hash,
+                decision_id=auth.decision_id,
+                decision_hash=auth.decision_hash,
+                claim_id=claim.claim_id,
+                claim_hash=claim.artifact_hash,
+                task_id=auth.task_id,
+                attempt_number=next_attempt_number,
+                attempt_actor=claimant,
+                attempt_requested_at=now,
+                attempt_recorded_at=now,
+                claim_expires_at=claim.claim_expires_at,
+                must_start_by=must_start_by,
+                input_hash=input_hash,
+                operation=operation,
+                worker_class=worker_class,
+                status=ExecutionAttemptStatus.RECORDED,
+            )
+
+            # 10) Persist atomically (within this same transaction).
+            # Use the transaction-neutral helper to avoid nested BEGIN.
+            canonical = canonical_json(attempt.to_canonical_dict())
+            payload_sha256 = sha256_text(canonical)
+            linkage = _hash_attempt_linkage(
+                attempt.attempt_id,
+                attempt.authorization_id,
+                attempt.authorization_hash,
+                attempt.request_id,
+                attempt.request_hash,
+                attempt.decision_id,
+                attempt.decision_hash,
+                attempt.claim_id,
+                attempt.claim_hash,
+                attempt.task_id,
+                attempt.attempt_number,
+                attempt.attempt_actor_id,
+                attempt.attempt_actor_type,
+                attempt.attempt_actor_context,
+                attempt.attempt_requested_at,
+                attempt.attempt_recorded_at,
+                attempt.claim_expires_at,
+                attempt.must_start_by,
+                attempt.input_hash,
+                attempt.operation,
+                attempt.worker_class,
+                attempt.status.value,
+            )
+            self._insert_attempt_rows(attempt, canonical, payload_sha256, linkage)
+
+            return ExecutionAttemptResult(
+                authorization_id=authorization_id,
+                claim_id=claim_id,
+                attempt_id=attempt.attempt_id,
+                attempt_hash=attempt.artifact_hash,
+                attempt_number=attempt.attempt_number,
+                attempt_recorded_at=attempt.attempt_recorded_at,
+                must_start_by=attempt.must_start_by,
+                claimant_id=claimant.actor_id,
+                persisted=True,
+                replayed=False,
+                reason="ExecutionAttempt persisted",
+            )
+
+        try:
+            return self._run_atomic(_work)
+        except sqlite3.IntegrityError as exc:
+            raise ExecutionAttemptConflictError(
+                f"claim {claim_id} consumption conflict: {exc}"
+            ) from exc
+
     # -- ledger / integrity -------------------------------------------------
     def get_authority_events(self) -> list[ExecutionAuthorityLedgerEntry]:
         rows = self._conn.execute(
@@ -1156,6 +1774,64 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
                 failures.append(
                     f"claim {r['artifact_id']} references missing authorization "
                     f"{r['authorization_id']} (orphan claim)"
+                )
+        # 1f) attempt artifacts: hash re-verification + linkage tamper detection.
+        for r in self._conn.execute(
+            "SELECT artifact_id, authorization_id, authorization_hash, request_id, "
+            "request_hash, decision_id, decision_hash, claim_id, claim_hash, "
+            "attempt_number, attempt_actor_id, attempt_actor_type, "
+            "attempt_actor_context, attempt_requested_at, attempt_recorded_at, "
+            "claim_expires_at, must_start_by, input_hash, operation, "
+            "worker_class, status, artifact_hash, attempt_linkage_sha256, "
+            "canonical_payload FROM execution_attempts"
+        ):
+            try:
+                payload = json.loads(r["canonical_payload"])
+            except Exception as exc:  # noqa: BLE001
+                failures.append(
+                    f"execution_attempts {r['artifact_id']} "
+                    f"payload unparseable: {exc}"
+                )
+                continue
+            if sha256_payload(payload) != r["artifact_hash"]:
+                failures.append(
+                    f"execution_attempts {r['artifact_id']} "
+                    f"artifact hash mismatch"
+                )
+            expected_linkage = _hash_attempt_linkage(
+                r["artifact_id"],
+                r["authorization_id"],
+                r["authorization_hash"],
+                r["request_id"],
+                r["request_hash"],
+                r["decision_id"],
+                r["decision_hash"],
+                r["claim_id"],
+                r["claim_hash"],
+                r["task_id"],
+                int(r["attempt_number"]),
+                r["attempt_actor_id"],
+                r["attempt_actor_type"],
+                r["attempt_actor_context"],
+                r["attempt_requested_at"],
+                r["attempt_recorded_at"],
+                r["claim_expires_at"],
+                r["must_start_by"],
+                r["input_hash"],
+                r["operation"],
+                r["worker_class"],
+                r["status"],
+            )
+            if expected_linkage != r["attempt_linkage_sha256"]:
+                failures.append(
+                    f"execution_attempts {r['artifact_id']} "
+                    f"attempt linkage tamper detected"
+                )
+            # Verify attempt_number is positive
+            if int(r["attempt_number"]) < 1:
+                failures.append(
+                    f"execution_attempts {r['artifact_id']} "
+                    f"invalid attempt_number {r['attempt_number']}"
                 )
         # 2) ledger chain verification.
         rows = self._conn.execute(

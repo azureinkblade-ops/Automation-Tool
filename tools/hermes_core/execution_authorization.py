@@ -1,10 +1,10 @@
-"""Immutable domain model for Hermes execution authorization (EA-1).
+"""Immutable domain model for Hermes execution authorization (EA-1 + EA-4A + EA-4B).
 
 This module defines the *structural* domain artifacts only. It does NOT:
 
 * persist anything (no ``execution_authority.db`` / ``SQLiteExecutionAuthorizationStore``);
 * issue, consume, or revoke authorizations (no issuance service);
-* implement ``ExecutionClaim`` / ``ExecutionAttempt``;
+* implement ``ExecutionAttempt`` consumption or claim-consumption services;
 * route, launch, enqueue, or dispatch workers;
 * introduce execution state transitions (``AWAITING_EXECUTION_AUTHORIZATION``,
   ``AUTHORIZED_FOR_EXECUTION``, ``EXECUTING``).
@@ -58,6 +58,20 @@ __all__ = [
     "verify_execution_authorization_hash",
     "verify_execution_authorization_request_hash",
     "verify_execution_authorization_decision_hash",
+    # EA-4B ExecutionAttempt domain
+    "ExecutionAttemptError",
+    "ExecutionAttemptNotFoundError",
+    "ExecutionAttemptConflictError",
+    "ExecutionAttemptClaimExpiredError",
+    "ExecutionAttemptLimitError",
+    "ExecutionAttemptIntegrityError",
+    "ExecutionAttemptLineageError",
+    "ExecutionAttemptStatus",
+    "ExecutionAttemptActor",
+    "ExecutionAttempt",
+    "ATTEMPT_ARTIFACT_VERSION",
+    "build_execution_attempt",
+    "reconstruct_attempt",
 ]
 
 # --------------------------------------------------------------------------- #
@@ -76,6 +90,44 @@ class ExecutionAuthorizationError(ValueError):
 
 class ExecutionAuthorizationValidationError(ExecutionAuthorizationError):
     """Raised when a domain artifact fails structural/semantic validation."""
+
+
+# --------------------------------------------------------------------------- #
+# EA-4B domain errors
+# --------------------------------------------------------------------------- #
+
+
+class ExecutionAttemptError(ExecutionAuthorizationError):
+    """Base error for the execution-attempt domain (EA-4B).
+
+    Domain/structural validation only. Persisted-tamper integrity exceptions
+    (e.g. an ``ExecutionAttemptIntegrityError``) are intentionally NOT defined
+    here; they belong to the future EA-4B store layer.
+    """
+
+
+class ExecutionAttemptNotFoundError(ExecutionAttemptError):
+    """Raised when an expected ExecutionAttempt does not exist."""
+
+
+class ExecutionAttemptConflictError(ExecutionAttemptError):
+    """Raised when an attempt conflicts with an existing durable attempt."""
+
+
+class ExecutionAttemptClaimExpiredError(ExecutionAttemptError):
+    """Raised when the Claim has expired at attempt-creation time."""
+
+
+class ExecutionAttemptLimitError(ExecutionAttemptError):
+    """Raised when the attempt ceiling has been exhausted."""
+
+
+class ExecutionAttemptIntegrityError(ExecutionAttemptError):
+    """Raised on tampered or corrupt attempt data (future store layer use)."""
+
+
+class ExecutionAttemptLineageError(ExecutionAttemptError):
+    """Raised when attempt lineage does not match its Authorization/Claim."""
 
 
 # --------------------------------------------------------------------------- #
@@ -114,6 +166,7 @@ AMENDED_ARTIFACT_VERSION = "2"
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _AUTHORIZATION_ID_RE = re.compile(r"^execution-authorization-[0-9a-f]{16}$")
 _CLAIM_ID_RE = re.compile(r"^execution-authorization-claim-[0-9a-f]{16}$")
+_ATTEMPT_ID_RE = re.compile(r"^execution-authorization-attempt-[0-9a-f]{16}$")
 
 # Conservative frozen claim lifetime (EA-4A). Bounded, non-null.
 DEFAULT_MAX_CLAIM_LIFETIME_SECONDS = 300
@@ -124,6 +177,7 @@ _ID_PREFIX = "execution-authorization-"
 _REQUEST_ID_PREFIX = "execution-authorization-request-"
 _DECISION_ID_PREFIX = "execution-authorization-decision-"
 _CLAIM_ID_PREFIX = "execution-authorization-claim-"
+_ATTEMPT_ID_PREFIX = "execution-authorization-attempt-"
 
 
 # --------------------------------------------------------------------------- #
@@ -547,7 +601,126 @@ class ExecutionAuthorizationDecision:
 
 
 # --------------------------------------------------------------------------- #
-# Builders (pure constructors; zero authority semantics)
+# EA-4B ExecutionAttempt domain
+# --------------------------------------------------------------------------- #
+
+
+class ExecutionAttemptStatus(str, Enum):
+    """Pre-execution attempt state only.
+
+    EA-4B deliberately stops before ``EXECUTING``. ``RECORDED`` means a
+    durable ExecutionAttempt has been persisted; it does NOT mean a worker
+    has been launched or that execution has begun.
+    """
+
+    RECORDED = "RECORDED"
+
+
+# ExecutionAttempt artifact version (EA-4B).
+ATTEMPT_ARTIFACT_VERSION = "1"
+
+
+@dataclass(frozen=True)
+class ExecutionAttemptActor:
+    """Structured identity of the component requesting claim consumption.
+
+    This identity represents the system component requesting consumption of
+    the Claim into an Attempt. It does NOT grant worker execution authority.
+    """
+
+    actor_id: str
+    actor_type: str
+    actor_context: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "actor_id": self.actor_id,
+            "actor_type": self.actor_type,
+            "actor_context": self.actor_context,
+        }
+
+
+@dataclass(frozen=True)
+class ExecutionAttempt:
+    """A durable, immutable record that a valid ExecutionClaim has been
+    consumed for a future execution attempt. Created by EA-4B only.
+
+    EXECUTION_ATTEMPT_RECORDED != EXECUTING: a persisted Attempt means a
+    specific claimant reserved and consumed the Claim; it does NOT mean a
+    process, worker, or command started. The Attempt cryptographically binds
+    to the exact Authorization, Request, Decision, Claim, and task via the
+    linkage fields below.
+
+    One durable Attempt per attempt_number per Authorization is enforced at
+    persistence. No worker/execution state is created.
+    """
+
+    attempt_id: str
+    authorization_id: str
+    authorization_hash: str
+    request_id: str
+    request_hash: str
+    decision_id: str
+    decision_hash: str
+    claim_id: str
+    claim_hash: str
+    task_id: str
+    attempt_number: int
+    attempt_actor_id: str
+    attempt_actor_type: str
+    attempt_actor_context: Optional[str]
+    attempt_requested_at: str  # absolute UTC RFC3339/ISO ending Z
+    attempt_recorded_at: str  # absolute UTC RFC3339/ISO ending Z
+    claim_expires_at: str  # absolute UTC RFC3339/ISO ending Z
+    must_start_by: str  # absolute UTC RFC3339/ISO ending Z
+    input_hash: str
+    operation: str
+    worker_class: Optional[str]
+    status: ExecutionAttemptStatus
+    artifact_version: str
+    artifact_hash: str
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        """Deterministic preimage for hashing.
+
+        Excludes ``artifact_hash`` (set after hashing). Includes the full
+        cryptographic lineage (authorization_id/hash, request_id/hash,
+        decision_id/hash, claim_id/hash, task_id) and the attempt's own time
+        semantics so the Attempt is bound to the exact Claim and cannot be
+        repurposed.
+        """
+        return {
+            "attempt_id": self.attempt_id,
+            "authorization_id": self.authorization_id,
+            "authorization_hash": self.authorization_hash,
+            "request_id": self.request_id,
+            "request_hash": self.request_hash,
+            "decision_id": self.decision_id,
+            "decision_hash": self.decision_hash,
+            "claim_id": self.claim_id,
+            "claim_hash": self.claim_hash,
+            "task_id": self.task_id,
+            "attempt_number": self.attempt_number,
+            "attempt_actor_id": self.attempt_actor_id,
+            "attempt_actor_type": self.attempt_actor_type,
+            "attempt_actor_context": self.attempt_actor_context,
+            "attempt_requested_at": self.attempt_requested_at,
+            "attempt_recorded_at": self.attempt_recorded_at,
+            "claim_expires_at": self.claim_expires_at,
+            "must_start_by": self.must_start_by,
+            "input_hash": self.input_hash,
+            "operation": self.operation,
+            "worker_class": self.worker_class,
+            "status": self.status.value,
+            "artifact_version": self.artifact_version,
+        }
+
+    def canonical_json(self) -> str:
+        return canonical_json(self.to_canonical_dict())
+
+    def verify_hash(self) -> bool:
+        """Pure domain verification: stored hash vs recomputed canonical hash."""
+        return sha256_payload(self.to_canonical_dict()) == self.artifact_hash
 #
 # The builder validates inputs, derives the deterministic artifact id from a
 # canonical preimage that excludes the id, then derives artifact_hash from the
@@ -1007,3 +1180,174 @@ def reconstruct_claim(payload: Mapping[str, Any]) -> ExecutionClaim:
     d["claimant"] = _claimant_from_dict(d["claimant"])
     d["authorization_policy"] = _policy_from_dict(d["authorization_policy"])
     return build_execution_claim(**d)
+
+
+# --------------------------------------------------------------------------- #
+# EA-4B ExecutionAttempt: validation helpers
+# --------------------------------------------------------------------------- #
+
+
+def _validate_attempt_actor(actor: ExecutionAttemptActor) -> None:
+    if not isinstance(actor, ExecutionAttemptActor):
+        raise ExecutionAttemptError("attempt_actor must be an ExecutionAttemptActor")
+    _require_nonempty("attempt_actor.actor_id", actor.actor_id)
+    _require_nonempty("attempt_actor.actor_type", actor.actor_type)
+    if actor.actor_context is not None:
+        _require_nonempty("attempt_actor.actor_context", actor.actor_context)
+
+
+def _validate_attempt_status(status: ExecutionAttemptStatus) -> None:
+    if not isinstance(status, ExecutionAttemptStatus):
+        raise ExecutionAttemptError("status must be a valid ExecutionAttemptStatus")
+
+
+# --------------------------------------------------------------------------- #
+# EA-4B ExecutionAttempt: builder
+# --------------------------------------------------------------------------- #
+
+
+def build_execution_attempt(
+    *,
+    authorization_id: str,
+    authorization_hash: str,
+    request_id: str,
+    request_hash: str,
+    decision_id: str,
+    decision_hash: str,
+    claim_id: str,
+    claim_hash: str,
+    task_id: str,
+    attempt_number: int,
+    attempt_actor: ExecutionAttemptActor,
+    attempt_requested_at: str,
+    attempt_recorded_at: str,
+    claim_expires_at: str,
+    must_start_by: str,
+    input_hash: str,
+    operation: str,
+    worker_class: Optional[str],
+    status: ExecutionAttemptStatus = ExecutionAttemptStatus.RECORDED,
+    artifact_version: str = ATTEMPT_ARTIFACT_VERSION,
+) -> ExecutionAttempt:
+    """Build a durable, immutable ExecutionAttempt bound to its Claim.
+
+    The Attempt cryptographically binds to the exact Authorization (id + hash),
+    Request (id + hash), Decision (id + hash), Claim (id + hash), and task.
+    ``must_start_by`` must be absolute UTC ending in ``Z`` and is bounded by
+    the Claim lifetime (callers enforce that; this builder validates structure
+    only).
+
+    ``attempt_number`` must be >= 1.
+    """
+    _require_nonempty("authorization_id", authorization_id)
+    _require_sha256("authorization_hash", authorization_hash)
+    _require_nonempty("request_id", request_id)
+    _require_sha256("request_hash", request_hash)
+    _require_nonempty("decision_id", decision_id)
+    _require_sha256("decision_hash", decision_hash)
+    _require_nonempty("claim_id", claim_id)
+    _require_sha256("claim_hash", claim_hash)
+    _require_nonempty("task_id", task_id)
+    if not isinstance(attempt_number, int) or isinstance(attempt_number, bool):
+        raise ExecutionAttemptError("attempt_number must be an integer >= 1")
+    if attempt_number < 1:
+        raise ExecutionAttemptError("attempt_number must be >= 1")
+    _validate_attempt_actor(attempt_actor)
+    _require_utc_z_timestamp("attempt_requested_at", attempt_requested_at)
+    _require_utc_z_timestamp("attempt_recorded_at", attempt_recorded_at)
+    _require_utc_z_timestamp("claim_expires_at", claim_expires_at)
+    _require_utc_z_timestamp("must_start_by", must_start_by)
+    _require_sha256("input_hash", input_hash)
+    _require_nonempty("operation", operation)
+    if worker_class is not None:
+        _require_nonempty("worker_class", worker_class)
+    _validate_attempt_status(status)
+
+    preimage = {
+        "authorization_id": authorization_id,
+        "authorization_hash": authorization_hash,
+        "request_id": request_id,
+        "request_hash": request_hash,
+        "decision_id": decision_id,
+        "decision_hash": decision_hash,
+        "claim_id": claim_id,
+        "claim_hash": claim_hash,
+        "task_id": task_id,
+        "attempt_number": attempt_number,
+        "attempt_actor_id": attempt_actor.actor_id,
+        "attempt_actor_type": attempt_actor.actor_type,
+        "attempt_actor_context": attempt_actor.actor_context,
+        "attempt_requested_at": attempt_requested_at,
+        "attempt_recorded_at": attempt_recorded_at,
+        "claim_expires_at": claim_expires_at,
+        "must_start_by": must_start_by,
+        "input_hash": input_hash,
+        "operation": operation,
+        "worker_class": worker_class,
+        "status": status.value,
+        "artifact_version": artifact_version,
+    }
+    attempt_id = _derive_id(_ATTEMPT_ID_PREFIX, preimage)
+    full = {**preimage, "attempt_id": attempt_id}
+    if not _ATTEMPT_ID_RE.match(attempt_id):
+        raise ExecutionAttemptError(
+            f"derived attempt_id is malformed: {attempt_id!r}"
+        )
+    artifact_hash = sha256_payload(full)
+    return ExecutionAttempt(
+        attempt_id=attempt_id,
+        authorization_id=authorization_id,
+        authorization_hash=authorization_hash,
+        request_id=request_id,
+        request_hash=request_hash,
+        decision_id=decision_id,
+        decision_hash=decision_hash,
+        claim_id=claim_id,
+        claim_hash=claim_hash,
+        task_id=task_id,
+        attempt_number=attempt_number,
+        attempt_actor_id=attempt_actor.actor_id,
+        attempt_actor_type=attempt_actor.actor_type,
+        attempt_actor_context=attempt_actor.actor_context,
+        attempt_requested_at=attempt_requested_at,
+        attempt_recorded_at=attempt_recorded_at,
+        claim_expires_at=claim_expires_at,
+        must_start_by=must_start_by,
+        input_hash=input_hash,
+        operation=operation,
+        worker_class=worker_class,
+        status=status,
+        artifact_version=artifact_version,
+        artifact_hash=artifact_hash,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# EA-4B ExecutionAttempt: reconstruction
+# --------------------------------------------------------------------------- #
+
+
+def _attempt_actor_from_dict(d: Mapping[str, Any]) -> ExecutionAttemptActor:
+    return ExecutionAttemptActor(
+        actor_id=d["actor_id"],
+        actor_type=d["actor_type"],
+        actor_context=d.get("actor_context"),
+    )
+
+
+def reconstruct_attempt(payload: Mapping[str, Any]) -> ExecutionAttempt:
+    """Rebuild an immutable ExecutionAttempt from its canonical dict."""
+    d = dict(payload)
+    d.pop("artifact_hash", None)
+    d.pop("attempt_id", None)
+    # Remove the flat actor fields and build the structured actor for the builder
+    actor = ExecutionAttemptActor(
+        actor_id=d.pop("attempt_actor_id"),
+        actor_type=d.pop("attempt_actor_type"),
+        actor_context=d.pop("attempt_actor_context", None),
+    )
+    d["attempt_actor"] = actor
+    status = d.get("status")
+    if isinstance(status, str):
+        d["status"] = ExecutionAttemptStatus(status)
+    return build_execution_attempt(**d)
