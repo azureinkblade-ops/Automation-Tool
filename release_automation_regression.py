@@ -68,6 +68,44 @@ def test_release_job_prerequisites_block_later_stages() -> None:
     assert royal_road and royal_road["stage"] == "royal_road"
 
 
+def test_retrying_chapter_blocks_later_chapter_in_same_novel_stage() -> None:
+    root = Path(tempfile.mkdtemp())
+    automation_db.enqueue_release_jobs(root, [
+        {"abbr": "HA", "chapter": 84, "stage": "inner_disciple", "date": "2026-08-20"},
+        {"abbr": "HA", "chapter": 85, "stage": "inner_disciple", "date": "2026-08-21"},
+    ])
+    earlier = automation_db.claim_next_release_job(root, "regression")
+    assert earlier and earlier["chapter"] == 84
+    automation_db.update_release_job(
+        root,
+        earlier["jobId"],
+        "retrying",
+        nextAttemptAt="2999-01-01 00:00:00",
+        lastError="transient failure",
+    )
+    assert automation_db.claim_next_release_job(root, "second-worker") is None
+
+
+def test_retrying_chapter_does_not_block_another_novel() -> None:
+    root = Path(tempfile.mkdtemp())
+    automation_db.enqueue_release_jobs(root, [
+        {"abbr": "HA", "chapter": 84, "stage": "inner_disciple", "date": "2026-08-20"},
+        {"abbr": "HA", "chapter": 85, "stage": "inner_disciple", "date": "2026-08-21"},
+        {"abbr": "EN", "chapter": 130, "stage": "inner_disciple", "date": "2026-08-22"},
+    ])
+    earlier = automation_db.claim_next_release_job(root, "regression")
+    assert earlier and earlier["abbr"] == "HA" and earlier["chapter"] == 84
+    automation_db.update_release_job(
+        root,
+        earlier["jobId"],
+        "retrying",
+        nextAttemptAt="2999-01-01 00:00:00",
+        lastError="transient failure",
+    )
+    unrelated = automation_db.claim_next_release_job(root, "second-worker")
+    assert unrelated and unrelated["abbr"] == "EN" and unrelated["chapter"] == 130
+
+
 def test_release_job_payload_updates_preserve_identity() -> None:
     root = Path(tempfile.mkdtemp())
     automation_db.enqueue_release_jobs(root, [
@@ -118,6 +156,8 @@ def main() -> None:
         test_release_jobs_claim_in_release_order,
         test_release_job_completion_is_persistent,
         test_release_job_prerequisites_block_later_stages,
+        test_retrying_chapter_blocks_later_chapter_in_same_novel_stage,
+        test_retrying_chapter_does_not_block_another_novel,
         test_release_job_payload_updates_preserve_identity,
         test_systemic_failure_reset_restores_pending_job,
     ]

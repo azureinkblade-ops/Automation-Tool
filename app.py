@@ -22750,7 +22750,7 @@ async function verifyPatreonDraft(page, draft, row) {{
     : '';
   const expectedBody = String(draft.body || '').trim();
   checks.body = expectedBody.length > 0 && String(bodyText || '').trim().length >= Math.min(500, Math.floor(expectedBody.length * 0.8));
-  checks.media = Boolean(row.mediaResult && row.mediaResult.attached);
+  checks.media = Boolean(row.mediaResult && row.mediaResult.attached && row.mediaReady !== false);
 
   const paid = page.locator('input[type="radio"][value="paid"]:visible').first();
   checks.paidAccess = Boolean(await paid.isChecked().catch(() => false));
@@ -22812,7 +22812,83 @@ async function verifyPatreonDraft(page, draft, row) {{
   return {{ ok: required.every(key => checks[key] === true), checks, required }};
 }}
 
-async function submitPatreonDraft(page, verification) {{
+function normalizePatreonText(value) {{
+  return String(value || '').replace(/\\s+/g, ' ').trim();
+}}
+
+async function waitForPatreonMediaReady(page, timeout = 120000) {{
+  const processing = page.getByText(/your file is processing/i).first();
+  if (await processing.isVisible().catch(() => false)) {{
+    await processing.waitFor({{ state: 'hidden', timeout }}).catch(() => null);
+  }}
+  return !(await processing.isVisible().catch(() => false));
+}}
+
+async function verifyPersistedPatreonPost(page, draft) {{
+  const persistedUrl = page.url();
+  const postId = patreonPostId(persistedUrl);
+  if (!postId || persistedUrl.includes('/posts/new')) {{
+    return {{ ok: false, checks: {{ canonicalPostUrl: false }}, required: ['canonicalPostUrl'], pageUrl: persistedUrl }};
+  }}
+  await page.reload({{ waitUntil: 'domcontentloaded', timeout: 60000 }});
+  await page.waitForTimeout(2500);
+
+  const checks = {{ canonicalPostUrl: patreonPostId(page.url()) === postId }};
+  const titleInput = await firstVisible(page, [
+    'input[placeholder*="title" i]',
+    'textarea[placeholder*="title" i]',
+    '[aria-label*="title" i]'
+  ], 5000);
+  checks.title = Boolean(titleInput) && normalizePatreonText(await titleInput.inputValue().catch(() => '')) === normalizePatreonText(draft.title);
+
+  const bodyEditor = await firstVisible(page, [
+    '.ProseMirror[contenteditable="true"]',
+    '[contenteditable="true"][role="textbox"]',
+    '[contenteditable="true"]'
+  ], 5000);
+  const persistedBody = normalizePatreonText(bodyEditor ? await bodyEditor.innerText().catch(() => '') : '')
+    .replace(/^Paid access starts here\\s*/i, '');
+  const expectedBody = normalizePatreonText(draft.body);
+  checks.body = Boolean(expectedBody) && (persistedBody === expectedBody || persistedBody.includes(expectedBody));
+
+  const paid = page.locator('input[type="radio"][value="paid"]:visible').first();
+  checks.paidAccess = Boolean(await paid.isChecked().catch(() => false));
+  const tierAccessToggle = page.locator('input[type="checkbox"][aria-label="Toggle tier selection"]:visible').first();
+  checks.tierAccess = Boolean(await tierAccessToggle.isChecked().catch(() => false));
+  const tierButton = page.getByRole('button', {{ name: 'Select tiers' }}).first();
+  checks.tiers = false;
+  if (await tierButton.count().catch(() => 0)) {{
+    if ((await tierButton.getAttribute('aria-expanded').catch(() => 'false')) !== 'true') {{
+      await tierButton.click({{ force: true }}).catch(() => null);
+      await page.waitForTimeout(400);
+    }}
+    const desired = new Set(draft.tiers || []);
+    let allMatched = true;
+    for (const tier of ['Inner Disciple', 'Path Initiate']) {{
+      const control = page.getByRole('menuitemcheckbox').filter({{ hasText: tier }}).first();
+      if (!(await control.count().catch(() => 0))) {{
+        allMatched = false;
+        continue;
+      }}
+      const checked = (await control.getAttribute('aria-checked')) === 'true';
+      if (checked !== desired.has(tier)) allMatched = false;
+    }}
+    checks.tiers = allMatched;
+    await page.keyboard.press('Escape').catch(() => null);
+  }}
+
+  const dateInput = page.locator('input[type="date"]:visible').first();
+  const timeInput = page.locator('input[type="time"]:visible').first();
+  checks.date = (await dateInput.inputValue().catch(() => '')) === String(draft.publish_date || '');
+  checks.time = (await timeInput.inputValue().catch(() => '')).slice(0, 5) === String(draft.publish_time || '09:00').slice(0, 5);
+  checks.media = await waitForPatreonMediaReady(page, 30000)
+    && Boolean(await page.locator('button[aria-label*="edit cover image media" i], img[alt*="post preview" i], img[alt*="uploaded" i]').count().catch(() => 0));
+
+  const required = ['canonicalPostUrl', 'title', 'body', 'paidAccess', 'tierAccess', 'tiers', 'date', 'time', 'media'];
+  return {{ ok: required.every(key => checks[key] === true), checks, required, pageUrl: page.url(), postId }};
+}}
+
+async function submitPatreonDraft(page, verification, draft) {{
   if (!verification || !verification.ok) return {{ submitted: false, verified: false, reason: 'pre-submit verification failed' }};
   const scheduled = ['Schedule', 'PublishForSchedule'].includes(verification.checks.actionName);
   const name = verification.checks.actionName === 'Schedule' ? 'Schedule' : /publish now|publish/i;
@@ -22838,8 +22914,8 @@ async function submitPatreonDraft(page, verification) {{
     }}
   }}
   const afterUrl = page.url();
-  const body = await page.locator('body').innerText().catch(() => '');
-  const successText = /scheduled|published|your post is live|post scheduled/i.test(body);
+  const notices = await page.locator('[role="alert"], [role="status"]').allInnerTexts().catch(() => []);
+  const successText = notices.some(text => /post scheduled|post published|your post is live/i.test(String(text || '')));
   const leftEditor = !(afterUrl.includes('/edit') || afterUrl.includes('/posts/new'));
   if (successText || leftEditor || afterUrl !== beforeUrl) {{
     const successDialog = page.getByRole('dialog').last();
@@ -22851,12 +22927,14 @@ async function submitPatreonDraft(page, verification) {{
       }}
     }}
   }}
+  const persistedVerification = await verifyPersistedPatreonPost(page, draft);
   return {{
     submitted: true,
-    verified: Boolean(successText || leftEditor || afterUrl !== beforeUrl),
+    verified: Boolean(persistedVerification && persistedVerification.ok),
     beforeUrl,
-    afterUrl,
-    successText
+    afterUrl: page.url(),
+    successText,
+    persistedVerification
   }};
 }}
 
@@ -22902,12 +22980,13 @@ async function findReusablePatreonPage(context, editUrl) {{
       row.titleFilled = await fillTitle(page, draft);
       row.bodyFilled = await fillBody(page, draft);
       row.mediaResult = await attachMedia(page, draft);
+      row.mediaReady = await waitForPatreonMediaReady(page);
       row.audienceActions = await tryConfigureAudience(page, draft);
       row.scheduleActions = await tryConfigureSchedule(page, draft);
       await page.waitForTimeout(1200);
       row.pageUrl = page.url();
       row.verification = await verifyPatreonDraft(page, draft, row);
-      if (draft.auto_submit) row.submitResult = await submitPatreonDraft(page, row.verification);
+      if (draft.auto_submit) row.submitResult = await submitPatreonDraft(page, row.verification, draft);
       row.pageUrl = page.url();
       row.ok = Boolean(row.verification && row.verification.ok && (!draft.auto_submit || (row.submitResult && row.submitResult.verified)));
     }} catch (error) {{

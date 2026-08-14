@@ -2767,6 +2767,14 @@ def claim_next_release_job(root: Path, worker_id: str) -> dict[str, Any] | None:
                   )
                   AND NOT EXISTS (
                     SELECT 1
+                    FROM release_automation_jobs AS earlier_chapter
+                    WHERE earlier_chapter.novel_abbr=release_automation_jobs.novel_abbr
+                      AND earlier_chapter.stage=release_automation_jobs.stage
+                      AND earlier_chapter.chapter_number < release_automation_jobs.chapter_number
+                      AND earlier_chapter.status NOT IN ('verified','cancelled')
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1
                     FROM release_automation_jobs AS phase_prerequisite
                     WHERE phase_prerequisite.status NOT IN ('verified','cancelled')
                       AND (
