@@ -287,11 +287,31 @@ DIRECT_PUBLIC_URL_RE = re.compile(
 )
 
 
+def _limit_hashtags(text: str, limit: int) -> str:
+    """Keep the first unique hashtags in their existing rotation order."""
+    kept: set[str] = set()
+
+    def replace(match: re.Match) -> str:
+        tag = match.group(0)
+        key = tag.lower()
+        if key in kept or len(kept) >= max(0, limit):
+            return ""
+        kept.add(key)
+        return tag
+
+    return re.sub(r"(?<!\w)#\w+", replace, str(text or ""))
+
+
 def public_copy_without_links(text: str, platform: str = "") -> str:
     cleaned = DIRECT_PUBLIC_URL_RE.sub("", str(text or ""))
     cleaned = re.sub(r"(?im)^\s*(rr|royal road|patreon|youtube|tik\s*tok|tiktok|instagram|x|twitter)\b.*$", "", cleaned)
     cleaned = re.sub(r"https?://\S+", "", cleaned)
     cleaned = cleaned.replace("\u2014", "-").replace("\u2013", "-")
+    # Facebook suppresses hashtag-heavy posts. Preserve the upstream deterministic
+    # rotation order, but enforce the platform cap at the final public-copy boundary
+    # so template, fallback, and Hermes-differentiated paths all behave identically.
+    if str(platform or "").strip().lower() == "facebook":
+        cleaned = _limit_hashtags(cleaned, 5)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
