@@ -18,6 +18,7 @@ Design rules (mirrors the Codex file-boundary pattern + the app's fail-loud rule
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -26,7 +27,7 @@ import shutil
 import subprocess
 import sys
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -91,10 +92,13 @@ class AgentPostResult:
     selected_candidate_index: int | None = None
     fallback_reason: str | None = None
     execution: HermesExecution | None = None
+    response_chars: int = 0
+    response_sha256: str = ""
+    json_candidate_count: int = 0
 
-# Diagnostics: every agent failure (rc!=0, unparseable output, subprocess error) is
-# logged here with the raw Hermes stdout/stderr so a failed post-build is diagnosable
-# instead of silently falling back to the template. The app's own logs/ dir.
+# Diagnostics: every terminal outcome is logged with bounded classifications and
+# response fingerprints so a fallback is diagnosable without copying model output,
+# provider diagnostics, secrets, or huge responses into the log. The app's logs/ dir.
 #
 # This module uses a dedicated, isolated logger. It must NOT call logging.basicConfig
 # (which would hijack the process-wide root handler and pollute unrelated application
@@ -113,14 +117,64 @@ if not _logger.handlers:
         _logger.addHandler(logging.NullHandler())
 
 
+def _text_fingerprint(label: str, text: str) -> str:
+    """Return bounded, non-content diagnostics for potentially sensitive output."""
+    if not text:
+        return ""
+    digest = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()[:16]
+    return f"\n  {label}_CHARS={len(text)} {label}_SHA256={digest}"
+
+
 def _log(msg: str, *, abbr: str = "", stdout: str = "", stderr: str = "") -> None:
-    """Record a diagnostic line (with raw agent output on failure) to logs/agent_post_writer.log."""
+    """Record a failure without copying model output or provider diagnostics into logs."""
     tail = ""
-    if stdout:
-        tail += f"\n  STDOUT>>> {stdout!r}"
-    if stderr:
-        tail += f"\n  STDERR>>> {stderr!r}"
+    tail += _text_fingerprint("STDOUT", stdout)
+    tail += _text_fingerprint("STDERR", stderr)
     _logger.error("[%s] %s%s", abbr or "-", msg, tail)
+
+
+def _result_outcome(result: AgentPostResult) -> str:
+    """Stable coarse outcome used by logs and backward-compatible metadata."""
+    if result.status is AgentPostStatus.SUCCESS:
+        return "repaired_json" if result.normalizations else "valid_json"
+    if result.status is AgentPostStatus.HERMES_EMPTY_OUTPUT:
+        return "empty_response"
+    if result.status in {
+        AgentPostStatus.HERMES_NOT_ENABLED,
+        AgentPostStatus.HERMES_NOT_STARTED,
+        AgentPostStatus.HERMES_TIMEOUT,
+        AgentPostStatus.HERMES_PROCESS_FAILED,
+    }:
+        return "invocation_failure"
+    if result.status is AgentPostStatus.CONTRACT_VALIDATION_FAILED:
+        return "invalid_contract"
+    if result.status is AgentPostStatus.JSON_PARSE_FAILED:
+        return "unrecoverable_json"
+    if result.status is AgentPostStatus.FINAL_BLOCK_NOT_FOUND:
+        return "final_block_not_found"
+    if result.status is AgentPostStatus.DATABASE_PERSIST_FAILED:
+        return "persistence_failure"
+    return result.status.value.lower()
+
+
+def _log_result_outcome(abbr: str, result: AgentPostResult) -> None:
+    """Emit one bounded terminal summary, including template-fallback activation."""
+    _logger.info(
+        "[%s] OUTCOME=%s status=%s generic_template_fallback=%s "
+        "parse_mode=%s normalizations=%s missing_fields=%s validation_errors=%s "
+        "response_chars=%s response_sha256=%s json_candidates=%s",
+        abbr or "-",
+        _result_outcome(result),
+        result.status.value,
+        result.copy is None,
+        result.parse_mode or "none",
+        ",".join(result.normalizations) or "none",
+        ",".join(result.missing_fields) or "none",
+        ",".join(result.validation_errors) or "none",
+        result.response_chars,
+        result.response_sha256 or "none",
+        result.json_candidate_count,
+    )
 
 
 # Hermes CLI lives in its own venv; resolve from the known location, else PATH.
@@ -271,6 +325,12 @@ def _repair_json_body(body: str) -> tuple[str | None, tuple[str, ...]]:
     if stripped != candidate:
         normalizations.append("removed_line_comment")
         candidate = stripped
+    # Strip JSON5-style block comments. The prompt requests strict JSON, but a
+    # short trailing explanation inside /* ... */ is a common recoverable defect.
+    block_stripped = re.sub(r"/\*.*?\*/", "", candidate, flags=re.DOTALL)
+    if block_stripped != candidate:
+        normalizations.append("removed_block_comment")
+        candidate = block_stripped
     # Collapse runs of adjacent double-quotes (e.g. `{ ""hook":` -> `{ "hook":`).
     collapsed = re.sub(r'"{2,}', '"', candidate)
     if collapsed != candidate:
@@ -342,7 +402,7 @@ def _looks_like_draft(markup: str) -> bool:
     return any(m in lowered for m in markers)
 
 
-def _extract_json(stdout_text: str) -> tuple[dict | None, str | None, tuple[str, ...]]:
+def _extract_json(stdout_text: str) -> tuple[Any | None, str | None, tuple[str, ...]]:
     """Select the final usable JSON payload from Hermes stdout.
 
     Selection order (per the reliability plan, Task 4):
@@ -448,7 +508,7 @@ def _unwrap_variation(payload: dict | None) -> dict | None:
 _REQUIRED_FIELDS = ("hook", "caption", "cta", "content_angle", "intended_audience")
 
 
-def _validate_contract(copy: dict | None) -> tuple[list[str], list[str]]:
+def _validate_contract(copy: Any | None) -> tuple[list[str], list[str]]:
     """Return (missing_fields, validation_errors) for the social-post-v1 contract."""
     missing: list[str] = []
     errors: list[str] = []
@@ -610,7 +670,7 @@ def generate_post_result(
     except subprocess.TimeoutExpired as exc:
         completed_at = __import__("time").strftime("%Y-%m-%dT%H:%M:%S")
         duration_ms = int((__import__("time").time() - t0) * 1000)
-        _log(f"FAIL: subprocess timeout: {exc!r}", abbr=abbr)
+        _log("FAIL: subprocess timeout", abbr=abbr)
         return _finalize(
             AgentPostResult(
                 status=AgentPostStatus.HERMES_TIMEOUT,
@@ -622,7 +682,7 @@ def generate_post_result(
                     command_flags=tuple(argv), exit_code=None, duration_ms=duration_ms,
                     started_at=started_at, completed_at=completed_at, reasoning="none",
                     skills=skills, max_turns=str(max_turns),
-                    stdout_replacement_count=0, error=repr(exc),
+                    stdout_replacement_count=0, error=type(exc).__name__,
                 ),
             ),
             run_id=run_id,
@@ -632,24 +692,25 @@ def generate_post_result(
                 command_flags=tuple(argv), exit_code=None, duration_ms=duration_ms,
                 started_at=started_at, completed_at=completed_at, reasoning="none",
                 skills=skills, max_turns=str(max_turns),
-                stdout_replacement_count=0, error=repr(exc),
+                stdout_replacement_count=0, error=type(exc).__name__,
             ),
         )
     except (OSError, ValueError) as exc:
         completed_at = __import__("time").strftime("%Y-%m-%dT%H:%M:%S")
         duration_ms = int((__import__("time").time() - t0) * 1000)
-        _log(f"FAIL: subprocess error: {exc!r}", abbr=abbr)
+        error_type = type(exc).__name__
+        _log(f"FAIL: subprocess error type={error_type}", abbr=abbr)
         return _finalize(
             AgentPostResult(
                 status=AgentPostStatus.HERMES_PROCESS_FAILED,
                 copy=None,
                 raw_response_path=None,
                 run_id=run_id,
-                fallback_reason=f"hermes subprocess error: {exc!r}",
+                fallback_reason=f"hermes subprocess error: {error_type}",
                 execution=HermesExecution(
                     command_flags=tuple(argv), exit_code=None, duration_ms=duration_ms,
                     started_at=started_at, completed_at=completed_at, reasoning="none",
-                    skills=skills, max_turns=str(max_turns), error=repr(exc),
+                    skills=skills, max_turns=str(max_turns), error=error_type,
                 ),
             ),
             run_id=run_id,
@@ -658,7 +719,7 @@ def generate_post_result(
             execution=HermesExecution(
                 command_flags=tuple(argv), exit_code=None, duration_ms=duration_ms,
                 started_at=started_at, completed_at=completed_at, reasoning="none",
-                skills=skills, max_turns=str(max_turns), error=repr(exc),
+                skills=skills, max_turns=str(max_turns), error=error_type,
             ),
         )
     completed_at = __import__("time").strftime("%Y-%m-%dT%H:%M:%S")
@@ -724,7 +785,7 @@ def generate_post_result(
         # variations). Distinguish a found-but-invalid contract (envelope-only,
         # empty required fields) from a genuinely missing final block so the
         # caller records the precise missing_fields.
-        if isinstance(data, dict):
+        if data is not None:
             missing, validation_errors = _validate_contract(data)
             if missing or validation_errors:
                 _log(
@@ -751,21 +812,32 @@ def generate_post_result(
                     stdout_text=stdout_text, stdout_raw=stdout_raw,
                     stderr_text=stderr_text, normalized=None, execution=execution,
                 )
+        json_like_output = any(token in stdout_text for token in ("{", "}", "[", "]"))
+        failure_status = (
+            AgentPostStatus.JSON_PARSE_FAILED
+            if json_like_output
+            else AgentPostStatus.FINAL_BLOCK_NOT_FOUND
+        )
+        fallback_reason = (
+            "hermes output contained malformed or truncated JSON that could not be repaired"
+            if json_like_output
+            else "hermes output contained no JSON final block"
+        )
         _log(
-            "FAIL: output not parseable as post JSON (missing caption / empty or malformed variations)",
+            f"FAIL: {fallback_reason}",
             abbr=abbr,
             stdout=stdout_text[:3000],
             stderr=stderr_text[:1500],
         )
         return _finalize(
             AgentPostResult(
-                status=AgentPostStatus.FINAL_BLOCK_NOT_FOUND,
+                status=failure_status,
                 copy=None,
                 raw_response_path=None,
                 run_id=run_id,
                 parse_mode=parse_mode,
                 normalizations=parse_normalizations,
-                fallback_reason="reasoning transcript contained no complete final block",
+                fallback_reason=fallback_reason,
                 execution=execution,
             ),
             run_id=run_id,
@@ -840,6 +912,17 @@ def _finalize(
     `run_id` is minted by the caller before the subprocess launch so it is stable
     across every terminal path and can be returned on the result.
     """
+    response_sha256 = (
+        hashlib.sha256(stdout_raw).hexdigest()[:16]
+        if stdout_raw
+        else ""
+    )
+    result = replace(
+        result,
+        response_chars=len(stdout_text),
+        response_sha256=response_sha256,
+        json_candidate_count=len(_find_balanced_json_objects(stdout_text)),
+    )
     try:
         import automation_db  # local import keeps the module boundary clean
 
@@ -878,19 +961,17 @@ def _finalize(
         )
         automation_db.replace_agent_post_fields(root, run_id, fields)
     except Exception as exc:  # persistence failure: never silently proceed
-        _log(f"FAIL: persistence error: {exc!r}", abbr=abbr)
+        error_type = type(exc).__name__
+        _log(f"FAIL: persistence error type={error_type}", abbr=abbr)
         _emergency_log(abbr, novel, chapter, result, exc)
         if result.status is AgentPostStatus.SUCCESS:
-            return AgentPostResult(
+            result = replace(
+                result,
                 status=AgentPostStatus.DATABASE_PERSIST_FAILED,
                 copy=None,
-                raw_response_path=None,
-                run_id=run_id,
-                parse_mode=result.parse_mode,
-                normalizations=result.normalizations,
-                fallback_reason=f"generation succeeded but persistence failed: {exc!r}",
-                execution=execution,
+                fallback_reason=f"generation succeeded but persistence failed: {error_type}",
             )
+    _log_result_outcome(abbr, result)
     return result
 
 
@@ -901,7 +982,8 @@ def _emergency_log(abbr: str, novel: str, chapter: str, result: AgentPostResult,
         line = (
             f"{__import__('time').strftime('%Y-%m-%dT%H:%M:%S')} "
             f"PERSIST_FAIL abbr={abbr} novel={novel} chapter={chapter} "
-            f"status={result.status.value} reason={result.fallback_reason!r} error={exc!r}\n"
+            f"status={result.status.value} reason={result.fallback_reason!r} "
+            f"error_type={type(exc).__name__}\n"
         )
         with emerg.open("a", encoding="utf-8") as fh:
             fh.write(line)
@@ -930,7 +1012,17 @@ def agent_result_metadata(result: AgentPostResult) -> dict[str, object]:
         "_agent_model": execution.resolved_model if execution else "unknown",
         "_agent_provider": execution.resolved_provider if execution else "unknown",
         "_agent_reasoning": execution.reasoning if execution else "none",
+        "_agent_outcome": _result_outcome(result),
         "_agent_parse_mode": result.parse_mode,
+        "_agent_parse_normalizations": list(result.normalizations),
+        "_agent_missing_fields": list(result.missing_fields),
+        "_agent_validation_errors": list(result.validation_errors),
+        "_agent_response_chars": result.response_chars,
+        "_agent_response_sha256": result.response_sha256 or None,
+        "_agent_json_candidate_count": result.json_candidate_count,
+        # Current policy is fail-soft: no validated copy means the caller uses
+        # its existing generic template. This makes that activation observable.
+        "_agent_fallback_activated": result.copy is None,
         "_agent_duration_ms": execution.duration_ms if execution else None,
         "_agent_schema_version": "social-post-v1",
     }

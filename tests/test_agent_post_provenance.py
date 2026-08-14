@@ -290,8 +290,11 @@ def test_metadata_contract_shape():
     expected = {
         "_agent_requested", "_agent_used", "_agent_status", "_agent_run_id",
         "_agent_source", "_agent_fallback_reason", "_agent_model", "_agent_provider",
-        "_agent_reasoning", "_agent_parse_mode", "_agent_duration_ms",
-        "_agent_schema_version",
+        "_agent_reasoning", "_agent_outcome", "_agent_parse_mode",
+        "_agent_parse_normalizations", "_agent_missing_fields",
+        "_agent_validation_errors", "_agent_response_chars",
+        "_agent_response_sha256", "_agent_json_candidate_count",
+        "_agent_fallback_activated", "_agent_duration_ms", "_agent_schema_version",
     }
     ok = True
     with _Sandbox():
