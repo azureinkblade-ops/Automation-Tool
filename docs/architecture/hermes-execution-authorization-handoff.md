@@ -854,8 +854,8 @@ tamper-evident `ExecutionClaim` persistence.
 ## 29.6 EA-4B claim consumption + execution attempt (implementation, COMPLETE)
 
 **EA-4B is COMPLETE (atomic Claim -> ExecutionAttempt consumption).**
-Two local commits: implementation (b9bff10) + architecture evidence
-reconciliation (6921330). Origin/main remains unchanged; remote push requires separate
+Three local commits: implementation (b9bff10) + architecture evidence
+reconciliation (6921330) + final record-only correction (d0bc92a). Origin/main remains unchanged; remote push requires separate
 pre-push audit authorization.
 
 This milestone is the first permitted to create a durable `ExecutionAttempt`:

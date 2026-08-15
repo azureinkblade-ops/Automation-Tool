@@ -853,7 +853,8 @@ above.)
 ## 81. EA-3I.2 status (COMPLETE)
 
 **EA-3I.2 COMPLETE (first capability-bearing issuance slice).** Committed as
-a single narrow local commit per the EA-3I.2 milestone authorization.
+three local commits: implementation + architecture evidence reconciliation +
+final record-only correction. Origin/main remains unchanged.
 
 This slice creates REAL execution authority under the EA-3D / EA-3A / EA-3B /
 EA-3I.1 contracts:
