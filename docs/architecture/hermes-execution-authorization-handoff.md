@@ -854,8 +854,8 @@ tamper-evident `ExecutionClaim` persistence.
 ## 29.6 EA-4B claim consumption + execution attempt (implementation, COMPLETE)
 
 **EA-4B is COMPLETE (atomic Claim -> ExecutionAttempt consumption).**
-Committed as a single narrow local commit per the EA-4B milestone
-authorization. Origin/main remains unchanged; remote push requires separate
+Two local commits: implementation (b9bff10) + architecture evidence
+reconciliation (6921330). Origin/main remains unchanged; remote push requires separate
 pre-push audit authorization.
 
 This milestone is the first permitted to create a durable `ExecutionAttempt`:
@@ -892,9 +892,9 @@ This milestone is the first permitted to create a durable `ExecutionAttempt`:
   `ATTEMPT_RECORDED` leaves zero residue (no partial write); next valid consume
   recovers the slot as attempt_number=1.
 - Concurrency PROVEN: 500 genuine two-connection/two-thread contention trials
-  (250 same-actor + 250 different-actor, zero failures). 5 mutation teeth
+  (250 same-actor + 250 different-actor, zero failures). 6 mutation teeth
   (expiry bypass, ceiling bypass, lineage bypass, rollback split, actor conflict
-  bypass, numbering bypass) all detected with byte-exact source restoration.
+  bypass, attempt-number bypass) all detected with byte-exact source restoration.
 - Read-path tamper detection: 23 physical columns bound by
   `attempt_linkage_sha256` envelope; physical mutation fails closed on load and
   `verify_integrity()`.
