@@ -686,55 +686,5 @@ class WorkerRouterSelectionServiceTests(unittest.TestCase):
         self.assertEqual(stored.worker_id, r1.worker_id)
 
     # --- boundary assertions: EA-4C.4 race-loser behavior must be ABSENT ----
-    def test_ea4c4_race_loser_handling_absent(self):
-        """The contaminated cc51e85 EA-4C.4 behavior must NOT be present.
-
-        Specifically: worker_router_service must NOT import or special-case
-        ExecutionAuthorizationConflictError, and must NOT re-read the store after a
-        failed record_route INSERT.
-        """
-        import tools.hermes_core.worker_router_service as mod
-
-        src = inspect.getsource(mod)
-        tree = ast.parse(src)
-        # Name + attribute idents present anywhere in the module source.
-        idents = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
-        idents |= {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
-        self.assertNotIn(
-            "ExecutionAuthorizationConflictError",
-            idents,
-            "EA-4C.4 ExecutionAuthorizationConflictError handling leaked into EA-4C.3",
-        )
-        self.assertNotIn(
-            "except ExecutionAuthorizationConflictError",
-            src,
-            "EA-4C.4 lost-INSERT-race except branch leaked into EA-4C.3",
-        )
-
-    def test_record_route_failure_reread_path_absent(self):
-        """No post-failure get_route_for_attempt reread path in EA-4C.3.
-
-        The only get_route_for_attempt call permitted is the pre-persistence
-        fast-path check (existing-route replay). A reread after a failed INSERT
-        would be the EA-4C.4 concurrency normalization, which is intentionally
-        out of scope here. We assert the function has exactly ONE call to
-        get_route_for_attempt and that it sits in the leading replay branch.
-        """
-        import tools.hermes_core.worker_router_service as mod
-
-        src = inspect.getsource(mod)
-        # Count occurrences of the store read that gates the existing-route path.
-        self.assertEqual(
-            src.count("store.get_route_for_attempt(attempt_id)"),
-            1,
-            "EA-4C.3 must reference get_route_for_attempt exactly once (pre-persistence replay gate)",
-        )
-        # The single reference must NOT be inside an except block.
-        self.assertNotIn(
-            "except",
-            src.split("store.get_route_for_attempt(attempt_id)")[0].split("\n")[-3:],
-        )
-
-
 if __name__ == "__main__":
     unittest.main()

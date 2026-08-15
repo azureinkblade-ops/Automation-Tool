@@ -33,14 +33,17 @@ identity. It may produce a route decision; it grants no execution authority and
 may not launch/dispatch anything.
 
 Concurrency boundary (EA-4C.3 vs EA-4C.4):
-    This module handles the case where a route ALREADY EXISTS before persistence
-    (the pre-existing-route replay/conflict fast path). It does NOT handle a
-    lost ``record_route`` INSERT race: that post-failure re-read normalization
-    is the EA-4C.4 concurrency proof and is intentionally absent here. The
-    terminal persistence path wraps ``store.record_route`` failures only in
-    ``ExecutionAuthorizationStoreError`` (store -> routing-domain translation);
-    it never re-reads the store after a failed INSERT, and it never special-cases
-    ``ExecutionAuthorizationConflictError``.
+    EA-4C.3 handles the case where a route ALREADY EXISTS before persistence
+    (the pre-existing-route replay/conflict fast path). EA-4C.4 additionally
+    handles a LOST ``record_route`` INSERT race: under concurrent selectors for
+    the same unrouted Attempt, the DB layer (BEGIN IMMEDIATE + UNIQUE(attempt_id))
+    admits exactly one writer; the loser receives ``ExecutionAuthorizationConflictError``
+    and re-reads the now-authoritative existing route, resolving via the same
+    replay/conflict logic (``_resolve_existing_route``). The terminal invariant
+    is preserved: exactly one route, every loser resolves to replay or a typed
+    conflict, never a raw SQLite leak. This lost-INSERT-race reread normalization
+    is the clean dividing line between EA-4C.3 and EA-4C.4 and is added ONLY in
+    the EA-4C.4 slice.
 
 Design source of truth:
     docs/architecture/HERMES_EA4C_WORKER_ROUTER_DESIGN_AUTHORIZATION.md
@@ -75,11 +78,11 @@ from .worker_router import (
 )
 
 # Imported only for exception translation (so raw store/SQLite errors never
-# leak out of the routing service -- EA-4C.3). NOTE: ExecutionAuthorizationStoreError
-# is the ONLY store exception imported here. The EA-4C.4 lost-INSERT-race
-# special-case (ExecutionAuthorizationConflictError + post-failure reread) is NOT
-# present in EA-4C.3.
+# leak out of the routing service -- EA-4C.3). The EA-4C.4 lost-INSERT-race
+# special-case (ExecutionAuthorizationConflictError + post-failure reread) IS
+# part of EA-4C.4 concurrency normalization and is handled explicitly below.
 from .sqlite_execution_authorization_store import (
+    ExecutionAuthorizationConflictError,
     ExecutionAuthorizationStoreError,
     SQLiteExecutionAuthorizationStore,
 )
@@ -199,11 +202,13 @@ def _resolve_existing_route(
 ) -> WorkerRouteDecision:
     """Resolve the replay/conflict semantics of an ALREADY-DURABLE route.
 
-    This helper is reachable ONLY from the pre-routing fast path (the caller
-    checks for an already-durable route before selecting). It is NEVER reached
-    from a failed ``record_route`` INSERT. The EA-4C.4 lost-INSERT-race reread
-    normalization deliberately does not exist in this module (see concurrency
-    boundary note at file top).
+    This helper is reachable from (a) the pre-routing fast path (the caller
+    checks for an already-durable route before selecting) and (b) the
+    EA-4C.4 lost-INSERT-race path (a failed ``record_route`` raised
+    ``ExecutionAuthorizationConflictError`` because UNIQUE(attempt_id) fired;
+    the now-authoritative route is re-read and resolved here). Both converge on
+    the same terminal invariant. It is NEVER reached from a non-conflict store
+    error.
 
     Terminal semantics (EA-4C.3):
 
@@ -271,10 +276,12 @@ def select_and_record_worker_route(
     condition raises a ``WorkerRouteError`` subclass (never a raw store/SQLite
     exception).
 
-    Concurrency note: this EA-4C.3 path assumes the route does not already exist
-    (the fast path above handles that) and that the single ``record_route`` call
-    succeeds. A lost INSERT race is an EA-4C.4 concern and is intentionally NOT
-    handled here.
+    Concurrency note: this EA-4C.4 path assumes the route does not already exist
+    (the fast path above handles that). If two selectors race on the same
+    unrouted Attempt, exactly one wins the ``record_route`` INSERT; the loser
+    receives ``ExecutionAuthorizationConflictError`` and is normalized via the
+    re-read + replay/conflict path (see the handler below). That lost-INSERT-race
+    normalization is the EA-4C.4 dividing line and is handled here.
     """
     if clock is None:
         clock = utc_now()
@@ -344,9 +351,32 @@ def select_and_record_worker_route(
     )
     try:
         store.record_route(route)
+    except ExecutionAuthorizationConflictError as exc:
+        # EA-4C.4 lost-INSERT-race normalization: a concurrent selector won the
+        # record_route INSERT (UNIQUE(attempt_id) fired). Re-read the now
+        # authoritative existing route and resolve via the SAME replay/conflict
+        # logic used by the pre-existing-route fast path, based on THIS context's
+        # replay-significant inputs (selected worker, routing policy identity,
+        # router-actor identity). Terminal invariant preserved: exactly one route,
+        # every loser resolves to replay or a typed conflict, never a raw
+        # SQLite leak (ExecutionAuthorizationConflictError is a routing-domain
+        # exception, not a raw sqlite3 error).
+        try:
+            existing = store.get_route_for_attempt(attempt_id)
+        except ExecutionAuthorizationStoreError as inner:
+            raise _attempt_lineage_error(inner) from inner
+        if existing is None:
+            # Should not happen: the conflict implies a row was written. Surface
+            # a typed routing error without leaking sqlite details.
+            raise WorkerRouteConflictError(
+                f"lost route race for attempt {attempt_id} but no route found: {exc}"
+            ) from exc
+        return _resolve_existing_route(
+            store=store, existing=existing, attempt_id=attempt_id,
+            registry=registry, policy=policy, router_actor=router_actor,
+        )
     except ExecutionAuthorizationStoreError as exc:
-        # Normal EA-4C.3 store/domain translation only. No special-casing of
-        # ExecutionAuthorizationConflictError; no post-failure reread.
+        # Normal EA-4C.3 store/domain translation only.
         raise _attempt_lineage_error(exc) from exc
     return route
 
