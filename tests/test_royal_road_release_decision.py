@@ -39,6 +39,8 @@ def test_overdue_new_chapter_uses_publish_now_path() -> None:
 
     assert spec["scheduled_release"] == ""
     assert spec["edit_existing"] is False
+    assert app.actionable_royal_road_release_date("2000-01-01") == ""
+    assert app.actionable_royal_road_release_date("2999-01-01") == "2999-01-01"
 
 
 def test_royal_road_verifier_accepts_publish_now_without_schedule_date() -> None:

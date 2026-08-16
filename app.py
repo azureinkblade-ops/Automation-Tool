@@ -26627,6 +26627,11 @@ def royal_road_new_chapter_url(story: str) -> str:
     return f"https://www.royalroad.com/author-dashboard/chapters/new/{match.group(1)}" if match else ""
 
 
+def actionable_royal_road_release_date(value: Any) -> str:
+    release_date = str(value or "").strip()
+    return release_date if release_date > iso_today().isoformat() else ""
+
+
 def royal_road_release_spec(
     folder: Path,
     *,
@@ -26672,7 +26677,7 @@ def royal_road_release_spec(
     rr_new_url = royal_road_new_chapter_url(str(metadata.get("abbr") or ""))
     release_dates = release_status.get("dates") if isinstance(release_status.get("dates"), dict) else {}
     release_date = str(scheduled_release or release_dates.get("royalRoadDate") or "").strip()
-    actionable_release_date = release_date if release_date > iso_today().isoformat() else ""
+    actionable_release_date = actionable_royal_road_release_date(release_date)
     return {
         "key": "royal-road",
         "label": "Royal Road",
@@ -26814,7 +26819,7 @@ def social_post_preview(
                 "fiction_url": royal_road_url_for_story(str(metadata.get("abbr") or "")),
                 "chapter_url": rr_chapter_url,
                 "edit_existing": edit_existing,
-                "scheduled_release": str(rr_dates.get("royalRoadDate") or "") if not edit_existing else "",
+                "scheduled_release": actionable_royal_road_release_date(rr_dates.get("royalRoadDate")) if not edit_existing else "",
                 "media_path": str(image_path) if image_path.exists() else "",
             }
         )
@@ -28460,7 +28465,7 @@ def manual_campaign_platform_specs(campaign_folder: Path) -> list[dict[str, str]
                 "fiction_url": royal_road_url_for_story(str(campaign_metadata.get("abbr") or "")) if spec["key"] == "royal-road" else "",
                 "chapter_url": rr_chapter_url if spec["key"] == "royal-road" else "",
                 "edit_existing": edit_existing if spec["key"] == "royal-road" else False,
-                "scheduled_release": str(rr_dates.get("royalRoadDate") or "") if spec["key"] == "royal-road" and not edit_existing else "",
+                "scheduled_release": actionable_royal_road_release_date(rr_dates.get("royalRoadDate")) if spec["key"] == "royal-road" and not edit_existing else "",
             }
         )
     return result
