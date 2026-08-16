@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import inspect
+import json
+import tempfile
+from pathlib import Path
+
 import app
 
 
@@ -19,3 +24,24 @@ def test_changed_existing_royal_road_chapter_uses_update_path() -> None:
     )
 
     assert decision == "update_existing"
+
+
+def test_overdue_new_chapter_uses_publish_now_path() -> None:
+    folder = Path(tempfile.mkdtemp())
+    (folder / "metadata.json").write_text(
+        json.dumps({"abbr": "HA", "chapter": 66, "title": "Chapter 66"}),
+        encoding="utf-8",
+    )
+    (folder / "royal-road.txt").write_text("Chapter 66\n\nBody", encoding="utf-8")
+    (folder / "royal-road-post-note.txt").write_text("Note", encoding="utf-8")
+
+    spec = app.royal_road_release_spec(folder, scheduled_release="2000-01-01")
+
+    assert spec["scheduled_release"] == ""
+    assert spec["edit_existing"] is False
+
+
+def test_royal_road_verifier_accepts_publish_now_without_schedule_date() -> None:
+    source = inspect.getsource(app.write_manual_posts_playwright_script)
+
+    assert "date: editExisting || !expectedDate || scheduleValue.includes(expectedDate)" in source

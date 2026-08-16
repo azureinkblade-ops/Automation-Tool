@@ -26672,6 +26672,7 @@ def royal_road_release_spec(
     rr_new_url = royal_road_new_chapter_url(str(metadata.get("abbr") or ""))
     release_dates = release_status.get("dates") if isinstance(release_status.get("dates"), dict) else {}
     release_date = str(scheduled_release or release_dates.get("royalRoadDate") or "").strip()
+    actionable_release_date = release_date if release_date > iso_today().isoformat() else ""
     return {
         "key": "royal-road",
         "label": "Royal Road",
@@ -26685,7 +26686,7 @@ def royal_road_release_spec(
         "fiction_url": royal_road_url_for_story(str(metadata.get("abbr") or "")),
         "chapter_url": rr_chapter_url,
         "edit_existing": edit_existing,
-        "scheduled_release": "" if edit_existing else release_date,
+        "scheduled_release": "" if edit_existing else actionable_release_date,
         "media_path": "",
         "auto_submit": bool(auto_submit),
     }
@@ -29236,7 +29237,7 @@ async function verifyRoyalRoadDraft(page, post) {{
     title: Boolean(expectedTitle) && titleValue === expectedTitle,
     body: royalRoadTextMatches(bodyValue, expectedBody),
     postNote: royalRoadTextMatches(noteValue, expectedNote),
-    date: editExisting || (Boolean(expectedDate) && scheduleValue.includes(expectedDate)),
+    date: editExisting || !expectedDate || scheduleValue.includes(expectedDate),
     actionAvailable: (await action.count().catch(() => 0)) > 0 && await action.isEnabled().catch(() => false),
   }};
   const verification = {{
