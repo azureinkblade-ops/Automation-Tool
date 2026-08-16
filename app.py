@@ -22157,7 +22157,7 @@ def royal_road_diff_and_edit(folder: str) -> dict[str, Any]:
     rr = check.get("result", {}).get("royalRoad", {}) if isinstance(check.get("result"), dict) else {}
     compare = rr.get("contentCompare", {}) if isinstance(rr, dict) else {}
     status = str(compare.get("status") or "").lower()
-    should_open = status in {"different", "missing", "unknown"} or bool(post.get("editExistingRoyalRoadChapter"))
+    should_open = status in {"different", "missing", "not_found", "unknown"} or bool(post.get("editExistingRoyalRoadChapter"))
     assist = social_post_preview(target_folder, True) if should_open else None
     return {
         "folder": target_folder,

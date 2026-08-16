@@ -45,3 +45,9 @@ def test_royal_road_verifier_accepts_publish_now_without_schedule_date() -> None
     source = inspect.getsource(app.write_manual_posts_playwright_script)
 
     assert "date: editExisting || !expectedDate || scheduleValue.includes(expectedDate)" in source
+
+
+def test_missing_live_chapter_opens_royal_road_editor() -> None:
+    source = inspect.getsource(app.royal_road_diff_and_edit)
+
+    assert '"not_found"' in source
