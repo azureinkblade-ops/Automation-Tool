@@ -104,6 +104,32 @@ class TrustedFakeAdapterResolver:
         return self._adapter
 
 
+class TrustedRealAdapterResolver:
+    """Narrow EA-4D.3E-C wiring: explicit trusted real-execution resolution.
+
+    This resolver is used ONLY when a coordinator is explicitly constructed for
+    real execution (e.g. ``ExecutionLaunchCoordinator(..., adapter_resolver=
+    TrustedRealAdapterResolver(factory))``). It resolves ``LOCAL_WORKER_ADAPTER``
+    to a real ``LocalWorkerRuntimeAdapter`` built by the supplied factory. The
+    DEFAULT coordinator continues to use ``TrustedFakeAdapterResolver`` and
+    remains fake-only; real execution therefore requires explicit trusted
+    construction and is never the default path.
+
+    Any non-LOCAL kind, or a kind the factory cannot satisfy, fails closed.
+    """
+
+    def __init__(self, *, factory) -> None:
+        # factory: Callable[[WorkerRuntimeAdapterKind], RuntimeLaunchAdapter]
+        self._factory = factory
+
+    def resolve(self, adapter_kind: WorkerRuntimeAdapterKind) -> RuntimeLaunchAdapter:
+        if adapter_kind != WorkerRuntimeAdapterKind.LOCAL_WORKER_ADAPTER:
+            raise LaunchCoordinationFailClosedError(
+                f"real resolver handles only LOCAL_WORKER_ADAPTER; "
+                f"rejected {adapter_kind!r}")
+        return self._factory(adapter_kind)
+
+
 # --------------------------------------------------------------------------- #
 # Immutable coordinator result (distinct from frozen ExecutionStartResult)
 # --------------------------------------------------------------------------- #

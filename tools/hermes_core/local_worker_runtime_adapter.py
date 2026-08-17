@@ -49,18 +49,43 @@ from tools.hermes_core.local_worker_runtime_config import (
     LocalWorkerLaunchConfig,
     TrustedLocalWorkerConfigRegistry,
 )
+from tools.hermes_core.local_worker_process_control import (
+    ProcessSpawnError,
+    spawn_probe,
+)
 
 
 # --------------------------------------------------------------------------- #
 # No-spawn boundary
 # --------------------------------------------------------------------------- #
 class RuntimeAdapterExecutionNotAuthorizedError(RuntimeAdapterError):
-    """Raised at the spawn boundary when 3E-C real execution is not authorized.
+    """Raised at the spawn boundary when process_control is not configured.
 
     The adapter validates and constructs the full launch command (dry run) but
-    must not invoke a process. This error makes the no-spawn boundary explicit
-    and testable; it is NEVER silently swallowed into STARTED/FAILED/UNKNOWN.
+    must not invoke a process when no trusted real-execution capability is
+    injected. This keeps the default coordinator fake-only and makes the
+    no-spawn boundary explicit and testable. It is NEVER swallowed into
+    STARTED/FAILED/UNKNOWN.
     """
+
+
+@dataclass(frozen=True)
+class LocalWorkerTimeouts:
+    """Frozen EA-4D.3E-C timeout freeze (seconds).
+
+    Process creation is SYNCHRONOUS (subprocess.Popen is called directly; there
+    is no enforced spawn_timeout because an un-cancellable thread-wrapped spawn
+    would create a duplicate-execution race). The three bounded controls below
+    are all mechanically enforced:
+      - ack_timeout_seconds:     communicate(input=..., timeout=...) wraps the
+                                acknowledgement I/O.
+      - lookup_timeout_seconds: SQLite busy_timeout on the idempotency registry.
+      - shutdown_timeout_seconds: bounded terminate/kill of the owned child.
+    """
+
+    ack_timeout_seconds: float = 5.0
+    lookup_timeout_seconds: float = 2.0
+    shutdown_timeout_seconds: float = 3.0
 
 
 # --------------------------------------------------------------------------- #
@@ -237,13 +262,25 @@ class LocalWorkerIdempotencyRegistry:
     never authoritative absence.
     """
 
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, lookup_timeout_seconds: float = 2.0) -> None:
         self._db_path = db_path
+        self._lookup_timeout_seconds = lookup_timeout_seconds
 
     def _connect(self) -> sqlite3.Connection:
         # isolation_level=None: the registry controls its own transactions.
-        conn = sqlite3.connect(self._db_path, isolation_level=None)
+        # ``timeout=`` is the SQLite busy-timeout: the connection will retry a
+        # locked resource for at most this many seconds before raising
+        # OperationalError. This mechanically bounds lookup against a locked or
+        # unavailable registry so it normalizes to UNKNOWN (not an unbounded
+        # wait). busy_timeout mirrors the same bound at the C level.
+        conn = sqlite3.connect(
+            self._db_path, isolation_level=None,
+            timeout=self._lookup_timeout_seconds)
         conn.execute("PRAGMA foreign_keys = ON")
+        # busy_timeout is an integer we fully control; PRAGMA cannot take a
+        # bound-parameter placeholder, so format it directly.
+        conn.execute(
+            "PRAGMA busy_timeout = %d" % int(self._lookup_timeout_seconds * 1000))
         return conn
 
     def _ensure_validated(self, conn: sqlite3.Connection) -> None:
@@ -357,9 +394,18 @@ class LocalWorkerRuntimeAdapter:
         *,
         config_registry: TrustedLocalWorkerConfigRegistry,
         idempotency_registry: LocalWorkerIdempotencyRegistry,
+        process_control=None,
+        timeouts: Optional["LocalWorkerTimeouts"] = None,
     ) -> None:
         self._config_registry = config_registry
         self._idempotency_registry = idempotency_registry
+        # When process_control is provided (explicit trusted real-execution
+        # construction), launch() performs the real probe spawn. When it is
+        # None, launch() stops at the dry-run boundary (RuntimeAdapter
+        # ExecutionNotAuthorizedError) -- preserving the 3E-A/B behavior and
+        # keeping the default coordinator fake-only.
+        self._process_control = process_control
+        self._timeouts = timeouts or LocalWorkerTimeouts()
 
     # -- pre-delivery validation (definitive -> FAILED, not UNKNOWN) ---------- #
     def _validate_pre_delivery(
@@ -417,14 +463,62 @@ class LocalWorkerRuntimeAdapter:
         # Full pre-delivery validation (definitive failure -> FAILED cause).
         config = self._validate_pre_delivery(
             binding=binding, launch_attempt=launch_attempt, idempotency_key=idempotency_key)
-        # Dry-run command construction (no process created).
+        # Dry-run command construction (validated even when spawning).
         command = build_launch_command(
             launch_attempt=launch_attempt, binding=binding, config=config)
         command.assert_no_shell()
-        # Spawn boundary: 3E-C real execution is NOT authorized in this slice.
-        raise RuntimeAdapterExecutionNotAuthorizedError(
-            "EA-4D.3E-C real execution not authorized; spawn boundary reached "
-            "after full dry-run validation")
+
+        if self._process_control is None:
+            # No trusted real-execution capability injected: stop at the
+            # dry-run boundary. Default coordinator path stays fake-only.
+            raise RuntimeAdapterExecutionNotAuthorizedError(
+                "EA-4D.3E-C real execution not authorized; spawn boundary reached "
+                "after full dry-run validation")
+
+        # Real, controlled probe spawn (EA-4D.3E-C). The probe writes to the
+        # worker-owned SQLite registry; we normalize the authoritative state
+        # via lookup() so a lost ack never yields a false positive.
+        try:
+            return_code, stdout_text = self._process_control.spawn_probe(
+                executable=command.executable,
+                argv=command.argv[1:] + (self._idempotency_registry._db_path,),
+                cwd=command.cwd,
+                environment=command.environment,
+                request_json=command.request_payload_json,
+                ack_timeout_seconds=self._timeouts.ack_timeout_seconds,
+                shutdown_timeout_seconds=self._timeouts.shutdown_timeout_seconds,
+            )
+        except ProcessSpawnError as exc:
+            # Definitive failure to create the process (e.g. executable missing,
+            # permission denied) -> FAILED, not UNKNOWN.
+            return RuntimeLaunchResult(
+                outcome=RuntimeLaunchOutcome.FAILED,
+                error_code="PROCESS_CREATION_FAILED",
+                error_summary=str(exc),
+            )
+        # The worker has committed (or not) to the worker-owned registry. The
+        # authoritative reconciliation determines the normalized outcome.
+        reconcile = self._idempotency_registry.lookup(idempotency_key)
+        if reconcile.outcome == RuntimeLookupOutcome.FOUND_STARTED:
+            return RuntimeLaunchResult(
+                outcome=RuntimeLaunchOutcome.STARTED,
+                runtime_run_id=reconcile.runtime_run_id,
+                adapter_metadata_hash=None,
+            )
+        if reconcile.outcome == RuntimeLookupOutcome.FOUND_FAILED:
+            return RuntimeLaunchResult(
+                outcome=RuntimeLaunchOutcome.FAILED,
+                error_code="WORKER_REJECTED",
+                error_summary="worker rejected before acceptance",
+            )
+        # No authoritative STARTED/FAILED row: the launch is ambiguous.
+        return RuntimeLaunchResult(
+            outcome=RuntimeLaunchOutcome.UNKNOWN,
+            error_code="ACK_LOST_OR_UNRESOLVED",
+            error_summary=(
+                f"probe exited with code {return_code}; ack/registry state "
+                f"unresolved"),
+        )
 
     def lookup(self, idempotency_key: str) -> RuntimeLookupResult:
         return self._idempotency_registry.lookup(idempotency_key)
