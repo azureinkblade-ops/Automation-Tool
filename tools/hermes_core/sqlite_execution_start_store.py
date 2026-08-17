@@ -51,12 +51,29 @@ from tools.hermes_core.execution_start import (
     ExecutionStartReservation,
     ExecutionStartReservationStatus,
     ExecutionStartResultError,
+    ExecutionLaunchAttempt,
+    ExecutionLaunchAttemptStatus,
 )
 from tools.hermes_core.hashing import canonical_json, sha256_text
 
 
-SCHEMA_VERSION_START = 1
+SCHEMA_VERSION_START = 2
+SCHEMA_VERSION_LEGACY = 1
 SUPPORTED_SCHEMA_VERSIONS_START = (SCHEMA_VERSION_START,)
+MIGRATABLE_FROM_SCHEMA_VERSIONS_START = (SCHEMA_VERSION_LEGACY,)
+
+# Frozen, known-good v1 execution_launch_attempts column set. Used by the
+# v1->v2 migration to verify the on-disk shape before altering anything.
+# v1 lacked reservation_hash; v2 adds it (NOT NULL).
+V1_LAUNCH_ATTEMPT_COLUMNS = (
+    "launch_attempt_id", "artifact_hash", "reservation_id", "route_id",
+    "route_hash", "attempt_id", "attempt_hash", "authorization_id",
+    "authorization_hash", "task_id", "worker_id", "worker_class",
+    "worker_version", "operation", "input_hash", "runtime_binding_id",
+    "runtime_binding_version", "runtime_binding_hash", "idempotency_key",
+    "recorded_at", "must_start_by", "launcher_actor_id", "launcher_actor_type",
+    "launcher_actor_context", "status", "canonical_json", "payload_sha256",
+)
 
 
 class ExecutionStartStoreError(Exception):
@@ -65,6 +82,11 @@ class ExecutionStartStoreError(Exception):
 
 class ExecutionStartSchemaError(ExecutionStartStoreError):
     """Schema version mismatch or bootstrap failure."""
+
+
+class ExecutionStartMigrationError(ExecutionStartSchemaError):
+    """v1 -> v2 migration refused (e.g. populated legacy rows with no
+    verifiable reservation hash). Fail-closed; never synthesizes a value."""
 
 
 # --------------------------------------------------------------------------- #
@@ -107,7 +129,7 @@ class SQLiteExecutionStartStore:
     def __init__(self, db_path: "str | Path") -> None:
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self._db_path))
+        self._conn = sqlite3.connect(str(self._db_path), isolation_level=None)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA journal_mode = DELETE")
@@ -116,6 +138,14 @@ class SQLiteExecutionStartStore:
         # raise after the reservation row + START_RESERVED ledger entry are
         # inserted but before COMMIT, so rollback leaves zero residue.
         self._fail_after_reservation_insert = False
+        # Test-only failure-injection seam (EA-4D.3B migration proof): when set,
+        # raise at the start of _migrate_v1_to_v2 so the v1 database is left
+        # recognizable (rolled back, version still 1).
+        self._fail_during_migration = False
+        # Test-only failure-injection seam (EA-4D.3B migration proof): when set,
+        # raise AFTER the structural/data migration but BEFORE the schema-version
+        # row is advanced to v2, proving transactional atomicity of the mutation.
+        self._fail_after_launch_attempt_schema_migration = False
         self._initialize()
 
     # -- schema --------------------------------------------------------------
@@ -136,11 +166,25 @@ class SQLiteExecutionStartStore:
             raise ExecutionStartSchemaError(
                 "start schema version row missing after bootstrap")
         version = int(stored["version"])
-        if version not in SUPPORTED_SCHEMA_VERSIONS_START:
-            raise ExecutionStartSchemaError(
-                f"unsupported start schema version {version}; "
-                f"supported: {sorted(SUPPORTED_SCHEMA_VERSIONS_START)}")
+        if version == SCHEMA_VERSION_START:
+            # Fresh-or-already-v2 database: ensure the v2 table set exists.
+            self._ensure_v2_tables(cur)
+            self._conn.commit()
+            return
+        if version in MIGRATABLE_FROM_SCHEMA_VERSIONS_START:
+            # Legacy v1 database: migrate to v2 atomically. The whole migration
+            # (shape check, ALTER/population/rebuild, version advance) runs in a
+            # single transaction; any injected failure or error rolls back
+            # completely, leaving a recognizable v1 database.
+            self._run_atomic(lambda: self._migrate_v1_to_v2(cur))
+            return
+        raise ExecutionStartSchemaError(
+            f"unsupported start schema version {version}; "
+            f"supported: {sorted(SUPPORTED_SCHEMA_VERSIONS_START)}")
 
+    # -- v2 schema -----------------------------------------------------------
+    def _ensure_v2_tables(self, cur) -> None:
+        """Create the v2 Start DB table set (reservation_hash persisted)."""
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS execution_start_reservations (
@@ -177,12 +221,14 @@ class SQLiteExecutionStartStore:
         )
         # Schema-completeness only: the launch-attempt table exists, but NO
         # EA-4D.2 code path writes to it. EA-4D.3 owns launch orchestration.
+        # v2 adds reservation_hash (NOT NULL) to the launch-attempt table.
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS execution_launch_attempts (
                 launch_attempt_id TEXT PRIMARY KEY,
                 artifact_hash TEXT NOT NULL,
                 reservation_id TEXT NOT NULL UNIQUE,
+                reservation_hash TEXT NOT NULL,
                 route_id TEXT NOT NULL,
                 route_hash TEXT NOT NULL,
                 attempt_id TEXT NOT NULL,
@@ -210,7 +256,6 @@ class SQLiteExecutionStartStore:
             )
             """
         )
-        # Schema-completeness only: start results (EA-4D.3).
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS execution_start_results (
@@ -251,7 +296,119 @@ class SQLiteExecutionStartStore:
             )
             """
         )
-        self._conn.commit()
+
+    # -- v1 -> v2 migration --------------------------------------------------
+    def _migrate_v1_to_v2(self, cur) -> None:
+        """Atomically migrate a legacy v1 Start DB to v2.
+
+        v2 adds ``reservation_hash`` (NOT NULL) to ``execution_launch_attempts``.
+        The migration refuses (fail-closed) if it cannot prove the shape, or
+        if populated legacy launch-attempt rows exist whose ``reservation_hash``
+        cannot be reconstructed from a verifiable durable ExecutionStartReservation.
+        No default/synthetic value is ever written. On any failure the caller's
+        transaction is rolled back, leaving a recognizable v1 database.
+        """
+        if self._fail_during_migration:
+            raise ExecutionStartMigrationError("injected migration failure")
+        # 1. Verify the actual on-disk launch-attempt shape matches the known
+        #    v1 definition (must NOT yet contain reservation_hash).
+        cols = [
+            r["name"] for r in cur.execute(
+                "PRAGMA table_info(execution_launch_attempts)").fetchall()
+        ]
+        if cols != list(V1_LAUNCH_ATTEMPT_COLUMNS):
+            raise ExecutionStartMigrationError(
+                f"execution_launch_attempts on-disk shape does not match known "
+                f"v1 definition; refusing to migrate. got={cols}")
+        if "reservation_hash" in cols:
+            raise ExecutionStartMigrationError(
+                "execution_launch_attempts already has reservation_hash; "
+                "unexpected v1 state")
+        # 2. Count legacy launch-attempt rows.
+        row_count = cur.execute(
+            "SELECT COUNT(*) AS n FROM execution_launch_attempts"
+        ).fetchone()["n"]
+        # 3. Add the column. For an empty table SQLite permits NOT NULL with no
+        #    default; for a populated table we add it nullable first, then
+        #    populate from verified reservations and rebuild as NOT NULL.
+        if row_count == 0:
+            cur.execute(
+                "ALTER TABLE execution_launch_attempts "
+                "ADD COLUMN reservation_hash TEXT NOT NULL"
+            )
+        else:
+            cur.execute(
+                "ALTER TABLE execution_launch_attempts "
+                "ADD COLUMN reservation_hash TEXT"
+            )
+            self._populate_legacy_reservation_hashes(cur, row_count)
+            self._rebuild_launch_attempts_not_null(cur)
+        # 3b. Post-mutation / pre-version-advance rollback seam. If armed, fail
+        # here AFTER the structural + data migration has occurred but BEFORE the
+        # schema-version row is advanced to v2. A crash at this point must roll
+        # back every mutation, leaving a recognizable v1 database.
+        if self._fail_after_launch_attempt_schema_migration:
+            raise ExecutionStartMigrationError(
+                "injected post-mutation failure (rollback proof)")
+        # 4. Advance the schema version LAST (within the same transaction), so a
+        #    crash before this point leaves a recognizable v1 database.
+        cur.execute(
+            "UPDATE start_schema_version SET version = ?",
+            (SCHEMA_VERSION_START,),
+        )
+
+    def _populate_legacy_reservation_hashes(self, cur, row_count: int) -> None:
+        """Reconstruct reservation_hash for each populated legacy launch-attempt
+        row from a verified durable ExecutionStartReservation. Fail closed if
+        any row cannot be proven."""
+        rows = cur.execute(
+            "SELECT launch_attempt_id, reservation_id FROM "
+            "execution_launch_attempts"
+        ).fetchall()
+        if len(rows) != row_count:
+            raise ExecutionStartMigrationError(
+                "launch-attempt row count shifted during migration")
+        for row in rows:
+            reservation_id = row["reservation_id"]
+            res_row = cur.execute(
+                "SELECT * FROM execution_start_reservations WHERE "
+                "reservation_id = ?",
+                (reservation_id,),
+            ).fetchone()
+            if res_row is None:
+                raise ExecutionStartMigrationError(
+                    f"launch attempt {row['launch_attempt_id']} references "
+                    f"reservation {reservation_id} which is absent; cannot "
+                    f"reconstruct reservation_hash (fail closed)")
+            reservation = self._row_to_reservation(res_row)
+            # _row_to_reservation already verified the reservation hash/linkage.
+            cur.execute(
+                "UPDATE execution_launch_attempts SET reservation_hash = ? "
+                "WHERE launch_attempt_id = ?",
+                (reservation.artifact_hash, row["launch_attempt_id"]),
+            )
+
+    def _rebuild_launch_attempts_not_null(self, cur) -> None:
+        """Rebuild execution_launch_attempts so reservation_hash is NOT NULL,
+        after populated rows have valid hashes. Any still-NULL row fails closed.
+        """
+        null_rows = cur.execute(
+            "SELECT COUNT(*) AS n FROM execution_launch_attempts "
+            "WHERE reservation_hash IS NULL"
+        ).fetchone()["n"]
+        if null_rows:
+            raise ExecutionStartMigrationError(
+                f"{null_rows} launch-attempt row(s) still lack a verifiable "
+                f"reservation_hash after reconstruction; fail closed")
+        cur.execute(
+            "CREATE TABLE execution_launch_attempts_v2 AS "
+            "SELECT * FROM execution_launch_attempts"
+        )
+        cur.execute("DROP TABLE execution_launch_attempts")
+        cur.execute(
+            "ALTER TABLE execution_launch_attempts_v2 "
+            "RENAME TO execution_launch_attempts"
+        )
 
     # -- helpers -------------------------------------------------------------
     def _run_atomic(self, fn) -> None:
@@ -547,6 +704,166 @@ class SQLiteExecutionStartStore:
         ).fetchone()
         return row is not None
 
+    def get_launch_attempt(
+        self, reservation_id: str,
+    ) -> Optional[ExecutionLaunchAttempt]:
+        """Read a durable ExecutionLaunchAttempt by reservation_id.
+
+        Always verifies integrity on read: reconstructed artifact
+        ``verify_hash()`` and recomputed ``payload_sha256`` are checked.
+        Tampering any persisted column fails closed.
+        """
+        row = self._conn.execute(
+            "SELECT * FROM execution_launch_attempts WHERE reservation_id = ?",
+            (reservation_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return _row_to_launch_attempt(row)
+
+    def record_launch_attempt(
+        self,
+        *,
+        attempt: ExecutionLaunchAttempt,
+        now: str,
+    ) -> ExecutionLaunchAttempt:
+        """Persist one durable ExecutionLaunchAttempt and one
+        LAUNCH_ATTEMPT_RECORDED ledger event inside a single atomic
+        transaction.
+
+        The store does NOT:
+          * resolve a runtime binding,
+          * read the clock,
+          * invoke an adapter or worker,
+          * infer a runtime result.
+
+        Entry precondition: the caller has already verified lineage,
+        resolved the binding, captured the clock, and rechecked the
+        deadline (EA-4D.3B admission ordering, sections 1-9).
+        """
+        if not isinstance(attempt, ExecutionLaunchAttempt):  # type: ignore[attr-defined]  # noqa: F821
+            raise ExecutionStartStoreError(
+                f"record_launch_attempt requires ExecutionLaunchAttempt, "
+                f"got {type(attempt)!r}")
+        if not attempt.verify_hash():
+            raise ExecutionStartIntegrityError(
+                f"launch attempt {attempt.launch_attempt_id} failed hash "
+                f"verification; refusing to persist")
+        canonical = canonical_json(attempt.to_canonical_dict())  # type: ignore[attr-defined]  # noqa: F821
+        payload_sha256 = sha256_text(canonical)
+
+        result: dict = {}
+
+        def _work() -> None:
+            try:
+                self._conn.execute(
+                    "INSERT INTO execution_launch_attempts "
+                    "(launch_attempt_id, artifact_hash, reservation_id, "
+                    "reservation_hash, route_id, route_hash, attempt_id, "
+                    "attempt_hash, authorization_id, authorization_hash, task_id, worker_id, "
+                    "worker_class, worker_version, operation, input_hash, "
+                    "runtime_binding_id, runtime_binding_version, "
+                    "runtime_binding_hash, idempotency_key, recorded_at, "
+                    "must_start_by, launcher_actor_id, launcher_actor_type, "
+                    "launcher_actor_context, status, canonical_json, "
+                    "payload_sha256) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        attempt.launch_attempt_id,
+                        attempt.artifact_hash,
+                        attempt.reservation_id,
+                        attempt.reservation_hash,
+                        attempt.route_id,
+                        attempt.route_hash,
+                        attempt.attempt_id,
+                        attempt.attempt_hash,
+                        attempt.authorization_id,
+                        attempt.authorization_hash,
+                        attempt.task_id,
+                        attempt.worker_id,
+                        attempt.worker_class,
+                        attempt.worker_version,
+                        attempt.operation,
+                        attempt.input_hash,
+                        attempt.runtime_binding_id,
+                        attempt.runtime_binding_version,
+                        attempt.runtime_binding_hash,
+                        attempt.idempotency_key,
+                        attempt.recorded_at,
+                        attempt.must_start_by,
+                        attempt.launcher_actor_id,
+                        attempt.launcher_actor_type,
+                        attempt.launcher_actor_context,
+                        attempt.status.value,
+                        canonical,
+                        payload_sha256,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                if "UNIQUE" in str(exc) and "reservation_id" in str(exc):
+                    raise ExecutionStartConflictError(
+                        f"launch attempt already exists for reservation "
+                        f"{attempt.reservation_id}; no second admission") from exc
+                raise ExecutionStartIntegrityError(
+                    f"unexpected integrity error persisting launch attempt: "
+                    f"{exc}") from exc
+            self._append_launch_attempt_ledger(attempt, now, payload_sha256)
+            result["attempt"] = attempt
+
+        try:
+            self._run_atomic(_work)
+        except ExecutionStartConflictError:
+            raise
+        except sqlite3.IntegrityError as exc:
+            if "UNIQUE" in str(exc) and "reservation_id" in str(exc):
+                raise ExecutionStartConflictError(
+                    f"lost INSERT race (UNIQUE reservation_id) for "
+                    f"{attempt.reservation_id}; re-reading durable winner") from exc
+            raise ExecutionStartIntegrityError(
+                f"unexpected integrity error: {exc}") from exc
+        return result["attempt"]
+
+    def _append_launch_attempt_ledger(
+        self,
+        attempt: ExecutionLaunchAttempt,  # type: ignore[attr-defined]  # noqa: F821
+        now: str,
+        payload_sha256: str,
+    ) -> str:
+        prev = self._conn.execute(
+            "SELECT entry_sha256 FROM execution_start_ledger "
+            "ORDER BY sequence_no DESC LIMIT 1",
+        ).fetchone()
+        previous = prev["entry_sha256"] if prev else None
+        payload = {
+            "event_type": "LAUNCH_ATTEMPT_RECORDED",
+            "artifact_type": "ExecutionLaunchAttempt",
+            "artifact_id": attempt.launch_attempt_id,
+            "artifact_hash": attempt.artifact_hash,
+            "payload_sha256": payload_sha256,
+            "previous_entry_sha256": previous,
+            "timestamp": now,
+        }
+        entry_sha = sha256_text(canonical_json(payload))
+        self._conn.execute(
+            "INSERT INTO execution_start_ledger "
+            "(event_id, event_type, artifact_type, artifact_id, artifact_hash, "
+            "payload_sha256, previous_entry_sha256, entry_sha256, timestamp) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                attempt.launch_attempt_id,
+                "LAUNCH_ATTEMPT_RECORDED",
+                "ExecutionLaunchAttempt",
+                attempt.launch_attempt_id,
+                attempt.artifact_hash,
+                payload_sha256,
+                previous,
+                entry_sha,
+                now,
+            ),
+        )
+        return entry_sha
+
     def close(self) -> None:
         self._conn.close()
 
@@ -585,3 +902,58 @@ def _replay_significant_equal(a: ExecutionStartReservation,
         and a.launcher_actor_type == b.launcher_actor_type
         and a.launcher_actor_context == b.launcher_actor_context
     )
+
+
+def _row_to_launch_attempt(row: sqlite3.Row) -> ExecutionLaunchAttempt:
+    """Reconstruct + verify a durable ExecutionLaunchAttempt on read.
+
+    The reconstructed artifact's own ``verify_hash()`` is checked, and the
+    recomputed canonical payload hash is compared against the stored physical
+    ``payload_sha256``. Any divergence fails closed (tamper-evident).
+    """
+    try:
+        status = ExecutionLaunchAttemptStatus(row["status"])
+    except ValueError:
+        raise ExecutionStartIntegrityError(
+            f"launch attempt row for reservation {row['reservation_id']} "
+            f"has an invalid stored status {row['status']!r}; refusing to "
+            f"return tampered artifact")
+    artifact = ExecutionLaunchAttempt(
+        launch_attempt_id=row["launch_attempt_id"],
+        launch_attempt_version="1",
+        artifact_hash=row["artifact_hash"],
+        reservation_id=row["reservation_id"],
+        reservation_hash=row["reservation_hash"],
+        route_id=row["route_id"],
+        route_hash=row["route_hash"],
+        attempt_id=row["attempt_id"],
+        attempt_hash=row["attempt_hash"],
+        authorization_id=row["authorization_id"],
+        authorization_hash=row["authorization_hash"],
+        task_id=row["task_id"],
+        worker_id=row["worker_id"],
+        worker_class=row["worker_class"],
+        worker_version=row["worker_version"],
+        operation=row["operation"],
+        input_hash=row["input_hash"],
+        runtime_binding_id=row["runtime_binding_id"],
+        runtime_binding_version=row["runtime_binding_version"],
+        runtime_binding_hash=row["runtime_binding_hash"],
+        idempotency_key=row["idempotency_key"],
+        recorded_at=row["recorded_at"],
+        must_start_by=row["must_start_by"],
+        launcher_actor_id=row["launcher_actor_id"],
+        launcher_actor_type=row["launcher_actor_type"],
+        launcher_actor_context=row["launcher_actor_context"],
+        status=status,
+    )
+    if not artifact.verify_hash():
+        raise ExecutionStartIntegrityError(
+            f"launch attempt {artifact.launch_attempt_id} failed hash "
+            f"verification on read; refusing to return tampered artifact")
+    canonical = canonical_json(artifact.to_canonical_dict())
+    if sha256_text(canonical) != row["payload_sha256"]:
+        raise ExecutionStartIntegrityError(
+            f"launch attempt {artifact.launch_attempt_id} payload/linkage hash "
+            f"mismatch on read; refusing to return tampered artifact")
+    return artifact
