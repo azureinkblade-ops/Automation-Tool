@@ -43,12 +43,15 @@ from .execution_authorization import (
     ExecutionAuthorizationDecision,
     ExecutionAuthorizationDecisionOutcome,
     ExecutionAuthorizationRequest,
+    ExecutionStateProjection,
+    ExecutionStateProjectionConflictError,
     build_execution_attempt,
     reconstruct_authorization,
     reconstruct_claim,
     reconstruct_decision,
     reconstruct_request,
     reconstruct_attempt,
+    reconstruct_state_projection,
 )
 from .worker_router import (
     WorkerRouteDecision,
@@ -67,7 +70,8 @@ from .execution_authorization_store import (
 from .hashing import canonical_json, sha256_payload, sha256_text
 
 SCHEMA_VERSION = 6
-SUPPORTED_SCHEMA_VERSIONS = frozenset({SCHEMA_VERSION})
+SCHEMA_VERSION_LATEST = 7
+SUPPORTED_SCHEMA_VERSIONS = frozenset({6, 7})
 
 
 def _hash_decision_linkage(decision_id: str, authorization_id: Optional[str]) -> str:
@@ -314,6 +318,10 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
         self._fail_after_decision = False
         self._fail_after_attempt_insert = False
         self._fail_after_route_insert = False
+        # EA-4D.4B v7 migration rollback seams (proves in-transaction DDL
+        # rollback inside BEGIN IMMEDIATE).
+        self._fail_before_v7_create = False
+        self._fail_after_v7_create = False
         self._initialize()
 
     # -- schema -------------------------------------------------------------
@@ -322,11 +330,12 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
         cur.execute(
             "CREATE TABLE IF NOT EXISTS authority_schema_version (version INTEGER)"
         )
-        # Idempotent bootstrap: insert v1 only if no row exists.
+        # Idempotent bootstrap: a fresh DB is born directly at the latest schema
+        # version (v7); an existing DB already has its version row.
         cur.execute(
             "INSERT OR IGNORE INTO authority_schema_version (version) "
             "SELECT ? WHERE NOT EXISTS (SELECT 1 FROM authority_schema_version)",
-            (SCHEMA_VERSION,),
+            (SCHEMA_VERSION_LATEST,),
         )
         stored = cur.execute(
             "SELECT version FROM authority_schema_version LIMIT 1"
@@ -498,6 +507,134 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
             """
         )
         self._conn.commit()
+
+        # Version roles (frozen EA-4D.4B):
+        #   SCHEMA_VERSION = 6         -> legacy/current input version
+        #   SCHEMA_VERSION_LATEST = 7  -> target/latest; a FRESH DB is born here
+        # A fresh database is created DIRECTLY at v7 with the complete schema
+        # (no migration round-trip). An existing v6 DB is migrated atomically to
+        # v7. An existing v7 DB is opened in place. The frozen predecessor test
+        # (SCHEMA_VERSION == 6) is preserved because SCHEMA_VERSION is unchanged.
+        if version == SCHEMA_VERSION_LATEST:  # 7: fresh or already-migrated
+            # Complete v7 schema: ensure the projection table is present
+            # (idempotent for a DB that already has it; a fresh DB gets it here
+            # without ever running migrate_to_v7).
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS execution_state_projections (
+                    projection_id TEXT PRIMARY KEY,
+                    artifact_hash TEXT NOT NULL,
+
+                    start_result_id TEXT NOT NULL,
+                    start_result_hash TEXT NOT NULL,
+
+                    launch_attempt_id TEXT NOT NULL,
+                    launch_attempt_hash TEXT NOT NULL,
+
+                    route_id TEXT NOT NULL,
+                    route_hash TEXT NOT NULL,
+
+                    authorization_id TEXT NOT NULL,
+                    authorization_hash TEXT NOT NULL,
+
+                    attempt_id TEXT NOT NULL,
+                    attempt_hash TEXT NOT NULL,
+
+                    task_id TEXT NOT NULL,
+                    worker_id TEXT NOT NULL,
+                    worker_version TEXT NOT NULL,
+
+                    runtime_run_id TEXT NOT NULL,
+
+                    target_state TEXT NOT NULL,
+
+                    projected_at TEXT NOT NULL,
+
+                    canonical_payload TEXT NOT NULL,
+                    payload_sha256 TEXT NOT NULL,
+
+                    UNIQUE(projection_id),
+                    UNIQUE(start_result_id, target_state)
+                )
+                """
+            )
+            self._conn.commit()
+        elif version == SCHEMA_VERSION:  # 6: existing legacy DB -> migrate
+            self.migrate_to_v7()
+        else:
+            raise ExecutionAuthorizationSchemaError(
+                f"unsupported authority schema version {version}; "
+                f"supported: {sorted(SUPPORTED_SCHEMA_VERSIONS)}")
+
+    # -- v6 -> v7 projection-schema migration (EA-4D.4B) ---------------------
+    def migrate_to_v7(self) -> None:
+        """Additively migrate the Authority DB from v6 to v7.
+
+        v7 adds the immutable ``execution_state_projections`` table only.
+        Additive: existing authority rows are NOT rejected (unlike 4A's
+        empty-only rule). The migration runs inside one BEGIN IMMEDIATE;
+        version advancement is LAST. A typed exception escapes _run_atomic,
+        which rolls back.
+        """
+        if self._fail_before_v7_create:
+            raise ExecutionAuthorizationSchemaError("injected v7 refusal")
+        self._run_atomic(self._migrate_v6_to_v7)
+
+    def _migrate_v6_to_v7(self) -> None:
+        """Migration body; runs inside _run_atomic (BEGIN IMMEDIATE)."""
+        cur = self._conn
+        version = int(cur.execute(
+            "SELECT version FROM authority_schema_version LIMIT 1").fetchone()[
+            "version"])
+        if version != 6:
+            raise ExecutionAuthorizationSchemaError(
+                f"v7 migration requires schema version 6; got {version}")
+        # Exact v6 table set verification (fail closed on unexpected shape).
+        expected_tables = {
+            "authority_schema_version", "execution_authorization_requests",
+            "execution_authorization_decisions", "execution_authorizations",
+            "execution_authorization_claims", "execution_attempts",
+            "authority_ledger", "worker_routes",
+        }
+        existing = {r["name"] for r in cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if not expected_tables.issubset(existing):
+            raise ExecutionAuthorizationSchemaError(
+                "authority DB is not in the known v6 shape; refusing migration")
+        cur.execute(
+            """
+            CREATE TABLE execution_state_projections (
+                projection_id TEXT PRIMARY KEY,
+                artifact_hash TEXT NOT NULL,
+                start_result_id TEXT NOT NULL,
+                start_result_hash TEXT NOT NULL,
+                launch_attempt_id TEXT NOT NULL,
+                launch_attempt_hash TEXT NOT NULL,
+                route_id TEXT NOT NULL,
+                route_hash TEXT NOT NULL,
+                authorization_id TEXT NOT NULL,
+                authorization_hash TEXT NOT NULL,
+                attempt_id TEXT NOT NULL,
+                attempt_hash TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                worker_id TEXT NOT NULL,
+                worker_version TEXT NOT NULL,
+                runtime_run_id TEXT NOT NULL,
+                target_state TEXT NOT NULL,
+                projected_at TEXT NOT NULL,
+                canonical_payload TEXT NOT NULL,
+                payload_sha256 TEXT NOT NULL,
+                UNIQUE(projection_id),
+                UNIQUE(start_result_id, target_state)
+            )
+            """
+        )
+        if self._fail_after_v7_create:
+            raise ExecutionAuthorizationSchemaError(
+                "injected post-create v7 failure")
+        # Version advancement LAST (within the same transaction).
+        cur.execute(
+            "UPDATE authority_schema_version SET version = 7")
 
     # -- helpers ------------------------------------------------------------
     @staticmethod
@@ -1506,6 +1643,88 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
             payload_sha256,
             self._now_utc(),
         )
+
+    # -- execution-state projections (EA-4D.4B) ------------------------------
+    def record_projection(self, projection: ExecutionStateProjection) -> None:
+        """Persist an immutable EXECUTING projection + ledger event atomically.
+
+        Idempotency/conflict are governed by (start_result_id, target_state):
+        an identical committed projection is returned idempotently; a conflicting
+        projection (same start_result_id/target_state, different material
+        lineage) fails closed. Projection INSERT and ATTEMPT_EXECUTING ledger
+        append are ONE Authority-DB transaction (both commit or both rollback).
+        """
+        if not projection.verify_hash():
+            raise ExecutionStateProjectionIntegrityError(
+                f"projection {projection.projection_id} failed hash "
+                f"verification; refusing to persist")
+        canonical = canonical_json(projection.to_canonical_dict())
+        payload_sha256 = sha256_text(canonical)
+
+        def _work() -> str:
+            row = self._conn.execute(
+                "SELECT projection_id, artifact_hash, canonical_payload "
+                "FROM execution_state_projections "
+                "WHERE start_result_id = ? AND target_state = ?",
+                (projection.start_result_id, projection.target_state),
+            ).fetchone()
+            if row is not None:
+                if row["artifact_hash"] == projection.artifact_hash and \
+                        row["canonical_payload"] == canonical:
+                    return row["projection_id"]
+                raise ExecutionStateProjectionConflictError(
+                    f"conflicting projection for start_result_id="
+                    f"{projection.start_result_id}; refusing to overwrite")
+            self._conn.execute(
+                """
+                INSERT INTO execution_state_projections (
+                    projection_id, artifact_hash,
+                    start_result_id, start_result_hash,
+                    launch_attempt_id, launch_attempt_hash,
+                    route_id, route_hash,
+                    authorization_id, authorization_hash,
+                    attempt_id, attempt_hash,
+                    task_id, worker_id, worker_version,
+                    runtime_run_id, target_state, projected_at,
+                    canonical_payload, payload_sha256
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    projection.projection_id, projection.artifact_hash,
+                    projection.start_result_id, projection.start_result_hash,
+                    projection.launch_attempt_id, projection.launch_attempt_hash,
+                    projection.route_id, projection.route_hash,
+                    projection.authorization_id, projection.authorization_hash,
+                    projection.attempt_id, projection.attempt_hash,
+                    projection.task_id, projection.worker_id,
+                    projection.worker_version,
+                    projection.runtime_run_id, projection.target_state,
+                    projection.projected_at,
+                    canonical, payload_sha256,
+                ),
+            )
+            self._append_ledger(
+                "ATTEMPT_EXECUTING",
+                type(projection).__name__,
+                projection.projection_id,
+                projection.artifact_hash,
+                payload_sha256,
+                self._now_utc(),
+            )
+            return projection.projection_id
+
+        return self._run_atomic(_work)
+
+    def get_projection(
+        self, start_result_id: str, target_state: str = "EXECUTING"
+    ) -> Optional[dict]:
+        """Return the committed projection row for a start result, or None."""
+        row = self._conn.execute(
+            "SELECT * FROM execution_state_projections "
+            "WHERE start_result_id = ? AND target_state = ?",
+            (start_result_id, target_state),
+        ).fetchone()
+        return dict(row) if row is not None else None
 
     # -- routes (EA-4C.2) --------------------------------------------------
     def record_route(self, route: WorkerRouteDecision) -> None:

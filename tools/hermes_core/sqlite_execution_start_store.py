@@ -185,6 +185,9 @@ class _ExecutionLaunchAttemptLineageView:
                 "stored artifact_hash; refusing to expose lineage")
         self._d = d
         self.artifact_hash = artifact_hash
+        # launch_attempt_hash is the verified hash of this launch attempt's
+        # canonical payload (see frozen EA-4D.4B micro-freeze #1 bridge).
+        self.launch_attempt_hash = artifact_hash
         self.launch_attempt_id = d["launch_attempt_id"]
         self.route_id = d["route_id"]
         self.route_hash = d["route_hash"]
@@ -196,6 +199,14 @@ class _ExecutionLaunchAttemptLineageView:
         self.runtime_binding_hash = d["runtime_binding_hash"]
         self.idempotency_key = d["idempotency_key"]
         self.reservation_id = d["reservation_id"]
+        # Authority-lineage fields already bound in the verified canonical_json
+        # (EA-4D.4B Option A: expose, do not create new authority). These are
+        # surfaced read-only after hash verification; no new persistence.
+        self.authorization_id = d["authorization_id"]
+        self.authorization_hash = d["authorization_hash"]
+        self.attempt_id = d["attempt_id"]
+        self.attempt_hash = d["attempt_hash"]
+        self.reservation_hash = d["reservation_hash"]
 
     def verify_hash(self) -> bool:
         from tools.hermes_core.hashing import sha256_payload
