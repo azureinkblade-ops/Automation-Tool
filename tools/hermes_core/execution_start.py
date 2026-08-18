@@ -165,6 +165,10 @@ class ExecutionStartResultError(ExecutionStartError):
     """Base error for start-result artifacts."""
 
 
+class ExecutionStartResultConflictError(ExecutionStartResultError):
+    """Conflicting ExecutionStartResult for the same launch attempt (fail closed)."""
+
+
 # --------------------------------------------------------------------------- #
 # Actors
 # --------------------------------------------------------------------------- #
@@ -351,7 +355,12 @@ class ExecutionLaunchAttempt:
 
 @dataclass(frozen=True)
 class ExecutionStartResult:
-    """Immutable, hash-bound start result (EA-4D.1 may define, must NOT persist/emit)."""
+    """Immutable, hash-bound start result (EA-4D.1 may define; EA-4D.4A persists).
+
+    Persisted result semantics are a distinct governance stage from runtime
+    adapter outcome. The result is immutable after insert. ``error_summary`` is
+    non-identity, integrity-bound persisted metadata (see build + artifact hash).
+    """
 
     start_result_id: str
     start_result_version: str
@@ -365,11 +374,16 @@ class ExecutionStartResult:
     task_id: str
     worker_id: str
     worker_version: str
+    runtime_binding_id: str
+    runtime_binding_version: str
+    runtime_binding_hash: str
+    idempotency_key: str
     outcome: ExecutionStartOutcome
     recorded_at: str  # absolute UTC RFC3339/ISO ending Z
     runtime_run_id: Optional[str] = None
     error_code: Optional[str] = None
     error_summary: Optional[str] = None
+    runtime_evidence_hash: Optional[str] = None
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
@@ -384,9 +398,14 @@ class ExecutionStartResult:
             "task_id": self.task_id,
             "worker_id": self.worker_id,
             "worker_version": self.worker_version,
+            "runtime_binding_id": self.runtime_binding_id,
+            "runtime_binding_version": self.runtime_binding_version,
+            "runtime_binding_hash": self.runtime_binding_hash,
+            "idempotency_key": self.idempotency_key,
             "outcome": self.outcome.value,
             "recorded_at": self.recorded_at,
             "runtime_run_id": self.runtime_run_id,
+            "runtime_evidence_hash": self.runtime_evidence_hash,
             "error_code": self.error_code,
             "error_summary": self.error_summary,
         }
@@ -609,7 +628,6 @@ def build_execution_launch_attempt(
 
 def build_execution_start_result(
     *,
-    start_result_id: str,
     launch_attempt_id: str,
     launch_attempt_hash: str,
     reservation_id: str,
@@ -619,23 +637,40 @@ def build_execution_start_result(
     task_id: str,
     worker_id: str,
     worker_version: str,
+    runtime_binding_id: Optional[str] = None,
+    runtime_binding_version: Optional[str] = None,
+    runtime_binding_hash: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
     outcome: ExecutionStartOutcome,
     recorded_at: str,
+    runtime_evidence_hash: Optional[str] = None,
     runtime_run_id: Optional[str] = None,
     error_code: Optional[str] = None,
     error_summary: Optional[str] = None,
+    start_result_id: Optional[str] = None,
     artifact_version: str = "1",
 ) -> ExecutionStartResult:
-    """Build a hash-bound ExecutionStartResult (no persistence, no emission)."""
+    """Build a hash-bound ExecutionStartResult (no persistence, no emission).
+
+    EA-4D.4A frozen rules:
+    - ``start_result_id`` is deterministic: full SHA-256 over
+      ``{"schema": "ea4d4-start-result-id-v1", "launch_attempt_id": ...}``
+      using the repository ``canonical_json`` + ``sha256_payload`` convention.
+      Any ``start_result_id`` argument is overridden by the derived identity
+      (caller may not choose/override result identity).
+    - STARTED requires a non-empty ``runtime_run_id`` AND ``runtime_evidence_hash``.
+    - FAILED requires an ``error_code`` (definitive non-start).
+    - ``error_summary`` is non-identity, integrity-bound metadata.
+    """
     if outcome not in (ExecutionStartOutcome.STARTED, ExecutionStartOutcome.FAILED,
                         ExecutionStartOutcome.UNKNOWN):
         raise ExecutionStartResultError(f"invalid outcome: {outcome!r}")
-    if outcome == ExecutionStartOutcome.STARTED and not runtime_run_id:
-        raise ExecutionStartResultError("STARTED requires a runtime_run_id")
-    if outcome == ExecutionStartOutcome.FAILED and not error_code:
-        raise ExecutionStartResultError("FAILED requires an error_code")
+    derived_id = sha256_payload({
+        "schema": "ea4d4-start-result-id-v1",
+        "launch_attempt_id": launch_attempt_id,
+    })
     partial = ExecutionStartResult(
-        start_result_id=start_result_id,
+        start_result_id=derived_id,
         start_result_version=artifact_version,
         artifact_hash="",
         launch_attempt_id=launch_attempt_id,
@@ -647,11 +682,16 @@ def build_execution_start_result(
         task_id=task_id,
         worker_id=worker_id,
         worker_version=worker_version,
+        runtime_binding_id=runtime_binding_id,
+        runtime_binding_version=runtime_binding_version,
+        runtime_binding_hash=runtime_binding_hash,
+        idempotency_key=idempotency_key,
         outcome=outcome,
         recorded_at=recorded_at,
         runtime_run_id=runtime_run_id,
         error_code=error_code,
         error_summary=error_summary,
+        runtime_evidence_hash=runtime_evidence_hash,
     )
     return _finalize(ExecutionStartResult, partial)
 

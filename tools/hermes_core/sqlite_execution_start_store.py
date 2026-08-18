@@ -50,6 +50,8 @@ from tools.hermes_core.execution_start import (
     ExecutionStartIntegrityError,
     ExecutionStartReservation,
     ExecutionStartReservationStatus,
+    ExecutionStartResult,
+    ExecutionStartResultConflictError,
     ExecutionStartResultError,
     ExecutionLaunchAttempt,
     ExecutionLaunchAttemptStatus,
@@ -58,9 +60,53 @@ from tools.hermes_core.hashing import canonical_json, sha256_text
 
 
 SCHEMA_VERSION_START = 2
+SCHEMA_VERSION_LATEST = 3
 SCHEMA_VERSION_LEGACY = 1
-SUPPORTED_SCHEMA_VERSIONS_START = (SCHEMA_VERSION_START,)
-MIGRATABLE_FROM_SCHEMA_VERSIONS_START = (SCHEMA_VERSION_LEGACY,)
+SUPPORTED_SCHEMA_VERSIONS_START = (SCHEMA_VERSION_START, SCHEMA_VERSION_LATEST)
+MIGRATABLE_FROM_SCHEMA_VERSIONS_START = (SCHEMA_VERSION_LEGACY, SCHEMA_VERSION_START)
+
+# Frozen, known-good v2 execution_start_results column set. Used by the
+# v2->v3 migration to verify the on-disk shape before touching anything.
+# v2 lacked the EA-4D.4A lineage/evidence columns; v3 adds them (NOT NULL).
+V2_RESULT_COLUMNS = (
+    "start_result_id", "artifact_hash", "launch_attempt_id", "launch_attempt_hash",
+    "reservation_id", "reservation_hash", "route_id", "route_hash", "task_id",
+    "worker_id", "worker_version", "outcome", "recorded_at", "runtime_run_id",
+    "error_code", "error_summary", "canonical_json", "payload_sha256",
+)
+
+# Frozen v3 execution_start_results DDL. Adds the five EA-4D.4A NOT NULL columns
+# (runtime_binding_*, idempotency_key, runtime_evidence_hash) so every persisted
+# v3 result carries the complete frozen lineage/evidence needed to reproduce and
+# verify its canonical result artifact hash.
+V3_RESULT_TABLE_DDL = """
+CREATE TABLE execution_start_results_v3 (
+    start_result_id TEXT PRIMARY KEY,
+    artifact_hash TEXT NOT NULL,
+    launch_attempt_id TEXT NOT NULL UNIQUE,
+    launch_attempt_hash TEXT NOT NULL,
+    reservation_id TEXT NOT NULL,
+    reservation_hash TEXT NOT NULL,
+    route_id TEXT NOT NULL,
+    route_hash TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    worker_id TEXT NOT NULL,
+    worker_version TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    runtime_run_id TEXT,
+    error_code TEXT,
+    error_summary TEXT,
+    canonical_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    runtime_binding_id TEXT NOT NULL,
+    runtime_binding_version TEXT NOT NULL,
+    runtime_binding_hash TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    runtime_evidence_hash TEXT NOT NULL
+)
+"""
+
 
 # Frozen, known-good v1 execution_launch_attempts column set. Used by the
 # v1->v2 migration to verify the on-disk shape before altering anything.
@@ -122,6 +168,93 @@ class ExecutionStartLedgerEntry:
 # Store
 # --------------------------------------------------------------------------- #
 
+class _ExecutionLaunchAttemptLineageView:
+    """Verified, read-only lineage view of a durable launch attempt.
+
+    NOT a domain ExecutionLaunchAttempt. It reconstructs the minimal lineage
+    fields the EA-4D.4A service needs, after verifying that the stored
+    canonical payload hashes to the stored artifact_hash. A corrupted stored
+    payload fails closed before any lineage field is trusted.
+    """
+
+    def __init__(self, d: dict, artifact_hash: str) -> None:
+        from tools.hermes_core.hashing import sha256_payload
+        if sha256_payload(d) != artifact_hash:
+            raise ExecutionStartIntegrityError(
+                "launch-attempt lineage canonical payload does not match "
+                "stored artifact_hash; refusing to expose lineage")
+        self._d = d
+        self.artifact_hash = artifact_hash
+        self.launch_attempt_id = d["launch_attempt_id"]
+        self.route_id = d["route_id"]
+        self.route_hash = d["route_hash"]
+        self.task_id = d["task_id"]
+        self.worker_id = d["worker_id"]
+        self.worker_version = d["worker_version"]
+        self.runtime_binding_id = d["runtime_binding_id"]
+        self.runtime_binding_version = d["runtime_binding_version"]
+        self.runtime_binding_hash = d["runtime_binding_hash"]
+        self.idempotency_key = d["idempotency_key"]
+        self.reservation_id = d["reservation_id"]
+
+    def verify_hash(self) -> bool:
+        from tools.hermes_core.hashing import sha256_payload
+        return sha256_payload(self._d) == self.artifact_hash
+
+
+class _ExecutionStartReservationLineageView:
+    """Verified, read-only lineage view of a durable reservation.
+
+    NOT a domain ExecutionStartReservation. Verifies the stored canonical
+    payload before exposing reservation_id/artifact_hash.
+    """
+
+    def __init__(self, d: dict, artifact_hash: str) -> None:
+        from tools.hermes_core.hashing import sha256_payload
+        if sha256_payload(d) != artifact_hash:
+            raise ExecutionStartIntegrityError(
+                "reservation lineage canonical payload does not match stored "
+                "artifact_hash; refusing to expose lineage")
+        self._d = d
+        self.artifact_hash = artifact_hash
+        self.reservation_id = d["reservation_id"]
+
+    def verify_hash(self) -> bool:
+        from tools.hermes_core.hashing import sha256_payload
+        return sha256_payload(self._d) == self.artifact_hash
+
+
+def _result_material_identity(result: "ExecutionStartResult") -> str:
+    """Material result identity (frozen EA-4D.4).
+
+    Binds the immutable semantic identity of a persisted result, EXCLUDING
+    nonidentity metadata (error_summary, recorded_at, persisted_at). Two results
+    with identical material identity but different error_summary are the SAME
+    result (idempotent replay); a differing field here is a CONFLICT.
+    """
+    from tools.hermes_core.hashing import sha256_payload
+    return sha256_payload({
+        "schema": "ea4d4-result-material-identity-v1",
+        "launch_attempt_id": result.launch_attempt_id,
+        "launch_attempt_hash": result.launch_attempt_hash,
+        "reservation_id": result.reservation_id,
+        "reservation_hash": result.reservation_hash,
+        "route_id": result.route_id,
+        "route_hash": result.route_hash,
+        "task_id": result.task_id,
+        "worker_id": result.worker_id,
+        "worker_version": result.worker_version,
+        "runtime_binding_id": result.runtime_binding_id,
+        "runtime_binding_version": result.runtime_binding_version,
+        "runtime_binding_hash": result.runtime_binding_hash,
+        "idempotency_key": result.idempotency_key,
+        "result_outcome": result.outcome.value if hasattr(result.outcome, "value")
+                            else result.outcome,
+        "runtime_run_id": result.runtime_run_id or "",
+        "runtime_evidence_hash": result.runtime_evidence_hash,
+        "error_code": result.error_code or "",
+    })
+
 
 class SQLiteExecutionStartStore:
     """SQLite-backed EA-4D.2 start-admission store (START_RESERVED only)."""
@@ -146,6 +279,14 @@ class SQLiteExecutionStartStore:
         # raise AFTER the structural/data migration but BEFORE the schema-version
         # row is advanced to v2, proving transactional atomicity of the mutation.
         self._fail_after_launch_attempt_schema_migration = False
+        # Test-only failure-injection seam (EA-4D.4A v3 migration proof): when
+        # set, refuse the v2->v3 migration before any structural change.
+        self._fail_before_v3_rename = False
+        # Test-only failure-injection seam (EA-4D.4A v3 migration proof): when
+        # set, raise AFTER the replacement table is created but BEFORE the
+        # destructive DROP/RENAME, proving transactional rollback of in-flight
+        # DDL inside BEGIN IMMEDIATE.
+        self._fail_after_v3_create = False
         self._initialize()
 
     # -- schema --------------------------------------------------------------
@@ -297,7 +438,184 @@ class SQLiteExecutionStartStore:
             """
         )
 
-    # -- v1 -> v2 migration --------------------------------------------------
+    # -- v2 -> v3 result-schema migration (EA-4D.4A) ---------------------------
+    def migrate_to_v3(self) -> None:
+        """Explicitly migrate the Start DB result schema from v2 to v3.
+
+        EA-4D.4A frozen rule: the v2->v3 result migration is EMPTY-ONLY and
+        FAIL-CLOSED. Because execution_start_results has never had a production
+        INSERT path (verified during design inspection), any populated v2 result
+        table would represent unreconstructable historical evidence (the v3
+        shape requires runtime_evidence_hash and runtime_binding lineage that
+        cannot be losslessly recovered). A populated v2 result table therefore
+        triggers a typed refusal; the old table, its row, and the schema version
+        are left untouched.
+
+        The version check, exact-shape verification, and the populated-table
+        COUNT(*) refusal ALL execute inside one BEGIN IMMEDIATE transaction
+        (via _run_atomic), so a concurrent writer cannot insert a v2 result
+        between the COUNT(*) check and the structural migration. The typed
+        exception escapes _run_atomic, which rolls back the transaction.
+        """
+        if self._fail_before_v3_rename:
+            # Test-only seam: refuse before any structural change.
+            raise ExecutionStartMigrationError("injected v3 refusal")
+        self._run_atomic(self._migrate_v2_to_v3)
+
+    def _migrate_v2_to_v3(self) -> None:
+        """Migration body; runs inside _run_atomic (BEGIN IMMEDIATE)."""
+        cur = self._conn
+        version = int(cur.execute(
+            "SELECT version FROM start_schema_version LIMIT 1").fetchone()["version"])
+        if version != SCHEMA_VERSION_START:
+            raise ExecutionStartSchemaError(
+                f"v3 migration requires schema version {SCHEMA_VERSION_START}; "
+                f"got {version}")
+        # Exact v2 result-table shape verification.
+        cols = [r["name"] for r in cur.execute(
+            "PRAGMA table_info(execution_start_results)").fetchall()]
+        if cols != list(V2_RESULT_COLUMNS):
+            raise ExecutionStartMigrationError(
+                "execution_start_results is not in the known v2 shape")
+        # Populated-table check INSIDE the transaction (no TOCTOU window).
+        count = cur.execute(
+            "SELECT COUNT(*) AS c FROM execution_start_results").fetchone()["c"]
+        if count != 0:
+            # Populated v2 result table: unreconstructable; fail closed.
+            raise ExecutionStartMigrationError(
+                "populated v2 execution_start_results cannot be losslessly "
+                "migrated to v3; refusing (no synthetic evidence)")
+        cur.execute(V3_RESULT_TABLE_DDL)
+        if self._fail_after_v3_create:
+            # Test-only seam: prove in-flight DDL inside BEGIN IMMEDIATE rolls
+            # back after the replacement table exists but before destructive
+            # replacement. _run_atomic's rollback restores the v2 table.
+            raise ExecutionStartMigrationError("injected post-create failure")
+        cur.execute("DROP TABLE execution_start_results")
+        cur.execute(
+            "ALTER TABLE execution_start_results_v3 "
+            "RENAME TO execution_start_results")
+        # Version advancement LAST (within the same transaction).
+        cur.execute(
+            "UPDATE start_schema_version SET version = ?",
+            (SCHEMA_VERSION_LATEST,))
+
+    # -- result persistence (EA-4D.4A) -------------------------------------
+    def persist_execution_start_result(self, result: "ExecutionStartResult") -> None:
+        """Idempotently persist one immutable ExecutionStartResult.
+
+        Replay semantics: same launch_attempt_id + same canonical evidence ->
+        the same row (INSERT OR IGNORE then read-back). A conflicting result for
+        the same launch_attempt_id (different outcome/run identity/error code)
+        raises ExecutionStartResultConflictError and is never overwritten.
+        """
+        cur = self._conn
+        exists = cur.execute(
+            "SELECT 1 FROM execution_start_results WHERE launch_attempt_id = ?",
+            (result.launch_attempt_id,)).fetchone()
+        if exists:
+            existing = self.get_execution_start_result(result.launch_attempt_id)
+            if existing is None:
+                raise ExecutionStartResultConflictError(
+                    f"conflicting ExecutionStartResult for "
+                    f"launch_attempt_id={result.launch_attempt_id!r}")
+            # Replay vs conflict uses MATERIAL RESULT IDENTITY, which explicitly
+            # EXCLUDES nonidentity metadata (error_summary, recorded_at,
+            # persisted_at). Same material identity + differing summary -> the
+            # already-persisted immutable row is returned (idempotent); the
+            # stored error_summary is NOT overwritten. Different material
+            # identity (outcome/run identity/error code) -> CONFLICT, fail closed.
+            if _result_material_identity(existing) != _result_material_identity(result):
+                raise ExecutionStartResultConflictError(
+                    f"conflicting ExecutionStartResult for "
+                    f"launch_attempt_id={result.launch_attempt_id!r}")
+            return  # idempotent replay (same material identity)
+        cur.execute(
+            """
+            INSERT INTO execution_start_results (
+                start_result_id, artifact_hash, launch_attempt_id,
+                launch_attempt_hash, reservation_id, reservation_hash, route_id,
+                route_hash, task_id, worker_id, worker_version, outcome,
+                recorded_at, runtime_run_id, error_code, error_summary,
+                canonical_json, payload_sha256, runtime_binding_id,
+                runtime_binding_version, runtime_binding_hash, idempotency_key,
+                runtime_evidence_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                result.start_result_id, result.artifact_hash,
+                result.launch_attempt_id, result.launch_attempt_hash,
+                result.reservation_id, result.reservation_hash, result.route_id,
+                result.route_hash, result.task_id, result.worker_id,
+                result.worker_version, result.outcome.value, result.recorded_at,
+                result.runtime_run_id, result.error_code, result.error_summary,
+                result.canonical_json(), result.artifact_hash,
+                result.runtime_binding_id, result.runtime_binding_version,
+                result.runtime_binding_hash, result.idempotency_key,
+                result.runtime_evidence_hash,
+            ),
+        )
+        self._conn.commit()
+
+    def get_execution_start_result(
+        self, launch_attempt_id: str
+    ) -> Optional["ExecutionStartResult"]:
+        """Return the persisted result for a launch attempt, or None."""
+        row = self._conn.execute(
+            "SELECT * FROM execution_start_results WHERE launch_attempt_id = ?",
+            (launch_attempt_id,)).fetchone()
+        if row is None:
+            return None
+        from tools.hermes_core.execution_start import ExecutionStartOutcome
+        return ExecutionStartResult(
+            start_result_id=row["start_result_id"],
+            start_result_version="1",
+            artifact_hash=row["artifact_hash"],
+            launch_attempt_id=row["launch_attempt_id"],
+            launch_attempt_hash=row["launch_attempt_hash"],
+            reservation_id=row["reservation_id"],
+            reservation_hash=row["reservation_hash"],
+            route_id=row["route_id"],
+            route_hash=row["route_hash"],
+            task_id=row["task_id"],
+            worker_id=row["worker_id"],
+            worker_version=row["worker_version"],
+            runtime_binding_id=row["runtime_binding_id"],
+            runtime_binding_version=row["runtime_binding_version"],
+            runtime_binding_hash=row["runtime_binding_hash"],
+            idempotency_key=row["idempotency_key"],
+            outcome=ExecutionStartOutcome(row["outcome"]),
+            recorded_at=row["recorded_at"],
+            runtime_run_id=row["runtime_run_id"],
+            error_code=row["error_code"],
+            error_summary=row["error_summary"],
+            runtime_evidence_hash=row["runtime_evidence_hash"],
+        )
+
+    # -- lineage resolution (read-only, for 4A verification) ----------------
+    def get_execution_launch_attempt(
+        self, launch_attempt_id: str
+    ) -> Optional["_ExecutionLaunchAttemptLineageView"]:
+        """Return verified durable launch-attempt lineage, or None."""
+        row = self._conn.execute(
+            "SELECT canonical_json, artifact_hash FROM execution_launch_attempts "
+            "WHERE launch_attempt_id = ?", (launch_attempt_id,)).fetchone()
+        if row is None:
+            return None
+        import json
+        return _ExecutionLaunchAttemptLineageView(json.loads(row["canonical_json"]), row["artifact_hash"])
+
+    def get_execution_start_reservation(
+        self, reservation_id: str
+    ) -> Optional["_ExecutionStartReservationLineageView"]:
+        """Return verified durable reservation lineage, or None."""
+        row = self._conn.execute(
+            "SELECT canonical_json, artifact_hash FROM execution_start_reservations "
+            "WHERE reservation_id = ?", (reservation_id,)).fetchone()
+        if row is None:
+            return None
+        import json
+        return _ExecutionStartReservationLineageView(json.loads(row["canonical_json"]), row["artifact_hash"])
     def _migrate_v1_to_v2(self, cur) -> None:
         """Atomically migrate a legacy v1 Start DB to v2.
 
@@ -720,6 +1038,95 @@ class SQLiteExecutionStartStore:
         if row is None:
             return None
         return _row_to_launch_attempt(row)
+
+    def record_reservation(
+        self,
+        *,
+        reservation: ExecutionStartReservation,
+        now: str,
+    ) -> ExecutionStartReservation:
+        """Persist one durable ExecutionStartReservation (EA-4D.2 admission).
+
+        Mirrors the record_launch_attempt discipline: verifies the reservation
+        hash, stores canonical_json + payload_sha256, and enforces exactly-once
+        admission via UNIQUE(route_id). Same-context replay returns the durable
+        reservation; a divergent launcher ownership conflicts (no silent
+        transfer).
+        """
+        if not isinstance(reservation, ExecutionStartReservation):
+            raise ExecutionStartStoreError(
+                f"record_reservation requires ExecutionStartReservation, "
+                f"got {type(reservation)!r}")
+        if not reservation.verify_hash():
+            raise ExecutionStartIntegrityError(
+                f"reservation {reservation.reservation_id} failed hash "
+                f"verification; refusing to persist")
+        canonical = canonical_json(reservation.to_canonical_dict())
+        payload_sha256 = sha256_text(canonical)
+
+        result: dict = {}
+
+        def _work() -> None:
+            existing = self._conn.execute(
+                "SELECT * FROM execution_start_reservations WHERE route_id = ?",
+                (reservation.route_id,)).fetchone()
+            if existing is not None:
+                existing_res = self._row_to_reservation(existing)
+                if (existing_res.reservation_id == reservation.reservation_id
+                        and existing_res.route_id == reservation.route_id
+                        and existing_res.artifact_hash == reservation.artifact_hash):
+                    result["reservation"] = existing_res
+                    return
+                raise ExecutionStartConflictError(
+                    f"route {reservation.route_id} already reserved by "
+                    f"launcher {existing_res.launcher_actor_id}; "
+                    f"divergent launcher conflicts")
+            self._conn.execute(
+                "INSERT INTO execution_start_reservations "
+                "(reservation_id, artifact_hash, route_id, route_hash, attempt_id, "
+                "attempt_hash, authorization_id, authorization_hash, claim_id, "
+                "claim_hash, request_id, request_hash, decision_id, decision_hash, "
+                "task_id, worker_id, worker_class, worker_version, operation, "
+                "input_hash, reserved_at, must_start_by, launcher_actor_id, "
+                "launcher_actor_type, launcher_actor_context, status, canonical_json, "
+                "payload_sha256) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                "?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    reservation.reservation_id,
+                    reservation.artifact_hash,
+                    reservation.route_id,
+                    reservation.route_hash,
+                    reservation.attempt_id,
+                    reservation.attempt_hash,
+                    reservation.authorization_id,
+                    reservation.authorization_hash,
+                    reservation.claim_id,
+                    reservation.claim_hash,
+                    reservation.request_id,
+                    reservation.request_hash,
+                    reservation.decision_id,
+                    reservation.decision_hash,
+                    reservation.task_id,
+                    reservation.worker_id,
+                    reservation.worker_class,
+                    reservation.worker_version,
+                    reservation.operation,
+                    reservation.input_hash,
+                    reservation.reserved_at,
+                    reservation.must_start_by,
+                    reservation.launcher_actor_id,
+                    reservation.launcher_actor_type,
+                    reservation.launcher_actor_context,
+                    reservation.status.value,
+                    canonical,
+                    payload_sha256,
+                ),
+            )
+            result["reservation"] = reservation
+
+        self._run_atomic(_work)
+        return result["reservation"]
 
     def record_launch_attempt(
         self,
