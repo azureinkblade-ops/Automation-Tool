@@ -54,6 +54,37 @@ HOOK_TEMPLATES = (
     "They expected surrender. They got a consequence.",
 )
 
+NOVEL_VOICE = {
+    "HA": {
+        "genre": "modern cultivation progression fantasy",
+        "promise": "every ordinary errand can become a heavenly test",
+        "emotion": "survival, stubborn hope, and power earned one painful step at a time",
+        "tags": "#HeavenlyAscensionSystem #AzureInkblade #CultivationFantasy #ProgressionFantasy #WeakToStrong #SystemFantasy #BookTokFantasy",
+        "question": "Would you accept the system's reward if the next task could break you?",
+    },
+    "EN": {
+        "genre": "cyberpunk LitRPG progression fantasy",
+        "promise": "the system remembers what everyone else was forced to forget",
+        "emotion": "glitches, revenge, and a player rebuilding himself in a world of data",
+        "tags": "#EternalNexus #AzureInkblade #LitRPG #Cyberpunk #ProgressionFantasy #SystemInterface #BookTokFantasy",
+        "question": "If the reset gave you one secret advantage, would you use it or hide it?",
+    },
+    "HP": {
+        "genre": "xianxia cultivation fantasy",
+        "promise": "found family can be sharper than any blade",
+        "emotion": "quiet discipline, sect bonds, and the kind of strength that refuses to harden the heart",
+        "tags": "#HundredfoldPath #AzureInkblade #Xianxia #Wuxia #CultivationFantasy #Sect #ProgressionFantasy",
+        "question": "Would you choose the ruthless path, or protect the people who made you stronger?",
+    },
+    "SF": {
+        "genre": "forge-born progression fantasy",
+        "promise": "every flame asks what the soul is willing to become",
+        "emotion": "fire, loyalty, and consequences hammered into shape",
+        "tags": "#SoulForgeEra #AzureInkblade #ProgressionFantasy #ForgeFantasy #CultivationSaga #ForgedInFire #FantasyReads",
+        "question": "If power demanded a piece of your old self, would you pay it?",
+    },
+}
+
 
 def monday_for(value: str | date | None = None) -> date:
     if isinstance(value, date):
@@ -188,14 +219,27 @@ def engagement_score(
     }
 
 
-def _platform_copy(novel: str, hook: str, cta: str, goal: str) -> dict[str, str]:
+def _voice_for(abbr: str, novel: str) -> dict[str, str]:
+    return NOVEL_VOICE.get(abbr) or {
+        "genre": "serial fantasy web novel",
+        "promise": "each world has a different price for power",
+        "emotion": "danger, discovery, and choices that keep echoing",
+        "tags": "#AzureInkblade #WebNovel #ProgressionFantasy #FantasyReads #BookTokFantasy",
+        "question": "Which world would you step into first?",
+    }
+
+
+def _platform_copy(abbr: str, novel: str, hook: str, cta: str, goal: str) -> dict[str, str]:
     hub = "Link in bio."
+    voice = _voice_for(abbr, novel)
+    tags = voice["tags"]
+    x_tags = " ".join(tags.split()[:4])
     return {
-        "instagram": f"{hook}\n\nStep into {novel}, where every victory leaves a mark and every choice carries forward. Feel the consequence, then choose what you would risk next.\n\n{cta}\n{hub}\n\n#AzureInkblade #WebNovel #ProgressionFantasy #FantasyReads",
-        "tiktok": f"{hook} {cta} Read and watch: {hub} #BookTok #WebNovel #FantasyTok",
-        "x": f"{hook}\n{cta}\n{hub}\n#AzureInkblade #WebNovel",
-        "facebook": f"{hook}\n\nDiscover {novel} and follow the next turn in the story. Would you take the risk, or walk away? Tell me below.\n\n{cta}\n{hub}",
-        "youtube": f"{hook}\n\nDiscover {novel}, an Azure Inkblade progression fantasy web novel built around escalating choices, character growth, and consequences. Watch the chapter story, then continue reading or find the next release through the official hub.\n\n{cta}\n{hub}\n\n#AzureInkblade #ProgressionFantasy #WebNovel #FantasyAudiobook",
+        "instagram": f"{hook}\n\n{novel} is {voice['genre']} built around {voice['emotion']}. Feel the consequence of this scene, then decide what you would risk next.\n\n{cta}\n{hub}\n\n{tags}",
+        "tiktok": f"{hook} One choice, one cost, one consequence. {cta} {hub} {tags} #BookTok",
+        "x": f"{hook}\n{cta}\n{hub}\n{x_tags}",
+        "facebook": f"{hook}\n\n{novel} follows {voice['promise']}. {voice['question']} Tell me below.\n\n{cta}\n{hub}",
+        "youtube": f"{hook}\n\nDiscover {novel}, an Azure Inkblade {voice['genre']} web novel. This chapter teaser focuses on {voice['promise']}, with progression fantasy stakes, character growth, and consequences for serial fantasy readers.\n\n{cta}\n{hub}\n\n{tags} #WebNovel #FantasyAudiobook",
     }
 
 
@@ -223,7 +267,7 @@ def build_weekly_growth_plan(
         template = HOOK_TEMPLATES[int(_stable_rank(monday.isoformat(), f"{abbr}|{index}")[:8], 16) % len(HOOK_TEMPLATES)]
         hook = f"{template} {novel}" if not title else f"{template} In {title}, {novel} changes direction."
         cta = cta_for_goal(goal, f"{monday.isoformat()}|{abbr}|{index}", local_history)
-        platform_copy = _platform_copy(novel, hook, cta, goal)
+        platform_copy = _platform_copy(abbr, novel, hook, cta, goal)
         image_ref = str(context.get("imageRef") or "")
         quality = engagement_score(hook=hook, cta=cta, goal=goal, platform_copy=platform_copy, image_ref=image_ref, history=local_history)
         row = {
@@ -249,7 +293,7 @@ def build_weekly_growth_plan(
 
     saturday_hook = "Which Azure Inkblade world should get the next character or lore spotlight?"
     saturday_cta = cta_for_goal("Comments", f"{monday.isoformat()}|community", local_history)
-    saturday_copy = _platform_copy("Azure Inkblade", saturday_hook, saturday_cta, "Comments")
+    saturday_copy = _platform_copy("", "Azure Inkblade", saturday_hook, saturday_cta, "Comments")
     saturday_quality = engagement_score(hook=saturday_hook, cta=saturday_cta, goal="Comments", platform_copy=saturday_copy, history=local_history)
     plan_rows.append({
         "slot": 6, "day": "Saturday", "date": (monday + timedelta(days=5)).isoformat(), "type": "community_poll",
@@ -259,7 +303,7 @@ def build_weekly_growth_plan(
     })
     sunday_hook = "This week in Azure Inkblade: one choice, one cost, and four worlds still moving."
     sunday_cta = cta_for_goal("Traffic", f"{monday.isoformat()}|recap", local_history)
-    sunday_copy = _platform_copy("Azure Inkblade", sunday_hook, sunday_cta, "Traffic")
+    sunday_copy = _platform_copy("", "Azure Inkblade", sunday_hook, sunday_cta, "Traffic")
     sunday_quality = engagement_score(hook=sunday_hook, cta=sunday_cta, goal="Traffic", platform_copy=sunday_copy, history=local_history)
     plan_rows.append({
         "slot": 7, "day": "Sunday", "date": (monday + timedelta(days=6)).isoformat(), "type": "recap",

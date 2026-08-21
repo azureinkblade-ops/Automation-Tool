@@ -13472,6 +13472,24 @@ def pack_health_item(folder: Path, fast: bool = True) -> dict[str, Any]:
     else:
         review_gate = approved_image_upload_gate(folder, metadata, text_kind) if (is_tiktok_pack or is_social_pack or is_campaign_pack) and metadata else {"ok": True}
         review_required = image_review_required_for_buffer(folder, metadata, review_gate) if (is_tiktok_pack or is_social_pack or is_campaign_pack) and metadata else {"required": False}
+    blocked_reasons: list[str] = []
+    ready_actions: list[str] = []
+    if errors:
+        blocked_reasons.extend(errors)
+    if status == "needs_image_review" or review_required.get("required"):
+        blocked_reasons.append(str(review_required.get("reason") or "Images need approval before posting."))
+    if status == "needs_video_build":
+        blocked_reasons.append("Video is missing or needs to be rebuilt.")
+    if is_tiktok_pack and not has_required_buffer_media:
+        blocked_reasons.append("TikTok/Reel/Short MP4 is missing.")
+    if not fast and media and public_url_count < len(media) and (is_tiktok_pack or is_social_pack or is_campaign_pack):
+        blocked_reasons.append("One or more media files need public URLs before Buffer can use them.")
+    if not blocked_reasons and (is_tiktok_pack or is_social_pack or is_campaign_pack):
+        ready_actions.append("Push to Buffer")
+    if not blocked_reasons and status in {"manual_review_ready", "ready_to_upload"}:
+        ready_actions.append("Open browser review")
+    if status in PACK_DONE_STATUSES:
+        ready_actions.append("No action needed")
     if errors:
         next_action = "Repair metadata or rebuild this pack."
     elif status in PACK_DONE_STATUSES:
@@ -13489,19 +13507,28 @@ def pack_health_item(folder: Path, fast: bool = True) -> dict[str, Any]:
     else:
         next_action = "Review pack state."
     last_failure = metadata.get("lastFailure") or metadata.get("last_recovery") or metadata.get("buildError") or metadata.get("error") or ""
+    can_push_to_buffer = bool(
+        (is_tiktok_pack or is_social_pack or is_campaign_pack)
+        and has_required_buffer_media
+        and status in {"ready_to_queue", "manual_review_ready"}
+        and not review_required.get("required")
+        and not errors
+    )
     return {
         **summary,
         "mediaCount": len(media),
         "publicUrlCount": public_url_count,
         "bufferTextKind": buffer_text_kind,
         "bufferLabel": "Push Shorts/Reels to Buffer" if is_tiktok_pack else "Push Instagram to Buffer",
-        "canPushToBuffer": bool(
-            (is_tiktok_pack or is_social_pack or is_campaign_pack)
-            and has_required_buffer_media
-            and status in {"ready_to_queue", "manual_review_ready"}
-            and not review_required.get("required")
-            and not errors
-        ),
+        "canPushToBuffer": can_push_to_buffer,
+        "blockedReasons": list(dict.fromkeys(blocked_reasons)),
+        "readyActions": list(dict.fromkeys(ready_actions)),
+        "reliabilityGate": {
+            "ok": not blocked_reasons,
+            "canPushToBuffer": can_push_to_buffer,
+            "blockedReasons": list(dict.fromkeys(blocked_reasons)),
+            "readyActions": list(dict.fromkeys(ready_actions)),
+        },
         "imageReviewRequired": review_required,
         "media": media[:12],
         "errors": errors,
@@ -13672,6 +13699,8 @@ def button_preflight(folder: str, action: str = "") -> dict[str, Any]:
             result["ok"] = False
             result["errors"].append("No valid YouTube MP4 exists yet.")
     result["health"] = pack_health_item(target) if (target / "metadata.json").exists() else {}
+    result["blockedReasons"] = list(dict.fromkeys(list(result.get("errors") or []) + list((result.get("health") or {}).get("blockedReasons") or [])))
+    result["readyActions"] = list((result.get("health") or {}).get("readyActions") or [])
     if result["errors"]:
         result["ok"] = False
         result["nextAction"] = "Fix the listed issue before continuing."
@@ -15505,7 +15534,7 @@ def build_long_tiktok_copy(
     title_suffix = f": {title_tail}" if title_tail else ""
 
     agent_hook = str((agent_copy or {}).get("hook") or "").strip() or hook
-    setup = f"A deeper look at {name} {chapter_label}{title_suffix}"
+    setup = deep_tiktok_setup_line(abbr or story_key(novel), chapter_value, title, agent_hook or hook)
     question = platform_engagement_prompt_line(
         abbr or story_key(novel), "short_reel", "tiktok", context=f"deep-{chapter_value}"
     )
@@ -16245,7 +16274,8 @@ DEEP_TIKTOK_BAD_OVERLAY_RE = re.compile(
     r"protagonist in motion|tense confrontation|intimate emotional beat|"
     r"startling revelation|dangerous environment|quiet character moment|haunting closing image|"
     r"realistic cinematic|promotional image|theme:|photorealistic|no text|"
-    r"typography|logo|web novel|novel title|chapter title|chapter \d+ teaser)",
+    r"typography|logo|web novel|novel title|chapter title|chapter \d+ teaser|"
+    r"deeper look|read .* on royal road|royal road|linktree|https?://|www\.)",
     re.IGNORECASE,
 )
 
@@ -16285,6 +16315,96 @@ def deep_tiktok_novel_overlay_fallbacks(novel: str, count: int = 8) -> list[str]
     return lines[:count]
 
 
+DEEP_TIKTOK_OPENERS = {
+    "EN": (
+        "The Nexus does not just reset players. It remembers who survived.",
+        "Kael sees the glitch before the system can hide it.",
+        "The city calls it progress. The Nexus calls it a weapon.",
+    ),
+    "HA": (
+        "The heavens offer power, then ask what it costs.",
+        "One mortal step turns into a test the world was not ready for.",
+        "The system does not reward comfort. It rewards survival.",
+    ),
+    "SF": (
+        "The forge burns hottest when the soul has nowhere left to hide.",
+        "Every spark carries a price, and this one comes due fast.",
+        "The next flame does not just temper steel. It tests loyalty.",
+    ),
+    "HP": (
+        "The path looks quiet until the first breath becomes a trial.",
+        "Liang learns that patience can cut deeper than any blade.",
+        "A soft bond can become the strongest thing in a ruthless world.",
+    ),
+}
+
+
+def deep_tiktok_setup_line(abbr: str, chapter: str, title: str = "", hook: str = "") -> str:
+    key = story_key(abbr)
+    novel = NOVEL_NAMES.get(key, key or "Azure Inkblade")
+    chapter_value = str(chapter or "").strip()
+    chapter_label = "Prologue" if chapter_value in {"0", "prologue", "Prologue"} else f"Chapter {chapter_value}"
+    title_tail = re.sub(
+        rf"^{re.escape(chapter_label)}\s*[:.\-\u2013\u2014]?\s*", "", str(title or "").strip(), flags=re.IGNORECASE
+    ).strip()
+    title_piece = f" {chapter_label}: {title_tail}" if title_tail else f" {chapter_label}"
+    openers = DEEP_TIKTOK_OPENERS.get(key) or (
+        "One scene changes the shape of the story.",
+        "The quiet moment becomes the point of no return.",
+        "The next choice is smaller than a battle and heavier than one.",
+    )
+    seed = content_hash(f"{key}|{chapter_value}|{title}|{hook}")[:8]
+    opener = openers[int(seed, 16) % len(openers)]
+    return f"{opener} Watch{name_safe_chapter_tail(title_piece)} unfold in {novel}."
+
+
+def name_safe_chapter_tail(value: str) -> str:
+    text = re.sub(r"\s+", " ", str(value or "").strip())
+    return text if text else " this chapter"
+
+
+def deep_tiktok_cta_overlay(abbr: str, novel: str = "") -> str:
+    key = story_key(abbr)
+    options = (
+        "START READING. LINK IN BIO.",
+        "NEXT CHAPTER. LINK IN BIO.",
+        "FOLLOW THE ARC. LINK IN BIO.",
+        "CONTINUE. LINK IN BIO.",
+    )
+    return reel_overlay_text(options[int(content_hash(key or novel or "Azure Inkblade")[:8], 16) % len(options)], limit=62)
+
+
+def deep_tiktok_sequence_overlays(
+    moments: list[str],
+    abbr: str,
+    novel: str,
+    *,
+    chapter: str = "",
+    title: str = "",
+    count: int = 8,
+) -> list[str]:
+    fallbacks = deep_tiktok_novel_overlay_fallbacks(novel, max(count, len(moments) or count))
+    cleaned: list[str] = []
+    for index, moment in enumerate((moments or [])[:count]):
+        fallback = fallbacks[index % len(fallbacks)] if fallbacks else ""
+        line = sanitize_deep_tiktok_overlay(moment, novel, fallback)
+        if line and line not in cleaned:
+            cleaned.append(line)
+    while len(cleaned) < count:
+        fallback = fallbacks[len(cleaned) % len(fallbacks)] if fallbacks else "A hidden choice changes everything."
+        line = sanitize_deep_tiktok_overlay(fallback, novel, fallback)
+        if line not in cleaned:
+            cleaned.append(line)
+        else:
+            cleaned.append(reel_overlay_text(fallback, limit=58))
+    cleaned = cleaned[:count]
+    if cleaned:
+        setup = deep_tiktok_setup_line(abbr, chapter, title, cleaned[0])
+        cleaned[0] = sanitize_deep_tiktok_overlay(setup, novel, cleaned[0])
+    cleaned.append(deep_tiktok_cta_overlay(abbr, novel))
+    return cleaned
+
+
 def deep_tiktok_caption(abbr: str, chapter: str, title: str, hook: str) -> str:
     novel = NOVEL_NAMES.get(abbr, abbr)
     profile = social_profile(abbr)
@@ -16293,10 +16413,10 @@ def deep_tiktok_caption(abbr: str, chapter: str, title: str, hook: str) -> str:
     title_suffix = f": {title_tail}" if title_tail else ""
     return "\n".join(
         [
-            f"A deeper look at {novel} {chapter_label}{title_suffix}",
+            deep_tiktok_setup_line(abbr, chapter, title, hook),
             hook,
-            "Watch the full story beat, then continue the chapter.",
-            "Read now. Link in bio.",
+            "Stay for the turn, then tell me which choice you would have made.",
+            "Continue the story through the link in bio.",
             "",
             profile["hashtags"],
         ]
@@ -16350,17 +16470,22 @@ def repair_deep_tiktok_metadata(folder: Path, metadata: dict[str, Any] | None = 
     for index, line in enumerate(overlays):
         fallback = scene_fallbacks[index % len(scene_fallbacks)] if scene_fallbacks else ""
         sanitized_overlays.append(sanitize_deep_tiktok_overlay(line, novel, fallback))
+    if sanitized_overlays and "link in bio" not in sanitized_overlays[-1].lower():
+        sanitized_overlays = sanitized_overlays[:8]
+        sanitized_overlays.append(deep_tiktok_cta_overlay(abbr, novel))
     if sanitized_overlays and sanitized_overlays != overlays:
         overlays = sanitized_overlays
         overlays_file.write_text("\n".join(overlays) + "\n", encoding="utf-8")
     if not overlays and chapter_text:
-        overlays = [
-            sanitize_deep_tiktok_overlay(moment, novel, deep_tiktok_novel_overlay_fallbacks(novel, 1)[0])
-            for moment in deep_tiktok_chapter_moments(chapter_text, abbr, 8)
-        ]
-        overlays.append(reel_overlay_text("Read the next chapter. Link in bio.", limit=62))
+        overlays = deep_tiktok_sequence_overlays(
+            deep_tiktok_chapter_moments(chapter_text, abbr, 8),
+            abbr,
+            novel,
+            chapter=str(chapter),
+            title=title,
+        )
         overlays_file.write_text("\n".join(overlays) + "\n", encoding="utf-8")
-    hook = (overlays[0].replace("\n", " ") if overlays else f"A deeper look at {novel}").strip()
+    hook = (overlays[0].replace("\n", " ") if overlays else deep_tiktok_setup_line(abbr, str(chapter), title)).strip()
     chapter_label = "Prologue" if str(chapter).strip() in {"0", "prologue", "Prologue"} else f"Chapter {chapter}"
     caption = str(metadata.get("caption") or "").strip() or deep_tiktok_caption(abbr, str(chapter), title, hook)
     caption = social_caption_link_in_bio(caption, "tiktok")
@@ -16935,9 +17060,8 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
         archive_generated_promo_image(target, abbr, title, f"deep-tiktok-{index}")
     images.append(prepare_tiktok_outro_image(folder, abbr, novel, chapter, style=pack_track))
     sources.append("rotating-novel-card")
-    overlays = [reel_overlay_text(moment, limit=58) for moment in moments]
-    overlays.append(reel_overlay_text(f"READ {novel} ON ROYAL ROAD", limit=62))
-    hook = overlays[0].replace("\n", " ") if overlays else f"A deeper look at {novel}"
+    overlays = deep_tiktok_sequence_overlays(moments, abbr, novel, chapter=chapter, title=title)
+    hook = overlays[0].replace("\n", " ") if overlays else deep_tiktok_setup_line(abbr, chapter, title)
     # The 60s TikTok is its OWN adaptation, not a lengthened Reel caption. Route the
     # agent copy (or None) through build_long_tiktok_copy: with a usable agent caption
     # it produces the structured hook/setup/stakes/CTA adaptation; with None it reproduces
@@ -17126,8 +17250,11 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
         if isinstance(ag_overlays, str):
             ag_overlays = [line.strip() for line in ag_overlays.splitlines() if line.strip()]
     else:
-        body = f"A deeper look at {novel}. {prompt[:120]}"
-        cta = f"Continue {novel}. Link in bio."
+        body = (
+            f"{deep_tiktok_setup_line(abbr, '', novel, prompt)} "
+            f"{prompt[:140].rstrip('.')}. Stay for the reveal, then choose which world to enter next."
+        )
+        cta = f"Continue {novel} through the link in bio."
         tiktok_title = f"{novel}: {prompt[:48]} | 60 Second Novel Highlight"
         ag_overlays = []
 
@@ -17135,7 +17262,7 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
     caption = "\n\n".join(
         part for part in [
             body,
-            f"{cta}\nðŸ‘‰ {rr_link}" if cta else f"ðŸ‘‰ {rr_link}",
+            cta,
             novel_tags,
         ] if part and part.strip()
     ).strip()
@@ -17157,8 +17284,9 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
     while len(overlays) < scene_count:
         fallback = fallback_overlays[len(overlays) % len(fallback_overlays)]
         overlays.append(sanitize_deep_tiktok_overlay(fallback, novel, fallback))
-    overlays.append(reel_overlay_text(f"READ {novel} ON ROYAL ROAD", limit=62))
-    hook_line = overlays[0].replace("\n", " ") if overlays else f"A deeper look at {novel}"
+    overlays = overlays[:scene_count]
+    overlays.append(deep_tiktok_cta_overlay(abbr, novel))
+    hook_line = overlays[0].replace("\n", " ") if overlays else deep_tiktok_setup_line(abbr, "", novel)
 
     sound_source = choose_rotating_weekly_promo_audio()
     if not sound_source:
@@ -25633,6 +25761,7 @@ def buffer_dry_run_from_folder(folder: str, text_kind: str = "", mode: str = "ad
     send_routes = [route for route in routes if route.get("wouldSend")]
     if not send_routes:
         errors.append("No Buffer channel would receive this pack.")
+    blocked_reasons = clean_messages(list(health.get("blockedReasons") or []) + errors)
     return {
         "ok": not errors and bool(send_routes),
         "folder": str(post_folder),
@@ -25644,6 +25773,10 @@ def buffer_dry_run_from_folder(folder: str, text_kind: str = "", mode: str = "ad
         "publicUrlCount": len(public_urls),
         "missingPublicUrls": missing_public_urls,
         "routes": routes,
+        "readyRoutes": send_routes,
+        "wouldSendCount": len(send_routes),
+        "blockedReasons": blocked_reasons,
+        "nextAction": "Ready to push to Buffer." if not errors and send_routes else (blocked_reasons[0] if blocked_reasons else "Review Buffer routes."),
         "qualityGate": quality,
         "health": health,
         "errors": clean_messages(errors),

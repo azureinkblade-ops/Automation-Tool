@@ -1350,6 +1350,35 @@ def check_caption_voice_rotation() -> list[dict[str, object]]:
 
 def check_deep_tiktok_weekend_workflow() -> list[dict[str, object]]:
     checks: list[dict[str, object]] = []
+    caption = app.deep_tiktok_caption(
+        "EN",
+        "19",
+        "Chapter 19: Regression Signal",
+        "The interface blinked before Kael could pretend it was harmless.",
+    )
+    checks.append(assert_result(
+        "deep_tiktok_caption_is_dynamic_not_generic",
+        "deeper look" not in caption.lower() and "link in bio" in caption.lower() and "http" not in caption.lower(),
+        caption,
+    ))
+    overlays = app.deep_tiktok_sequence_overlays(
+        [
+            "Establishing World Shot: the city breaks open around him.",
+            "Kael chooses the impossible path.",
+            "The system answers with a price.",
+        ],
+        "EN",
+        "Eternal Nexus",
+        chapter="19",
+        title="Chapter 19: Regression Signal",
+        count=3,
+    )
+    overlay_text = "\n".join(overlays).lower()
+    checks.append(assert_result(
+        "deep_tiktok_overlay_sequence_has_clean_cta",
+        "establishing" not in overlay_text and "world shot" not in overlay_text and "royal road" not in overlay_text and "link in bio" in overlay_text,
+        str(overlays),
+    ))
     try:
         app.write_animated_reel_builder_script(
             app.TIKTOK_OUTPUT_DIR,
@@ -1553,6 +1582,14 @@ def check_buffer_dry_run_routes() -> list[dict[str, object]]:
                 warnings=dry.get("warnings"),
             )
         )
+        checks.append(assert_result(
+            "buffer_dry_run_reports_route_counts_and_blockers",
+            isinstance(dry.get("readyRoutes"), list)
+            and isinstance(dry.get("wouldSendCount"), int)
+            and isinstance(dry.get("blockedReasons"), list)
+            and bool(dry.get("nextAction")),
+            f"keys={sorted(dry.keys())}",
+        ))
     else:
         checks.append(result("buffer_dry_run_short_routes_to_all_short_channels", True, "No recent non-deep TikTok folder found."))
     if social_folder:
