@@ -4,6 +4,7 @@ import argparse
 import importlib
 import inspect
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -268,6 +269,25 @@ def check_tiktok_uses_supplied_chapter_text() -> list[dict[str, object]]:
         )
         checks.append(assert_result("tiktok_supplied_text_returns_four_overlays", len(overlays) == 4, f"overlays={overlays}"))
         checks.append(assert_result("tiktok_overlay_from_supplied_text", any("SWORD" in str(item).upper() or "BRIDGE" in str(item).upper() or "CITY" in str(item).upper() for item in overlays), f"overlays={overlays}"))
+        overlay_text = "\n".join(str(item) for item in overlays).upper()
+        overlay_flat = re.sub(r"\s+", " ", overlay_text)
+        checks.append(assert_result(
+            "tiktok_overlay_has_stronger_clean_hook",
+            "STOP HERE" not in overlay_flat and "ROYAL ROAD" not in overlay_flat and "LINK IN BIO" in overlay_flat,
+            f"overlays={overlays}",
+        ))
+        weak_tails = {"A", "AN", "AND", "AS", "AT", "BEFORE", "BUT", "FROM", "IN", "OF", "ON", "THE", "TO", "WHEN", "WITH"}
+        trailing_failures = []
+        for overlay in overlays:
+            words = re.findall(r"[A-Z0-9']+", str(overlay).upper())
+            if words and words[-1] in weak_tails:
+                trailing_failures.append(str(overlay))
+        checks.append(assert_result(
+            "tiktok_overlay_avoids_half_sentence_tails",
+            not trailing_failures,
+            f"overlays={overlays}",
+            failures=trailing_failures,
+        ))
     finally:
         app.docs_chapter_text = original_docs  # type: ignore[assignment]
     return checks

@@ -12886,12 +12886,23 @@ def write_variant_short_pack(experiment: dict[str, Any], variant: dict[str, Any]
     sound_source = Path(random.choice(sounds)["path"])
     sound_target = target_folder / sound_source.name
     shutil.copy2(sound_source, sound_target)
-    overlays = [
-        reel_overlay_text(opening, limit=48),
-        reel_overlay_text(str(variant.get("caption") or opening), limit=48),
-        reel_overlay_text(f"{novel} Chapter {chapter}", limit=48),
-        reel_overlay_text(f"Read {novel} on Royal Road", limit=58),
-    ]
+    overlay_seed = " ".join(
+        str(part or "").strip()
+        for part in (
+            opening,
+            variant.get("caption"),
+            variant.get("content_angle"),
+            variant_visual_seed(experiment, variant),
+        )
+        if str(part or "").strip()
+    )
+    overlays = tiktok_chapter_teaser_overlays(
+        abbr,
+        chapter,
+        novel,
+        chapter_text=str(experiment.get("chapterText") or experiment.get("text") or ""),
+        fallback_text=overlay_seed or visual_prompt,
+    )
     metadata = {}
     metadata.update(
         {
@@ -15579,6 +15590,170 @@ def build_long_tiktok_copy(
 
 
 
+SHORT_REEL_HOOK_TEMPLATES = {
+    "EN": (
+        "The Nexus noticed Kael first.",
+        "The system blinked first.",
+        "Kael was not supposed to wake.",
+    ),
+    "HA": (
+        "The heavens answered Kai first.",
+        "The System woke before Kai.",
+        "Kai was not ready to ascend.",
+    ),
+    "SF": (
+        "The forge remembered first.",
+        "One spark became a weapon.",
+        "The undercity heard the strike.",
+    ),
+    "HP": (
+        "The path answered Liang first.",
+        "One breath became a warning.",
+        "The sect saw only a disciple.",
+    ),
+}
+
+
+SHORT_OVERLAY_BAD_TEXT_RE = re.compile(
+    r"(?:"
+    r"establishing\s+world\s+shot|scene\s+focus|image\s+prompt|visual\s+prompt|"
+    r"promotional\s+image|cinematic\s+promotional|vertical\s+9:16|"
+    r"stop\s+here|royal\s+road|https?://|www\.|linktr\.ee"
+    r")",
+    re.IGNORECASE,
+)
+SHORT_OVERLAY_WEAK_TAILS = {
+    "a", "an", "and", "as", "at", "before", "behind", "but", "by", "for", "from",
+    "in", "into", "of", "on", "or", "that", "the", "then", "to", "when", "where",
+    "while", "with", "without",
+}
+
+
+def short_overlay_has_clean_tail(text: str) -> bool:
+    words = re.findall(r"[A-Za-z0-9']+", text)
+    if not words:
+        return False
+    return words[-1].lower() not in SHORT_OVERLAY_WEAK_TAILS
+
+
+def short_overlay_fits(text: str, width: int = 20, max_lines: int = 2) -> bool:
+    lines = textwrap.wrap(
+        text.upper(),
+        width=width,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+    return bool(lines) and len(lines) <= max_lines
+
+
+def short_overlay_wrap_complete(text: str, width: int = 20, max_lines: int = 2) -> str:
+    value = re.sub(r"\s+", " ", str(text or "")).strip().upper()
+    lines = textwrap.wrap(
+        value,
+        width=width,
+        max_lines=max_lines,
+        placeholder="",
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+    return "\n".join(line.strip() for line in lines if line.strip())
+
+
+def short_overlay_moment_text(sentence: str, abbr: str = "", fallback: str = "") -> str:
+    """Return a complete, visual short-form overlay line from chapter prose."""
+    source = clean_teaser_text(sentence or fallback, limit=180, max_words=None)
+    source = re.sub(r"^[\"'`]+|[\"'`]+$", "", source).strip()
+    clauses = re.split(
+        r"\s+(?:as|because|before|after|while|when|until|unless|though|but)\s+|[,;:]",
+        source,
+        flags=re.IGNORECASE,
+    )
+    candidates: list[str] = []
+    for clause in [source] + clauses:
+        cleaned = clean_teaser_text(clause, limit=58, max_words=8)
+        cleaned = re.sub(r"^[\"'`]+|[\"'`]+$", "", cleaned).strip()
+        word_count = len(cleaned.split())
+        if (
+            4 <= word_count <= 12
+            and cleaned not in candidates
+            and not SHORT_OVERLAY_BAD_TEXT_RE.search(cleaned)
+            and short_overlay_has_clean_tail(cleaned)
+            and short_overlay_fits(cleaned)
+        ):
+            candidates.append(cleaned)
+    if candidates:
+        return max(candidates, key=lambda item: visual_score(item, abbr))
+    fallback_clean = clean_teaser_text(fallback if not source else "", limit=76, max_words=10)
+    if (
+        fallback_clean
+        and not SHORT_OVERLAY_BAD_TEXT_RE.search(fallback_clean)
+        and short_overlay_has_clean_tail(fallback_clean)
+    ):
+        return fallback_clean
+    return "One choice changes everything"
+
+
+def short_chapter_visual_moments(
+    abbr: str,
+    chapter: str | int,
+    novel: str = "",
+    *,
+    chapter_text: str = "",
+    fallback_text: str = "",
+    count: int = 3,
+) -> list[str]:
+    abbr = story_key(abbr)
+    novel = novel or NOVEL_NAMES.get(abbr, abbr)
+    text = chapter_text
+    chapter_value = str(chapter or "").strip()
+    if not text and chapter_value.isdigit():
+        try:
+            data = docs_chapter_text(abbr, int(chapter_value))
+            text = str(data.get("text") or data.get("raw_text") or "")
+        except Exception:
+            text = ""
+    source = text or fallback_text or f"{novel} chapter {chapter_value}"
+    moments: list[str] = []
+    for sentence in visual_sentences(source, max(12, count * 4), abbr or novel):
+        moment = short_overlay_moment_text(sentence, abbr, fallback_text)
+        if moment and moment not in moments:
+            moments.append(moment)
+        if len(moments) >= count:
+            break
+    fallback_bits = [
+        "A secret rises from the shadows",
+        "One choice changes everything",
+        "The next trial begins now",
+    ]
+    for fallback in fallback_bits:
+        if len(moments) >= count:
+            break
+        if fallback not in moments:
+            moments.append(fallback)
+    return moments[:count]
+
+
+def short_reel_opening_overlay(abbr: str, chapter: str | int = "", seed_text: str = "") -> str:
+    abbr = story_key(abbr)
+    options = list(SHORT_REEL_HOOK_TEMPLATES.get(abbr) or ())
+    if not options:
+        options = ["One choice changes everything."]
+    slot = rotation_next(f"SHORT_REEL_OPENING_{abbr}_{chapter}", max(1, len(options)))
+    return short_overlay_wrap_complete(options[slot])
+
+
+def short_reel_cta_overlay(abbr: str, novel: str = "") -> str:
+    abbr = story_key(abbr)
+    novel = novel or NOVEL_NAMES.get(abbr, "Azure Inkblade")
+    options = [
+        "Continue the chapter. Link in bio.",
+        "Start the story. Link in bio.",
+        f"Read {novel}. Link in bio.",
+    ]
+    slot = rotation_next(f"SHORT_REEL_CTA_{abbr}", len(options))
+    return short_overlay_wrap_complete(options[slot], max_lines=3)
+
+
 def tiktok_chapter_teaser_overlays(
     abbr: str,
     chapter: str | int,
@@ -15590,33 +15765,25 @@ def tiktok_chapter_teaser_overlays(
 ) -> list[str]:
     abbr = story_key(abbr)
     novel = novel or NOVEL_NAMES.get(abbr, abbr)
-    text = chapter_text
-    chapter_value = str(chapter or "").strip()
-    if not text and chapter_value.isdigit():
-        try:
-            text = str(docs_chapter_text(abbr, int(chapter_value)).get("text") or "")
-        except Exception:
-            text = ""
-    candidates: list[str] = []
-    for sentence in visual_sentences(text or fallback_text, 12, abbr or novel):
-        cleaned = reel_overlay_text(sentence, limit=48)
-        if cleaned and cleaned not in candidates:
-            candidates.append(cleaned)
-        if len(candidates) >= 3:
+    moments = short_chapter_visual_moments(
+        abbr,
+        chapter,
+        novel,
+        chapter_text=chapter_text,
+        fallback_text=fallback_text,
+        count=3,
+    )
+    overlays = [short_reel_opening_overlay(abbr, chapter, moments[0] if moments else fallback_text)]
+    for moment in moments:
+        overlay = short_overlay_wrap_complete(short_overlay_moment_text(moment, abbr, fallback_text))
+        if overlay and overlay not in overlays:
+            overlays.append(overlay)
+        if len(overlays) >= 3:
             break
-    fallback_bits = [
-        "A SECRET RISES FROM THE SHADOWS",
-        "ONE CHOICE CHANGES EVERYTHING",
-        "THE NEXT TRIAL BEGINS NOW",
-    ]
-    while len(candidates) < 3:
-        candidates.append(fallback_bits[len(candidates)])
-    # Lead every Short/Reel with the proven hard hook (frame-1 pattern-interrupt).
-    # This is the creator's top-performing TikTok format, and it directly fights the
-    # YouTube Shorts 92.7% skip rate that the slow chapter-teaser openers produced.
-    candidates = [reel_overlay_text(youtube_shorts_hook(abbr), limit=48)] + candidates[:2]
-    final = reel_overlay_text(f"READ {novel} ON ROYAL ROAD", limit=58)
-    return candidates[:3] + [final]
+    while len(overlays) < 3:
+        overlays.append(reel_overlay_text("One choice changes everything", limit=54))
+    overlays.append(short_reel_cta_overlay(abbr, novel))
+    return overlays[:4]
 
 
 def prepare_tiktok_outro_image(folder: Path, abbr: str, novel: str, chapter: str | int, style: str = "main-posts") -> str:
@@ -15680,15 +15847,31 @@ def generate_tiktok_images(
     prompt_base = visual_prompt.strip() or f"{novel} chapter {chapter}, cinematic web novel promo art"
     scene_prompts: list[str] = []
     if chapter_text.strip():
-        phrases = fallback_phrases(chapter_text, abbr)
-        scene_prompts = make_chapter_image_prompts(chapter_title or f"Chapter {chapter}", chapter_text, phrases, novel)[:3]
+        scene_prompts = short_chapter_visual_moments(
+            abbr,
+            chapter,
+            novel,
+            chapter_text=chapter_text,
+            fallback_text=visual_prompt or prompt_base,
+        )
+        if len(scene_prompts) < 3:
+            phrases = fallback_phrases(chapter_text, abbr)
+            scene_prompts = make_chapter_image_prompts(chapter_title or f"Chapter {chapter}", chapter_text, phrases, novel)[:3]
     elif str(chapter).isdigit():
         try:
             chapter_data = docs_chapter_text(abbr, int(chapter))
             chapter_title = str(chapter_data.get("title") or f"Chapter {chapter}")
             chapter_text = str(chapter_data.get("text") or chapter_data.get("raw_text") or "")
-            phrases = fallback_phrases(chapter_text, abbr)
-            scene_prompts = make_chapter_image_prompts(chapter_title, chapter_text, phrases, novel)[:3]
+            scene_prompts = short_chapter_visual_moments(
+                abbr,
+                chapter,
+                novel,
+                chapter_text=chapter_text,
+                fallback_text=visual_prompt or prompt_base,
+            )
+            if len(scene_prompts) < 3:
+                phrases = fallback_phrases(chapter_text, abbr)
+                scene_prompts = make_chapter_image_prompts(chapter_title, chapter_text, phrases, novel)[:3]
         except Exception:
             scene_prompts = []
     created: list[str] = []
