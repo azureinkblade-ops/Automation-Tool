@@ -1,9 +1,12 @@
-"""Phase-3 retirement parity check (pre-repoint gate).
+"""Phase-3 retirement parity check.
 
 Backs up automation_state.db via the SQLite backup API, then canonical-hashes
 each kept JSON mirror and its DB payload, reporting match/mismatch. On mismatch
 the live JSON is treated as authoritative and imported into the DB (one-time
 reconciliation), per the approved order.
+
+After JSON retirement, a missing JSON mirror with a present DB row is a passing
+state and is reported as retired.
 
 Mapping:
 - analytics-lab.json          -> state_snapshots['analyticsLab']
@@ -58,6 +61,9 @@ def check_state_blob(fname: str, key: str) -> str:
     if file_hash is None and db_hash is None:
         print(f"[skip] {fname}: neither file nor DB present")
         return "skip"
+    if file_hash is None and db_hash is not None:
+        print(f"[RETIRED] {fname} absent; state_snapshots[{key}] present ({db_hash[:12]}...)")
+        return "retired"
     if file_hash == db_hash:
         print(f"[OK] {fname} == state_snapshots[{key}]  ({file_hash[:12]}...)")
         return "match"
@@ -75,7 +81,14 @@ def check_state_blob(fname: str, key: str) -> str:
 def check_release_status() -> str:
     src = ROOT / "release_status.json"
     if not src.exists():
-        print("[skip] release_status.json absent")
+        rows = automation_db.connect(ROOT).execute(
+            "SELECT COUNT(*) AS count FROM release_status"
+        ).fetchone()
+        count = int(rows["count"] if rows else 0)
+        if count:
+            print(f"[RETIRED] release_status.json absent; release_status table has {count} rows")
+            return "retired"
+        print("[skip] release_status.json absent and release_status table empty")
         return "skip"
     file_data = json.loads(src.read_text(encoding="utf-8"))
     file_hash = canon_hash(file_data)
@@ -105,7 +118,7 @@ def main() -> int:
     for f, r in results:
         print(f"  {f}: {r}")
     any_import = any(r in ("imported", "DB-MISSING") for _, r in results)
-    print("\nReconciliation performed." if any_import else "\nAll mirrors at parity (no import needed).")
+    print("\nReconciliation performed." if any_import else "\nAll mirrors retired or at parity (no import needed).")
     return 0
 
 
