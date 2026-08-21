@@ -1314,7 +1314,31 @@ def check_caption_voice_rotation() -> list[dict[str, object]]:
         f"caption={agent_caption[:90]!r}",
     ))
 
-    # 15. Existing saved pack metadata is not rewritten automatically (no state mutation here).
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    checks.append(assert_result(
+        "weekend_agent_copy_uses_rotated_tags_and_link_in_bio",
+        "rotated_hashtags(abbr, f\"weekend_{day}_agent\"" in source
+        and "rotated_x_hashtags(abbr, f\"weekend_{day}_agent\"" in source
+        and "social_caption_link_in_bio(_ig_body, \"instagram\")" in source
+        and "social_caption_link_in_bio(_fb_body, \"facebook\")" in source
+        and "social_caption_link_in_bio(_x_full, \"x\")" in source,
+        "Weekend Hermes copy must use novel-specific tags and public link-in-bio cleanup.",
+    ))
+    checks.append(assert_result(
+        "reused_campaign_pack_rebuilds_dynamic_social_copy",
+        "platform_posts = build_platform_posts(title, chapter, reused, post_focus, agent_copy=agent_copy)" in source
+        and "record_generated_social_posts(agent_meta, platform_posts)" in source,
+        "Reused campaign packs should refresh Hermes/platform copy instead of keeping stale template text.",
+    ))
+    checks.append(assert_result(
+        "daily_social_post_agent_uses_github_chapter_context",
+        "docs_chapter_text(_abbr, int(_chapter))" in source
+        and "_agent_material.update" in source
+        and "compact_chapter_hook(_doc_title, _doc_text, story=_abbr)" in source,
+        "Daily social posts should pass real chapter text into the dynamic copy agent.",
+    ))
+
+    # 18. Existing saved pack metadata is not rewritten automatically (no state mutation here).
     checks.append(assert_result(
         "no_saved_pack_metadata_rewrite",
         True,  # build_platform_posts is pure (no persistence); verified by call returning only.
@@ -1587,10 +1611,12 @@ def check_pack_health_social_preview_controls() -> list[dict[str, object]]:
     original_gate = app.ensure_quality_gate
     original_playwright = app.playwright_available
     original_open = app.open_url_once
+    original_chrome = app.chrome_debug_available
     try:
         app.ensure_quality_gate = lambda *_args, **_kwargs: None
         app.playwright_available = lambda: False
         app.open_url_once = lambda *_args, **_kwargs: None
+        app.chrome_debug_available = lambda: (False, "Regression Chrome bridge unavailable.")
         if social_folder and social_folder.exists():
             preview = app.social_post_preview(str(social_folder), use_playwright=False, platforms=["x", "facebook"])
             platforms = sorted(item.get("key") for item in preview.get("platforms", []) if item.get("key"))
@@ -1602,8 +1628,16 @@ def check_pack_health_social_preview_controls() -> list[dict[str, object]]:
                     f"folder={social_folder.name}, platforms={platforms}, missingMedia={missing_media}",
                 )
             )
+            checks.append(
+                assert_result(
+                    "social_preview_reports_chrome_bridge_status",
+                    "Regression Chrome bridge unavailable." in str(preview.get("preview_error") or ""),
+                    f"previewError={preview.get('preview_error')!r}",
+                )
+            )
         else:
             checks.append(result("weekend_social_preview_has_x_facebook_media", True, "No social post folder found in recent Pack Health results."))
+            checks.append(result("social_preview_reports_chrome_bridge_status", True, "No social post folder found in recent Pack Health results."))
 
         campaign_folder = next(iter(recent_pack_folders(app.OUTPUT_DIR, 8)), None)
         if campaign_folder:
@@ -1631,6 +1665,7 @@ def check_pack_health_social_preview_controls() -> list[dict[str, object]]:
         app.ensure_quality_gate = original_gate
         app.playwright_available = original_playwright
         app.open_url_once = original_open
+        app.chrome_debug_available = original_chrome
     return checks
 
 
@@ -2211,6 +2246,24 @@ def check_stabilization_contracts() -> list[dict[str, object]]:
         ))
     except Exception as exc:
         checks.append(result("deep_tiktok_overlay_rejects_prompt_text", False, f"overlay sanitizer error: {exc}"))
+    try:
+        source = (ROOT / "app.py").read_text(encoding="utf-8")
+        start = source.index("def rebuild_pack_section(")
+        end = source.index("\ndef ", start + 1)
+        rebuild_source = source[start:end]
+        preferred_source = 'text = str(metadata.get("chapter_text") or metadata.get("body") or metadata.get("raw_text") or "")'
+        docs_source = "docs_chapter_text(abbr, int(chapter))"
+        numeric_fallback = 'text = str(metadata.get("chapter") or "")'
+        checks.append(assert_result(
+            "rebuild_pack_section_uses_text_before_chapter_number",
+            preferred_source in rebuild_source
+            and docs_source in rebuild_source
+            and numeric_fallback in rebuild_source
+            and rebuild_source.index(preferred_source) < rebuild_source.index(docs_source) < rebuild_source.index(numeric_fallback),
+            "Image/caption rebuilds must use saved chapter text or GitHub text before falling back to numeric chapter metadata.",
+        ))
+    except Exception as exc:
+        checks.append(result("rebuild_pack_section_uses_text_before_chapter_number", False, f"source guard error: {exc}"))
     try:
         import youtube_pipeline
         checks.append(assert_result(
