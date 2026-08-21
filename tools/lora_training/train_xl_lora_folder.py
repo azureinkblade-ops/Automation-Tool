@@ -26,6 +26,13 @@ checkpoint, global step, completed epochs, timestamps, status, and last error.
 Pass --resume_from_checkpoint latest (or an explicit checkpoint dir) to continue
 from the last checkpoint instead of epoch 0. Interruption is safe: the wrapper
 restarts and resumes automatically.
+
+SAFETY STOP (2026-08-19): the trainer supports a cooperative safety-stop file
+(--safety_stop_file). When the watchdog writes STOP_REQUESTED, the trainer detects
+it between batches, saves a full-state checkpoint, archives the request, and exits
+cleanly via SystemExit(0). This is the primary safe-stop mechanism. taskkill / SIGTERM
+do NOT reliably produce KeyboardInterrupt on Windows detached processes, so the
+cooperative file is authoritative. See _check_safety_stop() and _archive_stop_request().
 """
 import os
 # Belt-and-suspenders: drop env vars that could seed a foreign site-packages.
@@ -37,12 +44,25 @@ os.environ["PYTHONNOUSERSITE"] = "1"
 import argparse
 import glob
 import json
+import math
 import random
 import re
 import shutil
 import time
+import threading
+import queue
+from concurrent.futures import ThreadPoolExecutor, Future
+
+
+def _mono() -> float:
+    """Monotonic clock used for prep/training timing. Defined here because the
+    prep and training loops call it; previously it was referenced but undefined,
+    which crashed the trainer before prep could run."""
+    return time.monotonic()
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -65,10 +85,6 @@ import PIL.Image as Image
 # ---------------------------------------------------------------------------
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _mono() -> float:
-    return time.monotonic()
 
 
 def load_manifest(path: str) -> dict:
@@ -113,6 +129,41 @@ def find_latest_checkpoint(output_dir: str):
     return best
 
 
+def _list_pairs(root):
+    """List (image, caption) pairs in a dataset root (CPU/metadata only)."""
+    pairs = []
+    for p in sorted(glob.glob(os.path.join(root, "*"))):
+        if p.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+            cap = os.path.splitext(p)[0] + ".txt"
+            if os.path.exists(cap):
+                pairs.append((p, cap))
+    return pairs
+
+
+def _build_signature(pairs, size, repeats, shuffle_tags):
+    """Dataset signature from metadata only (no model/GPU needed)."""
+    import hashlib
+    sig_pairs = []
+    for img_path, cap_path in pairs:
+        try:
+            cap_hash = hashlib.sha256(
+                open(cap_path, "rb").read()).hexdigest()[:16]
+        except Exception:
+            cap_hash = "na"
+        try:
+            st = os.stat(img_path)
+            img_key = f"{st.st_size}:{int(st.st_mtime)}"
+        except Exception:
+            img_key = "na"
+        sig_pairs.append([os.path.basename(img_path), cap_hash, img_key])
+    return {
+        "pairs": sig_pairs,
+        "size": size,
+        "repeats": repeats,
+        "shuffle_tags": shuffle_tags,
+    }
+
+
 class FolderDataset(Dataset):
     def __init__(self, root, tokenizer_one, tokenizer_two, vae, text_encoder_one,
                  text_encoder_two, device, size=1024, repeats=1, shuffle_tags=False,
@@ -130,12 +181,14 @@ class FolderDataset(Dataset):
         if cache_file is None:
             cache_file = os.path.join(root, ".latent_cache.pt")
         self.cache_file = cache_file
-        pairs = []
-        for p in sorted(glob.glob(os.path.join(root, "*"))):
-            if p.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
-                cap = os.path.splitext(p)[0] + ".txt"
-                if os.path.exists(cap):
-                    pairs.append((p, cap))
+        pairs = _list_pairs(root)
+        # unique_pairs: the distinct source image/caption pairs. Expensive VAE +
+        # text-encoder preprocessing is performed ONCE per unique pair and cached
+        # -- never once per repeated training sample.
+        self.unique_pairs = pairs
+        # self.pairs: the training-order list (unique pairs repeated `repeats`
+        # times) that drives __len__ and sampling frequency. Repeats affect how
+        # often each cached latent is sampled, NOT how many times it is encoded.
         self.pairs = pairs * repeats
         # Latent + text-embed cache: encode every unique image/caption ONCE on the
         # GPU (fp32) instead of every step. This is the missing optimization that made
@@ -147,8 +200,13 @@ class FolderDataset(Dataset):
         if self._try_load_cache():
             return
         _t0 = _mono()
-        _n = len(self.pairs)
-        for _i, (img_path, cap_path) in enumerate(self.pairs):
+        _n = len(self.unique_pairs)
+        _diag = os.environ.get("LORA_PREP_DIAG") == "1"
+        _hb = _mono()
+        for _i, (img_path, cap_path) in enumerate(self.unique_pairs):
+            if _diag:
+                print(f"[prep] SAMPLE {_i + 1}/{_n} name={os.path.basename(img_path)} "
+                      f"stage=start", flush=True)
             image = Image.open(img_path).convert("RGB")
             if image.size != (self.size, self.size):
                 image = image.resize((self.size, self.size), Image.LANCZOS)
@@ -166,10 +224,16 @@ class FolderDataset(Dataset):
                                          padding="max_length", truncation=True, return_tensors="pt")
             ids1 = tok_one.input_ids.squeeze(0)
             ids2 = tok_two.input_ids.squeeze(0)
+            if _diag:
+                print(f"[prep] SAMPLE {_i + 1}/{_n} name={os.path.basename(img_path)} "
+                      f"stage=vae_encode", flush=True)
             with torch.no_grad():
                 latent = self.vae.encode(
                     pixel.unsqueeze(0).to(self.device, dtype=torch.float32)
                 ).latent_dist.sample().to(torch.float32) * 0.18215
+                if _diag:
+                    print(f"[prep] SAMPLE {_i + 1}/{_n} name={os.path.basename(img_path)} "
+                          f"stage=text_encoders", flush=True)
                 enc1 = self.text_encoder_one(ids1.unsqueeze(0).to(self.device), output_hidden_states=True)
                 enc2 = self.text_encoder_two(ids2.unsqueeze(0).to(self.device), output_hidden_states=True)
                 pooled = enc2[0]
@@ -179,6 +243,12 @@ class FolderDataset(Dataset):
                 "hidden": hidden.squeeze(0).cpu(),
                 "pooled": pooled.squeeze(0).cpu(),
             })
+            if _diag:
+                _now = _mono()
+                if _now - _hb >= 10.0:
+                    _hb = _now
+                    print(f"[prep] HEARTBEAT sample {_i + 1}/{_n} name={os.path.basename(img_path)} "
+                          f"elapsed={_now - _t0:.0f}s", flush=True)
             # Progress logging so long precompute phases are observable.
             if (_i + 1) % 25 == 0 or (_i + 1) == _n:
                 _el = _mono() - _t0
@@ -192,26 +262,29 @@ class FolderDataset(Dataset):
         # Identifies the exact dataset the cache was built from. Includes caption
         # contents (not just paths) so editing a caption forces a rebuild, and an
         # image size/mtime proxy so replacing an image does too.
-        import hashlib
-        sig_pairs = []
-        for img_path, cap_path in self.pairs:
-            try:
-                cap_hash = hashlib.sha256(
-                    open(cap_path, "rb").read()).hexdigest()[:16]
-            except Exception:
-                cap_hash = "na"
-            try:
-                st = os.stat(img_path)
-                img_key = f"{st.st_size}:{int(st.st_mtime)}"
-            except Exception:
-                img_key = "na"
-            sig_pairs.append([os.path.basename(img_path), cap_hash, img_key])
-        return {
-            "pairs": sig_pairs,
-            "size": self.size,
-            "repeats": self.repeats,
-            "shuffle_tags": self.shuffle_tags,
-        }
+        return _build_signature(self.unique_pairs, self.size, self.repeats,
+                                self.shuffle_tags)
+
+    @staticmethod
+    def is_cache_valid(root, size=1024, repeats=1, shuffle_tags=False,
+                       cache_file=None):
+        """CPU/metadata-only check: does a valid latent cache already exist for
+        this dataset/config? Used to decide GPU placement of preprocessing-only
+        components (VAE + text encoders) before they are loaded to CUDA."""
+        if cache_file is None:
+            cache_file = os.path.join(root, ".latent_cache.pt")
+        pairs = _list_pairs(root)
+        signature = _build_signature(pairs, size, repeats, shuffle_tags)
+        try:
+            if not os.path.exists(cache_file):
+                return False
+            blob = torch.load(cache_file, map_location="cpu", weights_only=False)
+            if blob.get("signature") != signature:
+                return False
+            # Valid only if it covers every unique pair.
+            return len(blob.get("cache", [])) == len(pairs)
+        except Exception:
+            return False
 
     def _try_load_cache(self) -> bool:
         try:
@@ -244,7 +317,10 @@ class FolderDataset(Dataset):
         return len(self.pairs)
 
     def __getitem__(self, idx):
-        c = self.cache[idx]
+        # self.pairs has `repeats` copies of each unique pair; map the repeated
+        # training index back to its single cached entry so repeated samples
+        # reuse the same latent/text embeddings instead of duplicating them.
+        c = self.cache[idx % len(self.unique_pairs)]
         return {"latents": c["latents"], "hidden": c["hidden"], "pooled": c["pooled"]}
 
 
@@ -254,6 +330,203 @@ def collate_fn(items):
         "hidden": torch.stack([i["hidden"] for i in items]),
         "pooled": torch.stack([i["pooled"] for i in items]),
     }
+
+
+class SafetyStopRequested(Exception):
+    """Raised by the training loop when a cooperative safety stop is requested.
+
+    Carries the stop reason so the manifest/log can record it.
+    """
+    def __init__(self, reason: str = "UNKNOWN"):
+        self.reason = reason
+        super().__init__(f"safety stop requested: {reason}")
+
+
+def _check_safety_stop(
+    completed_epochs: int,
+    current_epoch: int,
+    next_batch_index: int,
+    stop_file: Path,
+    manifest: dict,
+    manifest_path: Path,
+    global_step: int,
+    save_checkpoint_fn,
+) -> None:
+    """Check the cooperative safety-stop file between batches.
+
+    If the file exists, read the reason, archive the file (don't just delete),
+    save a full-state checkpoint, and raise SafetyStopRequested so the outer
+    handler records the clean exit.
+
+    The three loop-relative counters are passed in explicitly so their semantics
+    are unambiguous (no global_step substitution).
+
+    completed_epochs = number of FULLY completed epochs (audit only).
+    current_epoch    = epoch currently being processed (0-indexed).
+    next_batch_index = index of the batch that WOULD be processed next, if
+                       training continued.  DataLoader position is NOT restored
+                       on resume (RESUME_BATCH_SEMANTICS=EPOCH_RESTART); this
+                       field is audit metadata only.
+    """
+    if not stop_file.exists():
+        return
+    # Read the stop request.  The watchdog writes structured JSON; parse it.
+    raw = ""
+    try:
+        raw = stop_file.read_text(encoding="utf-8").strip()
+    except Exception as exc:
+        print(f"[safety] WARNING could not read stop file {stop_file}: {exc}", flush=True)
+        return
+    reason = "UNKNOWN"
+    requested_run_id = ""
+    requested_pid = 0
+    try:
+        payload = json.loads(raw)
+        reason = payload.get("reason", "UNKNOWN")
+        requested_run_id = payload.get("run_id", "")
+        requested_pid = payload.get("trainer_root_pid", 0)
+    except json.JSONDecodeError:
+        # Legacy/plain-text fallback: first line is the reason
+        try:
+            reason = raw.splitlines()[0]
+        except Exception:
+            reason = "UNKNOWN"
+    reason = reason.strip() or "UNKNOWN"
+
+    # Verify the request belongs to the current run before honoring it.
+    # This prevents a stale stop file from a previous run from immediately
+    # terminating a new run (Gate 6 requirement).
+    current_run_id = manifest.get("run_id", "")
+    rejected = False
+    if requested_run_id and current_run_id and requested_run_id != current_run_id:
+        reason_reject = "STOP_REQUEST_REJECTED_RUN_ID_MISMATCH"
+        print(f"[safety] {reason_reject}: file has '{requested_run_id}', "
+              f"current run is '{current_run_id}'. Archiving as rejected.",
+              flush=True)
+        rejected = True
+    elif requested_pid and current_run_id and requested_pid != manifest.get("pid", 0):
+        reason_reject = "STOP_REQUEST_REJECTED_PID_MISMATCH"
+        print(f"[safety] {reason_reject}: file has {requested_pid}, "
+              f"current pid is {manifest.get('pid', 0)}. Archiving as rejected.",
+              flush=True)
+        rejected = True
+
+    if rejected:
+        _archive_rejected_stop_request(stop_file, reason_reject, requested_run_id,
+                                       requested_pid, manifest, manifest_path)
+        try:
+            stop_file.unlink()
+        except Exception:
+            pass
+        return
+
+    # Archive the valid stop request instead of deleting, for auditability.
+    try:
+        _archive_stop_request(
+            stop_file, reason, next_batch_index,
+            completed_epochs, current_epoch, global_step, manifest, manifest_path,
+        )
+    except Exception as exc:
+        print(f"[safety] WARNING could not archive stop file {stop_file}: {exc}", flush=True)
+        try:
+            stop_file.unlink()
+        except Exception:
+            pass
+    print(f"[safety] STOP REQUESTED (reason={reason}) — saving checkpoint and exiting.",
+          flush=True)
+    # Save a full-state checkpoint at the CURRENT state (mid-epoch is fine).
+    # completed_epochs = number of fully completed epochs (audit only).
+    # current_epoch    = the epoch currently being processed (0-indexed); set here
+    #   to reflect that the checkpoint was taken mid-epoch.
+    # next_batch_index = the batch about to be processed next (audit only; DataLoader
+    #   restarts at 0 on resume).
+    _save_checkp = save_checkpoint_fn
+    _save_checkp(
+        completed_epochs,
+        current_epoch=current_epoch,
+        next_batch_in_epoch=next_batch_index,
+    )
+    manifest.update({
+        "status": "safety_stopped",
+        "stage": "training",
+        "safety_stop_reason": reason,
+        "global_step": global_step,
+        "completed_epochs": completed_epochs,
+        "current_epoch": current_epoch,
+        "next_batch_index_within_epoch": next_batch_index,
+        "updated_at": _now_iso(),
+        "last_error": f"SAFETY_STOP:{reason}",
+    })
+    write_manifest(manifest_path, manifest)
+    raise SafetyStopRequested(reason)
+
+
+def _archive_rejected_stop_request(stop_file: Path, reject_reason: str,
+                                    file_run_id: str, file_pid: int,
+                                    manifest: dict,
+                                    manifest_path: Path | None = None) -> None:
+    """Archive a rejected (stale/mismatched) stop request for auditability."""
+    if manifest_path is not None:
+        archive_dir = Path(manifest_path).parent / "logs" / "safety_requests"
+    else:
+        archive_dir = Path(manifest.get("output_dir", ".")) / "logs" / "safety_requests"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    ts = _now_iso()
+    safe_ts = ts.replace(":", "-")
+    archived_name = f"stop_request_REJECTED_{safe_ts}.json"
+    archived = archive_dir / archived_name
+    payload = {
+        "reject_reason": reject_reason,
+        "archived_at": ts,
+        "original_reason": None,
+        "requested_run_id": file_run_id,
+        "requested_pid": file_pid,
+        "current_pid": manifest.get("pid", 0),
+        "current_run_id": manifest.get("run_id", "unknown"),
+        "source_path": str(stop_file),
+    }
+    try:
+        raw = stop_file.read_text(encoding="utf-8").strip()
+        payload["original_reason"] = json.loads(raw).get("reason", None) if raw else None
+    except Exception:
+        pass
+    tmp = archived.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp.replace(archived)
+
+
+def _archive_stop_request(stop_file: Path, reason: str, batch_index: int,
+                          completed_epochs: int, current_epoch: int,
+                          global_step_val: int,
+                          manifest: dict,
+                          manifest_path: Path | None = None) -> None:
+    """Move the stop-request file to the safety_requests archive with metadata."""
+    if manifest_path is not None:
+        archive_dir = Path(manifest_path).parent / "logs" / "safety_requests"
+    else:
+        archive_dir = Path(manifest.get("output_dir", ".")) / "logs" / "safety_requests"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    ts = _now_iso()
+    safe_ts = ts.replace(":", "-")
+    archived_name = f"stop_request_{safe_ts}.json"
+    archived = archive_dir / archived_name
+    payload = {
+        "reason": reason,
+        "requested_at": ts,
+        "run_id": manifest.get("run_id", "unknown"),
+        "trainer_root_pid": manifest.get("pid", 0),
+        "global_step": global_step_val,
+        "completed_epochs": completed_epochs,
+        "current_epoch": current_epoch,
+        "next_batch_index_within_epoch": batch_index,
+        "source_path": str(stop_file),
+        "resulting_checkpoint_global_step": global_step_val,
+    }
+    tmp = archived.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp.replace(archived)
+    # Remove the active stop file
+    stop_file.unlink()
 
 
 def main():
@@ -285,6 +558,13 @@ def main():
     ap.add_argument("--manifest", type=str, default=None,
                     help="Progress manifest JSON path "
                          "(default: <output_dir>/training_manifest.json).")
+    ap.add_argument("--safety_stop_file", type=str, default=None,
+                    help="Path to a cooperative safety-stop request file. "
+                         "If this file exists at the start of a batch, the trainer "
+                         "saves a full-state checkpoint and exits cleanly rather than "
+                         "being force-killed. The file's first line is used as the "
+                         "safety reason (e.g. GPU_MEMORY, GPU_THERMAL, WATCHDOG_FAILURE, "
+                         "USER_REQUEST).")
     args = ap.parse_args()
 
     if args.manifest is None:
@@ -319,10 +599,28 @@ def main():
     tokenizer_one = pipe.tokenizer
     tokenizer_two = pipe.tokenizer_2
     # keep VAE + text encoders in fp32 to avoid fp16 overflow in latents/embeds
-    text_encoder_one = pipe.text_encoder.to(accelerator.device)
-    text_encoder_two = pipe.text_encoder_2.to(accelerator.device)
-    vae = pipe.vae.to(accelerator.device)
-    unet = pipe.unet.to(accelerator.device)
+    text_encoder_one = pipe.text_encoder
+    text_encoder_two = pipe.text_encoder_2
+    vae = pipe.vae
+    unet = pipe.unet
+    # Cache-aware device placement: when a valid latent cache already exists, the
+    # VAE + both text encoders are NOT needed on GPU (their outputs are cached and
+    # loaded CPU-side, then moved to the accelerator device per training step).
+    # Placing them on GPU only on a cache MISS avoids the ~15.5 GiB startup
+    # transient and lets the unchanged watchdog tolerate startup.
+    cache_valid = FolderDataset.is_cache_valid(
+        args.train_data_dir, args.resolution, args.repeats, args.shuffle_tags)
+    if cache_valid:
+        print("[loader] valid latent cache detected -- VAE/text encoders stay on "
+              "CPU (cache-hit startup path)", flush=True)
+        unet = unet.to(accelerator.device)
+    else:
+        print("[loader] no valid latent cache -- loading VAE/text encoders to GPU "
+              "for preprocessing", flush=True)
+        text_encoder_one = text_encoder_one.to(accelerator.device)
+        text_encoder_two = text_encoder_two.to(accelerator.device)
+        vae = vae.to(accelerator.device)
+        unet = unet.to(accelerator.device)
     del pipe
 
     # freeze everything, inject LoRA into unet (and optionally text encoders)
@@ -386,6 +684,19 @@ def main():
                         meta = json.loads(meta_path.read_text(encoding="utf-8"))
                         starting_epoch = int(meta.get("completed_epochs", 0))
                         global_step = int(meta.get("global_step", 0))
+                        # Audit: if current_epoch > completed_epochs, we're resuming
+                        # mid-epoch.  DataLoader position is NOT restored by
+                        # accelerator.load_state(), so we will restart the current
+                        # epoch from batch 0.  This is the RESUME_BATCH_SEMANTICS.
+                        current_ep = meta.get("current_epoch")
+                        completed_ep = meta.get("completed_epochs")
+                        if current_ep is not None and completed_ep is not None:
+                            if current_ep > completed_ep:
+                                print(f"[resume] WARNING: checkpoint was taken mid-epoch "
+                                      f"(current_epoch={current_ep}, completed_epochs={completed_ep}). "
+                                      f"Resuming will RESTART epoch {current_ep} from batch 0 — "
+                                      f"some samples in that epoch will be re-seen.",
+                                      flush=True)
                     except Exception:
                         pass
                 if starting_epoch == 0 and global_step == 0:
@@ -419,8 +730,19 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    def _save_checkpoint(epoch_done: int):
-        """Save full Accelerate state + update manifest. epoch_done = completed epochs."""
+    # Track the current batch index within the epoch for accurate interrupt
+    # metadata.  global_step is a global counter and is NOT epoch-relative.
+    current_batch_index = 0
+
+    def _save_checkpoint(epoch_done: int, current_epoch: int | None = None, next_batch_in_epoch: int | None = None):
+        """Save full Accelerate state + update manifest.
+
+        epoch_done = number of FULLY completed epochs (for resume).
+        current_epoch = the epoch currently being processed (0-indexed), if any.
+        next_batch_in_epoch = index of the batch that WOULD be processed next
+                              in current_epoch (audit info only; DataLoader position
+                              is NOT restored on resume).
+        """
         nonlocal global_step
         ckpt_dir = Path(args.output_dir) / f"checkpoint-{global_step:06d}"
         accelerator.save_state(str(ckpt_dir))
@@ -429,6 +751,8 @@ def main():
         ckpt_meta = {
             "global_step": global_step,
             "completed_epochs": epoch_done,
+            "current_epoch": current_epoch if current_epoch is not None else epoch_done,
+            "next_batch_index_within_epoch": next_batch_in_epoch if next_batch_in_epoch is not None else 0,
             "num_train_epochs": args.num_train_epochs,
             "saved_at": _now_iso(),
         }
@@ -443,21 +767,67 @@ def main():
             "latest_checkpoint": str(ckpt_dir),
             "global_step": global_step,
             "completed_epochs": epoch_done,
+            "current_epoch": ckpt_meta["current_epoch"],
+            "next_batch_index_within_epoch": ckpt_meta["next_batch_index_within_epoch"],
             "updated_at": _now_iso(),
             "pid": os.getpid(),
         })
         write_manifest(args.manifest, manifest)
         print(f"[checkpoint] saved {ckpt_dir} (global_step={global_step}, "
-              f"epochs_done={epoch_done})", flush=True)
+              f"completed_epochs={epoch_done}, current_epoch={ckpt_meta['current_epoch']}, "
+              f"next_batch_in_epoch={ckpt_meta['next_batch_index_within_epoch']})", flush=True)
+
+    # Loop-relative state for accurate checkpoint metadata.
+    #   current_epoch_index  — epoch currently being processed (0-indexed), or
+    #     the epoch that was interrupted.
+    #   completed_epochs_count — number of FULLY completed epochs (incremented
+    #     only after an epoch genuinely finishes).
+    #   next_batch_index_within_epoch — index of the batch about to execute, or
+    #     (after a batch completes) the index of the NEXT batch.  This is audit
+    #     metadata only: DataLoader position is NOT restored on resume.
+    #
+    # Resume semantics: RESUME_BATCH_SEMANTICS=EPOCH_RESTART.
+    #   accelerator.load_state() restores model + optimizer + scheduler + RNG +
+    #   trainer global_step, but does NOT restore DataLoader iteration position.
+    #   A mid-epoch checkpoint therefore restarts the interrupted epoch from batch 0.
+    #   next_batch_index_within_epoch records where the DataLoader WOULD resume;
+    #   it is NOT where it actually resumes.
+    current_epoch_index = starting_epoch
+    completed_epochs_count = starting_epoch
+    next_batch_index_within_epoch = 0
 
     try:
         _train_t0 = _mono()
         for epoch in range(starting_epoch, args.num_train_epochs):
+            current_epoch_index = epoch
+            next_batch_index_within_epoch = 0
+            # Per-epoch bookkeeping: assume the epoch completes naturally unless
+            # an intentional early break (e.g. max_train_steps reached) sets this
+            # False. Must be initialized before the batch loop so the post-loop
+            # `if epoch_completed:` check never hits an unbound variable.
+            epoch_completed = True
+
             unet.train()
-            for batch in loader:
+
+            for batch_index, batch in enumerate(loader):
+                # The next batch about to execute.
+                next_batch_index_within_epoch = batch_index
+
+                # Safety stop is checked BEFORE any work on this batch.
+                if args.safety_stop_file:
+                    _check_safety_stop(
+                        completed_epochs_count,
+                        current_epoch_index,
+                        next_batch_index_within_epoch,
+                        Path(args.safety_stop_file),
+                        manifest,
+                        Path(args.manifest),
+                        global_step,
+                        save_checkpoint_fn=_save_checkpoint,
+                    )
+
                 with accelerator.accumulate(unet):
-                    # Latents + text embeds are precomputed once in FolderDataset (cached
-                    # on the GPU in fp32) — no per-step VAE/text-encoder cost.
+                    # --- full batch body unchanged ---
                     latents = batch["latents"].to(accelerator.device, dtype=torch.float32)
                     hidden = batch["hidden"].to(accelerator.device)
                     pooled = batch["pooled"].to(accelerator.device)
@@ -466,13 +836,11 @@ def main():
                     timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps,
                                               (bsz,), device=latents.device).long()
                     noisy = noise_scheduler.add_noise(latents, noise, timesteps)
-                    # SDXL needs time_ids (resolution + crop coords) in added_cond_kwargs
                     target_size = args.resolution
                     add_time_ids = torch.tensor(
                         [target_size, target_size, 0, 0, target_size, target_size],
                         dtype=torch.float32, device=hidden.device)
                     add_time_ids = add_time_ids.unsqueeze(0).repeat(bsz, 1)
-                    # cast UNet inputs to the UNet's (bf16) dtype
                     udtype = next(unet.parameters()).dtype
                     model_pred = unet(
                         noisy.to(udtype), timesteps.to(udtype), hidden.to(udtype),
@@ -485,24 +853,52 @@ def main():
                         target = noise
                     loss = torch.nn.functional.mse_loss(model_pred.float(), target.float())
                     accelerator.backward(loss)
-                    # clip gradients to prevent explosion -> nan
                     accelerator.clip_grad_norm_(trainable, 1.0)
                     optimizer.step()
                     optimizer.zero_grad()
+
+                # This batch is now fully reflected in model/optimizer state.
                 global_step += 1
                 steps = global_step
+
+                # If checkpointed now, the NEXT batch would be batch_index + 1.
+                next_batch_index_within_epoch = batch_index + 1
+
                 if global_step % 10 == 0:
                     _el = _mono() - _train_t0
                     _rate = global_step / _el if _el > 0 else 0.0
                     print(f"[step {global_step}] loss={loss.item():.4f} "
                           f"({_rate:.3f} steps/s, {1/_rate:.1f}s/step)", flush=True)
-                if args.checkpointing_steps and global_step % args.checkpointing_steps == 0:
-                    _save_checkpoint(epoch)
+
+                if (
+                    args.checkpointing_steps
+                    and global_step % args.checkpointing_steps == 0
+                ):
+                    _save_checkpoint(
+                        completed_epochs_count,
+                        current_epoch=current_epoch_index,
+                        next_batch_in_epoch=next_batch_index_within_epoch,
+                    )
+
                 if max_steps and global_step >= max_steps:
+                    epoch_completed = False
                     break
-            # end of epoch
-            if args.checkpointing_epochs and (epoch + 1) % args.checkpointing_epochs == 0:
-                _save_checkpoint(epoch + 1)
+
+            # Genuine end-of-epoch checkpoint.
+            if epoch_completed:
+                completed_epochs_count = epoch + 1
+                next_batch_index_within_epoch = 0
+
+                if (
+                    args.checkpointing_epochs
+                    and completed_epochs_count % args.checkpointing_epochs == 0
+                ):
+                    _save_checkpoint(
+                        completed_epochs_count,
+                        current_epoch=None,
+                        next_batch_in_epoch=0,
+                    )
+
             if max_steps and global_step >= max_steps:
                 break
 
@@ -548,16 +944,30 @@ def main():
         # Safe interruption: persist a checkpoint so the wrapper can resume.
         print("[interrupt] caught KeyboardInterrupt -- saving checkpoint before exit.", flush=True)
         try:
-            _save_checkpoint(starting_epoch)
+            _save_checkpoint(
+                completed_epochs_count,
+                current_epoch=current_epoch_index,
+                next_batch_in_epoch=next_batch_index_within_epoch,
+            )
         except Exception as exc:
             print(f"[interrupt] checkpoint save failed: {exc}", flush=True)
         manifest.update({
-            "status": "interrupted", "stage": "training",
-            "global_step": global_step, "updated_at": _now_iso(),
-            "last_error": "KeyboardInterrupt",
+            "status": "interrupted",
+            "stage": "training",
+            "global_step": global_step,
+            "completed_epochs": completed_epochs_count,
+            "current_epoch": current_epoch_index,
+            "next_batch_index_within_epoch": next_batch_index_within_epoch,
+            "resume_batch_semantics": "EPOCH_RESTART",
+            "updated_at": _now_iso(),
         })
         write_manifest(args.manifest, manifest)
         raise
+    except SafetyStopRequested:
+        # Cooperative safety stop: already checkpointed + manifest updated inside
+        # _check_safety_stop. Exit cleanly so the watchdog can confirm.
+        print("[safety] cooperative safety stop acknowledged; exiting.", flush=True)
+        raise SystemExit(0)
     except Exception as exc:
         manifest.update({
             "status": "failed", "stage": "training",

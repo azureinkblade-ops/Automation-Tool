@@ -114,7 +114,14 @@ try:
             flush=True,
         )
     else:
-        print(f"[image-pipeline] WARNING diffusers deps missing: {_deps} (falling back to external providers)", flush=True)
+        if ALLOW_EXTERNAL_IMAGE_FALLBACK:
+            fallback_policy = "external stock fallback ALLOWED (ALLOW_EXTERNAL_IMAGE_FALLBACK=1)"
+        else:
+            fallback_policy = "external stock fallback DISABLED; local emergency fallback will be used"
+        print(
+            f"[image-pipeline] WARNING diffusers deps missing: {_deps} ({fallback_policy})",
+            flush=True,
+        )
 except Exception as _exc:  # pragma: no cover - logging only
     print(f"[image-pipeline] dependency check skipped: {_exc}", flush=True)
 
