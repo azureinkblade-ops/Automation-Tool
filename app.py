@@ -1923,6 +1923,17 @@ def chrome_debug_available() -> tuple[bool, str]:
         req = urllib.request.Request(f"{url}/json/version", headers={"User-Agent": "AutomationTool/1.0"})
         with urllib.request.urlopen(req, timeout=3) as response:
             data = json.loads(response.read().decode("utf-8"))
+        targets_req = urllib.request.Request(f"{url}/json/list", headers={"User-Agent": "AutomationTool/1.0"})
+        with urllib.request.urlopen(targets_req, timeout=3) as response:
+            targets = json.loads(response.read().decode("utf-8"))
+        usable_page = any(
+            isinstance(target, dict)
+            and str(target.get("type") or "") == "page"
+            and not str(target.get("url") or "").startswith("chrome://profile-picker")
+            for target in targets if isinstance(targets, list)
+        )
+        if not usable_page:
+            return False, "Chrome is waiting at the profile picker. Select the automation Chrome profile, then retry."
         browser_name = str(data.get("Browser") or "Chrome")
         return True, f"Connected to {browser_name} at {url}."
     except Exception as exc:
@@ -17735,9 +17746,11 @@ def rebuild_pack_section(folder: str, part: str, use_openai: bool = False) -> di
         if part not in {"captions", "images"}:
             raise RuntimeError("This promo pack supports rebuilding captions or images.")
         title = str(metadata.get("title") or metadata.get("chapter_title") or "Chapter Promo")
-        text = str(metadata.get("chapter") or metadata.get("chapter_text") or "")
+        text = str(metadata.get("chapter_text") or metadata.get("body") or metadata.get("raw_text") or "")
         if not text.strip() and abbr and chapter:
             text = str(docs_chapter_text(abbr, int(chapter)).get("text") or "")
+        if not text.strip():
+            text = str(metadata.get("chapter") or "")
         rebuilt = make_campaign(
             title,
             text,
@@ -17921,28 +17934,25 @@ def make_weekend_social_post(abbr: str, day: str) -> dict[str, Any]:
                 abbr, f"Weekend {day}", day, _wk_hook, {"abbr": abbr, "novel": NOVEL_NAMES.get(abbr, "")}
             )
             if _agent and _agent.get("caption"):
+                _profile = social_profile(abbr)
+                _ag_hook = str(_agent.get("hook") or _wk_hook).strip()
                 _ag_cap = str(_agent["caption"]).strip()
                 _ag_cta = str(_agent.get("cta") or "").strip()
-                _ag_tags = " ".join(str(t) for t in (_agent.get("hashtags") or []) if str(t).strip())
-                if "#AzureInkblade" not in _ag_tags:
-                    _ag_tags = f"#AzureInkblade {_ag_tags}".strip()
-                _profile = social_profile(abbr)
-                _novel_tag = next((t for t in re.findall(r"#\w+", _profile.get("hashtags", "")) if t.lower() != "#azureinkblade"), "")
-                if _novel_tag and _novel_tag not in _ag_tags:
-                    _ag_tags = f"{_ag_tags} {_novel_tag}".strip()
-                _fb_body = _ag_cap + (f"\n\n{_ag_cta}" if _ag_cta else "")
-                _ig_body = _ag_cap + (f"\n\n{_ag_cta}" if _ag_cta else "")
-                # X: keep a real body (never collapse to tags-only). Trim cta first,
-                # then caption, to fit 280 â€” mirrors weekend_social_copy's X handling.
-                _x_full = f"{_ig_body}\n\n{_ag_tags}"
+                _ag_tags = rotated_hashtags(abbr, f"weekend_{day}_agent", chapter_text=f"{_ag_hook} {_ag_cap}", limit=10)
+                _ag_x_tags = rotated_x_hashtags(abbr, f"weekend_{day}_agent", limit=5)
+                _fb_body = "\n\n".join(part for part in [_ag_hook, _ag_cap, _ag_cta, _ag_tags] if part)
+                _ig_body = "\n\n".join(part for part in [_ag_hook, _ag_cap, _ag_cta, _ag_tags] if part)
+                _x_full = "\n\n".join(part for part in [_ag_hook or _ag_cap, _ag_cta, _ag_x_tags] if part)
                 if len(_x_full) > 280:
-                    _x_full = f"{_ag_cap}\n\n{_ag_tags}"
+                    _x_full = "\n\n".join(part for part in [_ag_hook or _ag_cap, _ag_x_tags] if part)
                 if len(_x_full) > 280:
-                    _x_full = _ag_cap[:277].rsplit(" ", 1)[0].rstrip() + "...\n\n" + _ag_tags
+                    _x_full = clean_teaser_text(_ag_hook or _ag_cap, 210, max_words=28) + "\n\n" + _ag_x_tags
+                if len(_x_full) > 280:
+                    _x_full = _x_full[:277].rsplit(" ", 1)[0].rstrip() + "..."
                 copy = {
-                    "instagram": f"{_ig_body}\n\n{_ag_tags}",
-                    "x": _x_full,
-                    "facebook": f"{_fb_body}\n\n{_ag_tags}",
+                    "instagram": social_caption_link_in_bio(_ig_body, "instagram"),
+                    "x": social_caption_link_in_bio(_x_full, "x"),
+                    "facebook": social_caption_link_in_bio(_fb_body, "facebook"),
                     "alt_text": copy.get("alt_text", f"Weekend promotional image for {_profile.get('name', abbr)}."),
                     "post_focus": copy.get("post_focus", ""),
                     "caption_style": copy.get("caption_style", "") + "+agent",
@@ -26923,6 +26933,8 @@ def social_post_preview(
     else:
         playwright_stdout = ""
         playwright_stderr = ""
+        chrome_ok, chrome_message = chrome_debug_available()
+        preview_error = "" if chrome_ok else chrome_message
         for spec in specs:
             try:
                 open_url_once(spec["url"])
@@ -29792,12 +29804,16 @@ def prepare_manual_posts(folder: str, use_playwright: bool = True) -> dict[str, 
         launched = True
         message = "Playwright is preparing the platform tabs. Review before publishing."
     else:
+        chrome_ok, chrome_message = chrome_debug_available()
         for spec in specs:
             try:
                 open_url_once(spec["url"])
             except Exception:
                 pass
-        message = "Playwright prefill is not available in this runtime, so platform pages were opened for review."
+        message = (
+            "Playwright prefill is not available, so platform pages were opened for review. "
+            + ("" if chrome_ok else chrome_message)
+        ).strip()
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata["manual_posts_prep"] = {
         "prepared_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -33032,7 +33048,31 @@ def make_campaign(
         if novel:
             reused["novel"] = novel
         reused["post_focus_override"] = post_focus
-        reused.update(build_platform_posts(title, chapter, reused, post_focus))
+        agent_copy = None
+        agent_meta = {}
+        if agent_posts_enabled() and abbr:
+            try:
+                _agent_hook = " ".join(str(p) for p in reused.get("phrases", [])[:3]).strip()
+                if not _agent_hook:
+                    _agent_hook = compact_chapter_hook(title, chapter, story=abbr)
+                agent_copy, agent_meta = resolve_agent_post_copy(
+                    abbr,
+                    title,
+                    str(reused.get("chapter", chapter_id) or chapter_id),
+                    _agent_hook,
+                    reused,
+                )
+            except Exception as _agent_exc:
+                agent_copy = None
+                reused.setdefault("warnings", []).append(f"agent_post_writer skipped: {_agent_exc}")
+        platform_posts = build_platform_posts(title, chapter, reused, post_focus, agent_copy=agent_copy)
+        if agent_meta:
+            agent_meta["_agent_used"] = (
+                agent_copy is not None and platform_posts.get("_agent_source") == "hermes_agent"
+            )
+            platform_posts.update(agent_meta)
+            record_generated_social_posts(agent_meta, platform_posts)
+        reused.update(platform_posts)
         write_text_artifacts(folder, reused)
         background_videos = choose_background_videos(
             background_video_count(),
@@ -44537,9 +44577,26 @@ class Handler(BaseHTTPRequestHandler):
                     try:
                         _title = NOVEL_NAMES.get(_abbr, _abbr)
                         _chapter = _chapter or latest_released_chapter_for(_abbr)
+                        _agent_material = {"abbr": _abbr, "novel": _title, "chapter": _chapter}
                         _agent_hook = ""
+                        try:
+                            if str(_chapter).strip().isdigit():
+                                _doc = docs_chapter_text(_abbr, int(_chapter))
+                                _doc_title = str(_doc.get("title") or _title)
+                                _doc_text = str(_doc.get("text") or _doc.get("raw_text") or "")
+                                if _doc_text.strip():
+                                    _agent_hook = compact_chapter_hook(_doc_title, _doc_text, story=_abbr)
+                                    _agent_material.update(
+                                        {
+                                            "title": _doc_title,
+                                            "chapter_text": _doc_text,
+                                            "phrases": [_agent_hook],
+                                        }
+                                    )
+                        except Exception:
+                            pass
                         agent_copy, agent_meta = resolve_agent_post_copy(
-                            _abbr, _title, _chapter, _agent_hook, {"abbr": _abbr, "novel": _title},
+                            _abbr, _title, _chapter, _agent_hook, _agent_material,
                         )
                     except Exception as _agent_exc:  # never block a daily post on the agent
                         agent_copy = None
