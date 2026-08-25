@@ -931,6 +931,28 @@ def check_live_server_routes() -> list[dict[str, object]]:
     except Exception as exc:
         checks.append(result("live_pack_health_fast", False, str(exc)))
 
+    for name, endpoint, limit in (
+        ("live_analytics_lab_cached_fast", "/api/analytics-lab?refresh=0", 3.0),
+        ("live_release_upload_queue_cached_fast", "/api/chapter-release-upload-queue?refresh=0", 5.0),
+    ):
+        started = time.time()
+        try:
+            payload = fetch_local_json(endpoint, timeout=10.0)
+            elapsed = time.time() - started
+            valid = isinstance(payload, dict) and not payload.get("error")
+            if name == "live_analytics_lab_cached_fast":
+                valid = valid and payload.get("state_key") == "analyticsLab"
+            else:
+                valid = valid and isinstance(payload.get("assignments"), list)
+            checks.append(assert_result(
+                name,
+                valid and elapsed < limit,
+                f"elapsed={elapsed:.2f}s, keys={len(payload) if isinstance(payload, dict) else 0}",
+                elapsed=round(elapsed, 3),
+            ))
+        except Exception as exc:
+            checks.append(result(name, False, str(exc)))
+
     preview_folders: list[str] = []
     for root in [app.TIKTOK_OUTPUT_DIR, app.SOCIAL_OUTPUT_DIR, app.OUTPUT_DIR]:
         preview_folders.extend(str(folder) for folder in recent_pack_folders(root, 4))
@@ -1334,6 +1356,69 @@ def check_caption_voice_rotation() -> list[dict[str, object]]:
         f"caption={agent_caption[:90]!r}",
     ))
 
+    # 15. The saved daily-social pack path must persist the structured agent
+    # copy into the files used by Buffer/manual previews, not only the pure
+    # build_platform_posts() return value.
+    temp_daily = Path(tempfile.mkdtemp(prefix="daily-agent-copy-", dir=str(ROOT)))
+    try:
+        def _reset_folder(path: Path) -> None:
+            if path.exists():
+                shutil.rmtree(path)
+            path.mkdir(parents=True, exist_ok=True)
+
+        def _fresh_image(target: Path, **_kwargs: object) -> str:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"\x89PNG\r\n\x1a\n")
+            return "regression"
+
+        collab = {
+            "list_daily_promo_images": lambda: [
+                {
+                    "abbr": "HP",
+                    "day": "Monday",
+                    "novel": app.NOVEL_NAMES["HP"],
+                    "filename": "HP_Monday.png",
+                    "path": str(temp_daily / "HP_Monday.png"),
+                }
+            ],
+            "social_post_folder": lambda _abbr, _day, _chapter: temp_daily / "saved-pack",
+            "reset_generated_folder": _reset_folder,
+            "social_copy_with_openai": lambda *_args, **_kwargs: {},
+            "create_fresh_social_image_from_caption": _fresh_image,
+            "update_chapter_ledger": lambda *_args, **_kwargs: None,
+            "auto_publish_generated_media": lambda folder, payload: {"folder": str(folder), **payload},
+        }
+        saved = app.make_social_post(
+            "HP",
+            "Monday",
+            "{novel} {day}",
+            False,
+            "royal_road_live",
+            "25",
+            agent_copy=agent_payload,
+            agent_meta={"_agent_available": True},
+            collaborators=collab,
+        )
+        saved_folder = Path(str(saved.get("folder") or ""))
+        saved_ig = (saved_folder / "instagram.txt").read_text(encoding="utf-8")
+        saved_fb = (saved_folder / "facebook.txt").read_text(encoding="utf-8")
+        saved_x = (saved_folder / "x.txt").read_text(encoding="utf-8")
+        checks.append(assert_result(
+            "daily_social_saved_pack_uses_agent_copy",
+            "Breathed until his lungs" in saved_ig
+            and "true strength is not just" in saved_fb
+            and "HundredfoldPath" in saved_x
+            and "Hundredfold Path - Hundredfold Path" not in saved_x
+            and "http" not in saved_ig.lower()
+            and "http" not in saved_fb.lower()
+            and "http" not in saved_x.lower(),
+            f"folder={saved_folder.name}, source={saved.get('source')}",
+        ))
+    except Exception as exc:
+        checks.append(result("daily_social_saved_pack_uses_agent_copy", False, str(exc)))
+    finally:
+        shutil.rmtree(temp_daily, ignore_errors=True)
+
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     checks.append(assert_result(
         "weekend_agent_copy_uses_rotated_tags_and_link_in_bio",
@@ -1695,6 +1780,43 @@ def check_pack_health_social_preview_controls() -> list[dict[str, object]]:
         else:
             checks.append(result("weekend_social_preview_has_x_facebook_media", True, "No social post folder found in recent Pack Health results."))
             checks.append(result("social_preview_reports_chrome_bridge_status", True, "No social post folder found in recent Pack Health results."))
+
+        stale_folder = app.SOCIAL_OUTPUT_DIR / "_regression-preview-stale-copy"
+        try:
+            app.reset_generated_folder(stale_folder)
+            image = stale_folder / "preview.png"
+            image.write_bytes(b"\x89PNG\r\n\x1a\n")
+            (stale_folder / "x.txt").write_text("STALE X FILE\n", encoding="utf-8")
+            (stale_folder / "facebook.txt").write_text("STALE FACEBOOK FILE\n", encoding="utf-8")
+            (stale_folder / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "kind": "daily_social",
+                        "abbr": "EN",
+                        "novel": app.NOVEL_NAMES["EN"],
+                        "chapter": "19",
+                        "image": str(image),
+                        "x": "FRESH X METADATA link in bio.",
+                        "facebook": "FRESH FACEBOOK METADATA link in bio.",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            preview = app.social_post_preview(str(stale_folder), use_playwright=False, platforms=["x", "facebook"])
+            by_platform = {str(item.get("key") or ""): str(item.get("text") or "") for item in preview.get("platforms", [])}
+            checks.append(
+                assert_result(
+                    "social_preview_prefers_metadata_over_stale_text_files",
+                    by_platform.get("x") == "FRESH X METADATA link in bio."
+                    and by_platform.get("facebook") == "FRESH FACEBOOK METADATA link in bio.",
+                    f"x={by_platform.get('x')!r}, facebook={by_platform.get('facebook')!r}",
+                )
+            )
+        except Exception as exc:
+            checks.append(result("social_preview_prefers_metadata_over_stale_text_files", False, str(exc)))
+        finally:
+            shutil.rmtree(stale_folder, ignore_errors=True)
 
         campaign_folder = next(iter(recent_pack_folders(app.OUTPUT_DIR, 8)), None)
         if campaign_folder:

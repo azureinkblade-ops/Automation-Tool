@@ -11551,7 +11551,18 @@ def mark_pinned_asset_applied(asset_id: str, status: str = "planned") -> dict[st
     return {"ok": True, "asset": asset, "plan": data, "file": None, "storage": "sqlite", "resource": "state_snapshots", "state_key": "pinnedProfileAssets"}
 
 
-def analytics_lab_dashboard() -> dict[str, Any]:
+def analytics_lab_dashboard(refresh: bool = True) -> dict[str, Any]:
+    if not refresh:
+        cached = rsr.load(ROOT, "analyticsLab", default={})
+        if isinstance(cached, dict) and cached:
+            return {
+                **cached,
+                "file": None,
+                "storage": "sqlite",
+                "resource": "state_snapshots",
+                "state_key": "analyticsLab",
+                "cached": True,
+            }
     conversions = _phase2_load_blob("conversionTracking", CONVERSION_TRACKING_FILE)
     weekly = write_growth_weekly_report()
     optimizer = growth_optimizer_plan()
@@ -11577,6 +11588,7 @@ def analytics_lab_dashboard() -> dict[str, Any]:
         "storage": "sqlite",
         "resource": "state_snapshots",
         "state_key": "analyticsLab",
+        "cached": False,
     }
 
 
@@ -27069,6 +27081,10 @@ def social_post_preview(
         return requested_platforms is None or platform in requested_platforms
 
     def preview_text(platform: str, *metadata_keys: str) -> str:
+        for key in metadata_keys:
+            text = str(metadata.get(key) or "").strip()
+            if text:
+                return text
         file_candidates = {
             "x": ("x.txt", "x-post.txt", "x_post.txt"),
             "facebook": ("facebook.txt", "facebook-post.txt", "facebook_post.txt"),
@@ -27079,10 +27095,6 @@ def social_post_preview(
                 text = candidate.read_text(encoding="utf-8").strip()
                 if text:
                     return text
-        for key in metadata_keys:
-            text = str(metadata.get(key) or "").strip()
-            if text:
-                return text
         return ""
 
     specs = []
@@ -27252,6 +27264,13 @@ def social_post_preview(
                     or f"The {platform_label} composer did not confirm that the caption was populated."
                 )
                 preview_error = f"{platform_label} preview failed: {detail}"
+                break
+            platform_spec = next(
+                (spec for spec in specs if str(spec.get("key") or "").lower() == platform_key),
+                {},
+            )
+            if str(platform_spec.get("media_path") or "").strip() and not bool(platform_result.get("attached")):
+                preview_error = f"{platform_label} preview failed: The caption was populated, but the image attachment was not verified."
                 break
     else:
         playwright_stdout = ""
@@ -28761,7 +28780,16 @@ def manual_campaign_platform_specs(campaign_folder: Path) -> list[dict[str, str]
         else:
             text_path = campaign_folder / spec["file"]
             media_path = campaign_folder / spec["media"] if spec["media"] else None
-        text = text_path.read_text(encoding="utf-8").strip() if text_path.exists() else ""
+        text = ""
+        if spec["key"] in {"x", "facebook"} and matching_social_post:
+            try:
+                social_metadata = read_metadata(social_folder)
+            except Exception:
+                social_metadata = {}
+            metadata_keys = ("x", "x_post") if spec["key"] == "x" else ("facebook", "facebook_post")
+            text = next((str(social_metadata.get(key) or "").strip() for key in metadata_keys if str(social_metadata.get(key) or "").strip()), "")
+        if not text:
+            text = text_path.read_text(encoding="utf-8").strip() if text_path.exists() else ""
         chapter_title, chapter_body = split_platform_chapter_text(text, str(campaign_metadata.get("title") or ""))
         chapter_body = royal_road_editor_spacing(chapter_body).strip()
         post_note_path = campaign_folder / "royal-road-post-note.txt"
@@ -28902,6 +28930,17 @@ function record(event) {{
   }} catch (_) {{}}
 }}
 
+function normalizedComposerText(value) {{
+  return String(value || '').replace(/\u200B/g, '').replace(/\s+/g, ' ').trim();
+}}
+
+function composerTextMatches(actual, expected) {{
+  const cleanActual = normalizedComposerText(actual);
+  const cleanExpected = normalizedComposerText(expected);
+  if (!cleanExpected) return true;
+  return cleanActual === cleanExpected || cleanActual.includes(cleanExpected) || cleanExpected.includes(cleanActual);
+}}
+
 async function fillFirstTextbox(page, text) {{
   const selectors = [
     '[data-testid="tweetTextarea_0"]',
@@ -28929,7 +28968,7 @@ async function fillXPost(page, text) {{
     '[aria-label="Post text"][contenteditable="true"]',
     '[role="textbox"][contenteditable="true"]'
   ];
-  const normalizedExpected = String(text || '').replace(/\u200B/g, '').replace(/\\s+/g, ' ').trim();
+  const normalizedExpected = normalizedComposerText(text);
   for (const selector of selectors) {{
     const boxes = page.locator(selector);
     const count = await boxes.count().catch(() => 0);
@@ -28945,8 +28984,8 @@ async function fillXPost(page, text) {{
         }});
         await page.waitForTimeout(350);
         const actualText = await target.evaluate((node) => String(node.innerText || node.textContent || ''));
-        const normalizedActual = actualText.replace(/\u200B/g, '').replace(/\\s+/g, ' ').trim();
-        if (!normalizedActual || (normalizedExpected && normalizedActual !== normalizedExpected)) {{
+        const normalizedActual = normalizedComposerText(actualText);
+        if (!normalizedActual || !composerTextMatches(actualText, normalizedExpected)) {{
           throw new Error(`X composer verification failed: expected ${{normalizedExpected.length}} characters, found ${{normalizedActual.length}}.`);
         }}
         await target.evaluate((node) => {{
@@ -29010,7 +29049,11 @@ async function fillFacebookPost(page, text) {{
           await box.click({{ timeout: 4000 }});
           await page.keyboard.insertText(text);
         }}
-        record({{ platform: 'Facebook', action: 'filled_composer', selector, index: i }});
+        const verifiedText = await box.innerText().catch(() => '');
+        if (text && !composerTextMatches(verifiedText, text)) {{
+          throw new Error(`Facebook composer verification failed: expected ${{normalizedComposerText(text).length}} characters, found ${{normalizedComposerText(verifiedText).length}}.`);
+        }}
+        record({{ platform: 'Facebook', action: 'filled_composer', selector, index: i, verified: true }});
         return true;
       }} catch (error) {{
         record({{ platform: 'Facebook', action: 'facebook_textbox_failed', selector, index: i, error: String(error.message || error).slice(0, 400) }});
@@ -29047,7 +29090,11 @@ async function fillFacebookComposerTextOnly(page, text) {{
           await box.click({{ timeout: 3000 }});
           await page.keyboard.insertText(text);
         }}
-        record({{ platform: 'Facebook', action: 'filled_open_composer', selector, index: i }});
+        const verifiedText = await box.innerText().catch(() => '');
+        if (text && !composerTextMatches(verifiedText, text)) {{
+          throw new Error(`Facebook open composer verification failed: expected ${{normalizedComposerText(text).length}} characters, found ${{normalizedComposerText(verifiedText).length}}.`);
+        }}
+        record({{ platform: 'Facebook', action: 'filled_open_composer', selector, index: i, verified: true }});
         return true;
       }} catch (error) {{
         record({{ platform: 'Facebook', action: 'facebook_open_textbox_failed', selector, index: i, error: String(error.message || error).slice(0, 400) }});
@@ -29747,8 +29794,9 @@ async function attachMedia(page, post) {{
     try {{
       return await page.evaluate(() => {{
         const blobImages = [...document.querySelectorAll('img')].filter(img => String(img.src || '').startsWith('blob:')).length;
+        const xMedia = document.querySelectorAll('[data-testid="tweetPhoto"], [data-testid="attachments"] img, [data-testid="attachments"] video').length;
         const removeButtons = [...document.querySelectorAll('[aria-label*="Remove" i]')].filter(el => /media|photo|image|video|preview/i.test(el.getAttribute('aria-label') || '')).length;
-        return blobImages + removeButtons;
+        return blobImages + xMedia + removeButtons;
       }});
     }} catch (_) {{
       return 0;
@@ -29764,8 +29812,10 @@ async function attachMedia(page, post) {{
         await scopedInputs.nth(i).setInputFiles(mediaPath, {{ timeout: 10000 }});
         await page.waitForTimeout(5000);
         const after = await mediaPreviewCount();
-        record({{ platform: post.label, action: 'attached_x_scoped_file_input', mediaPath, index: i, before, after, assumedAttached: true }});
-        return true;
+        const selectedFiles = await scopedInputs.nth(i).evaluate(input => Number(input.files?.length || 0)).catch(() => 0);
+        const verifiedAttached = after > before || selectedFiles > 0;
+        record({{ platform: post.label, action: 'attached_x_scoped_file_input', mediaPath, index: i, before, after, selectedFiles, verifiedAttached }});
+        if (verifiedAttached) return true;
       }} catch (error) {{
         record({{ platform: post.label, action: 'x_scoped_file_input_failed', index: i, error: String(error.message || error).slice(0, 500) }});
       }}
@@ -29780,8 +29830,9 @@ async function attachMedia(page, post) {{
         await chooser.setFiles(mediaPath);
         await page.waitForTimeout(4000);
         const after = await mediaPreviewCount();
-        record({{ platform: post.label, action: 'attached_x_scoped_filechooser', mediaPath, before, after, assumedAttached: true }});
-        return true;
+        const verifiedAttached = after > before;
+        record({{ platform: post.label, action: 'attached_x_scoped_filechooser', mediaPath, before, after, verifiedAttached }});
+        if (verifiedAttached) return true;
       }}
     }} catch (error) {{
       record({{ platform: post.label, action: 'x_scoped_filechooser_failed', error: String(error.message || error).slice(0, 500) }});
@@ -29798,8 +29849,10 @@ async function attachMedia(page, post) {{
         await xInputs.nth(i).setInputFiles(mediaPath, {{ timeout: 10000 }});
         await page.waitForTimeout(5000);
         const after = await mediaPreviewCount();
-        record({{ platform: post.label, action: 'attached_x_file_input', mediaPath, index: i, before, after, assumedAttached: true }});
-        return true;
+        const selectedFiles = await xInputs.nth(i).evaluate(input => Number(input.files?.length || 0)).catch(() => 0);
+        const verifiedAttached = after > before || selectedFiles > 0;
+        record({{ platform: post.label, action: 'attached_x_file_input', mediaPath, index: i, before, after, selectedFiles, verifiedAttached }});
+        if (verifiedAttached) return true;
       }} catch (error) {{
         record({{ platform: post.label, action: 'x_file_input_failed', index: i, error: String(error.message || error).slice(0, 500) }});
       }}
@@ -29812,8 +29865,9 @@ async function attachMedia(page, post) {{
       await chooser.setFiles(mediaPath);
       await page.waitForTimeout(4000);
       const after = await mediaPreviewCount();
-      record({{ platform: post.label, action: 'attached_media_filechooser', mediaPath, before, after, assumedAttached: true }});
-      return true;
+      const verifiedAttached = after > before;
+      record({{ platform: post.label, action: 'attached_media_filechooser', mediaPath, before, after, verifiedAttached }});
+      if (verifiedAttached) return true;
     }} catch (error) {{
       record({{ platform: post.label, action: 'x_filechooser_failed', error: String(error.message || error).slice(0, 500) }});
     }}
@@ -29885,6 +29939,25 @@ async function reusablePage(context, post) {{
     if (composePage) return composePage;
     const existingXPage = pages.find((page) => platformMatches(post, page.url()));
     if (existingXPage) return existingXPage;
+  }}
+  if (key === 'facebook') {{
+    const facebookPages = pages.filter((page) => platformMatches(post, page.url()));
+    for (const page of facebookPages) {{
+      const composerVisible = await page.locator(
+        '[aria-label*="Create a post"], [aria-label*="What\\'s on your mind"], div[role="dialog"] div[role="textbox"][contenteditable="true"]'
+      ).first().isVisible().catch(() => false);
+      if (composerVisible) return page;
+    }}
+    const consumerFacebookPage = facebookPages.find((page) => {{
+      try {{
+        const host = new URL(page.url()).hostname.replace(/^www\\./, '').toLowerCase();
+        return host === 'facebook.com' || host === 'm.facebook.com';
+      }} catch (_) {{
+        return false;
+      }}
+    }});
+    if (consumerFacebookPage) return consumerFacebookPage;
+    return null;
   }}
   for (const page of pages) {{
     if (platformMatches(post, page.url())) return page;
@@ -30052,7 +30125,7 @@ async function reusablePage(context, post) {{
       filled = post.text ? await fillFirstTextbox(page, post.text) : false;
       attached = await attachMedia(page, post);
     }}
-    record({{ platform: post.label, reused, filled, attached, url: page.url() }});
+    record({{ platform: post.label, reused, filled, attached, mediaRequired: Boolean(String(post.media_path || '').trim()), url: page.url() }});
     console.log(`${{post.label}} ${{reused ? 'reused existing tab' : 'opened new tab'}}${{filled ? ' and prefilled' : ''}}${{attached ? ' with media attached' : ''}}. Publish manually after review.`);
   }}
   console.log('All manual pages are open. Nothing was published.');
@@ -43148,11 +43221,11 @@ ${data.message || 'Builder finished.'}`;
         if (!response.ok) throw new Error(data.error || 'Post preview failed');
         const requestedKeys = Array.isArray(platforms) && platforms.length ? platforms.map(item => String(item).toLowerCase()) : ['x', 'facebook'];
         const verifiedResults = requestedKeys.map(key => [...(data.playwright_events || [])].reverse().find(item => String(item.platform || '').toLowerCase() === key && Object.prototype.hasOwnProperty.call(item, 'filled'))).filter(Boolean);
-        const verifiedLabels = verifiedResults.filter(item => item.filled).map(item => item.platform);
+        const verifiedLabels = verifiedResults.filter(item => item.filled && (!item.mediaRequired || item.attached)).map(item => item.platform);
         statusEl.textContent = verifiedLabels.length ? `${verifiedLabels.join(' and ')} post populated. Review in Chrome before publishing.` : data.message;
         const log = document.createElement('div');
         log.className = 'copy';
-        const verification = verifiedResults.map(item => `\n${item.platform} caption verified: ${item.filled ? 'yes' : 'no'}`).join('');
+        const verification = verifiedResults.map(item => `\n${item.platform} caption verified: ${item.filled ? 'yes' : 'no'}\n${item.platform} image verified: ${item.mediaRequired ? (item.attached ? 'yes' : 'no') : 'not required'}`).join('');
         log.textContent = `Preview cockpit:\n${data.cockpit}\n\nBrowser helper: ${data.playwright_launched ? 'launched' : 'not launched'}${verification}\nNothing was published automatically.`;
         results.appendChild(log);
       } catch (error) {
@@ -43723,7 +43796,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
             return
         if parsed.path == "/api/analytics-lab":
-            self.send_json(analytics_lab_dashboard())
+            query = urllib.parse.parse_qs(parsed.query)
+            refresh = str(query.get("refresh", ["0"])[0]).lower() in {"1", "true", "yes"}
+            self.send_json(analytics_lab_dashboard(refresh=refresh))
             return
         if parsed.path == "/api/predictive-growth-plan":
             self.send_json(predictive_growth_recommendations())

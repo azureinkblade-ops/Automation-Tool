@@ -1394,7 +1394,8 @@ def build_platform_posts(
         _x_body = agent_hook or _ag_caption
         if _ag_cta:
             _x_body = f"{_x_body}\n\n{_ag_cta}"
-        _x_full = f"{novel} - {title}\n\n{_x_body}\n\n{_x_tag_str}"
+        _x_heading = novel if title.strip().casefold() == novel.casefold() else f"{novel} - {title}"
+        _x_full = f"{_x_heading}\n\n{_x_body}\n\n{_x_tag_str}"
         if len(_x_full) > 280:
             _x_full = f"{_x_body}\n\n{_x_tag_str}"
         if len(_x_full) > 280:
