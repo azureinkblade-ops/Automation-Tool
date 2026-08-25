@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import threading
 import time
@@ -135,12 +136,42 @@ class WorkflowStore:
     
     Uses atomic writes (write temp + rename) to survive crashes.
     All reads/writes go through a single mutex for thread safety.
+    Uses file-based locks for cross-process safety on a per-workflow basis.
     """
     
     def __init__(self, db_path: Path):
         self.db_path = db_path
         self._lock = threading.Lock()
+        self._lock_dir = db_path.parent / f".{db_path.stem}_locks"
+        self._lock_dir.mkdir(exist_ok=True)
         self._init_schema()
+
+    def _workflow_lock(self, workflow_id: str) -> Path:
+        """Get the lock file path for a workflow. Used for cross-process locking."""
+        return self._lock_dir / f"{workflow_id}.lock"
+
+    def acquire_workflow_lock(self, workflow_id: str, timeout: float = 30.0) -> Optional[Path]:
+        """Try to acquire a per-workflow lock. Returns lock file path on success, None on timeout."""
+        lock_path = self._workflow_lock(workflow_id)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                # O_CREAT | O_EXCL equivalent via open exclusive
+                fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(fd, f"{os.getpid()}:{threading.current_thread().ident}:{time.time()}".encode())
+                os.close(fd)
+                return lock_path
+            except FileExistsError:
+                time.sleep(0.1)
+        return None
+
+    def release_workflow_lock(self, workflow_id: str):
+        """Release the per-workflow lock."""
+        lock_path = self._workflow_lock(workflow_id)
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
 
     def _init_schema(self):
         with self._lock:
@@ -339,7 +370,21 @@ class ChapterWorkflowController:
         return ws.state if ws else None
 
     def run_stage(self, ws: WorkflowState) -> WorkflowState:
-        """Run the current stage (idempotent). Resumes from current state."""
+        """Run the current stage (idempotent). Resumes from current state.
+        
+        Acquires a per-workflow lock to prevent concurrent mutation.
+        """
+        lock = self.store.acquire_workflow_lock(ws.workflow_id)
+        if lock is None:
+            logger.warning("Could not acquire lock for %s, skipping", ws.workflow_id)
+            return ws
+        try:
+            return self._run_stage_locked(ws)
+        finally:
+            self.store.release_workflow_lock(ws.workflow_id)
+
+    def _run_stage_locked(self, ws: WorkflowState) -> WorkflowState:
+        """Run stage with lock already held."""
         dispatch = {
             State.INIT: self.run_context_loaded,
             State.CONTEXT_LOADED: self.run_brief_drafted,
@@ -450,6 +495,9 @@ class ChapterWorkflowController:
                 self._transition(ws, State.VALIDATING)
             else:
                 ws.attempt += 1
+                if ws.attempt > self.max_retries:
+                    self._fail(ws, f"Max retries ({self.max_retries}) exceeded")
+                    return ws
                 if ws.state == State.WRITING:
                     # Already in writing (revise loop); just persist
                     self._transition_same(ws)
