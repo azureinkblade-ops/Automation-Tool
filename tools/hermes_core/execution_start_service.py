@@ -48,6 +48,7 @@ from tools.hermes_core.sqlite_execution_start_store import (
     SQLiteExecutionStartStore,
 )
 from tools.hermes_core.worker_router import (
+    WorkerRegistry,
     WorkerRouteDecision,
     WorkerRouteStatus,
 )
@@ -63,6 +64,7 @@ def reserve_execution_start(
     start_store: SQLiteExecutionStartStore,
     attempt_id: str,
     launcher_actor: ExecutionLauncherActor,
+    worker_registry: Optional[WorkerRegistry] = None,
     clock: Optional[object] = None,
 ) -> ExecutionStartReservation:
     """Admon exactly one START_RESERVED reservation derived from THREE independently
@@ -162,7 +164,7 @@ def reserve_execution_start(
     # --- worker identity: owned by Route (already proven == Attempt) -------
     worker_id = route.worker_id
     worker_class = route.worker_class
-    worker_version = "1"
+    worker_version = _resolve_worker_version(route, worker_registry)
 
     # --- bind reservation from DURABLE artifacts, not Route copies ---------
     reservation = build_execution_start_reservation(
@@ -206,6 +208,41 @@ def _require_equal(label, a, b):
         raise ExecutionStartLineageError(
             f"EA-4D.2 lineage mismatch: {label}: route/attempt/authorization "
             f"value differs ({a!r} != {b!r})")
+
+
+def _resolve_worker_version(
+    route: WorkerRouteDecision,
+    worker_registry: Optional[WorkerRegistry],
+) -> str:
+    """Resolve exact worker version from the route-bound registry when supplied."""
+    if worker_registry is None:
+        return "1"
+    if not worker_registry.verify_hash():
+        raise ExecutionStartIntegrityError(
+            "worker registry failed hash verification")
+    _require_equal(
+        "worker_registry_version",
+        route.worker_registry_version,
+        worker_registry.registry_version,
+    )
+    _require_equal(
+        "worker_registry_hash",
+        route.worker_registry_hash,
+        worker_registry.registry_hash,
+    )
+    matches = [
+        worker for worker in worker_registry.workers
+        if worker.worker_id == route.worker_id
+        and worker.worker_class == route.worker_class
+    ]
+    if len(matches) != 1:
+        raise ExecutionStartLineageError(
+            "selected worker does not resolve uniquely in verified registry")
+    worker = matches[0]
+    if not worker.verify_hash() or not worker.enabled:
+        raise ExecutionStartIntegrityError(
+            "selected worker descriptor is invalid or disabled")
+    return worker.worker_version
 
 
 def _capture_clock(clock):

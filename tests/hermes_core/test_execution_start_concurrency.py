@@ -166,7 +166,8 @@ def _setup_claim_lineage(store, task_id="task-1", scope=None, must_start_by=None
 
 
 def _record_route(store, attempt_id, worker_id="w-a", routing_policy=None,
-                  router_actor=None, selected_at="2026-06-01T00:00:00Z"):
+                  router_actor=None, selected_at="2026-06-01T00:00:00Z",
+                  worker_version="1"):
     if routing_policy is None:
         routing_policy = _make_routing_policy()
     if router_actor is None:
@@ -178,7 +179,8 @@ def _record_route(store, attempt_id, worker_id="w-a", routing_policy=None,
         registry_version="reg-1",
         workers=[build_worker_descriptor(
             worker_id=worker_id, worker_class=attempt.worker_class,
-            worker_version="1", capabilities=[], allowed_operations=("run-sandboxed",),
+            worker_version=worker_version, capabilities=[],
+            allowed_operations=("run-sandboxed",),
             enabled=True, registration_source="test", registration_version="1")])
     route = build_worker_route_decision(
         attempt_id=attempt_id, attempt_hash=attempt.artifact_hash,
@@ -484,6 +486,42 @@ class ReservationServiceTests(unittest.TestCase):
         self.assertEqual(out.worker_id, self.route.worker_id)
         self.assertEqual(len(self.start_store.get_reservations_for_route(self.route.route_id)), 1)
         self.assertEqual(len(self.start_store.get_start_ledger_events("START_RESERVED")), 1)
+
+    def test_verified_registry_preserves_exact_worker_version(self):
+        auth_store = SQLiteExecutionAuthorizationStore(self.auth_db)
+        attempt_id, _auth, _msb = _setup_claim_lineage(
+            auth_store, task_id="task-version-1-0")
+        route = _record_route(
+            auth_store,
+            attempt_id,
+            worker_id="regional-hand-repair-worker",
+            worker_version="1.0",
+        )
+        attempt = auth_store.get_attempt(attempt_id)
+        registry = build_worker_registry(
+            registry_version=route.worker_registry_version,
+            workers=[build_worker_descriptor(
+                worker_id=route.worker_id,
+                worker_class=attempt.worker_class,
+                worker_version="1.0",
+                capabilities=[],
+                allowed_operations=["run-sandboxed"],
+                enabled=True,
+                registration_source="test",
+                registration_version="1",
+            )],
+        )
+        self.assertEqual(registry.registry_hash, route.worker_registry_hash)
+        out = reserve_execution_start(
+            store=auth_store,
+            start_store=self.start_store,
+            attempt_id=attempt_id,
+            launcher_actor=self.launcher,
+            worker_registry=registry,
+            clock=lambda: "2026-06-01T00:00:00Z",
+        )
+        auth_store.close()
+        self.assertEqual(out.worker_version, "1.0")
 
     def test_service_rejects_non_launcher(self):
         from tools.hermes_core.execution_start import ExecutionLauncherActor

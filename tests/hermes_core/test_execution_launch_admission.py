@@ -142,7 +142,16 @@ class CanonicalChain:
     route: WorkerRouteDecision
 
 
-def _build_canonical_chain(*, seed="seed", deadline=None):
+def _build_canonical_chain(
+    *,
+    seed="seed",
+    deadline=None,
+    operation="run-sandbox",
+    worker_class="run-sandbox",
+    input_hash="0" * 64,
+    worker_id=None,
+    worker_registry=None,
+):
     """Build and immediately verify_hash() the canonical chain in dependency
     order. Authorization provenance is kept separate from routing provenance.
 
@@ -165,9 +174,9 @@ def _build_canonical_chain(*, seed="seed", deadline=None):
         policy_version="1",
     )
     scope = ExecutionAuthorizationScope(
-        operation="run-sandbox",
-        worker_class="run-sandbox",
-        input_hash="0" * 64,
+        operation=operation,
+        worker_class=worker_class,
+        input_hash=input_hash,
         attempt_limit=1,
         max_runtime_seconds=300,
     )
@@ -285,9 +294,9 @@ def _build_canonical_chain(*, seed="seed", deadline=None):
         decision_id=decision.decision_id,
         decision_hash=decision.artifact_hash,
         task_id=attempt.task_id,
-        worker_id=f"worker-{seed}",
+        worker_id=worker_id or f"worker-{seed}",
         worker_class=attempt.worker_class,
-        registry=_ROUTING_REGISTRY,
+        registry=worker_registry or _ROUTING_REGISTRY,
         policy=_ROUTING_POLICY,
         selected_at="2024-01-01T00:04:00Z",
         must_start_by=attempt.must_start_by,

@@ -270,7 +270,7 @@ def admit_execution_launch_attempt(
     # Inputs MUST derive from the verified Route/Attempt. No caller-supplied
     # alternate worker identity.
     worker_id = route.worker_id
-    worker_version = route.worker_registry_version
+    worker_version = reservation.worker_version
     worker_class = route.worker_class
     operation = attempt.operation
     try:
