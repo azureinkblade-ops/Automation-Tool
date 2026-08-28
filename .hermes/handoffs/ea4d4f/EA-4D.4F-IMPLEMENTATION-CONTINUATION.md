@@ -145,3 +145,44 @@ Next authority boundary:
 - A live Codex invocation requires separate R12E authorization after R12D proves
   that the adapter exposes no prohibited model-visible tools.
 - Commit / push: NO.
+
+## 2026-08-28 R12A delegation domain implementation complete
+
+EA-4D.4F-R12A is `COMPLETE / NOT COMMITTED`.
+
+R12A added only the canonical delegated-task domain and its durable SQLite
+store, plus focused tests. The production surface remains exactly two new
+modules:
+
+- `tools/hermes_core/delegated_task.py`
+- `tools/hermes_core/sqlite_delegation_store.py`
+
+The SQLite schema is version 1. It durably stores delegations, capability
+leases, delegation cancellations, and lease revocations with fail-closed
+replay/conflict and reconstruction integrity checks.
+
+Two implementation/test corrections were made during verification:
+
+- all SQLite connections are now explicitly closed, fixing a Windows temporary
+  database handle leak;
+- four tamper fixtures now commit their deliberate corruption before the
+  integrity reader is invoked.
+
+Verification is green at current counts:
+
+- R12A focused: 50 passed, 15 subtests passed;
+- complete `tests/hermes_core/`: 1,071 passed, 47 subtests passed;
+- all authorized intermediate EA-4D.4A-E, authority/attempt, worker-routing,
+  launch, start-result, and migration gates passed with zero failures.
+
+Completion report:
+`.hermes/handoffs/ea4d4f/EA-4D.4F-R12A-DELEGATION-DOMAIN-IMPLEMENTATION-COMPLETE.md`
+
+Authority boundary:
+
+- R11 design: UNCHANGED / FROZEN.
+- R12B: NOT AUTHORIZED.
+- R12C-R12E: NOT AUTHORIZED.
+- Live agent invocation: NOT AUTHORIZED.
+- Commit: NOT AUTHORIZED.
+- Push: NO.
