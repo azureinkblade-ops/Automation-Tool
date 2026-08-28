@@ -187,30 +187,31 @@ Authority boundary:
 - Commit: NOT AUTHORIZED.
 - Push: NO.
 
-## 2026-08-28 R12B delivery and receiver acceptance complete
+## 2026-08-28 R12B delivery and receiver acceptance - COMMITTED
 
-EA-4D.4F-R12B is `IMPLEMENTATION COMPLETE / NOT COMMITTED`.
+EA-4D.4F-R12B: COMPLETE / COMMITTED
 
-R12B extends the committed R12A SQLite store from schema version 1 to 2 with
-durable mailbox messages, append-only hash-linked claim/acknowledgement events,
-and immutable receiver acceptance or rejection. Exact replay recovers existing
-truth; divergent replay, wrong receiver/lineage, cancellation, revocation,
-expiry, malformed state, and tamper fail closed.
+- R12B commit SHA: `e7b42eac2931f20a400092b3b5fa8d7323557714`
+- R12B parent SHA: `025bfe33a7229b044ba421469a7516166fffeda1` (R12A)
+- Schema version: 2
+- R12B focused: 38 passed, 25 subtests
+- R12A focused: 50 passed, 15 subtests
+- Full Hermes Core: 1109 passed, 72 subtests
+- Prohibited-capability audit: CLEAR
 
-It does not invoke Codex, Kilo, workers, processes, network, browser, MCP,
-scheduler, GPU, or ComfyUI. It does not project `EXECUTING` or return terminal
-results/evidence. R12C remains the separately gated fake-agent composition and
-return-path proof.
+## 2026-08-28 R12C composition - IMPLEMENTATION COMPLETE / NOT COMMITTED
 
-Verification:
+EA-4D.4F-R12C IMPLEMENTATION: COMPLETE / NOT COMMITTED
 
-- R12B focused: 38 passed, 25 subtests passed;
-- R12A focused: 50 passed, 15 subtests passed;
-- all required intermediate gates passed with zero failures;
-- complete Hermes Core: 1,109 passed, 72 subtests passed;
-- prohibited-capability AST audit: clean.
+**Critical discrepancy reported**: The authorization packet framed R12C as "the first real Codex receiver adapter" with a real invocation budget. However, the **frozen R11 design (Section 20.3)** explicitly assigns R12C to **deterministic fake agents**. Per the packet's own instruction to follow the frozen design when it differs materially, R12C was implemented with deterministic fake agents — no real Codex was invoked.
 
-Completion report:
+- Production: `tools/hermes_core/delegation_composition.py` (new)
+- Tests: `tests/hermes_core/test_delegation_composition.py` (new)
+- R12C focused: 9 passed
+- Full Hermes Core: 1118 passed, 72 subtests (0 regressions)
+- Prohibited-capability audit: CLEAR
+- R12D is the next proposed gate (Codex adapter qualification)
+- R12D-R12E remain unauthorized
 `.hermes/handoffs/ea4d4f/EA-4D.4F-R12B-DELIVERY-ACCEPTANCE-IMPLEMENTATION-COMPLETE.md`
 
 Authority boundary:
