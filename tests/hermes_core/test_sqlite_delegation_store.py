@@ -112,7 +112,7 @@ class SQLiteDelegationStoreTests(unittest.TestCase):
             version = connection.execute(
                 "SELECT version FROM delegation_schema_version WHERE singleton=1"
             ).fetchone()[0]
-        self.assertEqual(version, 1)
+        self.assertEqual(version, 2)
 
     def test_reopen_latest_database_does_not_change_file(self):
         before = self.db.stat().st_mtime_ns
@@ -353,7 +353,15 @@ class SQLiteDelegationStoreTests(unittest.TestCase):
         )
         self.assertEqual(
             self.store.verify_integrity(),
-            {"delegations": 1, "leases": 1, "cancellations": 1, "revocations": 1},
+            {
+                "delegations": 1,
+                "leases": 1,
+                "cancellations": 1,
+                "revocations": 1,
+                "mailbox_messages": 0,
+                "delivery_events": 0,
+                "receipts": 0,
+            },
         )
 
     def test_mutated_artifact_is_rejected_before_write(self):

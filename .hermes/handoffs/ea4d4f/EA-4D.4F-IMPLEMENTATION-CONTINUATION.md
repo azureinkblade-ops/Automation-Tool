@@ -186,3 +186,39 @@ Authority boundary:
 - Live agent invocation: NOT AUTHORIZED.
 - Commit: NOT AUTHORIZED.
 - Push: NO.
+
+## 2026-08-28 R12B delivery and receiver acceptance complete
+
+EA-4D.4F-R12B is `IMPLEMENTATION COMPLETE / NOT COMMITTED`.
+
+R12B extends the committed R12A SQLite store from schema version 1 to 2 with
+durable mailbox messages, append-only hash-linked claim/acknowledgement events,
+and immutable receiver acceptance or rejection. Exact replay recovers existing
+truth; divergent replay, wrong receiver/lineage, cancellation, revocation,
+expiry, malformed state, and tamper fail closed.
+
+It does not invoke Codex, Kilo, workers, processes, network, browser, MCP,
+scheduler, GPU, or ComfyUI. It does not project `EXECUTING` or return terminal
+results/evidence. R12C remains the separately gated fake-agent composition and
+return-path proof.
+
+Verification:
+
+- R12B focused: 38 passed, 25 subtests passed;
+- R12A focused: 50 passed, 15 subtests passed;
+- all required intermediate gates passed with zero failures;
+- complete Hermes Core: 1,109 passed, 72 subtests passed;
+- prohibited-capability AST audit: clean.
+
+Completion report:
+`.hermes/handoffs/ea4d4f/EA-4D.4F-R12B-DELIVERY-ACCEPTANCE-IMPLEMENTATION-COMPLETE.md`
+
+Authority boundary:
+
+- R12A: COMPLETE / COMMITTED.
+- R12B: COMPLETE / NOT COMMITTED.
+- R12C: NEXT PROPOSED GATE / NOT AUTHORIZED.
+- R12D-R12E: NOT AUTHORIZED.
+- Agent invocation / `EXECUTING` projection / GPU / ComfyUI: NO.
+- Commit: NOT AUTHORIZED.
+- Push: NO.
