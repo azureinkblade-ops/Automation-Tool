@@ -250,39 +250,45 @@ No `codex exec`, prompt, model workload, or agent task was launched. R12E
 remains authorized for one live proof with zero definitive starts and one
 invocation remaining.
 
-## 2026-08-28 R12E one-shot live proof - IMPLEMENTATION COMPLETE / NOT COMMITTED
+## 2026-08-28 R12E-R1 Codex CLI compatibility remediation - HOLD / ARCHITECTURAL INCOMPATIBILITY
 
-EA-4D.4F-R12E IMPLEMENTATION: COMPLETE / NOT COMMITTED
+EA-4D.4F-R12E-R1: HOLD / ARCHITECTURAL INCOMPATIBILITY
 
-- Production: `tools/hermes_core/delegation_result.py` (new)
-- Production: `tools/hermes_core/sqlite_delegation_result_store.py` (new)
-- Production: `tools/hermes_core/codex_live_process.py` (new)
-- Tests: `tests/hermes_core/test_sqlite_delegation_result_store.py` (new)
-- Tests: `tests/hermes_core/test_codex_live_process.py` (new)
-- Tests: `tests/hermes_core/run_r12e_live_proof.py` (new)
-- R12E result store: 16 passed, 6 subtests
-- R12E live process: 4 passed
-- R12D focused: 41 passed (no regression)
-- R12C focused: 9 passed (no regression)
-- R12B focused: 38 passed, 25 subtests (no regression)
-- R12A focused: 50 passed, 15 subtests (no regression)
-- Full Hermes Core: 1,202 passed, 78 subtests (0 regressions)
-- Prohibited-capability audit: CLEAR
-- Result domain: canonical result + delivery artifacts, exact replay, divergent rejection
-- Result store: same SQLite topology, atomic result+delivery+mailbox, rollback
-- Process controller: R12E-only, no-shell, bounded capture, output to files
-- No live Codex model invocation
-- No Codex process has been invoked
-- No EXECUTING projection
-- Live invocation budget remaining: 1
-- Durable preflight state: PREPARED (transport registry), PID: none, definitive starts: 0
+**Failure preservation:**
+- Original R12E invocation ID: `2878095abb0b500f5dc684eca7c8afe61f2f5e51d70442a7ce1c0c08477e5fe5`
+- PID: 660
+- Definitive starts: 1 (permanent)
+- Exit code: 2
+- Stderr: `error: unexpected argument '--ask-for-approval' found`
+- Consumed budget: 1
+- Terminal state: FAILED
+
+**Root cause:**
+- Prior binary requalification (commit 0fe869c) relied on help-surface inference
+- The `--ask-for-approval` flag existed in alpha.8 but was removed in alpha.12.2
+- No parser-only validation was performed to confirm argv acceptance
+- The frozen R11 argv contract (Section 11.2) specifies `--ask-for-approval never` which is not valid in codex-cli 0.150.0-alpha.12.2
+
+**Semantic equivalence analysis:**
+- `--dangerously-bypass-approvals-and-sandbox` removes sandbox entirely (NOT equivalent)
+- `--approve-for-me` uses workspace-write sandbox (NOT equivalent to read-only)
+- No alpha.12.2 flag provides `approval policy = never` WITH `sandbox = read-only`
+- SEMANTIC_EQUIVALENT_AVAILABLE=NO
+
+**Classification:** Case B — Architectural change required
+
+**Required governance action:** HOLD — Do not self-authorize redesign of approval semantics
+
+Compatibility record: `.hermes/handoffs/ea4d4f/EA-4D.4F-R12E-R1-CODEX-CLI-COMPATIBILITY-REQUALIFICATION.md`
 
 Authority boundary:
 
-- R11 design: UNCHANGED / FROZEN.
-- Binary successor: PASS / RE-FROZEN.
+- R12A: COMPLETE / COMMITTED.
+- R12B: COMPLETE / COMMITTED.
+- R12C: COMPLETE / COMMITTED.
 - R12D: COMPLETE / COMMITTED.
-- R12E: COMPLETE / NOT COMMITTED.
+- R12E: FAIL / TERMINAL.
+- R12E-R1: HOLD / ARCHITECTURAL INCOMPATIBILITY.
 - Kilo / GPU / ComfyUI / Studio Bible / image pipeline: NO.
 - Push: NO.
 
