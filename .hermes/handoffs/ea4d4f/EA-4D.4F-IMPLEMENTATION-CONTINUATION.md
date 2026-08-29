@@ -314,6 +314,35 @@ Next required gate: a narrowly scoped implementation authorization for the
 reordered argv and CLI-contract qualification. A future live proof requires a
 separate packet, new identities, and a new one-shot budget.
 
+## 2026-08-29 R12E-R3 ordered argv and CLI contract - COMMITTED
+
+EA-4D.4F-R12E-R3: PASS / COMMITTED
+
+- Production argv now places `--ask-for-approval never --sandbox read-only` before `exec`.
+- Adapter version is `1.1`.
+- Qualified CLI contract ID is `21f341c1ac959ee3a7c7ce929baf492183bd0d07e7443c0e76e4f22f0196bc02`.
+- Eligibility requires matching absolute binary path, SHA-256, version, contract ID, and exact flattened argv.
+- Ambient user config remains disabled by the frozen `--ignore-user-config` exec option.
+- Historical post-`exec` approval ordering now fails qualification before process capability.
+- Non-live parser qualification passed against alpha.12.2 with no model/task output.
+- Adapter qualification: 90 passed.
+- Process controller: 4 passed.
+- Result store: 16 passed, 6 subtests.
+- R12C/R12B/R12A: 9; 38 + 25 subtests; 50 + 15 subtests.
+- Authority/routing/launch/start/migration ladder: 303 / 85 / 33 / 116 / 11.
+- EA-4D.4A-E: 28 / 25 / 11 / 11 / 19.
+- Complete Hermes Core: 1,228 passed, 78 subtests, zero failures.
+- Original R12E remains immutable `DEFINITELY_STARTED / FAILED`, PID 660, remaining 0.
+- R12E-R3 live starts: 0.
+- No Kilo, browser, MCP, network, scheduler, GPU, ComfyUI, image pipeline, or RHR action.
+
+Completion record:
+`.hermes/handoffs/ea4d4f/EA-4D.4F-R12E-R3-CODEX-ORDERED-ARGV-IMPLEMENTATION-COMPLETE.md`
+
+Next gate: `EA-4D.4F-R12E-R4 ONE-SHOT LIVE REQUALIFICATION`, separately
+authorized with new identities and a new one-shot budget. R12E-R4 is not
+authorized by R12E-R3.
+
 Authority boundary:
 
 - R11 design: UNCHANGED / FROZEN.

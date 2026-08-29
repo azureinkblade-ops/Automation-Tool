@@ -18,7 +18,8 @@ from typing import Any, Callable, Optional, Protocol
 PINNED_CODEX_PATH = r"C:\Users\David\AppData\Local\OpenAI\Codex\bin\fac60c5e9a2ae3df\codex.exe"
 PINNED_CODEX_SHA256 = "34e9cfe7d5bbcec306fe6ab3fd502a713a7a1f0fb644c11ad2990fc80599fd4f"
 PINNED_CODEX_VERSION = "codex-cli 0.150.0-alpha.12.2"
-PINNED_ADAPTER_VERSION = "1.0"
+PINNED_ADAPTER_VERSION = "1.1"
+PINNED_CLI_CONTRACT_ID = "21f341c1ac959ee3a7c7ce929baf492183bd0d07e7443c0e76e4f22f0196bc02"
 REGISTRY_SCHEMA_VERSION = 1
 MIN_TIMEOUT_SECONDS, DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS = 5, 60, 300
 MAX_STDIN_BYTES, MAX_STDOUT_BYTES = 256 * 1024, 1024 * 1024
@@ -28,6 +29,13 @@ DISABLED_CAPABILITIES = (
     "browser_use_full_cdp_access", "computer_use", "image_generation",
     "apps", "plugins", "hooks", "multi_agent",
 )
+GLOBAL_SECURITY_ARGS = ("--ask-for-approval", "never", "--sandbox", "read-only")
+EXEC_BASE_ARGS = ("--json", "--ephemeral", "--ignore-user-config", "--ignore-rules")
+APPROVAL_POLICY = "never"
+SANDBOX_POLICY = "read-only"
+AMBIENT_CONFIG_POLICY = "ignore-user-config"
+STRUCTURED_OUTPUT_POLICY = "jsonl+json-schema+last-message"
+INPUT_DELIVERY_POLICY = "stdin"
 SUPPORTED_EVENTS = frozenset({
     "thread.started", "turn.started", "item.started", "item.updated",
     "item.completed", "turn.completed", "turn.failed", "error",
@@ -78,6 +86,7 @@ class CodexTrustedConfig:
     spool_directory: str
     registry_path: str
     environment: tuple[tuple[str, str], ...]
+    expected_cli_contract_id: str
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
 
     def validate(self) -> None:
@@ -89,6 +98,10 @@ class CodexTrustedConfig:
         except ValueError as exc: raise BinaryVerificationError("SHA-256 is not hexadecimal") from exc
         if not self.expected_version.startswith("codex-cli "):
             raise BinaryVerificationError("version is not Codex CLI")
+        if len(self.expected_cli_contract_id) != 64:
+            raise ArgvConstructionError("CLI contract ID must have 64 characters")
+        try: int(self.expected_cli_contract_id, 16)
+        except ValueError as exc: raise ArgvConstructionError("CLI contract ID is not hexadecimal") from exc
         if not MIN_TIMEOUT_SECONDS <= self.timeout_seconds <= MAX_TIMEOUT_SECONDS:
             raise CodexTimeoutError("timeout is outside the frozen 5..300 second range")
         root = Path(self.fixture_root).resolve(strict=True)
@@ -111,6 +124,7 @@ def default_trusted_config() -> CodexTrustedConfig:
         PINNED_CODEX_PATH, PINNED_CODEX_SHA256, PINNED_CODEX_VERSION,
         str(root), str(root), str(runtime / "hermes-result-v1.schema.json"),
         str(runtime / "spool"), str(runtime / "transport.sqlite3"), tuple(sorted(env)),
+        PINNED_CLI_CONTRACT_ID,
     )
 
 
@@ -123,7 +137,92 @@ class CodexBinaryIdentity:
     metadata_probe_spawned: bool = True
 
 
+@dataclass(frozen=True)
+class CodexCliContract:
+    adapter_version: str
+    binary_sha256: str
+    binary_version: str
+    global_options: tuple[str, ...]
+    subcommand: str
+    ordered_exec_options: tuple[str, ...]
+    approval_policy: str
+    sandbox_policy: str
+    ambient_config_policy: str
+    structured_output: str
+    input_delivery: str
+    disabled_capabilities: tuple[str, ...]
+
+    def material(self) -> dict[str, Any]:
+        return {
+            "adapter_version": self.adapter_version,
+            "ambient_config_policy": self.ambient_config_policy,
+            "approval_policy": self.approval_policy,
+            "binary_sha256": self.binary_sha256,
+            "binary_version": self.binary_version,
+            "disabled_capabilities": list(self.disabled_capabilities),
+            "global_options": list(self.global_options),
+            "input_delivery": self.input_delivery,
+            "ordered_exec_options": list(self.ordered_exec_options),
+            "sandbox_policy": self.sandbox_policy,
+            "structured_output": self.structured_output,
+            "subcommand": self.subcommand,
+        }
+
+
+@dataclass(frozen=True)
+class CodexQualifiedRuntimeBinding:
+    executable: str
+    binary_sha256: str
+    binary_version: str
+    cli_contract_id: str
+
+
+def _exec_option_template(disabled_capabilities=DISABLED_CAPABILITIES) -> tuple[str, ...]:
+    options = [*EXEC_BASE_ARGS, "--output-schema", "<trusted-schema-file>",
+               "--output-last-message", "<adapter-owned-output-file>",
+               "--cd", "<trusted-working-directory>"]
+    for capability in disabled_capabilities:
+        options.extend(("--disable", capability))
+    return (*options, "-")
+
+
+def codex_cli_contract(
+    binary_sha256: str,
+    binary_version: str,
+    *,
+    global_options=GLOBAL_SECURITY_ARGS,
+    ordered_exec_options=None,
+    approval_policy=APPROVAL_POLICY,
+    sandbox_policy=SANDBOX_POLICY,
+    ambient_config_policy=AMBIENT_CONFIG_POLICY,
+    disabled_capabilities=DISABLED_CAPABILITIES,
+) -> CodexCliContract:
+    capabilities = tuple(disabled_capabilities)
+    return CodexCliContract(
+        adapter_version=PINNED_ADAPTER_VERSION,
+        binary_sha256=binary_sha256,
+        binary_version=binary_version,
+        global_options=tuple(global_options),
+        subcommand="exec",
+        ordered_exec_options=tuple(
+            _exec_option_template(capabilities)
+            if ordered_exec_options is None else ordered_exec_options
+        ),
+        approval_policy=approval_policy,
+        sandbox_policy=sandbox_policy,
+        ambient_config_policy=ambient_config_policy,
+        structured_output=STRUCTURED_OUTPUT_POLICY,
+        input_delivery=INPUT_DELIVERY_POLICY,
+        disabled_capabilities=capabilities,
+    )
+
+
+def codex_cli_contract_id(contract: CodexCliContract) -> str:
+    return _hash_text(_canonical(contract.material()))
+
+
 VersionProbe = Callable[[str, tuple[tuple[str, str], ...], str], tuple[int, str, str]]
+ParserProbe = Callable[[str, tuple[str, ...], tuple[tuple[str, str], ...], str], tuple[int, str, str]]
 
 
 def _version_probe(executable: str, env: tuple[tuple[str, str], ...], cwd: str):
@@ -132,6 +231,14 @@ def _version_probe(executable: str, env: tuple[tuple[str, str], ...], cwd: str):
         capture_output=True, text=True, timeout=10, check=False,
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+
+def _parser_probe(executable: str, args: tuple[str, ...], env: tuple[tuple[str, str], ...], cwd: str):
+    result = subprocess.run(
+        [executable, *args], cwd=cwd, env=dict(env), shell=False,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10, check=False,
+    )
+    return result.returncode, result.stdout, result.stderr
 
 
 def resolve_pinned_binary(config: Optional[CodexTrustedConfig] = None, *, version_probe: VersionProbe = _version_probe):
@@ -152,8 +259,33 @@ def resolve_pinned_binary(config: Optional[CodexTrustedConfig] = None, *, versio
     return CodexBinaryIdentity(actual, stdout, str(executable), executable.stat().st_size)
 
 
-BASE_ARGS = ("exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules",
-             "--ask-for-approval", "never", "--sandbox", "read-only")
+def qualify_codex_runtime(
+    config: CodexTrustedConfig,
+    *,
+    version_probe: VersionProbe = _version_probe,
+) -> CodexQualifiedRuntimeBinding:
+    binary = resolve_pinned_binary(config, version_probe=version_probe)
+    contract = codex_cli_contract(binary.sha256, binary.version)
+    contract_id = codex_cli_contract_id(contract)
+    if contract_id != config.expected_cli_contract_id:
+        raise ArgvConstructionError(
+            f"CLI contract mismatch: expected {config.expected_cli_contract_id}, got {contract_id}"
+        )
+    return CodexQualifiedRuntimeBinding(
+        executable=binary.executable,
+        binary_sha256=binary.sha256,
+        binary_version=binary.version,
+        cli_contract_id=contract_id,
+    )
+
+
+def _ordered_args(schema: Path, output: Path, working_directory: Path) -> tuple[str, ...]:
+    args = [*GLOBAL_SECURITY_ARGS, "exec", *EXEC_BASE_ARGS,
+            "--output-schema", str(schema), "--output-last-message", str(output),
+            "--cd", str(working_directory)]
+    for capability in DISABLED_CAPABILITIES:
+        args.extend(("--disable", capability))
+    return (*args, "-")
 
 
 @dataclass(frozen=True)
@@ -164,6 +296,7 @@ class CodexArgv:
     env: tuple[tuple[str, str], ...]
     input_schema_file: str
     output_file: str
+    cli_contract_id: str = ""
     shell: bool = False
     def to_list(self): return [self.executable, *self.args]
     def validate(self, config: CodexTrustedConfig) -> None:
@@ -173,23 +306,35 @@ class CodexArgv:
             raise ArgvConstructionError("executable is not the verified path")
         if self.cwd != str(Path(config.working_directory).resolve(strict=True)) or self.env != config.environment:
             raise ArgvConstructionError("cwd/environment differs from trusted binding")
-        if self.args[-1:] != ("-",): raise ArgvConstructionError("stdin marker is required")
+        if self.cli_contract_id != config.expected_cli_contract_id:
+            raise ArgvConstructionError("argv is not bound to the qualified CLI contract")
+        schema = _within(config.output_schema_file, config.fixture_root)
+        output = _within(self.output_file, config.fixture_root)
+        spool = _within(config.spool_directory, config.fixture_root)
+        if self.input_schema_file != str(schema) or output.parent != spool:
+            raise ArgvConstructionError("schema/output paths differ from the qualified binding")
+        expected = _ordered_args(schema, output, Path(config.working_directory).resolve(strict=True))
+        if self.args != expected:
+            raise ArgvConstructionError("ordered argv differs from the qualified CLI contract")
 
 
-def build_codex_argv(config: CodexTrustedConfig, binary: CodexBinaryIdentity, *, runtime_run_id: str):
+def build_codex_argv(config: CodexTrustedConfig, binding: CodexQualifiedRuntimeBinding, *, runtime_run_id: str):
     config.validate()
-    if binary.executable != str(Path(config.executable_path).resolve(strict=True)):
-        raise BinaryVerificationError("binary is not bound to trusted path")
+    if (
+        binding.executable != str(Path(config.executable_path).resolve(strict=True))
+        or binding.binary_sha256 != config.expected_sha256
+        or binding.binary_version != config.expected_version
+    ):
+        raise BinaryVerificationError("binary identity differs from qualified runtime binding")
+    if binding.cli_contract_id != config.expected_cli_contract_id:
+        raise ArgvConstructionError("unknown CLI contract ID")
     if not runtime_run_id or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789-" for c in runtime_run_id):
         raise ArgvConstructionError("unsafe runtime_run_id")
     schema = _within(config.output_schema_file, config.fixture_root)
     output = _within(config.spool_directory, config.fixture_root) / f"{runtime_run_id}.json"
-    args = list(BASE_ARGS) + ["--output-schema", str(schema), "--output-last-message", str(output),
-                              "--cd", str(Path(config.working_directory).resolve(strict=True))]
-    for capability in DISABLED_CAPABILITIES: args += ["--disable", capability]
-    args.append("-")
-    result = CodexArgv(binary.executable, tuple(args), str(Path(config.working_directory).resolve(strict=True)),
-                       config.environment, str(schema), str(output))
+    args = _ordered_args(schema, output, Path(config.working_directory).resolve(strict=True))
+    result = CodexArgv(binding.executable, args, str(Path(config.working_directory).resolve(strict=True)),
+                       config.environment, str(schema), str(output), binding.cli_contract_id)
     result.validate(config)
     return result
 
@@ -387,15 +532,17 @@ class CodexExecutionOutcome:
 
 class CodexReceiverAdapter:
     def __init__(self, *, config=None, process_impl=None, version_probe=_version_probe,
-                 monotonic=time.monotonic, sleep=time.sleep):
+                 parser_probe=_parser_probe, monotonic=time.monotonic, sleep=time.sleep):
         self.config = config or default_trusted_config(); self.config.validate()
-        self.process = process_impl; self.version_probe = version_probe
+        self.process = process_impl; self.version_probe = version_probe; self.parser_probe = parser_probe
         self.monotonic, self.sleep = monotonic, sleep
         self.registry = CodexInvocationRegistry(self.config.registry_path)
     @property
     def timeout_seconds(self): return self.config.timeout_seconds
     def verify_binary(self): return resolve_pinned_binary(self.config, version_probe=self.version_probe)
-    def build_argv(self, runtime_run_id="codex-run-dry"): return build_codex_argv(self.config, self.verify_binary(), runtime_run_id=runtime_run_id)
+    def qualify_runtime(self): return qualify_codex_runtime(self.config, version_probe=self.version_probe)
+    def build_argv(self, runtime_run_id="codex-run-dry"):
+        return build_codex_argv(self.config, self.qualify_runtime(), runtime_run_id=runtime_run_id)
     def parse_jsonl(self, stdout): return parse_codex_jsonl(stdout)
     def classify_start_state(self, pid, result):
         if pid is None and result is None: return CodexStartState("NOT_STARTED")
@@ -408,7 +555,8 @@ class CodexReceiverAdapter:
         if len(stdin_data.encode()) > MAX_STDIN_BYTES: raise CodexAdapterError("stdin exceeds limit")
         self.registry.initialize(); run_id = f"codex-run-{_hash_text(idempotency_key)[:32]}"
         argv = self.build_argv(run_id); argv_hash = _hash_text(_canonical(argv.to_list()))
-        material = _hash_text(_canonical({"adapter": PINNED_ADAPTER_VERSION, "argv": argv_hash,
+        material = _hash_text(_canonical({"adapter": PINNED_ADAPTER_VERSION,
+            "cli_contract_id": argv.cli_contract_id, "argv": argv_hash,
             "delegation": delegation_id, "launch": launch_attempt_id,
             "stdin": _hash_text(stdin_data), "timeout": self.timeout_seconds}))
         record, replayed = self.registry.reserve(key=idempotency_key, material_hash=material,
@@ -480,9 +628,35 @@ class CodexReceiverAdapter:
                 return CodexExecutionOutcome(record, None, True, replayed)
             self.sleep(0.05)
     def qualify_no_live_invocation(self):
-        binary = self.verify_binary(); argv = build_codex_argv(self.config, binary, runtime_run_id="codex-run-dry")
-        return {"binary_path": binary.executable, "binary_sha256": binary.sha256,
-            "binary_version": binary.version, "metadata_probe_spawned": True,
+        binding = self.qualify_runtime()
+        argv = build_codex_argv(self.config, binding, runtime_run_id="codex-run-dry")
+        parser_args = (*argv.args[:-1], "--help")
+        output_path = Path(argv.output_file)
+        output_before = (
+            (output_path.stat().st_size, output_path.stat().st_mtime_ns)
+            if output_path.exists() else None
+        )
+        code, stdout, stderr = self.parser_probe(
+            argv.executable, parser_args, argv.env, argv.cwd
+        )
+        output_after = (
+            (output_path.stat().st_size, output_path.stat().st_mtime_ns)
+            if output_path.exists() else None
+        )
+        if code != 0 or "Usage: codex exec" not in stdout:
+            raise ArgvConstructionError(
+                f"complete CLI contract parser qualification failed ({code}): {stderr[:256]}"
+            )
+        if output_before != output_after:
+            raise ArgvConstructionError("parser qualification produced a task output artifact")
+        return {"binary_path": binding.executable, "binary_sha256": binding.binary_sha256,
+            "binary_version": binding.binary_version, "cli_contract_id": binding.cli_contract_id,
+            "metadata_probe_spawned": True, "parser_probe_spawned": True,
+            "parser_validation_args": [argv.executable, *parser_args],
+            "approval_policy": APPROVAL_POLICY, "sandbox_policy": SANDBOX_POLICY,
+            "ambient_config_policy": AMBIENT_CONFIG_POLICY,
+            "human_approval_prompts": False, "automatic_operation_approval": False,
+            "parser_output_artifact_changed": False,
             "model_agent_execution_possible": False, "argv": argv.to_list(),
             "environment_names": [k for k, _ in argv.env], "timeout_seconds": self.timeout_seconds,
             "disabled_capabilities": list(DISABLED_CAPABILITIES), "live_invocation": False}

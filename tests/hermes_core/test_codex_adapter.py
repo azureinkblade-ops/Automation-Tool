@@ -9,11 +9,13 @@ from dataclasses import replace
 from pathlib import Path
 
 from tools.hermes_core.codex_adapter import (
+    GLOBAL_SECURITY_ARGS,
     MAX_JSONL_EVENTS,
     MAX_STDOUT_BYTES,
     PINNED_CODEX_PATH,
     PINNED_CODEX_SHA256,
     PINNED_CODEX_VERSION,
+    PINNED_CLI_CONTRACT_ID,
     ArgvConstructionError,
     BinaryVerificationError,
     CodexAdapterError,
@@ -26,6 +28,8 @@ from tools.hermes_core.codex_adapter import (
     CodexTimeoutError,
     CodexTrustedConfig,
     build_codex_argv,
+    codex_cli_contract,
+    codex_cli_contract_id,
     default_trusted_config,
     parse_codex_jsonl,
     resolve_pinned_binary,
@@ -100,8 +104,12 @@ class AdapterFixture(unittest.TestCase):
             spool_directory=str(root / "runtime" / "spool files"),
             registry_path=str(root / "runtime" / "transport.sqlite3"),
             environment=(("CODEX_HOME", str(root / "codex-home")), ("SYSTEMROOT", r"C:\Windows")),
+            expected_cli_contract_id=codex_cli_contract_id(codex_cli_contract(
+                __import__("hashlib").sha256(executable.read_bytes()).hexdigest(),
+                PINNED_CODEX_VERSION,
+            )),
         )
-        self.probes = 0
+        self.probes = self.parser_probes = 0
     def tearDown(self): self.tmp.cleanup()
     def probe(self, executable, environment, cwd):
         self.probes += 1
@@ -109,10 +117,19 @@ class AdapterFixture(unittest.TestCase):
         self.assertEqual(environment, self.config.environment)
         self.assertEqual(cwd, self.config.working_directory)
         return 0, self.config.expected_version, ""
+    def parser_probe(self, executable, args, environment, cwd):
+        self.parser_probes += 1
+        self.assertEqual(executable, str(Path(self.config.executable_path).resolve()))
+        self.assertEqual(environment, self.config.environment)
+        self.assertEqual(cwd, self.config.working_directory)
+        self.assertEqual(args[-1], "--help")
+        self.assertNotIn("-", args)
+        return 0, "Usage: codex exec [OPTIONS] [PROMPT]", ""
     def adapter(self, process=None, config=None, clock=None):
         clock = clock or Clock()
         return CodexReceiverAdapter(config=config or self.config, process_impl=process,
-            version_probe=self.probe, monotonic=clock.monotonic, sleep=clock.sleep)
+            version_probe=self.probe, parser_probe=self.parser_probe,
+            monotonic=clock.monotonic, sleep=clock.sleep)
     def execute(self, adapter, **kwargs):
         values = dict(idempotency_key="idem-1", launch_attempt_id="launch-1",
                       delegation_id="delegation-1", stdin_data='{"task":"read-only"}')
@@ -147,9 +164,19 @@ class BinaryTests(AdapterFixture):
         with self.assertRaises(BinaryVerificationError): replace(self.config, executable_path="codex.exe").validate()
     def test_arbitrary_override_api_absent(self):
         with self.assertRaises(TypeError): resolve_pinned_binary(executable="evil.exe")
+    def test_real_complete_parser_contract_is_accepted_without_model(self):
+        report = CodexReceiverAdapter().qualify_no_live_invocation()
+        self.assertEqual(report["cli_contract_id"], PINNED_CLI_CONTRACT_ID)
+        self.assertTrue(report["parser_probe_spawned"])
+        self.assertFalse(report["model_agent_execution_possible"])
 
 
 class BindingTests(AdapterFixture):
+    def assert_args_rejected(self, args):
+        argv = self.adapter().build_argv()
+        with self.assertRaises(ArgvConstructionError):
+            replace(argv, args=tuple(args)).validate(self.config)
+
     def test_argv_uses_absolute_verified_binary(self):
         argv = self.adapter().build_argv()
         self.assertTrue(Path(argv.executable).is_absolute()); self.assertNotEqual(argv.executable, "codex.exe")
@@ -162,6 +189,36 @@ class BindingTests(AdapterFixture):
                       "--ephemeral", "--ignore-user-config", "--ignore-rules",
                       "--ask-for-approval", "never", "--sandbox", "read-only", "--cd", "-"):
             self.assertIn(value, args)
+    def test_global_security_options_precede_exec(self):
+        args = self.adapter().build_argv().args
+        self.assertEqual(args[:5], (*GLOBAL_SECURITY_ARGS, "exec"))
+    def test_exec_options_and_config_isolation_follow_exec(self):
+        args = self.adapter().build_argv().args; exec_index = args.index("exec")
+        for option in ("--json", "--ephemeral", "--ignore-user-config", "--ignore-rules",
+                       "--output-schema", "--output-last-message", "--cd"):
+            self.assertGreater(args.index(option), exec_index)
+    def test_exact_flattened_argv_is_deterministic(self):
+        self.assertEqual(self.adapter().build_argv().to_list(), self.adapter().build_argv().to_list())
+    def test_historical_post_exec_approval_order_is_rejected(self):
+        args = list(self.adapter().build_argv().args)
+        del args[:4]; args[1:1] = ["--ask-for-approval", "never", "--sandbox", "read-only"]
+        self.assert_args_rejected(args)
+    def test_missing_approval_policy_is_rejected(self):
+        args = list(self.adapter().build_argv().args); del args[:2]; self.assert_args_rejected(args)
+    def test_wrong_approval_policy_is_rejected(self):
+        args = list(self.adapter().build_argv().args); args[1] = "on-request"; self.assert_args_rejected(args)
+    def test_missing_read_only_sandbox_is_rejected(self):
+        args = list(self.adapter().build_argv().args); del args[2:4]; self.assert_args_rejected(args)
+    def test_workspace_write_is_rejected(self):
+        args = list(self.adapter().build_argv().args); args[3] = "workspace-write"; self.assert_args_rejected(args)
+    def test_danger_full_access_is_rejected(self):
+        args = list(self.adapter().build_argv().args); args[3] = "danger-full-access"; self.assert_args_rejected(args)
+    def test_dangerous_bypass_is_rejected(self):
+        args = list(self.adapter().build_argv().args); args.insert(0, "--dangerously-bypass-approvals-and-sandbox"); self.assert_args_rejected(args)
+    def test_approve_for_me_is_rejected(self):
+        args = list(self.adapter().build_argv().args); args.insert(0, "--approve-for-me"); self.assert_args_rejected(args)
+    def test_missing_user_config_isolation_is_rejected(self):
+        args = list(self.adapter().build_argv().args); args.remove("--ignore-user-config"); self.assert_args_rejected(args)
     def test_every_capability_is_disabled(self):
         args = self.adapter().build_argv().args
         for cap in ("shell_tool", "browser_use", "computer_use", "image_generation", "multi_agent"):
@@ -183,9 +240,51 @@ class BindingTests(AdapterFixture):
     def test_timeout_bounds_are_accepted(self):
         replace(self.config, timeout_seconds=5).validate(); replace(self.config, timeout_seconds=300).validate()
     def test_runtime_id_cannot_escape_spool(self):
-        binary = resolve_pinned_binary(self.config, version_probe=self.probe)
-        with self.assertRaises(ArgvConstructionError): build_codex_argv(self.config, binary, runtime_run_id="../bad")
+        binding = self.adapter().qualify_runtime()
+        with self.assertRaises(ArgvConstructionError): build_codex_argv(self.config, binding, runtime_run_id="../bad")
     def test_shell_is_always_false(self): self.assertFalse(self.adapter().build_argv().shell)
+
+
+class CliContractTests(AdapterFixture):
+    def contract(self, **changes):
+        return codex_cli_contract(self.config.expected_sha256, self.config.expected_version, **changes)
+    def test_pinned_production_contract_id_is_stable(self):
+        contract = codex_cli_contract(PINNED_CODEX_SHA256, PINNED_CODEX_VERSION)
+        self.assertEqual(codex_cli_contract_id(contract), PINNED_CLI_CONTRACT_ID)
+    def test_same_material_has_same_contract_id(self):
+        self.assertEqual(codex_cli_contract_id(self.contract()), codex_cli_contract_id(self.contract()))
+    def test_global_option_order_changes_contract_id(self):
+        changed = self.contract(global_options=("--sandbox", "read-only", "--ask-for-approval", "never"))
+        self.assertNotEqual(codex_cli_contract_id(changed), self.config.expected_cli_contract_id)
+    def test_exec_option_order_changes_contract_id(self):
+        options = list(self.contract().ordered_exec_options); options[0], options[1] = options[1], options[0]
+        changed = self.contract(ordered_exec_options=options)
+        self.assertNotEqual(codex_cli_contract_id(changed), self.config.expected_cli_contract_id)
+    def test_approval_policy_changes_contract_id(self):
+        changed = self.contract(approval_policy="on-request")
+        self.assertNotEqual(codex_cli_contract_id(changed), self.config.expected_cli_contract_id)
+    def test_sandbox_policy_changes_contract_id(self):
+        changed = self.contract(sandbox_policy="workspace-write")
+        self.assertNotEqual(codex_cli_contract_id(changed), self.config.expected_cli_contract_id)
+    def test_ambient_config_policy_changes_contract_id(self):
+        changed = self.contract(ambient_config_policy="inherit-user-config")
+        self.assertNotEqual(codex_cli_contract_id(changed), self.config.expected_cli_contract_id)
+    def test_unknown_contract_id_fails_closed(self):
+        binding = self.adapter().qualify_runtime()
+        with self.assertRaises(ArgvConstructionError):
+            build_codex_argv(self.config, replace(binding, cli_contract_id="0" * 64), runtime_run_id="codex-run-dry")
+    def test_expected_unknown_contract_fails_qualification(self):
+        config = replace(self.config, expected_cli_contract_id="0" * 64)
+        with self.assertRaises(ArgvConstructionError): self.adapter(config=config).qualify_runtime()
+    def test_binary_and_contract_binding_rejects_binary_mismatch(self):
+        binding = self.adapter().qualify_runtime()
+        with self.assertRaises(BinaryVerificationError):
+            build_codex_argv(self.config, replace(binding, binary_sha256="0" * 64), runtime_run_id="codex-run-dry")
+    def test_historical_order_fails_before_process_capability(self):
+        process = FakeProcess(); argv = self.adapter(process).build_argv()
+        old = ("exec", "--ask-for-approval", "never", "--sandbox", "read-only", *argv.args[5:])
+        with self.assertRaises(ArgvConstructionError): replace(argv, args=old).validate(self.config)
+        self.assertEqual(process.starts, 0)
 
 
 class JsonlTests(unittest.TestCase):
@@ -335,7 +434,16 @@ class ExecutionTests(AdapterFixture):
     def test_qualification_report_states_no_model_execution(self):
         report=self.adapter().qualify_no_live_invocation()
         self.assertFalse(report["live_invocation"]); self.assertFalse(report["model_agent_execution_possible"])
+        self.assertEqual(report["approval_policy"], "never"); self.assertEqual(report["sandbox_policy"], "read-only")
+        self.assertFalse(report["human_approval_prompts"]); self.assertFalse(report["automatic_operation_approval"])
+        self.assertFalse(report["parser_output_artifact_changed"])
         self.assertEqual(report["binary_sha256"],self.config.expected_sha256); self.assertNotIn("PATH",report["environment_names"])
+        self.assertEqual(report["cli_contract_id"], self.config.expected_cli_contract_id)
+        self.assertEqual(self.parser_probes, 1)
+    def test_parser_rejection_fails_qualification(self):
+        adapter=CodexReceiverAdapter(config=self.config, version_probe=self.probe,
+            parser_probe=lambda *_:(2,"","old ordering rejected"))
+        with self.assertRaises(ArgvConstructionError): adapter.qualify_no_live_invocation()
 
 
 class CapabilityAuditTests(unittest.TestCase):
