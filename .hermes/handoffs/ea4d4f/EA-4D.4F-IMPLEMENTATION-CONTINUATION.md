@@ -209,13 +209,12 @@ EA-4D.4F-R12C: COMPLETE / COMMITTED
 - Full Hermes Core: 1,118 passed, 72 subtests
 - Prohibited-capability audit: CLEAR
 
-## 2026-08-29 R12D Codex adapter qualification - HOLD / REMEDIATION AUTHORIZED
+## 2026-08-29 R12D Codex adapter qualification - COMPLETE / NOT COMMITTED
 
-The initial R12D implementation was not accepted. Its tests did not prove an
+The initial R12D implementation was placed on HOLD because it did not prove an
 actual executable path/hash/version, bounded trusted cwd/environment, durable
 replay, adapter cancellation behavior, strict structured-result validation, or
-correct nonzero-after-start classification. The initial completion claims are
-superseded by this HOLD record.
+correct nonzero-after-start classification. Those defects have been remediated.
 
 The previously frozen Codex executable disappeared during an application
 update. A separate non-live compatibility review accepted and re-froze the
@@ -228,15 +227,34 @@ installed successor without changing frozen R11 architecture:
 - Qualification:
   `.hermes/handoffs/ea4d4f/EA-4D.4F-CODEX-BINARY-REQUALIFICATION.md`
 
-No `codex exec`, prompt, model workload, or agent task was launched during
-requalification. R12E remains authorized for one live proof with zero
-definitive starts and one invocation remaining.
+The repaired adapter now binds and verifies that exact executable, uses trusted
+Windows-safe argv/cwd/environment, enforces a 5..300 second timeout, persists
+schema-versioned transport idempotency before fake spawn, prevents blind replay,
+observes durable cancellation/revocation, validates strict JSONL plus final
+result schema, and preserves definitive process-start evidence independently
+from terminal success.
+
+Verification is green at the current final-focused counts:
+
+- R12D focused: 64 passed;
+- R12C focused: 9 passed;
+- R12B focused: 38 passed, 25 subtests;
+- R12A focused: 50 passed, 15 subtests;
+- authority/attempt/routing/launch/start ladder: 548 passed;
+- complete Hermes Core final rerun: 1,182 passed, 72 subtests.
+
+Completion report:
+`.hermes/handoffs/ea4d4f/EA-4D.4F-R12D-CODEX-ADAPTER-QUALIFICATION-IMPLEMENTATION-COMPLETE.md`
+
+No `codex exec`, prompt, model workload, or agent task was launched. R12E
+remains authorized for one live proof with zero definitive starts and one
+invocation remaining.
 
 Authority boundary:
 
 - R11 design: UNCHANGED / FROZEN.
 - Binary successor: PASS / RE-FROZEN.
-- R12D: HOLD / REMEDIATION AUTHORIZED.
+- R12D: COMPLETE / NOT COMMITTED.
 - R12E: NOT STARTED.
 - Kilo / GPU / ComfyUI / Studio Bible / image pipeline: NO.
 - Push: NO.
