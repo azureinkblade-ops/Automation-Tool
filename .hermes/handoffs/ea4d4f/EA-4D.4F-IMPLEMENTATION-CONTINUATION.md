@@ -343,6 +343,26 @@ Next gate: `EA-4D.4F-R12E-R4 ONE-SHOT LIVE REQUALIFICATION`, separately
 authorized with new identities and a new one-shot budget. R12E-R4 is not
 authorized by R12E-R3.
 
+## 2026-08-29 R12E-R4 one-shot live requalification - FAIL / TERMINAL
+
+- New governed R12E-R4 identities and runtime state were created without reusing original R12E lineage.
+- Pre-live focused qualification passed: 110 tests + 6 subtests.
+- Binary, adapter, ordered CLI contract, read-only sandbox, approval `never`, and isolated config all matched the frozen preflight.
+- Exactly one Codex process definitely started: PID `7196`; budget is consumed (`1/1`, remaining `0`).
+- The CLI contract was accepted and Codex emitted `thread.started` and `turn.started`.
+- The request then failed before model/task execution with `invalid_json_schema`: a const-only `evidence_type` property lacked an explicit `type` key.
+- No structured result, result delivery, acknowledgement, or completion projection was created.
+- Terminal exact replay used fake process capability, started zero processes, and divergent replay failed closed.
+- Post-live complete Hermes Core regression passed: 1,228 tests + 78 subtests, zero failures.
+- Original R12E evidence remains immutable and hash-unchanged.
+- No retry, source remediation, production activation, scheduler, Kilo, GPU, ComfyUI, image-pipeline, or RHR action occurred.
+
+Terminal evidence:
+`.hermes/handoffs/ea4d4f/EA-4D.4F-R12E-R4-ONE-SHOT-LIVE-REQUALIFICATION-COMPLETE.md`
+
+Next boundary: a separately authorized non-live schema-contract remediation.
+Any later live proof requires entirely new identities and a new explicit budget.
+
 Authority boundary:
 
 - R11 design: UNCHANGED / FROZEN.
