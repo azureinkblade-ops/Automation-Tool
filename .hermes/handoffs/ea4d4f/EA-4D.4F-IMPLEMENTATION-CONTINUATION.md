@@ -292,6 +292,28 @@ Authority boundary:
 - Kilo / GPU / ComfyUI / Studio Bible / image pipeline: NO.
 - Push: NO.
 
+## 2026-08-29 R12E-R2 approval/sandbox redesign - DESIGN PASS
+
+EA-4D.4F-R12E-R2 DESIGN: PASS / SEMANTIC EQUIVALENT FOUND
+
+- The original R12E invocation remains terminal `FAILED`, PID 660, exit 2.
+- Original authority remains consumed: authorized 1, definitive starts 1, remaining 0.
+- The lingering `PREPARED` file is a preparation snapshot, not current execution truth.
+- Durable transport/evidence state prevents reuse; a focused failed-terminal replay test was added.
+- alpha.12.2 still supports `--ask-for-approval never`, but only as a top-level option before `exec`.
+- The safe successor preserves `approval=never` plus `sandbox=read-only` and `--ignore-user-config`.
+- `--approve-for-me` is rejected because it requires workspace-write.
+- dangerous approval/sandbox bypass remains prohibited.
+- R12D qualification must bind binary identity plus a complete CLI-contract identity.
+- Production adapter correction is not authorized by this design gate.
+- No new live proof, model task, GPU, ComfyUI, browser, scheduler, or Kilo action occurred.
+
+Design record: `.hermes/handoffs/ea4d4f/EA-4D.4F-R12E-R2-CODEX-APPROVAL-SANDBOX-REDESIGN.md`
+
+Next required gate: a narrowly scoped implementation authorization for the
+reordered argv and CLI-contract qualification. A future live proof requires a
+separate packet, new identities, and a new one-shot budget.
+
 Authority boundary:
 
 - R11 design: UNCHANGED / FROZEN.

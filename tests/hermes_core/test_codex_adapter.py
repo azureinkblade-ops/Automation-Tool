@@ -269,6 +269,11 @@ class ExecutionTests(AdapterFixture):
         first=self.execute(adapter); second=self.execute(adapter)
         self.assertEqual(first.record.runtime_run_id,second.record.runtime_run_id); self.assertEqual(process.starts,1)
         self.assertTrue(second.verified_result.valid)
+    def test_failed_terminal_replay_never_spawns_again(self):
+        result=CodexProcessResult(421,2,"","parser rejected argv",""); process=FakeProcess([result]); adapter=self.adapter(process)
+        first=self.execute(adapter); second=self.execute(adapter)
+        self.assertEqual(first.record.start_state,"DEFINITELY_STARTED"); self.assertEqual(first.record.terminal_state,"FAILED")
+        self.assertTrue(second.replayed); self.assertEqual(second.record,first.record); self.assertEqual(process.starts,1)
     def test_divergent_replay_fails_closed(self):
         adapter=self.adapter(FakeProcess([CodexProcessResult(421,0,success_jsonl(),"",final_output())]))
         self.execute(adapter)
