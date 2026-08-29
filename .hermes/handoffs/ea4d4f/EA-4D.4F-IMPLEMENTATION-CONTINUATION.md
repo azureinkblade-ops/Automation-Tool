@@ -199,19 +199,47 @@ EA-4D.4F-R12B: COMPLETE / COMMITTED
 - Full Hermes Core: 1109 passed, 72 subtests
 - Prohibited-capability audit: CLEAR
 
-## 2026-08-28 R12C composition - IMPLEMENTATION COMPLETE / NOT COMMITTED
+## 2026-08-28 R12C delegation composition - COMMITTED
 
-EA-4D.4F-R12C IMPLEMENTATION: COMPLETE / NOT COMMITTED
+EA-4D.4F-R12C: COMPLETE / COMMITTED
 
-**Critical discrepancy reported**: The authorization packet framed R12C as "the first real Codex receiver adapter" with a real invocation budget. However, the **frozen R11 design (Section 20.3)** explicitly assigns R12C to **deterministic fake agents**. Per the packet's own instruction to follow the frozen design when it differs materially, R12C was implemented with deterministic fake agents — no real Codex was invoked.
-
-- Production: `tools/hermes_core/delegation_composition.py` (new)
-- Tests: `tests/hermes_core/test_delegation_composition.py` (new)
+- R12C commit SHA: `23023ae91dd6a464b985b1d171afd1aa0aca00b8`
+- R12C parent SHA: `e7b42eac2931f20a400092b3b5fa8d7323557714` (R12B)
 - R12C focused: 9 passed
-- Full Hermes Core: 1118 passed, 72 subtests (0 regressions)
+- Full Hermes Core: 1,118 passed, 72 subtests
 - Prohibited-capability audit: CLEAR
-- R12D is the next proposed gate (Codex adapter qualification)
-- R12D-R12E remain unauthorized
+
+## 2026-08-29 R12D Codex adapter qualification - HOLD / REMEDIATION AUTHORIZED
+
+The initial R12D implementation was not accepted. Its tests did not prove an
+actual executable path/hash/version, bounded trusted cwd/environment, durable
+replay, adapter cancellation behavior, strict structured-result validation, or
+correct nonzero-after-start classification. The initial completion claims are
+superseded by this HOLD record.
+
+The previously frozen Codex executable disappeared during an application
+update. A separate non-live compatibility review accepted and re-froze the
+installed successor without changing frozen R11 architecture:
+
+- Canonical path:
+  `C:\Users\David\AppData\Local\OpenAI\Codex\bin\fac60c5e9a2ae3df\codex.exe`
+- Version: `codex-cli 0.150.0-alpha.12.2`
+- SHA-256: `34e9cfe7d5bbcec306fe6ab3fd502a713a7a1f0fb644c11ad2990fc80599fd4f`
+- Qualification:
+  `.hermes/handoffs/ea4d4f/EA-4D.4F-CODEX-BINARY-REQUALIFICATION.md`
+
+No `codex exec`, prompt, model workload, or agent task was launched during
+requalification. R12E remains authorized for one live proof with zero
+definitive starts and one invocation remaining.
+
+Authority boundary:
+
+- R11 design: UNCHANGED / FROZEN.
+- Binary successor: PASS / RE-FROZEN.
+- R12D: HOLD / REMEDIATION AUTHORIZED.
+- R12E: NOT STARTED.
+- Kilo / GPU / ComfyUI / Studio Bible / image pipeline: NO.
+- Push: NO.
 `.hermes/handoffs/ea4d4f/EA-4D.4F-R12B-DELIVERY-ACCEPTANCE-IMPLEMENTATION-COMPLETE.md`
 
 Authority boundary:
