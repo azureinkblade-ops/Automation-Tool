@@ -60,6 +60,12 @@ from tools.hermes_core.sqlite_execution_authorization_store import (
 )
 from tools.hermes_core.sqlite_execution_start_store import SQLiteExecutionStartStore
 from tools.hermes_core.hashing import canonical_json, sha256_payload
+from tools.hermes_core.runtime_namespace import (
+    RUNTIME_NAMESPACE_CONTRACT_VERSION,
+    RuntimeNamespaceOwner,
+    reserve_runtime_namespace,
+    runtime_namespace_path,
+)
 from tests.hermes_core.test_execution_launch_admission import (
     _build_canonical_chain,
     _launcher_actor,
@@ -72,7 +78,9 @@ from tests.hermes_core.test_execution_launch_admission import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-RUNTIME = ROOT / ".hermes" / "runtime" / "ea4d4f" / "r12e"
+RUNTIME_ROOT = ROOT / ".hermes" / "runtime" / "ea4d4f"
+RUNTIME_OWNER = RuntimeNamespaceOwner("ea4d4f-r12e-r6-one-shot")
+RUNTIME = runtime_namespace_path(RUNTIME_ROOT, RUNTIME_OWNER)
 AUTHORITY_DB = RUNTIME / "authority.sqlite3"
 START_DB = RUNTIME / "start.sqlite3"
 TRANSPORT_DB = RUNTIME / "codex-transport.sqlite3"
@@ -91,6 +99,7 @@ DEADLINE = "2026-08-30T23:59:59Z"
 SOURCE_FILES = (
     ROOT / "tools" / "hermes_core" / "codex_adapter.py",
     ROOT / "tools" / "hermes_core" / "codex_result_schema.py",
+    ROOT / "tools" / "hermes_core" / "runtime_namespace.py",
     ROOT / "tools" / "hermes_core" / "codex_live_process.py",
     ROOT / "tools" / "hermes_core" / "delegation_result.py",
     ROOT / "tools" / "hermes_core" / "sqlite_delegation_result_store.py",
@@ -290,11 +299,14 @@ def _resume_preflight() -> dict:
 
 
 def prepare() -> dict:
+    source_binding = _git_head()
+    namespace = reserve_runtime_namespace(
+        RUNTIME_ROOT, RUNTIME_OWNER, source_binding=source_binding,
+    )
     if EVIDENCE_FILE.exists():
         raise RuntimeError("R12E evidence already exists; live proof cannot be prepared again")
     if any(path.exists() for path in (AUTHORITY_DB, START_DB, TRANSPORT_DB, PREFLIGHT_FILE)):
         return _resume_preflight()
-    RUNTIME.mkdir(parents=True, exist_ok=True)
     if _file_hash(R11_FILE) != FROZEN_R11_SHA256:
         raise RuntimeError("frozen R11 hash mismatch")
 
@@ -443,6 +455,11 @@ def prepare() -> dict:
         "artifact_version": "1",
         "prepared_at": _now(),
         "repository_head": head,
+        "runtime_namespace_contract": RUNTIME_NAMESPACE_CONTRACT_VERSION,
+        "runtime_namespace_owner": RUNTIME_OWNER.proof_identity,
+        "runtime_namespace_owner_hash": namespace.owner_hash,
+        "runtime_namespace_path": str(namespace.path),
+        "runtime_namespace_manifest_sha256": _file_hash(namespace.manifest_path),
         "source_sha256": _source_hashes(),
         "frozen_r11_sha256": FROZEN_R11_SHA256,
         "delegation_id": envelope.delegation_id,
@@ -497,6 +514,15 @@ def refreeze() -> dict:
     if EVIDENCE_FILE.exists() or not PREFLIGHT_FILE.exists():
         raise RuntimeError("R12E preflight is not eligible for source refreeze")
     packet = json.loads(PREFLIGHT_FILE.read_text(encoding="utf-8"))
+    namespace = reserve_runtime_namespace(
+        RUNTIME_ROOT, RUNTIME_OWNER, source_binding=_git_head(),
+    )
+    if (
+        packet.get("runtime_namespace_owner_hash") != namespace.owner_hash
+        or packet.get("runtime_namespace_manifest_sha256")
+        != _file_hash(namespace.manifest_path)
+    ):
+        raise RuntimeError("runtime namespace ownership changed after preflight")
     adapter = CodexReceiverAdapter(config=_trusted_config(
         packet["task_input_hash"], packet["receipt_hash"]
     ))
@@ -535,6 +561,15 @@ def execute(expected_preflight_hash: str) -> dict:
     if _file_hash(PREFLIGHT_FILE) != expected_preflight_hash:
         raise RuntimeError("preflight hash mismatch")
     packet = json.loads(PREFLIGHT_FILE.read_text(encoding="utf-8"))
+    namespace = reserve_runtime_namespace(
+        RUNTIME_ROOT, RUNTIME_OWNER, source_binding=_git_head(),
+    )
+    if (
+        packet.get("runtime_namespace_owner_hash") != namespace.owner_hash
+        or packet.get("runtime_namespace_manifest_sha256")
+        != _file_hash(namespace.manifest_path)
+    ):
+        raise RuntimeError("runtime namespace ownership changed after preflight")
     if _file_hash(R11_FILE) != packet["frozen_r11_sha256"]:
         raise RuntimeError("frozen R11 changed after preflight")
     if _file_hash(SCHEMA_FILE) != packet["schema_sha256"]:

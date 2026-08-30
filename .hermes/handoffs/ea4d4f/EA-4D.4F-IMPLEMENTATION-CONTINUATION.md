@@ -470,6 +470,33 @@ Next boundary: separately authorized non-live runtime-namespace remediation,
 then commit/requalification and a fresh live authorization. Historical R12E
 runtime/evidence must remain immutable. Live R6 execution is not authorized.
 
+## 2026-08-30 R12E-R6C runtime namespace isolation - PASS / READY FOR COMMIT
+
+- Added deterministic runtime contract `hermes-runtime-namespace/v1`.
+- Fresh runtime ownership derives from a fixed governed proof identity and a
+  canonical owner hash, never from a caller path, timestamp, delegation ID, or
+  invocation ID.
+- The R6 owner `ea4d4f-r12e-r6-one-shot` resolves to
+  `.hermes/runtime/ea4d4f/proof-adb795668b3266a8d95572cc`.
+- Ownership is frozen in an exclusively created `runtime-owner.json` manifest
+  bound to the exact source SHA. Exact replay is idempotent; foreign, unknown,
+  malformed, or source-drifted ownership fails closed.
+- Original `r12e` and `r12e-r4` namespaces remain read-only and unchanged.
+- R6 namespace reservation now precedes all durable identity creation; it does
+  not itself grant authority or process capability.
+- Tests: R6C 19 + 15 subtests; R6B/preflight group 183 + 24 subtests;
+  R12A/B/C 97 + 40 subtests; authority/start/routing 548; complete Hermes Core
+  1,301 + 96 subtests, zero failures.
+- Real R6 identities, runtime path creation, Codex starts, and model invocations
+  remain `0 / 0 / 0 / 0`; live budget remains `1`.
+
+Completion record:
+`.hermes/handoffs/ea4d4f/EA-4D.4F-R12E-R6C-RUNTIME-NAMESPACE-ISOLATION-COMPLETE.md`
+
+Next boundary: fresh R12E-R6 live authorization bound to the committed R6C
+HEAD, namespace contract, binary/CLI identities, and R6B schema contracts. It
+is not authorized by R6C.
+
 Authority boundary:
 
 - R11 design: UNCHANGED / FROZEN.
