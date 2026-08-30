@@ -13,7 +13,9 @@ from jsonschema import Draft202012Validator, ValidationError
 
 from tests.hermes_core.run_r12e_live_proof import _schema
 from tools.hermes_core.codex_adapter import (
+    PINNED_CLI_CONTRACT_ID,
     PINNED_CODEX_VERSION,
+    ArgvConstructionError,
     CodexReceiverAdapter,
     CodexSchemaQualificationError,
     CodexTrustedConfig,
@@ -262,6 +264,12 @@ class IdentityAndEligibilityTests(SchemaFixture):
         self.write_schema(changed)
         with self.assertRaisesRegex(CodexSchemaQualificationError, "hash differs"):
             self.prepare()
+        self.assertEqual(self.process.start.call_count, 0)
+
+    def test_schema_qualified_under_unknown_cli_environment_is_not_eligible(self):
+        config = replace(self.config, expected_cli_contract_id=PINNED_CLI_CONTRACT_ID)
+        with self.assertRaisesRegex(ArgvConstructionError, "CLI contract mismatch"):
+            self.prepare(config)
         self.assertEqual(self.process.start.call_count, 0)
 
     def test_valid_qualified_schema_is_preparable_without_process(self):

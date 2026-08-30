@@ -15,11 +15,15 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional, Protocol
 
-PINNED_CODEX_PATH = r"C:\Users\David\AppData\Local\OpenAI\Codex\bin\fac60c5e9a2ae3df\codex.exe"
-PINNED_CODEX_SHA256 = "34e9cfe7d5bbcec306fe6ab3fd502a713a7a1f0fb644c11ad2990fc80599fd4f"
-PINNED_CODEX_VERSION = "codex-cli 0.150.0-alpha.12.2"
+PREVIOUS_QUALIFIED_CODEX_PATH = r"C:\Users\David\AppData\Local\OpenAI\Codex\bin\fac60c5e9a2ae3df\codex.exe"
+PREVIOUS_QUALIFIED_CODEX_SHA256 = "34e9cfe7d5bbcec306fe6ab3fd502a713a7a1f0fb644c11ad2990fc80599fd4f"
+PREVIOUS_QUALIFIED_CODEX_VERSION = "codex-cli 0.150.0-alpha.12.2"
+PREVIOUS_QUALIFIED_CLI_CONTRACT_ID = "21f341c1ac959ee3a7c7ce929baf492183bd0d07e7443c0e76e4f22f0196bc02"
+PINNED_CODEX_PATH = r"C:\Users\David\AppData\Local\OpenAI\Codex\bin\6ca77c4a9caa4eed\codex.exe"
+PINNED_CODEX_SHA256 = "3052f7887c10e97f6cfe4941353bd0763300c4907e49a8688958cb40d4159d89"
+PINNED_CODEX_VERSION = "codex-cli 0.151.0-alpha.7.1"
 PINNED_ADAPTER_VERSION = "1.1"
-PINNED_CLI_CONTRACT_ID = "21f341c1ac959ee3a7c7ce929baf492183bd0d07e7443c0e76e4f22f0196bc02"
+PINNED_CLI_CONTRACT_ID = "ae576aea601f46634e6ad0d66b9097f78f157d161fdcd2195be6ad6b0db16495"
 SCHEMA_QUALIFICATION_POLICY = "codex-structured-output-schema/v1"
 REGISTRY_SCHEMA_VERSION = 1
 MIN_TIMEOUT_SECONDS, DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS = 5, 60, 300

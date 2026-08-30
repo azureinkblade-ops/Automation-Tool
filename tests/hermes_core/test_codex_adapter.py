@@ -16,6 +16,9 @@ from tools.hermes_core.codex_adapter import (
     PINNED_CODEX_SHA256,
     PINNED_CODEX_VERSION,
     PINNED_CLI_CONTRACT_ID,
+    PREVIOUS_QUALIFIED_CODEX_SHA256,
+    PREVIOUS_QUALIFIED_CODEX_VERSION,
+    PREVIOUS_QUALIFIED_CLI_CONTRACT_ID,
     ArgvConstructionError,
     BinaryVerificationError,
     CodexAdapterError,
@@ -151,7 +154,7 @@ class BinaryTests(AdapterFixture):
         self.assertEqual(identity.executable, str(Path(PINNED_CODEX_PATH).resolve()))
         self.assertEqual(identity.sha256, PINNED_CODEX_SHA256)
         self.assertEqual(identity.version, PINNED_CODEX_VERSION)
-        self.assertEqual(identity.size_bytes, 310753072)
+        self.assertEqual(identity.size_bytes, 313923888)
     def test_actual_bytes_are_hashed(self):
         identity = resolve_pinned_binary(self.config, version_probe=self.probe)
         self.assertEqual(identity.sha256, self.config.expected_sha256)
@@ -159,6 +162,15 @@ class BinaryTests(AdapterFixture):
     def test_hash_mismatch_fails_before_probe(self):
         with self.assertRaises(BinaryVerificationError):
             resolve_pinned_binary(replace(self.config, expected_sha256="0" * 64), version_probe=self.probe)
+        self.assertEqual(self.probes, 0)
+    def test_historical_binary_identity_is_not_the_successor_qualification(self):
+        config = replace(
+            default_trusted_config(),
+            expected_sha256=PREVIOUS_QUALIFIED_CODEX_SHA256,
+            expected_version=PREVIOUS_QUALIFIED_CODEX_VERSION,
+        )
+        with self.assertRaisesRegex(BinaryVerificationError, "SHA-256 mismatch"):
+            resolve_pinned_binary(config, version_probe=self.probe)
         self.assertEqual(self.probes, 0)
     def test_version_mismatch_fails(self):
         def bad(*_): return 0, "codex-cli 0.0.0", ""
@@ -260,6 +272,16 @@ class CliContractTests(AdapterFixture):
     def test_pinned_production_contract_id_is_stable(self):
         contract = codex_cli_contract(PINNED_CODEX_SHA256, PINNED_CODEX_VERSION)
         self.assertEqual(codex_cli_contract_id(contract), PINNED_CLI_CONTRACT_ID)
+    def test_successor_contract_is_distinct_from_historical_qualification(self):
+        historical = codex_cli_contract(
+            PREVIOUS_QUALIFIED_CODEX_SHA256,
+            PREVIOUS_QUALIFIED_CODEX_VERSION,
+        )
+        self.assertEqual(
+            codex_cli_contract_id(historical),
+            PREVIOUS_QUALIFIED_CLI_CONTRACT_ID,
+        )
+        self.assertNotEqual(PINNED_CLI_CONTRACT_ID, PREVIOUS_QUALIFIED_CLI_CONTRACT_ID)
     def test_same_material_has_same_contract_id(self):
         self.assertEqual(codex_cli_contract_id(self.contract()), codex_cli_contract_id(self.contract()))
     def test_global_option_order_changes_contract_id(self):

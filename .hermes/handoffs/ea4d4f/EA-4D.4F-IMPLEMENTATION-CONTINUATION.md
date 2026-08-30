@@ -386,6 +386,35 @@ Completion record:
 Next proposed gate: `EA-4D.4F-R12E-R6 ONE-SHOT LIVE REQUALIFICATION`, requiring
 new identities and a separate one-shot budget. It is not authorized by R12E-R5.
 
+## 2026-08-30 R12E-R6 preflight - HOLD / NOT STARTED
+
+- Required alpha.12.2 binary was absent after an automatic Codex update.
+- Installed successor was alpha.7.1 at a different path and SHA-256.
+- R12E-R6 stopped at binary identity before creating identities or runtime state.
+- Live accounting remains authorized 1, definitive starts 0, remaining 1.
+
+## 2026-08-30 R12E-R6A successor qualification - PASS / READY FOR COMMIT
+
+- Successor: `codex-cli 0.151.0-alpha.7.1`.
+- SHA-256: `3052f7887c10e97f6cfe4941353bd0763300c4907e49a8688958cb40d4159d89`.
+- New CLI contract ID: `ae576aea601f46634e6ad0d66b9097f78f157d161fdcd2195be6ad6b0db16495`.
+- Approval `never`, read-only sandbox, ordered global options, isolated user
+  config, structured output, and stdin delivery remain parser-qualified.
+- R5 schema hash `b2d9872b...` and qualification ID `7b404540...` remain
+  unchanged; live eligibility binds them independently to the new binary and
+  CLI contract.
+- Adapter 92, schema 26, process 4, result 16 + 6 subtests, R12C 9, R12B 38 +
+  25 subtests, R12A 50 + 15 subtests, authority/start subset 575 + 20 subtests.
+- Complete Hermes Core: 1,256 passed + 78 subtests, zero failures.
+- Codex task/model starts: 0. R12E-R6 identities: 0. Push: no.
+
+Qualification record:
+`.hermes/handoffs/ea4d4f/EA-4D.4F-R12E-R6A-CODEX-BINARY-REQUALIFICATION.md`
+
+Next boundary: a fresh R12E-R6 live authorization explicitly bound to the
+successor path, SHA-256, version, CLI contract ID, schema hash, schema
+qualification ID, and committed R6A HEAD. It is not authorized by R6A.
+
 Authority boundary:
 
 - R11 design: UNCHANGED / FROZEN.
