@@ -15,6 +15,12 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional, Protocol
 
+from tools.hermes_core.codex_result_schema import (
+    CodexInstanceSchemaError,
+    CodexResultSchemaLineage,
+    qualify_instance_bound_result_schema_file,
+)
+
 PREVIOUS_QUALIFIED_CODEX_PATH = r"C:\Users\David\AppData\Local\OpenAI\Codex\bin\fac60c5e9a2ae3df\codex.exe"
 PREVIOUS_QUALIFIED_CODEX_SHA256 = "34e9cfe7d5bbcec306fe6ab3fd502a713a7a1f0fb644c11ad2990fc80599fd4f"
 PREVIOUS_QUALIFIED_CODEX_VERSION = "codex-cli 0.150.0-alpha.12.2"
@@ -186,6 +192,11 @@ class CodexTrustedConfig:
     expected_cli_contract_id: str
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     expected_schema_sha256: Optional[str] = None
+    require_instance_schema_qualification: bool = False
+    expected_structural_policy_id: Optional[str] = None
+    expected_instance_schema_qualification_id: Optional[str] = None
+    expected_task_input_hash: Optional[str] = None
+    expected_receiver_receipt_hash: Optional[str] = None
 
     def validate(self) -> None:
         if not Path(self.executable_path).is_absolute():
@@ -205,6 +216,30 @@ class CodexTrustedConfig:
                 raise CodexSchemaQualificationError("schema SHA-256 must have 64 characters")
             try: int(self.expected_schema_sha256, 16)
             except ValueError as exc: raise CodexSchemaQualificationError("schema SHA-256 is not hexadecimal") from exc
+        instance_values = (
+            self.expected_structural_policy_id,
+            self.expected_instance_schema_qualification_id,
+            self.expected_task_input_hash,
+            self.expected_receiver_receipt_hash,
+        )
+        if self.require_instance_schema_qualification and not all(instance_values):
+            raise CodexSchemaQualificationError(
+                "complete instance schema qualification binding is required"
+            )
+        if not self.require_instance_schema_qualification and any(instance_values):
+            raise CodexSchemaQualificationError(
+                "instance schema binding requires explicit qualification enforcement"
+            )
+        for name, value in zip((
+            "structural policy ID", "instance schema qualification ID",
+            "task input hash", "receiver receipt hash",
+        ), instance_values):
+            if value is not None:
+                if len(value) != 64:
+                    raise CodexSchemaQualificationError(f"{name} must have 64 characters")
+                try: int(value, 16)
+                except ValueError as exc:
+                    raise CodexSchemaQualificationError(f"{name} is not hexadecimal") from exc
         if not MIN_TIMEOUT_SECONDS <= self.timeout_seconds <= MAX_TIMEOUT_SECONDS:
             raise CodexTimeoutError("timeout is outside the frozen 5..300 second range")
         root = Path(self.fixture_root).resolve(strict=True)
@@ -652,7 +687,27 @@ class CodexReceiverAdapter:
             raise CodexSchemaQualificationError(
                 "result schema hash differs from the qualified schema contract"
             )
+        self.qualify_instance_schema_contract()
         return qualification
+    def qualify_instance_schema_contract(self):
+        if not self.config.require_instance_schema_qualification:
+            return None
+        lineage = CodexResultSchemaLineage(
+            task_input_hash=self.config.expected_task_input_hash,
+            receiver_receipt_hash=self.config.expected_receiver_receipt_hash,
+        )
+        try:
+            return qualify_instance_bound_result_schema_file(
+                self.config.output_schema_file,
+                lineage=lineage,
+                binary_sha256=self.config.expected_sha256,
+                binary_version=self.config.expected_version,
+                cli_contract_id=self.config.expected_cli_contract_id,
+                expected_structural_policy_id=self.config.expected_structural_policy_id,
+                expected_qualification_id=self.config.expected_instance_schema_qualification_id,
+            )
+        except CodexInstanceSchemaError as exc:
+            raise CodexSchemaQualificationError(str(exc)) from exc
     def build_argv(self, runtime_run_id="codex-run-dry"):
         return build_codex_argv(self.config, self.qualify_runtime(), runtime_run_id=runtime_run_id)
     def parse_jsonl(self, stdout): return parse_codex_jsonl(stdout)
@@ -750,6 +805,7 @@ class CodexReceiverAdapter:
             self.qualify_schema_contract()
             if self.config.expected_schema_sha256 is not None else None
         )
+        instance_schema = self.qualify_instance_schema_contract()
         argv = build_codex_argv(self.config, binding, runtime_run_id="codex-run-dry")
         parser_args = (*argv.args[:-1], "--help")
         output_path = Path(argv.output_file)
@@ -776,6 +832,19 @@ class CodexReceiverAdapter:
             "schema_qualification_id": None if schema is None else schema.qualification_id,
             "schema_qualification_policy": None if schema is None else schema.policy,
             "schema_contract_qualified": schema is not None,
+            "structural_schema_policy_id": (
+                None if instance_schema is None else instance_schema.structural_policy_id
+            ),
+            "instance_schema_sha256": (
+                None if instance_schema is None else instance_schema.instance_schema_sha256
+            ),
+            "instance_lineage_hash": (
+                None if instance_schema is None else instance_schema.instance_lineage_hash
+            ),
+            "instance_schema_qualification_id": (
+                None if instance_schema is None else instance_schema.qualification_id
+            ),
+            "instance_schema_contract_qualified": instance_schema is not None,
             "metadata_probe_spawned": True, "parser_probe_spawned": True,
             "parser_validation_args": [argv.executable, *parser_args],
             "approval_policy": APPROVAL_POLICY, "sandbox_policy": SANDBOX_POLICY,

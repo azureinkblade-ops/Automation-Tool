@@ -24,6 +24,12 @@ from tools.hermes_core.codex_adapter import (
     qualify_codex_result_schema_file,
 )
 from tools.hermes_core.codex_live_process import CodexLiveProcess
+from tools.hermes_core.codex_result_schema import (
+    STRUCTURAL_POLICY_ID,
+    CodexResultSchemaLineage,
+    build_instance_bound_result_schema,
+    qualify_instance_bound_result_schema_file,
+)
 from tools.hermes_core.delegated_task import (
     build_delegated_capability_lease,
     build_delegated_task_envelope,
@@ -84,6 +90,7 @@ RECEIVER = "codex-cli-agent"
 DEADLINE = "2026-08-30T23:59:59Z"
 SOURCE_FILES = (
     ROOT / "tools" / "hermes_core" / "codex_adapter.py",
+    ROOT / "tools" / "hermes_core" / "codex_result_schema.py",
     ROOT / "tools" / "hermes_core" / "codex_live_process.py",
     ROOT / "tools" / "hermes_core" / "delegation_result.py",
     ROOT / "tools" / "hermes_core" / "sqlite_delegation_result_store.py",
@@ -137,9 +144,18 @@ def _source_hashes() -> dict[str, str]:
     }
 
 
-def _trusted_config():
+def _trusted_config(task_input_hash: str, receipt_hash: str):
     base = default_trusted_config()
     schema = qualify_codex_result_schema_file(SCHEMA_FILE)
+    lineage = CodexResultSchemaLineage(task_input_hash, receipt_hash)
+    instance = qualify_instance_bound_result_schema_file(
+        SCHEMA_FILE,
+        lineage=lineage,
+        binary_sha256=PINNED_CODEX_SHA256,
+        binary_version=PINNED_CODEX_VERSION,
+        cli_contract_id=base.expected_cli_contract_id,
+        expected_structural_policy_id=STRUCTURAL_POLICY_ID,
+    )
     return replace(
         base,
         output_schema_file=str(SCHEMA_FILE),
@@ -147,57 +163,18 @@ def _trusted_config():
         registry_path=str(TRANSPORT_DB),
         timeout_seconds=120,
         expected_schema_sha256=schema.schema_sha256,
+        require_instance_schema_qualification=True,
+        expected_structural_policy_id=STRUCTURAL_POLICY_ID,
+        expected_instance_schema_qualification_id=instance.qualification_id,
+        expected_task_input_hash=task_input_hash,
+        expected_receiver_receipt_hash=receipt_hash,
     )
 
 
 def _schema(task_input_hash: str, receipt_hash: str) -> dict:
-    return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "additionalProperties": False,
-        "required": [
-            "schema_version", "outcome", "result_payload", "output_manifest",
-            "evidence_manifest", "error_code", "error_summary",
-        ],
-        "properties": {
-            "schema_version": {"type": "string", "const": "1"},
-            "outcome": {"type": "string", "const": "SUCCEEDED"},
-            "result_payload": {
-                "type": "object", "additionalProperties": False,
-                "required": ["qualification_statement", "task_input_hash"],
-                "properties": {
-                    "qualification_statement": {
-                        "type": "string",
-                        "const": "EA-4D.4F R12E governed delegation proof complete."
-                    },
-                    "task_input_hash": {"type": "string", "const": task_input_hash},
-                },
-            },
-            "output_manifest": {
-                "type": "array", "maxItems": 0,
-                "items": {
-                    "type": "object", "additionalProperties": False,
-                    "required": [], "properties": {},
-                },
-            },
-            "evidence_manifest": {
-                "type": "array", "minItems": 1, "maxItems": 1,
-                "items": {
-                    "type": "object", "additionalProperties": False,
-                    "required": ["ordinal", "evidence_type", "sha256"],
-                    "properties": {
-                        "ordinal": {"type": "integer", "const": 0},
-                        "evidence_type": {
-                            "type": "string", "const": "receiver_acceptance_sha256"
-                        },
-                        "sha256": {"type": "string", "const": receipt_hash},
-                    },
-                },
-            },
-            "error_code": {"type": "null"},
-            "error_summary": {"type": "null"},
-        },
-    }
+    return build_instance_bound_result_schema(
+        CodexResultSchemaLineage(task_input_hash, receipt_hash)
+    )
 
 
 def _stdin(envelope, lease, receipt) -> dict:
@@ -247,7 +224,7 @@ def _resume_preflight() -> dict:
         reservation = start.get_reservation(reservation_id)
     finally:
         start.close()
-    config = _trusted_config()
+    config = _trusted_config(envelope.task_input_hash, receipt.artifact_hash)
     adapter = CodexReceiverAdapter(config=config)
     record = adapter.registry.get(launch.idempotency_key)
     if (
@@ -267,6 +244,7 @@ def _resume_preflight() -> dict:
         "frozen_r11_sha256": FROZEN_R11_SHA256,
         "delegation_id": envelope.delegation_id,
         "task_input_hash": envelope.task_input_hash,
+        "receipt_hash": receipt.artifact_hash,
         "lease_id": lease.lease_id,
         "mailbox_message_id": message_id,
         "receipt_id": receipt_id,
@@ -292,6 +270,13 @@ def _resume_preflight() -> dict:
         "schema_sha256": _file_hash(SCHEMA_FILE),
         "schema_contract_sha256": adapter.qualify_schema_contract().schema_sha256,
         "schema_qualification_id": adapter.qualify_schema_contract().qualification_id,
+        "structural_schema_policy_id": STRUCTURAL_POLICY_ID,
+        "instance_schema_qualification_id": (
+            adapter.qualify_instance_schema_contract().qualification_id
+        ),
+        "instance_lineage_hash": (
+            adapter.qualify_instance_schema_contract().instance_lineage_hash
+        ),
         "stdin_file": str(STDIN_FILE),
         "stdin_sha256": sha256_payload(stdin_payload),
         "live_invocations_authorized": 1,
@@ -441,7 +426,7 @@ def prepare() -> dict:
     _write_json(STDIN_FILE, stdin_payload)
     stdin_data = canonical_json(stdin_payload)
 
-    config = _trusted_config()
+    config = _trusted_config(envelope.task_input_hash, receipt.artifact_hash)
     adapter = CodexReceiverAdapter(config=config)
     record, argv, replayed = adapter.prepare_invocation(
         idempotency_key=launch.idempotency_key,
@@ -462,6 +447,7 @@ def prepare() -> dict:
         "frozen_r11_sha256": FROZEN_R11_SHA256,
         "delegation_id": envelope.delegation_id,
         "task_input_hash": envelope.task_input_hash,
+        "receipt_hash": receipt.artifact_hash,
         "lease_id": lease.lease_id,
         "mailbox_message_id": message.message_id,
         "receipt_id": receipt.receipt_id,
@@ -487,6 +473,13 @@ def prepare() -> dict:
         "schema_sha256": _file_hash(SCHEMA_FILE),
         "schema_contract_sha256": adapter.qualify_schema_contract().schema_sha256,
         "schema_qualification_id": adapter.qualify_schema_contract().qualification_id,
+        "structural_schema_policy_id": STRUCTURAL_POLICY_ID,
+        "instance_schema_qualification_id": (
+            adapter.qualify_instance_schema_contract().qualification_id
+        ),
+        "instance_lineage_hash": (
+            adapter.qualify_instance_schema_contract().instance_lineage_hash
+        ),
         "stdin_file": str(STDIN_FILE),
         "stdin_sha256": sha256_payload(stdin_payload),
         "live_invocations_authorized": 1,
@@ -504,7 +497,9 @@ def refreeze() -> dict:
     if EVIDENCE_FILE.exists() or not PREFLIGHT_FILE.exists():
         raise RuntimeError("R12E preflight is not eligible for source refreeze")
     packet = json.loads(PREFLIGHT_FILE.read_text(encoding="utf-8"))
-    adapter = CodexReceiverAdapter(config=_trusted_config())
+    adapter = CodexReceiverAdapter(config=_trusted_config(
+        packet["task_input_hash"], packet["receipt_hash"]
+    ))
     record = adapter.registry.get(packet["launch_idempotency_key"])
     if (
         record is None or record.start_state != "PREPARED"
@@ -544,11 +539,20 @@ def execute(expected_preflight_hash: str) -> dict:
         raise RuntimeError("frozen R11 changed after preflight")
     if _file_hash(SCHEMA_FILE) != packet["schema_sha256"]:
         raise RuntimeError("trusted result schema changed after preflight")
-    schema = CodexReceiverAdapter(config=_trusted_config()).qualify_schema_contract()
+    config = _trusted_config(packet["task_input_hash"], packet["receipt_hash"])
+    schema_adapter = CodexReceiverAdapter(config=config)
+    schema = schema_adapter.qualify_schema_contract()
     if schema.schema_sha256 != packet["schema_contract_sha256"]:
         raise RuntimeError("qualified result schema changed after preflight")
     if schema.qualification_id != packet["schema_qualification_id"]:
         raise RuntimeError("result schema qualification identity changed after preflight")
+    instance_schema = schema_adapter.qualify_instance_schema_contract()
+    if instance_schema.structural_policy_id != packet["structural_schema_policy_id"]:
+        raise RuntimeError("structural schema policy changed after preflight")
+    if instance_schema.qualification_id != packet["instance_schema_qualification_id"]:
+        raise RuntimeError("instance schema qualification changed after preflight")
+    if instance_schema.instance_lineage_hash != packet["instance_lineage_hash"]:
+        raise RuntimeError("instance schema lineage changed after preflight")
     if _source_hashes() != packet["source_sha256"]:
         raise RuntimeError("R12E source changed after preflight")
     stdin_payload = json.loads(STDIN_FILE.read_text(encoding="utf-8"))
@@ -562,6 +566,11 @@ def execute(expected_preflight_hash: str) -> dict:
     envelope = delegation.get_delegation(packet["delegation_id"])
     lease = delegation.get_lease(packet["lease_id"])
     receipt = delegation.get_receipt(packet["attempt_id"])
+    if (
+        envelope.task_input_hash != packet["task_input_hash"]
+        or receipt.artifact_hash != packet["receipt_hash"]
+    ):
+        raise RuntimeError("durable task/receipt lineage differs from preflight")
     launch_store = SQLiteExecutionStartStore(db_path=str(START_DB))
     authority_store = SQLiteExecutionAuthorizationStore(db_path=str(AUTHORITY_DB))
     evidence = {
@@ -577,7 +586,7 @@ def execute(expected_preflight_hash: str) -> dict:
         if launch is None or launch.artifact_hash != packet["launch_attempt_hash"]:
             raise RuntimeError("durable launch attempt does not match preflight")
         process = CodexLiveProcess()
-        adapter = CodexReceiverAdapter(config=_trusted_config(), process_impl=process)
+        adapter = CodexReceiverAdapter(config=config, process_impl=process)
         outcome = adapter.execute(
             idempotency_key=launch.idempotency_key,
             launch_attempt_id=launch.launch_attempt_id,
@@ -641,7 +650,7 @@ def execute(expected_preflight_hash: str) -> dict:
         # terminal registry row and must not call its fresh process controller.
         replay_process = CodexLiveProcess()
         replay = CodexReceiverAdapter(
-            config=_trusted_config(), process_impl=replay_process
+            config=config, process_impl=replay_process
         ).execute(
             idempotency_key=launch.idempotency_key,
             launch_attempt_id=launch.launch_attempt_id,
@@ -652,7 +661,7 @@ def execute(expected_preflight_hash: str) -> dict:
             raise RuntimeError("exact replay attempted duplicate process execution")
         divergent_blocked = False
         try:
-            CodexReceiverAdapter(config=_trusted_config()).prepare_invocation(
+            CodexReceiverAdapter(config=config).prepare_invocation(
                 idempotency_key=launch.idempotency_key,
                 launch_attempt_id=launch.launch_attempt_id,
                 delegation_id=envelope.delegation_id,

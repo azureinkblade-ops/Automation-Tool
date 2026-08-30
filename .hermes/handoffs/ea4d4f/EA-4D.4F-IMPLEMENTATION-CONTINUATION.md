@@ -415,6 +415,41 @@ Next boundary: a fresh R12E-R6 live authorization explicitly bound to the
 successor path, SHA-256, version, CLI contract ID, schema hash, schema
 qualification ID, and committed R6A HEAD. It is not authorized by R6A.
 
+## 2026-08-30 R12E-R6 instance-schema preflight - HOLD / NOT STARTED
+
+- The R5 schema hash `b2d9872b...` embeds R4 task and receiver-receipt hashes.
+- Fresh R6 lineage would necessarily change both values and therefore the
+  complete schema hash and qualification identity.
+- Reusing R5 bytes would bind R6 output to R4 lineage, so preparation stopped
+  before real identities, runtime state, process capability, or budget use.
+- R6 accounting remains authorized 1, started 0, remaining 1.
+
+## 2026-08-30 R12E-R6B instance-bound schema qualification - PASS / READY FOR COMMIT
+
+- Structural policy version: `codex-result-structural-policy/v1`.
+- Structural policy ID:
+  `c1c789f1ceb2c56b324bb4b54f26cf10d83380d5bcb9629b20b6f54ec4470dd3`.
+- Instance qualification version: `codex-instance-schema-qualification/v1`.
+- Only canonical task-input and durable receiver-receipt hashes are accepted as
+  typed instance parameters; all R5 structural/result strictness remains fixed.
+- Same policy/different lineage produces the same policy ID but different
+  schema hashes and qualification IDs.
+- Historical/cross-instance schema reuse, drift, incomplete binding, and wrong
+  binary/CLI/policy/lineage qualification fail before process capability.
+- R6B 26 + 3 subtests; adapter 92; schema 26; process 4; result 16 + 6
+  subtests; R12C 9; R12B 38 + 25 subtests; R12A 50 + 15 subtests.
+- Authority/start subset 575 + 20 subtests; complete Hermes Core 1,282 + 81
+  subtests, zero failures.
+- Live starts/model invocations/real R6 identities: `0 / 0 / 0`. Push: no.
+
+Completion record:
+`.hermes/handoffs/ea4d4f/EA-4D.4F-R12E-R6B-INSTANCE-BOUND-SCHEMA-QUALIFICATION-COMPLETE.md`
+
+Next boundary: a fresh R12E-R6 live authorization bound to the committed R6B
+HEAD, structural policy ID, successor binary/CLI identities, and instance
+qualification version. It must create durable R6 identities before deriving
+and freezing the instance schema, and remains unauthorized by R6B.
+
 Authority boundary:
 
 - R11 design: UNCHANGED / FROZEN.
