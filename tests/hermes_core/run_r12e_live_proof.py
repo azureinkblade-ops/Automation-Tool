@@ -21,6 +21,7 @@ from tools.hermes_core.codex_adapter import (
     CodexReceiverAdapter,
     CodexReplayConflictError,
     default_trusted_config,
+    qualify_codex_result_schema_file,
 )
 from tools.hermes_core.codex_live_process import CodexLiveProcess
 from tools.hermes_core.delegated_task import (
@@ -138,12 +139,14 @@ def _source_hashes() -> dict[str, str]:
 
 def _trusted_config():
     base = default_trusted_config()
+    schema = qualify_codex_result_schema_file(SCHEMA_FILE)
     return replace(
         base,
         output_schema_file=str(SCHEMA_FILE),
         spool_directory=str(SPOOL),
         registry_path=str(TRANSPORT_DB),
         timeout_seconds=120,
+        expected_schema_sha256=schema.schema_sha256,
     )
 
 
@@ -157,28 +160,37 @@ def _schema(task_input_hash: str, receipt_hash: str) -> dict:
             "evidence_manifest", "error_code", "error_summary",
         ],
         "properties": {
-            "schema_version": {"const": "1"},
-            "outcome": {"const": "SUCCEEDED"},
+            "schema_version": {"type": "string", "const": "1"},
+            "outcome": {"type": "string", "const": "SUCCEEDED"},
             "result_payload": {
                 "type": "object", "additionalProperties": False,
                 "required": ["qualification_statement", "task_input_hash"],
                 "properties": {
                     "qualification_statement": {
+                        "type": "string",
                         "const": "EA-4D.4F R12E governed delegation proof complete."
                     },
-                    "task_input_hash": {"const": task_input_hash},
+                    "task_input_hash": {"type": "string", "const": task_input_hash},
                 },
             },
-            "output_manifest": {"type": "array", "maxItems": 0},
+            "output_manifest": {
+                "type": "array", "maxItems": 0,
+                "items": {
+                    "type": "object", "additionalProperties": False,
+                    "required": [], "properties": {},
+                },
+            },
             "evidence_manifest": {
                 "type": "array", "minItems": 1, "maxItems": 1,
                 "items": {
                     "type": "object", "additionalProperties": False,
                     "required": ["ordinal", "evidence_type", "sha256"],
                     "properties": {
-                        "ordinal": {"const": 0},
-                        "evidence_type": {"const": "receiver_acceptance_sha256"},
-                        "sha256": {"const": receipt_hash},
+                        "ordinal": {"type": "integer", "const": 0},
+                        "evidence_type": {
+                            "type": "string", "const": "receiver_acceptance_sha256"
+                        },
+                        "sha256": {"type": "string", "const": receipt_hash},
                     },
                 },
             },
@@ -278,6 +290,8 @@ def _resume_preflight() -> dict:
         "result_schema_id": RESULT_SCHEMA_ID,
         "schema_file": str(SCHEMA_FILE),
         "schema_sha256": _file_hash(SCHEMA_FILE),
+        "schema_contract_sha256": adapter.qualify_schema_contract().schema_sha256,
+        "schema_qualification_id": adapter.qualify_schema_contract().qualification_id,
         "stdin_file": str(STDIN_FILE),
         "stdin_sha256": sha256_payload(stdin_payload),
         "live_invocations_authorized": 1,
@@ -396,7 +410,6 @@ def prepare() -> dict:
         claim_expires_at=DEADLINE,
     )
 
-    config = _trusted_config()
     runtime_run_id = "codex-run-" + hashlib.sha256(
         launch.idempotency_key.encode("utf-8")
     ).hexdigest()[:32]
@@ -428,6 +441,7 @@ def prepare() -> dict:
     _write_json(STDIN_FILE, stdin_payload)
     stdin_data = canonical_json(stdin_payload)
 
+    config = _trusted_config()
     adapter = CodexReceiverAdapter(config=config)
     record, argv, replayed = adapter.prepare_invocation(
         idempotency_key=launch.idempotency_key,
@@ -471,6 +485,8 @@ def prepare() -> dict:
         "result_schema_id": RESULT_SCHEMA_ID,
         "schema_file": str(SCHEMA_FILE),
         "schema_sha256": _file_hash(SCHEMA_FILE),
+        "schema_contract_sha256": adapter.qualify_schema_contract().schema_sha256,
+        "schema_qualification_id": adapter.qualify_schema_contract().qualification_id,
         "stdin_file": str(STDIN_FILE),
         "stdin_sha256": sha256_payload(stdin_payload),
         "live_invocations_authorized": 1,
@@ -528,6 +544,11 @@ def execute(expected_preflight_hash: str) -> dict:
         raise RuntimeError("frozen R11 changed after preflight")
     if _file_hash(SCHEMA_FILE) != packet["schema_sha256"]:
         raise RuntimeError("trusted result schema changed after preflight")
+    schema = CodexReceiverAdapter(config=_trusted_config()).qualify_schema_contract()
+    if schema.schema_sha256 != packet["schema_contract_sha256"]:
+        raise RuntimeError("qualified result schema changed after preflight")
+    if schema.qualification_id != packet["schema_qualification_id"]:
+        raise RuntimeError("result schema qualification identity changed after preflight")
     if _source_hashes() != packet["source_sha256"]:
         raise RuntimeError("R12E source changed after preflight")
     stdin_payload = json.loads(STDIN_FILE.read_text(encoding="utf-8"))

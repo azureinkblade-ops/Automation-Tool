@@ -363,6 +363,29 @@ Terminal evidence:
 Next boundary: a separately authorized non-live schema-contract remediation.
 Any later live proof requires entirely new identities and a new explicit budget.
 
+## 2026-08-29 R12E-R5 schema-contract remediation - PASS / NOT YET COMMITTED
+
+- Exact R12E-R4 failed schema recovered; file SHA-256 remains `51548a83...`.
+- Root cause confirmed: seven const-only properties lacked explicit matching types; the first live-reported path was `evidence_manifest.items.properties.evidence_type`.
+- The empty-only `output_manifest` also received an explicit closed `items` schema.
+- Logical result semantics remain unchanged under `hermes.delegation_result/v1`.
+- New local schema policy: `codex-structured-output-schema/v1`.
+- Qualified canonical schema hash: `b2d9872b...`.
+- Schema qualification ID: `7b404540...`.
+- New and `PREPARED` invocations fail closed on missing qualification, invalid schema, hash mismatch, or schema drift before process capability.
+- Already-terminal historical replay remains readable and launches no process.
+- The CLI has no safe schema-only service validation command; `exec --help` validates argv parsing only. No live-service acceptance is claimed by R12E-R5.
+- Focused gates: schema 25; adapter 90; process 4; result 16 + 6 subtests; R12C 9; R12B 38 + 25 subtests; R12A 50 + 15 subtests.
+- Complete Hermes Core: 1,253 passed + 78 subtests, zero failures.
+- R12E-R5 live starts/model invocations: 0 / 0.
+- Original R12E and R12E-R4 evidence hashes remain unchanged.
+
+Completion record:
+`.hermes/handoffs/ea4d4f/EA-4D.4F-R12E-R5-SCHEMA-CONTRACT-REMEDIATION-COMPLETE.md`
+
+Next proposed gate: `EA-4D.4F-R12E-R6 ONE-SHOT LIVE REQUALIFICATION`, requiring
+new identities and a separate one-shot budget. It is not authorized by R12E-R5.
+
 Authority boundary:
 
 - R11 design: UNCHANGED / FROZEN.

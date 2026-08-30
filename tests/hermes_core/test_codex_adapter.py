@@ -32,6 +32,7 @@ from tools.hermes_core.codex_adapter import (
     codex_cli_contract_id,
     default_trusted_config,
     parse_codex_jsonl,
+    qualify_codex_result_schema_material,
     resolve_pinned_binary,
     validate_final_output,
     verify_process_result,
@@ -95,12 +96,19 @@ class AdapterFixture(unittest.TestCase):
         executable = root / "Codex Bin" / "codex.exe"
         executable.parent.mkdir(); executable.write_bytes(b"qualified fake codex bytes")
         (root / "work").mkdir(); (root / "runtime").mkdir()
+        schema = {
+            "type": "object", "additionalProperties": False,
+            "required": ["value"],
+            "properties": {"value": {"type": "string"}},
+        }
+        schema_file = root / "runtime" / "result schema.json"
+        schema_file.write_text(json.dumps(schema), encoding="utf-8")
         self.config = CodexTrustedConfig(
             executable_path=str(executable),
             expected_sha256=__import__("hashlib").sha256(executable.read_bytes()).hexdigest(),
             expected_version=PINNED_CODEX_VERSION,
             fixture_root=str(root), working_directory=str(root / "work"),
-            output_schema_file=str(root / "runtime" / "result schema.json"),
+            output_schema_file=str(schema_file),
             spool_directory=str(root / "runtime" / "spool files"),
             registry_path=str(root / "runtime" / "transport.sqlite3"),
             environment=(("CODEX_HOME", str(root / "codex-home")), ("SYSTEMROOT", r"C:\Windows")),
@@ -108,6 +116,7 @@ class AdapterFixture(unittest.TestCase):
                 __import__("hashlib").sha256(executable.read_bytes()).hexdigest(),
                 PINNED_CODEX_VERSION,
             )),
+            expected_schema_sha256=qualify_codex_result_schema_material(schema).schema_sha256,
         )
         self.probes = self.parser_probes = 0
     def tearDown(self): self.tmp.cleanup()

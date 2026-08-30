@@ -20,6 +20,7 @@ PINNED_CODEX_SHA256 = "34e9cfe7d5bbcec306fe6ab3fd502a713a7a1f0fb644c11ad2990fc80
 PINNED_CODEX_VERSION = "codex-cli 0.150.0-alpha.12.2"
 PINNED_ADAPTER_VERSION = "1.1"
 PINNED_CLI_CONTRACT_ID = "21f341c1ac959ee3a7c7ce929baf492183bd0d07e7443c0e76e4f22f0196bc02"
+SCHEMA_QUALIFICATION_POLICY = "codex-structured-output-schema/v1"
 REGISTRY_SCHEMA_VERSION = 1
 MIN_TIMEOUT_SECONDS, DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS = 5, 60, 300
 MAX_STDIN_BYTES, MAX_STDOUT_BYTES = 256 * 1024, 1024 * 1024
@@ -52,6 +53,7 @@ class CodexJsonlParseError(CodexAdapterError): pass
 class CodexStartStateUnknownError(CodexAdapterError): pass
 class CodexReplayConflictError(CodexAdapterError): pass
 class CodexExecutionNotAuthorizedError(CodexAdapterError): pass
+class CodexSchemaQualificationError(CodexAdapterError): pass
 
 
 def _hash_bytes(value: bytes) -> str:
@@ -64,6 +66,97 @@ def _hash_text(value: str) -> str:
 
 def _canonical(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _json_type_matches(value: Any, expected: str) -> bool:
+    if expected == "null": return value is None
+    if expected == "boolean": return isinstance(value, bool)
+    if expected == "integer": return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "number": return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected == "string": return isinstance(value, str)
+    if expected == "array": return isinstance(value, list)
+    if expected == "object": return isinstance(value, dict)
+    return False
+
+
+def _audit_schema_node(node: Any, *, path: str) -> None:
+    if not isinstance(node, dict):
+        raise CodexSchemaQualificationError(f"{path} must be a schema object")
+    allowed = {
+        "$schema", "type", "additionalProperties", "properties", "required",
+        "const", "enum", "items", "minItems", "maxItems",
+    }
+    unsupported = sorted(set(node) - allowed)
+    if unsupported:
+        raise CodexSchemaQualificationError(f"{path} uses unsupported keywords: {unsupported}")
+    schema_type = node.get("type")
+    supported_types = {"object", "array", "string", "integer", "number", "boolean", "null"}
+    if schema_type not in supported_types:
+        raise CodexSchemaQualificationError(f"{path} requires one explicit supported type")
+    if "const" in node and not _json_type_matches(node["const"], schema_type):
+        raise CodexSchemaQualificationError(f"{path}.const does not match explicit type {schema_type}")
+    if "enum" in node:
+        enum = node["enum"]
+        if not isinstance(enum, list) or not enum:
+            raise CodexSchemaQualificationError(f"{path}.enum must be a non-empty array")
+        if any(not _json_type_matches(value, schema_type) for value in enum):
+            raise CodexSchemaQualificationError(f"{path}.enum contains a value of the wrong type")
+    if schema_type == "object":
+        properties = node.get("properties")
+        required = node.get("required")
+        if not isinstance(properties, dict):
+            raise CodexSchemaQualificationError(f"{path}.properties must be an object")
+        if node.get("additionalProperties") is not False:
+            raise CodexSchemaQualificationError(f"{path}.additionalProperties must be false")
+        if not isinstance(required, list) or len(required) != len(set(required)):
+            raise CodexSchemaQualificationError(f"{path}.required must be a unique array")
+        if set(required) != set(properties):
+            raise CodexSchemaQualificationError(f"{path}.required must contain every property exactly")
+        for name, child in properties.items():
+            if not isinstance(name, str) or not name:
+                raise CodexSchemaQualificationError(f"{path}.properties has an invalid name")
+            _audit_schema_node(child, path=f"{path}.properties.{name}")
+    elif schema_type == "array":
+        if "items" not in node:
+            raise CodexSchemaQualificationError(f"{path}.items is required")
+        for key in ("minItems", "maxItems"):
+            if key in node and (not isinstance(node[key], int) or isinstance(node[key], bool) or node[key] < 0):
+                raise CodexSchemaQualificationError(f"{path}.{key} must be a non-negative integer")
+        if node.get("minItems", 0) > node.get("maxItems", float("inf")):
+            raise CodexSchemaQualificationError(f"{path} has inconsistent array bounds")
+        _audit_schema_node(node["items"], path=f"{path}.items")
+    else:
+        forbidden = {"properties", "required", "additionalProperties", "items", "minItems", "maxItems"}
+        present = sorted(forbidden & set(node))
+        if present:
+            raise CodexSchemaQualificationError(f"{path} has type-incompatible keywords: {present}")
+
+
+@dataclass(frozen=True)
+class CodexSchemaQualification:
+    schema_sha256: str
+    qualification_id: str
+    policy: str
+
+
+def qualify_codex_result_schema_material(schema: Any) -> CodexSchemaQualification:
+    _audit_schema_node(schema, path="$")
+    schema_sha256 = _hash_text(_canonical(schema))
+    material = {"policy": SCHEMA_QUALIFICATION_POLICY, "schema_sha256": schema_sha256}
+    return CodexSchemaQualification(
+        schema_sha256=schema_sha256,
+        qualification_id=_hash_text(_canonical(material)),
+        policy=SCHEMA_QUALIFICATION_POLICY,
+    )
+
+
+def qualify_codex_result_schema_file(path: str | Path) -> CodexSchemaQualification:
+    candidate = Path(path)
+    try:
+        schema = json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise CodexSchemaQualificationError(f"cannot load trusted result schema: {exc}") from exc
+    return qualify_codex_result_schema_material(schema)
 
 
 def _within(path: str | Path, root: str | Path) -> Path:
@@ -88,6 +181,7 @@ class CodexTrustedConfig:
     environment: tuple[tuple[str, str], ...]
     expected_cli_contract_id: str
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
+    expected_schema_sha256: Optional[str] = None
 
     def validate(self) -> None:
         if not Path(self.executable_path).is_absolute():
@@ -102,6 +196,11 @@ class CodexTrustedConfig:
             raise ArgvConstructionError("CLI contract ID must have 64 characters")
         try: int(self.expected_cli_contract_id, 16)
         except ValueError as exc: raise ArgvConstructionError("CLI contract ID is not hexadecimal") from exc
+        if self.expected_schema_sha256 is not None:
+            if len(self.expected_schema_sha256) != 64:
+                raise CodexSchemaQualificationError("schema SHA-256 must have 64 characters")
+            try: int(self.expected_schema_sha256, 16)
+            except ValueError as exc: raise CodexSchemaQualificationError("schema SHA-256 is not hexadecimal") from exc
         if not MIN_TIMEOUT_SECONDS <= self.timeout_seconds <= MAX_TIMEOUT_SECONDS:
             raise CodexTimeoutError("timeout is outside the frozen 5..300 second range")
         root = Path(self.fixture_root).resolve(strict=True)
@@ -541,6 +640,15 @@ class CodexReceiverAdapter:
     def timeout_seconds(self): return self.config.timeout_seconds
     def verify_binary(self): return resolve_pinned_binary(self.config, version_probe=self.version_probe)
     def qualify_runtime(self): return qualify_codex_runtime(self.config, version_probe=self.version_probe)
+    def qualify_schema_contract(self):
+        if self.config.expected_schema_sha256 is None:
+            raise CodexSchemaQualificationError("qualified schema SHA-256 is required for invocation eligibility")
+        qualification = qualify_codex_result_schema_file(self.config.output_schema_file)
+        if qualification.schema_sha256 != self.config.expected_schema_sha256:
+            raise CodexSchemaQualificationError(
+                "result schema hash differs from the qualified schema contract"
+            )
+        return qualification
     def build_argv(self, runtime_run_id="codex-run-dry"):
         return build_codex_argv(self.config, self.qualify_runtime(), runtime_run_id=runtime_run_id)
     def parse_jsonl(self, stdout): return parse_codex_jsonl(stdout)
@@ -559,6 +667,11 @@ class CodexReceiverAdapter:
             "cli_contract_id": argv.cli_contract_id, "argv": argv_hash,
             "delegation": delegation_id, "launch": launch_attempt_id,
             "stdin": _hash_text(stdin_data), "timeout": self.timeout_seconds}))
+        existing = self.registry.get(idempotency_key)
+        if existing is None or (
+            existing.start_state == "PREPARED" and existing.terminal_state is None
+        ):
+            self.qualify_schema_contract()
         record, replayed = self.registry.reserve(key=idempotency_key, material_hash=material,
             run_id=run_id, launch_id=launch_attempt_id, delegation_id=delegation_id, argv_hash=argv_hash)
         if (cancelled or revoked) and record.terminal_state is None:
@@ -629,6 +742,10 @@ class CodexReceiverAdapter:
             self.sleep(0.05)
     def qualify_no_live_invocation(self):
         binding = self.qualify_runtime()
+        schema = (
+            self.qualify_schema_contract()
+            if self.config.expected_schema_sha256 is not None else None
+        )
         argv = build_codex_argv(self.config, binding, runtime_run_id="codex-run-dry")
         parser_args = (*argv.args[:-1], "--help")
         output_path = Path(argv.output_file)
@@ -651,6 +768,10 @@ class CodexReceiverAdapter:
             raise ArgvConstructionError("parser qualification produced a task output artifact")
         return {"binary_path": binding.executable, "binary_sha256": binding.binary_sha256,
             "binary_version": binding.binary_version, "cli_contract_id": binding.cli_contract_id,
+            "schema_sha256": None if schema is None else schema.schema_sha256,
+            "schema_qualification_id": None if schema is None else schema.qualification_id,
+            "schema_qualification_policy": None if schema is None else schema.policy,
+            "schema_contract_qualified": schema is not None,
             "metadata_probe_spawned": True, "parser_probe_spawned": True,
             "parser_validation_args": [argv.executable, *parser_args],
             "approval_policy": APPROVAL_POLICY, "sandbox_policy": SANDBOX_POLICY,
