@@ -450,6 +450,26 @@ HEAD, structural policy ID, successor binary/CLI identities, and instance
 qualification version. It must create durable R6 identities before deriving
 and freezing the instance schema, and remains unauthorized by R6B.
 
+## 2026-08-30 R12E-R6 fresh live preflight - HOLD / NOT STARTED
+
+- Repository, ancestry, frozen R11, successor binary, CLI contract, and R6B
+  structural/instance qualification checks passed.
+- The committed live harness still binds `RUNTIME` to the immutable historical
+  `.hermes/runtime/ea4d4f/r12e` evidence directory.
+- That directory contains the original R12E terminal evidence, and `prepare()`
+  correctly refuses to reuse it. Fresh R6 identities cannot be isolated under
+  the committed source without a new runtime namespace.
+- No `prepare` or `execute` call was made. Real R6 identities, process starts,
+  and model invocations remain `0 / 0 / 0`; the R6 budget remains `1`.
+- Focused non-live preflight: 164 tests + 9 subtests, zero failures.
+
+Evidence record:
+`.hermes/handoffs/ea4d4f/EA-4D.4F-R12E-R6-ONE-SHOT-LIVE-REQUALIFICATION-COMPLETE.md`
+
+Next boundary: separately authorized non-live runtime-namespace remediation,
+then commit/requalification and a fresh live authorization. Historical R12E
+runtime/evidence must remain immutable. Live R6 execution is not authorized.
+
 Authority boundary:
 
 - R11 design: UNCHANGED / FROZEN.
