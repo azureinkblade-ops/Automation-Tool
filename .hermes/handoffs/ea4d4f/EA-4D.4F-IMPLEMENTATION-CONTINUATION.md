@@ -695,3 +695,39 @@ Authority boundary:
 - R12E-R7: FAIL / TERMINAL.
 - Kilo / GPU / ComfyUI / Studio Bible / image pipeline: NO.
 - Push: NO.
+
+
+## 2026-08-31 R12E-R8 successor live validation - PASS / LIVE QUALIFIED
+
+EA-4D.4F-R12E-R8: PASS / LIVE QUALIFIED
+
+- R8 authorized definitive starts: 1
+- R8 definitive starts: 1
+- R8 remaining: 0
+- R8 PID: 41172
+- R8 exit code: 0
+- R8 outcome: SUCCEEDED
+- R8 process controller: PASS
+- R8 start store: V3 QUALIFIED
+- R8 binary: VERIFIED
+- R8 CLI contract: VERIFIED
+- R8 model execution: PASS
+- R8 StartResult persistence: PASS
+- R8 durable result return: PASS
+- R8 result delivery: PASS
+- R8 originator ACK: PASS
+- R8 COMPLETED projection: PASS
+- R8 post-live regression: 74 passed
+- R8 evidence: `.hermes/handoffs/ea4d4f/EA-4D.4F-R12E-R8-SUCCESSOR-LIVE-VALIDATION-COMPLETE.md`
+
+Authority boundary:
+
+- R11 design: UNCHANGED / FROZEN.
+- Binary successor: PASS / RE-FROZEN.
+- R12D: COMPLETE / COMMITTED.
+- R12E: FAIL / TERMINAL.
+- R12E-R6F: PASS / COMMITTED.
+- R12E-R7: FAIL / TERMINAL.
+- R12E-R8: PASS / LIVE QUALIFIED.
+- Kilo / GPU / ComfyUI / Studio Bible / image pipeline: NO.
+- Push: NO.
