@@ -591,3 +591,35 @@ Qualification record:
 
 R6D/R6E are eligible for the authorized exact-path clean commit. Fresh R6 live
 execution remains unauthorized.
+
+## 2026-08-31 R12E-R6 fresh live proof - FAIL / TERMINAL
+
+- Source/binary/CLI/R11/namespace/lease/instance-schema prechecks passed at
+  committed HEAD `4d8631fae5b17c3c2a84fea65ff63a8e0d579752`.
+- A fresh 300-second lease was issued for `2026-08-31T14:21:30Z` through
+  `2026-08-31T14:26:30Z`; namespace
+  `proof-adb795668b3266a8d95572cc` and fresh R6 identities were created.
+- Exactly one governed Codex task started as PID `9432`. CLI and live schema
+  acceptance passed; model execution returned exit `0` with a parsed,
+  schema-valid, lineage-valid, evidence-valid, output-scope-valid result.
+- Hermes then failed in post-launch start-result persistence because the fresh
+  schema-version-2 `execution_start_results` table lacks
+  `runtime_binding_id`, although the persistence code requires it.
+- Canonical result, result delivery, originator acknowledgement, COMPLETED
+  projection, and post-result replay were not reached. No second process or
+  retry occurred. R6 accounting is `STARTED=1 / REMAINING=0`.
+- Post-live gates remain green: R6D 24+8; R6C/R6D 43+23; R6B 26+3; adapter 92;
+  R12A/B/C 97+40; authority/start/routing 548; complete Hermes Core 1325+104.
+- Historical original and R4 evidence hashes remain unchanged. Runtime evidence
+  is preserved under the ignored isolated R6 namespace.
+
+Canonical evidence:
+`.hermes/handoffs/ea4d4f/EA-4D.4F-R12E-R6-ONE-SHOT-LIVE-REQUALIFICATION-COMPLETE.md`.
+
+Next boundary: separately authorized non-live start-store schema
+creation/migration remediation. Do not repair and rerun this consumed live
+attempt. A future live proof requires new authority and fresh identities.
+
+`EA-4D.4F-R12E-R6: FAIL / TERMINAL`
+
+`PUSH: NO`
