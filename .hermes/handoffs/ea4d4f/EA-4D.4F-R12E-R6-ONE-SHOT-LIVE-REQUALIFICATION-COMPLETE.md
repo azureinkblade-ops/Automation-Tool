@@ -103,3 +103,48 @@ push is authorized by this record.
 `REMAINING=1`
 
 `LIVE CODEX START=NOT PERFORMED`
+
+## 2026-08-31 Fresh Live Preflight Hold
+
+`EA-4D.4F-R12E-R6: HOLD / NOT STARTED`
+
+The renewed live packet was correctly bound to committed R6C source, but the
+first time-sensitive authority check failed before namespace reservation.
+
+- Preflight UTC: `2026-08-31T13:11:30.5693520Z`
+- Committed harness deadline: `2026-08-30T23:59:59Z`
+- Lease state: expired
+- Required packet state: `LEASE_EXPIRED=NO`
+- Governing HEAD: `e00780bb16ee13f3bad18501b9cc29d96f8b5f16`
+- Parent: `627d297f9da3399df3facf562fce6a42952f66a5`
+- Frozen R11 SHA-256:
+  `79b1f2bb37655290dbddb231bb5631c0c5619f716a204ad5cb2f195372112a70`
+- Tracked modifications/staged paths: `0 / 0`
+- Unrelated untracked paths: `139`, preserved
+
+The isolated R6 namespace
+`.hermes/runtime/ea4d4f/proof-adb795668b3266a8d95572cc` was not created.
+No owner manifest, delegation, lease, mailbox message, receipt, authorization,
+claim, execution attempt, launch attempt, invocation, instance schema, or
+transport state was created. No binary auto-requalification or live process
+qualification was attempted after the expired-lease gate failed.
+
+Live accounting remains:
+
+- Authorized definitive starts: `1`
+- Definitive starts: `0`
+- Remaining: `1`
+- PID: none
+- Codex task process starts: `0`
+- Model invocations: `0`
+
+Required next boundary: separately authorized non-live time-window remediation
+that replaces the expired fixed deadline with a fresh, deterministic,
+governance-bound validity window without weakening lease-expiry enforcement.
+That repair must be committed and requalified before a new live authorization.
+
+`RUNTIME_NAMESPACE_CREATED=NO`
+
+`R6_IDENTITIES_CREATED=0`
+
+`LIVE_BUDGET_CONSUMED=NO`

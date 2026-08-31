@@ -497,6 +497,23 @@ Next boundary: fresh R12E-R6 live authorization bound to the committed R6C
 HEAD, namespace contract, binary/CLI identities, and R6B schema contracts. It
 is not authorized by R6C.
 
+## 2026-08-31 R12E-R6 fresh live preflight - HOLD / NOT STARTED
+
+- Repository, ancestry, frozen R11, R6C namespace identity, and clean-state
+  checks passed at committed HEAD `e00780bb16ee13f3bad18501b9cc29d96f8b5f16`.
+- Current UTC was `2026-08-31T13:11:30.5693520Z`; the committed harness deadline
+  remained `2026-08-30T23:59:59Z`.
+- The required `LEASE_EXPIRED=NO` gate therefore failed before namespace
+  reservation or identity creation.
+- Fresh namespace/owner manifest, real R6 identities, process starts, and model
+  invocations remain `0 / 0 / 0 / 0`; live budget remains `1`.
+- No deadline patch, binary requalification, source change, or live retry was
+  attempted under the live packet.
+
+The canonical R6 live evidence record was appended without removing the prior
+runtime-collision HOLD. Next boundary: separately authorized non-live
+time-window remediation, commit/requalification, then a new live authorization.
+
 Authority boundary:
 
 - R11 design: UNCHANGED / FROZEN.
