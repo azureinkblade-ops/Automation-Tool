@@ -756,3 +756,15 @@ EA-4D.4F: CLOSED / QUALIFICATION COMPLETE
 - PUSH: NO
 
 Closure record: `.hermes/handoffs/ea4d4f/EA-4D.4F-AGENT-INTEGRATION-CLOSURE-REVIEW-COMPLETE.md`
+
+
+## 2026-08-31 EA-4E multi-receiver agent integration design - COMPLETE / FROZEN
+
+EA-4E: DESIGN COMPLETE / FROZEN
+
+- Design: `.hermes/handoffs/ea4e/EA-4E-MULTI-RECEIVER-AGENT-INTEGRATION-DESIGN.md`
+- Receivers: `codex-cli-agent` (frozen), `opencode-cli-agent` (new), `kilo-cli-agent` (new)
+- Static receiver binding from trusted config
+- Receiver capability != Hermes authority
+- Implementation: NOT AUTHORIZED
+- Production activation: NOT AUTHORIZED
