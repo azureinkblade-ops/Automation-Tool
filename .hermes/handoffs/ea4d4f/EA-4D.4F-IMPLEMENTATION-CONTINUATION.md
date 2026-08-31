@@ -629,7 +629,7 @@ attempt. A future live proof requires new authority and fresh identities.
 
 EA-4D.4F-R12E-R6F: PASS / COMMITTED
 
-- R6F commit SHA: `<pending>`
+- R6F commit SHA: `8c84b700b343952d799ea71047622753c5d176a1`
 - R6F parent SHA: `f712266bf4c81a09f9fd01df9f8985a4edfb2d32`
 - Frozen R11 design SHA: `79b1f2bb37655290dbddb231bb5631c0c5619f716a204ad5cb2f195372112a70`
 
@@ -664,5 +664,34 @@ Authority boundary:
 - R12D: COMPLETE / COMMITTED.
 - R12E: FAIL / TERMINAL.
 - R12E-R6F: PASS / COMMITTED.
+- Kilo / GPU / ComfyUI / Studio Bible / image pipeline: NO.
+- Push: NO.
+
+
+## 2026-08-31 R12E-R7 successor live validation - FAIL / TERMINAL
+
+EA-4D.4F-R12E-R7: FAIL / TERMINAL
+
+- R7 authorized definitive starts: 1
+- R7 definitive starts: 1
+- R7 remaining: 0
+- R7 PID: 44124
+- R7 exit code: 1
+- R7 failure: CODEX USAGE LIMIT (INFRASTRUCTURE)
+- R7 process controller: PASS
+- R7 start store: V3 QUALIFIED
+- R7 binary: VERIFIED
+- R7 CLI contract: VERIFIED
+- R7 post-live regression: 74 passed
+- R7 evidence: `.hermes/handoffs/ea4d4f/EA-4D.4F-R12E-R7-SUCCESSOR-LIVE-VALIDATION-COMPLETE.md`
+
+Authority boundary:
+
+- R11 design: UNCHANGED / FROZEN.
+- Binary successor: PASS / RE-FROZEN.
+- R12D: COMPLETE / COMMITTED.
+- R12E: FAIL / TERMINAL.
+- R12E-R6F: PASS / COMMITTED.
+- R12E-R7: FAIL / TERMINAL.
 - Kilo / GPU / ComfyUI / Studio Bible / image pipeline: NO.
 - Push: NO.
