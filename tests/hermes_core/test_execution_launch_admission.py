@@ -151,18 +151,47 @@ def _build_canonical_chain(
     input_hash="0" * 64,
     worker_id=None,
     worker_registry=None,
+    issued_at=None,
 ):
     """Build and immediately verify_hash() the canonical chain in dependency
     order. Authorization provenance is kept separate from routing provenance.
 
     ``deadline`` (ISO-8601 UTC) controls claim_expires_at / attempt.must_start_by
     / route.must_start_by. Defaults to now + 1 day (valid for admission).
+    ``issued_at`` optionally anchors the chain's event times for live-proof
+    preparation; omitted callers retain the historical fixture timestamps.
     """
     if deadline is None:
         deadline = _iso(
             datetime.datetime.now(datetime.timezone.utc)
             + datetime.timedelta(days=1)
         )
+    if issued_at is None:
+        request_time = authorization_time = "2024-01-01T00:00:00Z"
+        claim_time = "2024-01-01T00:01:00Z"
+        attempt_time = "2024-01-01T00:02:00Z"
+        route_time = "2024-01-01T00:04:00Z"
+    else:
+        if not isinstance(issued_at, str) or not issued_at.endswith("Z"):
+            raise ValueError("issued_at must be canonical UTC")
+        try:
+            anchor = datetime.datetime.fromisoformat(issued_at[:-1] + "+00:00")
+        except ValueError as exc:
+            raise ValueError("issued_at must be canonical UTC") from exc
+        if anchor.microsecond or anchor.utcoffset() != datetime.timedelta(0):
+            raise ValueError("issued_at must use whole-second canonical UTC")
+
+        def event_time(offset_seconds):
+            return (anchor + datetime.timedelta(seconds=offset_seconds)).isoformat(
+                timespec="seconds"
+            ).replace("+00:00", "Z")
+
+        if event_time(0) != issued_at:
+            raise ValueError("issued_at must use whole-second canonical UTC")
+        request_time = authorization_time = event_time(0)
+        claim_time = event_time(1)
+        attempt_time = event_time(2)
+        route_time = event_time(3)
     auth_actor = ExecutionAuthorizationActor(
         actor_id=f"authority-{seed}",
         actor_type=ExecutionAuthorizationActorType.SYSTEM,
@@ -188,7 +217,7 @@ def _build_canonical_chain(
         requested_scope=scope,
         requesting_actor=auth_actor,
         authorization_policy=auth_policy,
-        requested_at="2024-01-01T00:00:00Z",
+        requested_at=request_time,
         request_reason=f"request-{seed}",
     )
     assert request.verify_hash()
@@ -217,7 +246,7 @@ def _build_canonical_chain(
         authorized_scope=scope,
         authorization_reason=f"authorize-{seed}",
         authorization_policy=auth_policy,
-        issued_at="2024-01-01T00:00:00Z",
+        issued_at=authorization_time,
         expires_at=deadline,
         nonce=f"nonce-{seed}",
     )
@@ -249,7 +278,7 @@ def _build_canonical_chain(
         claimant=ExecutionClaimant(
             claimant_id=f"claimant-{seed}", claimant_type="system",
         ),
-        claimed_at="2024-01-01T00:01:00Z",
+        claimed_at=claim_time,
         claim_expires_at=deadline,
         authorization_policy=auth_policy,
         claim_reason=f"claim-{seed}",
@@ -271,8 +300,8 @@ def _build_canonical_chain(
             actor_id=f"attempt-{seed}", actor_type="policy-service",
             actor_context=None,
         ),
-        attempt_requested_at="2024-01-01T00:02:00Z",
-        attempt_recorded_at="2024-01-01T00:02:00Z",
+        attempt_requested_at=attempt_time,
+        attempt_recorded_at=attempt_time,
         claim_expires_at=claim.claim_expires_at,
         must_start_by=claim.claim_expires_at,
         input_hash=scope.input_hash,
@@ -298,7 +327,7 @@ def _build_canonical_chain(
         worker_class=attempt.worker_class,
         registry=worker_registry or _ROUTING_REGISTRY,
         policy=_ROUTING_POLICY,
-        selected_at="2024-01-01T00:04:00Z",
+        selected_at=route_time,
         must_start_by=attempt.must_start_by,
         operation=attempt.operation,
         input_hash=attempt.input_hash,

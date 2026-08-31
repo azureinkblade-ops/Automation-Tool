@@ -533,3 +533,61 @@ Authority boundary:
 - Agent invocation / `EXECUTING` projection / GPU / ComfyUI: NO.
 - Commit: NOT AUTHORIZED.
 - Push: NO.
+
+## 2026-08-31 R12E-R6D deterministic lease-window remediation - PASS / COMMIT HOLD
+
+- Root cause confirmed in `run_r12e_live_proof.py`: a reusable fixed
+  `2026-08-30T23:59:59Z` deadline was hashed through the authorization,
+  delegation, lease, route, attempt, and mailbox material.
+- Added policy `hermes-live-proof-lease-window/v1`, ID
+  `63ab96fe12a3206d7ff7f5281b6c0765c9630e394f7c6b3743bce49409a2bc31`.
+- The policy uses a finite 300-second UTC window, exact-expiry rejection, zero
+  skew, no environment override, and no automatic renewal.
+- A future fresh preparation exclusively writes `lease-window.json` after
+  namespace reservation. Resume/refreeze/execute reload the same timestamps;
+  replay cannot extend authority. Execute rechecks validity immediately before
+  process-controller construction.
+- Historical expired-fixture and fresh fake-attempt regressions pass. R6D
+  focused: 24 + 8 subtests; R6C/R6D: 43 + 23; R6B: 26 + 3; R12A/B/C: 97 + 40;
+  authority/start/routing: 548.
+- Complete Hermes Core: 1,322 passed + 104 subtests, with 3 failures caused only
+  by the separately pinned `6ca77c.../codex.exe` path disappearing after an
+  automatic Codex update. Current `b99306.../codex.exe` has unqualified SHA-256
+  `bfd4c3b...`.
+- R6D did not requalify or invoke the replacement binary. Because the packet
+  requires zero failures before commit, R6D remains uncommitted pending a
+  separately authorized non-live binary requalification and clean rerun.
+- Real R6 namespace/identities, Codex starts, and model invocations remain
+  `0 / 0 / 0 / 0`; live budget remains `1`.
+
+Completion record:
+`.hermes/handoffs/ea4d4f/EA-4D.4F-R12E-R6D-DETERMINISTIC-LEASE-WINDOW-REMEDIATION-COMPLETE.md`
+
+Next boundary: non-live successor binary requalification is required and is
+not authorized by R6D. Fresh R6 live preparation remains unauthorized.
+
+## 2026-08-31 R12E-R6E successor binary requalification - PASS / READY FOR COMMIT
+
+- The missing R6A `alpha.7.1` executable remains historical and was not
+  rebound or rewritten.
+- Qualified replacement: `b99306303521e97e/codex.exe`, `codex-cli
+  0.151.0-alpha.7.2`, 313790256 bytes, SHA-256 `bfd4c3b971477a559eadaeae8b1e41382ccb7656bd0104970cf5c6c581f2da7d`.
+- Replacement CLI contract ID:
+  `98cc8fd6a6ffc1bb0bb4a675d5988cc8f4c31960ada4357003980b5d8befec5b`.
+- Version/help and complete ordered parser-only qualification passed with no
+  task output, model call, or agent task start. All dangerous approval/sandbox,
+  config, unknown-binary, and drift cases remain fail-closed.
+- The original three binary-pin failures now pass 3/3; adapter 92; R6D 24 + 8;
+  R6C/R6D 43 + 23; R6B 26 + 3; R12A/B/C 97 + 40;
+  authority/start/routing 548; complete Hermes Core 1,325 + 104, zero failures.
+- Post-suite path/version/SHA/CLI identity recheck passed without drift.
+- R6D policy ID remains `63ab96fe12a3206d7ff7f5281b6c0765c9630e394f7c6b3743bce49409a2bc31`;
+  TTL remains 300 seconds.
+- Real R6 namespace/identities, task/model starts remain `0 / 0 / 0 / 0`;
+  live budget remains `1`.
+
+Qualification record:
+`.hermes/handoffs/ea4d4f/EA-4D.4F-R12E-R6E-CODEX-BINARY-REQUALIFICATION.md`
+
+R6D/R6E are eligible for the authorized exact-path clean commit. Fresh R6 live
+execution remains unauthorized.

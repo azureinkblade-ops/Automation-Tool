@@ -16,6 +16,9 @@ from tools.hermes_core.codex_adapter import (
     PINNED_CODEX_SHA256,
     PINNED_CODEX_VERSION,
     PINNED_CLI_CONTRACT_ID,
+    EARLIER_QUALIFIED_CODEX_SHA256,
+    EARLIER_QUALIFIED_CODEX_VERSION,
+    EARLIER_QUALIFIED_CLI_CONTRACT_ID,
     PREVIOUS_QUALIFIED_CODEX_SHA256,
     PREVIOUS_QUALIFIED_CODEX_VERSION,
     PREVIOUS_QUALIFIED_CLI_CONTRACT_ID,
@@ -154,7 +157,7 @@ class BinaryTests(AdapterFixture):
         self.assertEqual(identity.executable, str(Path(PINNED_CODEX_PATH).resolve()))
         self.assertEqual(identity.sha256, PINNED_CODEX_SHA256)
         self.assertEqual(identity.version, PINNED_CODEX_VERSION)
-        self.assertEqual(identity.size_bytes, 313923888)
+        self.assertEqual(identity.size_bytes, 313790256)
     def test_actual_bytes_are_hashed(self):
         identity = resolve_pinned_binary(self.config, version_probe=self.probe)
         self.assertEqual(identity.sha256, self.config.expected_sha256)
@@ -282,6 +285,15 @@ class CliContractTests(AdapterFixture):
             PREVIOUS_QUALIFIED_CLI_CONTRACT_ID,
         )
         self.assertNotEqual(PINNED_CLI_CONTRACT_ID, PREVIOUS_QUALIFIED_CLI_CONTRACT_ID)
+        earlier = codex_cli_contract(
+            EARLIER_QUALIFIED_CODEX_SHA256,
+            EARLIER_QUALIFIED_CODEX_VERSION,
+        )
+        self.assertEqual(
+            codex_cli_contract_id(earlier),
+            EARLIER_QUALIFIED_CLI_CONTRACT_ID,
+        )
+        self.assertNotEqual(PINNED_CLI_CONTRACT_ID, EARLIER_QUALIFIED_CLI_CONTRACT_ID)
     def test_same_material_has_same_contract_id(self):
         self.assertEqual(codex_cli_contract_id(self.contract()), codex_cli_contract_id(self.contract()))
     def test_global_option_order_changes_contract_id(self):

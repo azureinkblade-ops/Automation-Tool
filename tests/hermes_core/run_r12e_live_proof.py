@@ -60,6 +60,17 @@ from tools.hermes_core.sqlite_execution_authorization_store import (
 )
 from tools.hermes_core.sqlite_execution_start_store import SQLiteExecutionStartStore
 from tools.hermes_core.hashing import canonical_json, sha256_payload
+from tools.hermes_core.lease_window import (
+    EXPIRY_SEMANTICS,
+    LEASE_WINDOW_POLICY_VERSION,
+    QUALIFIED_LEASE_WINDOW_POLICY,
+    QUALIFIED_LEASE_WINDOW_POLICY_ID,
+    LeaseWindowReservation,
+    issue_or_load_attempt_lease_window,
+    lease_event_time,
+    load_attempt_lease_window,
+    require_lease_valid,
+)
 from tools.hermes_core.runtime_namespace import (
     RUNTIME_NAMESPACE_CONTRACT_VERSION,
     RuntimeNamespaceOwner,
@@ -95,15 +106,17 @@ R11_FILE = ROOT / ".hermes" / "handoffs" / "ea4d4f" / "EA-4D.4F-R11-AGENT-TO-AGE
 RESULT_SCHEMA_ID = "hermes.delegation_result/v1"
 ORIGINATOR = "hermes-primary-agent"
 RECEIVER = "codex-cli-agent"
-DEADLINE = "2026-08-30T23:59:59Z"
+LEASE_POLICY = QUALIFIED_LEASE_WINDOW_POLICY
 SOURCE_FILES = (
     ROOT / "tools" / "hermes_core" / "codex_adapter.py",
     ROOT / "tools" / "hermes_core" / "codex_result_schema.py",
     ROOT / "tools" / "hermes_core" / "runtime_namespace.py",
+    ROOT / "tools" / "hermes_core" / "lease_window.py",
     ROOT / "tools" / "hermes_core" / "codex_live_process.py",
     ROOT / "tools" / "hermes_core" / "delegation_result.py",
     ROOT / "tools" / "hermes_core" / "sqlite_delegation_result_store.py",
     ROOT / "tests" / "hermes_core" / "run_r12e_live_proof.py",
+    ROOT / "tests" / "hermes_core" / "test_execution_launch_admission.py",
 )
 
 
@@ -151,6 +164,28 @@ def _source_hashes() -> dict[str, str]:
         path.relative_to(ROOT).as_posix(): _file_hash(path)
         for path in SOURCE_FILES
     }
+
+
+def _lease_packet_fields(reservation: LeaseWindowReservation) -> dict:
+    window = reservation.window
+    return {
+        "lease_window_policy_version": LEASE_WINDOW_POLICY_VERSION,
+        "lease_window_policy_id": QUALIFIED_LEASE_WINDOW_POLICY_ID,
+        "lease_window_ttl_seconds": LEASE_POLICY.ttl_seconds,
+        "lease_window_expiry_semantics": EXPIRY_SEMANTICS,
+        "lease_window_issued_at": window.issued_at,
+        "lease_window_expires_at": window.expires_at,
+        "lease_window_artifact_hash": window.artifact_hash,
+        "lease_window_manifest_sha256": _file_hash(reservation.manifest_path),
+        "lease_window_auto_renewal": False,
+        "lease_window_clock_skew_seconds": 0,
+    }
+
+
+def _require_packet_lease(packet: dict, reservation: LeaseWindowReservation) -> None:
+    expected = _lease_packet_fields(reservation)
+    if any(packet.get(key) != value for key, value in expected.items()):
+        raise RuntimeError("attempt lease window changed after preflight")
 
 
 def _trusted_config(task_input_hash: str, receipt_hash: str):
@@ -201,7 +236,10 @@ def _stdin(envelope, lease, receipt) -> dict:
     }
 
 
-def _resume_preflight() -> dict:
+def _resume_preflight(
+    namespace,
+    lease_window: LeaseWindowReservation,
+) -> dict:
     """Finish a non-live preparation interrupted after durable PREPARED state."""
     required = (AUTHORITY_DB, START_DB, TRANSPORT_DB, SCHEMA_FILE, STDIN_FILE)
     if not all(path.exists() for path in required) or PREFLIGHT_FILE.exists():
@@ -249,6 +287,12 @@ def _resume_preflight() -> dict:
         "artifact_version": "1",
         "prepared_at": _now(),
         "repository_head": _git_head(),
+        "runtime_namespace_contract": RUNTIME_NAMESPACE_CONTRACT_VERSION,
+        "runtime_namespace_owner": RUNTIME_OWNER.proof_identity,
+        "runtime_namespace_owner_hash": namespace.owner_hash,
+        "runtime_namespace_path": str(namespace.path),
+        "runtime_namespace_manifest_sha256": _file_hash(namespace.manifest_path),
+        **_lease_packet_fields(lease_window),
         "source_sha256": _source_hashes(),
         "frozen_r11_sha256": FROZEN_R11_SHA256,
         "delegation_id": envelope.delegation_id,
@@ -305,8 +349,12 @@ def prepare() -> dict:
     )
     if EVIDENCE_FILE.exists():
         raise RuntimeError("R12E evidence already exists; live proof cannot be prepared again")
+    lease_window = issue_or_load_attempt_lease_window(
+        namespace.path, LEASE_POLICY, namespace.owner_hash,
+    )
+    require_lease_valid(lease_window.window)
     if any(path.exists() for path in (AUTHORITY_DB, START_DB, TRANSPORT_DB, PREFLIGHT_FILE)):
-        return _resume_preflight()
+        return _resume_preflight(namespace, lease_window)
     if _file_hash(R11_FILE) != FROZEN_R11_SHA256:
         raise RuntimeError("frozen R11 hash mismatch")
 
@@ -330,13 +378,14 @@ def prepare() -> dict:
         expected_evidence=[{
             "ordinal": 0, "evidence_type": "receiver_acceptance_sha256",
         }],
-        requested_at="2026-08-29T00:00:00Z",
-        expires_at=DEADLINE,
+        requested_at=lease_event_time(lease_window.window, 0),
+        expires_at=lease_window.window.expires_at,
         redelegation_allowed=False,
     )
     chain = _build_canonical_chain(
         seed="ea4d4f-r12e",
-        deadline=DEADLINE,
+        deadline=lease_window.window.expires_at,
+        issued_at=lease_window.window.issued_at,
         operation=envelope.operation,
         worker_class=RECEIVER,
         input_hash=envelope.artifact_hash,
@@ -388,9 +437,9 @@ def prepare() -> dict:
         network_policy="deny", approved_hosts=[], max_runtime_seconds=120,
         expected_result_schema_id=RESULT_SCHEMA_ID,
         expected_evidence=envelope.expected_evidence,
-        issued_at="2026-08-29T00:00:01Z",
-        not_before="2026-08-29T00:00:01Z",
-        expires_at=DEADLINE,
+        issued_at=lease_event_time(lease_window.window, 0),
+        not_before=lease_event_time(lease_window.window, 0),
+        expires_at=lease_window.window.expires_at,
         redelegation_allowed=False,
     )
     delegation = SQLiteDelegationStore(AUTHORITY_DB)
@@ -398,13 +447,13 @@ def prepare() -> dict:
     delegation.issue_lease(lease)
     message = delegation.deliver_delegation(
         lease.lease_id, sender_agent_id="hermes-agent-router",
-        delivered_at="2026-08-29T00:00:02Z",
+        delivered_at=lease_event_time(lease_window.window, 1),
     )
     delegation.claim_message(
         message.message_id, recipient_agent_id=RECEIVER,
         claim_token="r12e-receiver-claim",
-        claimed_at="2026-08-29T00:00:03Z",
-        claim_expires_at=DEADLINE,
+        claimed_at=lease_event_time(lease_window.window, 2),
+        claim_expires_at=lease_window.window.expires_at,
     )
 
     runtime_run_id = "codex-run-" + hashlib.sha256(
@@ -429,8 +478,8 @@ def prepare() -> dict:
         receiver_version=PINNED_CODEX_VERSION,
         runtime_run_id=runtime_run_id,
         outcome="ACCEPTED", reason_code=None, reason_summary=None,
-        received_at="2026-08-29T00:00:04Z",
-        decided_at="2026-08-29T00:00:05Z",
+        received_at=lease_event_time(lease_window.window, 3),
+        decided_at=lease_event_time(lease_window.window, 4),
     )
     delegation.record_receipt(receipt, source_message_id=message.message_id)
     _write_json(SCHEMA_FILE, _schema(envelope.task_input_hash, receipt.artifact_hash))
@@ -460,6 +509,7 @@ def prepare() -> dict:
         "runtime_namespace_owner_hash": namespace.owner_hash,
         "runtime_namespace_path": str(namespace.path),
         "runtime_namespace_manifest_sha256": _file_hash(namespace.manifest_path),
+        **_lease_packet_fields(lease_window),
         "source_sha256": _source_hashes(),
         "frozen_r11_sha256": FROZEN_R11_SHA256,
         "delegation_id": envelope.delegation_id,
@@ -523,6 +573,11 @@ def refreeze() -> dict:
         != _file_hash(namespace.manifest_path)
     ):
         raise RuntimeError("runtime namespace ownership changed after preflight")
+    lease_window = load_attempt_lease_window(
+        namespace.path, LEASE_POLICY, namespace.owner_hash,
+    )
+    _require_packet_lease(packet, lease_window)
+    require_lease_valid(lease_window.window)
     adapter = CodexReceiverAdapter(config=_trusted_config(
         packet["task_input_hash"], packet["receipt_hash"]
     ))
@@ -570,6 +625,10 @@ def execute(expected_preflight_hash: str) -> dict:
         != _file_hash(namespace.manifest_path)
     ):
         raise RuntimeError("runtime namespace ownership changed after preflight")
+    lease_window = load_attempt_lease_window(
+        namespace.path, LEASE_POLICY, namespace.owner_hash,
+    )
+    _require_packet_lease(packet, lease_window)
     if _file_hash(R11_FILE) != packet["frozen_r11_sha256"]:
         raise RuntimeError("frozen R11 changed after preflight")
     if _file_hash(SCHEMA_FILE) != packet["schema_sha256"]:
@@ -620,6 +679,7 @@ def execute(expected_preflight_hash: str) -> dict:
         launch = launch_store.get_launch_attempt(packet["reservation_id"])
         if launch is None or launch.artifact_hash != packet["launch_attempt_hash"]:
             raise RuntimeError("durable launch attempt does not match preflight")
+        require_lease_valid(lease_window.window)
         process = CodexLiveProcess()
         adapter = CodexReceiverAdapter(config=config, process_impl=process)
         outcome = adapter.execute(
@@ -713,7 +773,8 @@ def execute(expected_preflight_hash: str) -> dict:
         originator.claim_message(
             result_message_id, recipient_agent_id=ORIGINATOR,
             claim_token="r12e-originator-result-claim",
-            claimed_at=_now(), claim_expires_at=DEADLINE,
+            claimed_at=_now(),
+            claim_expires_at=lease_window.window.expires_at,
         )
         originator.acknowledge_message(
             result_message_id, recipient_agent_id=ORIGINATOR,
