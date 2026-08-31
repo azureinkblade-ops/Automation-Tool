@@ -26,6 +26,7 @@ from tools.hermes_core.sqlite_execution_start_store import (
     ExecutionStartSchemaError,
     ExecutionStartMigrationError,
     SCHEMA_VERSION_START,
+    SCHEMA_VERSION_LATEST,
     SCHEMA_VERSION_LEGACY,
     V1_LAUNCH_ATTEMPT_COLUMNS,
 )
@@ -167,21 +168,21 @@ def _fresh_v1_dir():
     return tempfile.mkdtemp(prefix="ea4d3b-v1-")
 
 
-class FreshV2CreationTests(unittest.TestCase):
+class FreshCurrentCreationTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="ea4d3b-fresh-")
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def test_fresh_db_is_v2_with_reservation_hash(self):
+    def test_fresh_db_is_current_with_reservation_hash(self):
         store = SQLiteExecutionStartStore(os.path.join(self.tmp, "start.db"))
         try:
             conn = store._conn
             version = conn.execute(
                 "SELECT version FROM start_schema_version LIMIT 1"
             ).fetchone()["version"]
-            self.assertEqual(version, SCHEMA_VERSION_START)
+            self.assertEqual(version, SCHEMA_VERSION_LATEST)
             cols = [
                 r["name"] for r in conn.execute(
                     "PRAGMA table_info(execution_launch_attempts)").fetchall()
@@ -191,7 +192,7 @@ class FreshV2CreationTests(unittest.TestCase):
             store.close()
 
 
-class V1ToV2MigrationTests(unittest.TestCase):
+class V1ToCurrentMigrationTests(unittest.TestCase):
     def setUp(self):
         self.tmp = _fresh_v1_dir()
 
@@ -201,14 +202,14 @@ class V1ToV2MigrationTests(unittest.TestCase):
     def _db_path(self):
         return os.path.join(self.tmp, "start.db")
 
-    def test_empty_v1_migrates_to_v2(self):
+    def test_empty_v1_migrates_to_current(self):
         _seed_v1_db(self._db_path(), with_schema_version=SCHEMA_VERSION_LEGACY)
         store = SQLiteExecutionStartStore(self._db_path())  # triggers migration
         try:
             version = store._conn.execute(
                 "SELECT version FROM start_schema_version LIMIT 1"
             ).fetchone()["version"]
-            self.assertEqual(version, SCHEMA_VERSION_START)
+            self.assertEqual(version, SCHEMA_VERSION_LATEST)
             cols = [
                 r["name"] for r in store._conn.execute(
                     "PRAGMA table_info(execution_launch_attempts)").fetchall()
@@ -217,15 +218,15 @@ class V1ToV2MigrationTests(unittest.TestCase):
         finally:
             store.close()
 
-    def test_migrated_v2_db_reopens(self):
+    def test_migrated_current_db_reopens(self):
         _seed_v1_db(self._db_path(), with_schema_version=SCHEMA_VERSION_LEGACY)
         SQLiteExecutionStartStore(self._db_path()).close()
-        store = SQLiteExecutionStartStore(self._db_path())  # reopen v2
+        store = SQLiteExecutionStartStore(self._db_path())  # reopen current
         try:
             version = store._conn.execute(
                 "SELECT version FROM start_schema_version LIMIT 1"
             ).fetchone()["version"]
-            self.assertEqual(version, SCHEMA_VERSION_START)
+            self.assertEqual(version, SCHEMA_VERSION_LATEST)
         finally:
             store.close()
 
@@ -345,13 +346,13 @@ class V1ToV2MigrationTests(unittest.TestCase):
             SCHEMA_VERSION_LEGACY,
         )
         conn.close()
-        # Reopening without the seam migrates normally to v2.
+        # Reopening without the seam migrates normally to current.
         store2 = SQLiteExecutionStartStore(self._db_path())
         try:
             version = store2._conn.execute(
                 "SELECT version FROM start_schema_version LIMIT 1"
             ).fetchone()["version"]
-            self.assertEqual(version, SCHEMA_VERSION_START)
+            self.assertEqual(version, SCHEMA_VERSION_LATEST)
         finally:
             store2.close()
 
@@ -411,14 +412,14 @@ class V1ToV2MigrationTests(unittest.TestCase):
         _, raised = self._open_migrating_store(fail_after_schema=True)
         self.assertIsNotNone(raised, "seam should have raised")
         self._assert_complete_v1_rollback(self._db_path(), expect_rows=0)
-        # Reopening without injection still migrates cleanly to v2.
+        # Reopening without injection still migrates cleanly to current.
         store = SQLiteExecutionStartStore(self._db_path())
         try:
             self.assertEqual(
                 store._conn.execute(
                     "SELECT version FROM start_schema_version LIMIT 1"
                 ).fetchone()["version"],
-                SCHEMA_VERSION_START,
+                SCHEMA_VERSION_LATEST,
             )
         finally:
             store.close()
@@ -480,7 +481,7 @@ class V1ToV2MigrationTests(unittest.TestCase):
                 store._conn.execute(
                     "SELECT version FROM start_schema_version LIMIT 1"
                 ).fetchone()["version"],
-                SCHEMA_VERSION_START,
+                SCHEMA_VERSION_LATEST,
             )
             got = store._conn.execute(
                 "SELECT reservation_hash FROM execution_launch_attempts "

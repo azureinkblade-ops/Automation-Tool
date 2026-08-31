@@ -75,6 +75,39 @@ V2_RESULT_COLUMNS = (
     "error_code", "error_summary", "canonical_json", "payload_sha256",
 )
 
+V3_RESULT_COLUMNS = V2_RESULT_COLUMNS + (
+    "runtime_binding_id", "runtime_binding_version", "runtime_binding_hash",
+    "idempotency_key", "runtime_evidence_hash",
+)
+
+# PRAGMA table_info contract for the frozen v3 result table. SQLite reports a
+# TEXT PRIMARY KEY with notnull=0 unless NOT NULL was stated separately.
+V3_RESULT_COLUMN_CONTRACT = (
+    ("start_result_id", "TEXT", 0, 1),
+    ("artifact_hash", "TEXT", 1, 0),
+    ("launch_attempt_id", "TEXT", 1, 0),
+    ("launch_attempt_hash", "TEXT", 1, 0),
+    ("reservation_id", "TEXT", 1, 0),
+    ("reservation_hash", "TEXT", 1, 0),
+    ("route_id", "TEXT", 1, 0),
+    ("route_hash", "TEXT", 1, 0),
+    ("task_id", "TEXT", 1, 0),
+    ("worker_id", "TEXT", 1, 0),
+    ("worker_version", "TEXT", 1, 0),
+    ("outcome", "TEXT", 1, 0),
+    ("recorded_at", "TEXT", 1, 0),
+    ("runtime_run_id", "TEXT", 0, 0),
+    ("error_code", "TEXT", 0, 0),
+    ("error_summary", "TEXT", 0, 0),
+    ("canonical_json", "TEXT", 1, 0),
+    ("payload_sha256", "TEXT", 1, 0),
+    ("runtime_binding_id", "TEXT", 1, 0),
+    ("runtime_binding_version", "TEXT", 1, 0),
+    ("runtime_binding_hash", "TEXT", 1, 0),
+    ("idempotency_key", "TEXT", 1, 0),
+    ("runtime_evidence_hash", "TEXT", 1, 0),
+)
+
 # Frozen v3 execution_start_results DDL. Adds the five EA-4D.4A NOT NULL columns
 # (runtime_binding_*, idempotency_key, runtime_evidence_hash) so every persisted
 # v3 result carries the complete frozen lineage/evidence needed to reproduce and
@@ -298,41 +331,162 @@ class SQLiteExecutionStartStore:
         # destructive DROP/RENAME, proving transactional rollback of in-flight
         # DDL inside BEGIN IMMEDIATE.
         self._fail_after_v3_create = False
-        self._initialize()
+        try:
+            self._initialize()
+        except Exception:
+            self._conn.close()
+            raise
 
     # -- schema --------------------------------------------------------------
     def _initialize(self) -> None:
         cur = self._conn
-        cur.execute(
-            "CREATE TABLE IF NOT EXISTS start_schema_version (version INTEGER)"
-        )
-        cur.execute(
-            "INSERT OR IGNORE INTO start_schema_version (version) "
-            "SELECT ? WHERE NOT EXISTS (SELECT 1 FROM start_schema_version)",
-            (SCHEMA_VERSION_START,),
-        )
-        stored = cur.execute(
-            "SELECT version FROM start_schema_version LIMIT 1"
-        ).fetchone()
-        if stored is None:
-            raise ExecutionStartSchemaError(
-                "start schema version row missing after bootstrap")
-        version = int(stored["version"])
-        if version == SCHEMA_VERSION_START:
-            # Fresh-or-already-v2 database: ensure the v2 table set exists.
-            self._ensure_v2_tables(cur)
-            self._conn.commit()
+        tables = {
+            row["name"] for row in cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        }
+        if not tables:
+            try:
+                self._run_atomic(self._bootstrap_latest_schema)
+            except sqlite3.OperationalError:
+                # Another thread already bootstrapped; that's fine
+                pass
+            self._require_current_schema()
             return
-        if version in MIGRATABLE_FROM_SCHEMA_VERSIONS_START:
-            # Legacy v1 database: migrate to v2 atomically. The whole migration
-            # (shape check, ALTER/population/rebuild, version advance) runs in a
-            # single transaction; any injected failure or error rolls back
-            # completely, leaving a recognizable v1 database.
-            self._run_atomic(lambda: self._migrate_v1_to_v2(cur))
+        if "start_schema_version" not in tables:
+            raise ExecutionStartSchemaError(
+                "existing start database has no schema-version table")
+
+        version = self._schema_version()
+        if version == SCHEMA_VERSION_LATEST:
+            self._require_current_schema()
+            return
+        if version == SCHEMA_VERSION_START:
+            self._require_v2_schema()
+            self.migrate_to_v3()
+            return
+        if version == SCHEMA_VERSION_LEGACY:
+            # Preserve the frozen atomic v1->v2 migration, then create any v2
+            # tables absent from a legacy database before advancing to v3.
+            self._run_atomic(lambda: (
+                self._migrate_v1_to_v2(cur), self._ensure_v2_tables(cur)
+            ))
+            self.migrate_to_v3()
             return
         raise ExecutionStartSchemaError(
             f"unsupported start schema version {version}; "
             f"supported: {sorted(SUPPORTED_SCHEMA_VERSIONS_START)}")
+
+    def _bootstrap_latest_schema(self) -> None:
+        cur = self._conn
+        # Singleton-enforced table: only one row allowed via UNIQUE(constant)
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS start_schema_version "
+            "(singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER)"
+        )
+        cur.execute(
+            "INSERT OR IGNORE INTO start_schema_version (singleton, version) VALUES (1, ?)",
+            (SCHEMA_VERSION_START,),
+        )
+        self._ensure_v2_tables(cur)
+        # Idempotent: if another thread already migrated to v3, this is a no-op
+        row = cur.execute("SELECT version FROM start_schema_version WHERE singleton=1").fetchone()
+        if row and int(row["version"]) == SCHEMA_VERSION_START:
+            self._migrate_v2_to_v3()
+
+    def _schema_version(self) -> int:
+        info = self._conn.execute(
+            "PRAGMA table_info(start_schema_version)"
+        ).fetchall()
+        shape = [(row["name"], row["type"].upper(), row["pk"]) for row in info]
+        # Accept both old (version-only) and new (singleton-enforced) shapes
+        if shape == [("singleton", "INTEGER", 1), ("version", "INTEGER", 0)]:
+            rows = self._conn.execute(
+                "SELECT version FROM start_schema_version WHERE singleton=1"
+            ).fetchall()
+        elif shape == [("version", "INTEGER", 0)]:
+            rows = self._conn.execute(
+                "SELECT version FROM start_schema_version"
+            ).fetchall()
+        else:
+            raise ExecutionStartSchemaError(
+                "start_schema_version has an incompatible physical shape")
+        if len(rows) != 1:
+            raise ExecutionStartSchemaError(
+                "start_schema_version must contain exactly one row")
+        return int(rows[0]["version"])
+
+    def _require_current_schema(self) -> None:
+        version = self._schema_version()
+        if version != SCHEMA_VERSION_LATEST:
+            raise ExecutionStartSchemaError(
+                f"start-result persistence requires schema version "
+                f"{SCHEMA_VERSION_LATEST}; got {version}")
+        required_tables = {
+            "execution_start_reservations", "execution_launch_attempts",
+            "execution_start_results", "execution_start_ledger",
+        }
+        tables = {
+            row["name"] for row in self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        missing = sorted(required_tables - tables)
+        if missing:
+            raise ExecutionStartSchemaError(
+                f"current start database is missing required tables: {missing}")
+        info = self._conn.execute(
+            "PRAGMA table_info(execution_start_results)"
+        ).fetchall()
+        actual = tuple(
+            (row["name"], row["type"].upper(), row["notnull"], row["pk"])
+            for row in info
+        )
+        if actual != V3_RESULT_COLUMN_CONTRACT:
+            raise ExecutionStartSchemaError(
+                "schema version 3 has an incompatible "
+                "execution_start_results physical shape")
+        unique_indexes = set()
+        for index in self._conn.execute(
+            "PRAGMA index_list(execution_start_results)"
+        ).fetchall():
+            if index["unique"]:
+                columns = tuple(
+                    row["name"] for row in self._conn.execute(
+                        f"PRAGMA index_info({index['name']})"
+                    ).fetchall()
+                )
+                unique_indexes.add(columns)
+        if ("launch_attempt_id",) not in unique_indexes:
+            raise ExecutionStartSchemaError(
+                "schema version 3 requires UNIQUE(launch_attempt_id)")
+
+    def _require_v2_schema(self) -> None:
+        if self._schema_version() != SCHEMA_VERSION_START:
+            raise ExecutionStartSchemaError(
+                "v2 schema validation requires schema version 2")
+        required_tables = {
+            "execution_start_reservations", "execution_launch_attempts",
+            "execution_start_results", "execution_start_ledger",
+        }
+        tables = {
+            row["name"] for row in self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        missing = sorted(required_tables - tables)
+        if missing:
+            raise ExecutionStartMigrationError(
+                f"schema version 2 is missing required tables: {missing}")
+        columns = tuple(
+            row["name"] for row in self._conn.execute(
+                "PRAGMA table_info(execution_start_results)"
+            ).fetchall()
+        )
+        if columns != V2_RESULT_COLUMNS:
+            raise ExecutionStartMigrationError(
+                "execution_start_results is not in the known v2 shape")
 
     # -- v2 schema -----------------------------------------------------------
     def _ensure_v2_tables(self, cur) -> None:
@@ -468,16 +622,28 @@ class SQLiteExecutionStartStore:
         between the COUNT(*) check and the structural migration. The typed
         exception escapes _run_atomic, which rolls back the transaction.
         """
+        version = self._schema_version()
+        if version == SCHEMA_VERSION_LATEST:
+            self._require_current_schema()
+            return
+        if version != SCHEMA_VERSION_START:
+            raise ExecutionStartSchemaError(
+                f"v3 migration requires schema version {SCHEMA_VERSION_START}; "
+                f"got {version}")
+        self._require_v2_schema()
         if self._fail_before_v3_rename:
             # Test-only seam: refuse before any structural change.
             raise ExecutionStartMigrationError("injected v3 refusal")
         self._run_atomic(self._migrate_v2_to_v3)
+        self._require_current_schema()
 
     def _migrate_v2_to_v3(self) -> None:
         """Migration body; runs inside _run_atomic (BEGIN IMMEDIATE)."""
         cur = self._conn
-        version = int(cur.execute(
-            "SELECT version FROM start_schema_version LIMIT 1").fetchone()["version"])
+        version = self._schema_version()
+        if version == SCHEMA_VERSION_LATEST:
+            # Already migrated (e.g., another thread raced ahead); idempotent no-op
+            return
         if version != SCHEMA_VERSION_START:
             raise ExecutionStartSchemaError(
                 f"v3 migration requires schema version {SCHEMA_VERSION_START}; "
@@ -507,9 +673,7 @@ class SQLiteExecutionStartStore:
             "ALTER TABLE execution_start_results_v3 "
             "RENAME TO execution_start_results")
         # Version advancement LAST (within the same transaction).
-        cur.execute(
-            "UPDATE start_schema_version SET version = ?",
-            (SCHEMA_VERSION_LATEST,))
+        _advance_schema_version(cur, SCHEMA_VERSION_LATEST)
 
     # -- result persistence (EA-4D.4A) -------------------------------------
     def persist_execution_start_result(self, result: "ExecutionStartResult") -> None:
@@ -520,6 +684,7 @@ class SQLiteExecutionStartStore:
         the same launch_attempt_id (different outcome/run identity/error code)
         raises ExecutionStartResultConflictError and is never overwritten.
         """
+        self._require_current_schema()
         cur = self._conn
         exists = cur.execute(
             "SELECT 1 FROM execution_start_results WHERE launch_attempt_id = ?",
@@ -572,6 +737,7 @@ class SQLiteExecutionStartStore:
         self, launch_attempt_id: str
     ) -> Optional["ExecutionStartResult"]:
         """Return the persisted result for a launch attempt, or None."""
+        self._require_current_schema()
         row = self._conn.execute(
             "SELECT * FROM execution_start_results WHERE launch_attempt_id = ?",
             (launch_attempt_id,)).fetchone()
@@ -681,10 +847,7 @@ class SQLiteExecutionStartStore:
                 "injected post-mutation failure (rollback proof)")
         # 4. Advance the schema version LAST (within the same transaction), so a
         #    crash before this point leaves a recognizable v1 database.
-        cur.execute(
-            "UPDATE start_schema_version SET version = ?",
-            (SCHEMA_VERSION_START,),
-        )
+        _advance_schema_version(cur, SCHEMA_VERSION_START)
 
     def _populate_legacy_reservation_hashes(self, cur, row_count: int) -> None:
         """Reconstruct reservation_hash for each populated legacy launch-attempt
@@ -1289,6 +1452,16 @@ class SQLiteExecutionStartStore:
 # --------------------------------------------------------------------------- #
 # Module-local helpers
 # --------------------------------------------------------------------------- #
+
+
+def _advance_schema_version(cur, version: int) -> None:
+    """Advance the schema version, handling both old and new schema_version shapes."""
+    info = cur.execute("PRAGMA table_info(start_schema_version)").fetchall()
+    shape = [(row["name"], row["type"].upper(), row["pk"]) for row in info]
+    if shape == [("singleton", "INTEGER", 1), ("version", "INTEGER", 0)]:
+        cur.execute("UPDATE start_schema_version SET version = ? WHERE singleton=1", (version,))
+    else:
+        cur.execute("UPDATE start_schema_version SET version = ?", (version,))
 
 
 def _deadline_ok(now: str, must_start_by: str) -> bool:

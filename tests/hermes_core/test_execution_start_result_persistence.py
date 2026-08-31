@@ -73,6 +73,9 @@ def _seed_v2_db(path, *, result_rows=(), with_schema_version=2,
             "error_summary TEXT, canonical_json TEXT NOT NULL, payload_sha256 TEXT NOT NULL"
         )
     conn.execute(f"CREATE TABLE execution_start_results ({cols})")
+    stub = SQLiteExecutionStartStore.__new__(SQLiteExecutionStartStore)
+    stub._conn = conn
+    stub._ensure_v2_tables(conn)
     for row in result_rows:
         conn.execute(
             "INSERT INTO execution_start_results "
@@ -100,6 +103,16 @@ class MigrationTests(unittest.TestCase):
         conn.close()
         return v
 
+    def _raw_v2_store(self):
+        store = SQLiteExecutionStartStore.__new__(SQLiteExecutionStartStore)
+        store._db_path = None
+        store._conn = sqlite3.connect(self.db, isolation_level=None)
+        store._conn.row_factory = sqlite3.Row
+        store._conn.execute("PRAGMA foreign_keys = ON")
+        store._fail_before_v3_rename = False
+        store._fail_after_v3_create = False
+        return store
+
     def test_fresh_store_is_v3_after_migrate(self):
         store = SQLiteExecutionStartStore(self.db)
         store.migrate_to_v3()
@@ -109,7 +122,6 @@ class MigrationTests(unittest.TestCase):
     def test_exact_empty_v2_migrates_to_v3(self):
         _seed_v2_db(self.db, with_schema_version=2, v3_result_shape=False)
         store = SQLiteExecutionStartStore(self.db)
-        store.migrate_to_v3()
         self.assertEqual(self._version(self.db), SCHEMA_VERSION_LATEST)
         # v3 shape has the five new NOT NULL columns.
         conn = sqlite3.connect(self.db)
@@ -130,9 +142,8 @@ class MigrationTests(unittest.TestCase):
                "{}", "p" * 64)
         _seed_v2_db(self.db, with_schema_version=2, v3_result_shape=False,
                     result_rows=[row])
-        store = SQLiteExecutionStartStore(self.db)
         with self.assertRaises(ExecutionStartMigrationError):
-            store.migrate_to_v3()
+            SQLiteExecutionStartStore(self.db)
         # Row, table, and version remain untouched (fail closed).
         self.assertEqual(self._version(self.db), 2)
         conn = sqlite3.connect(self.db)
@@ -140,11 +151,10 @@ class MigrationTests(unittest.TestCase):
             "SELECT COUNT(*) FROM execution_start_results").fetchone()[0]
         self.assertEqual(count, 1)
         conn.close()
-        store.close()
 
     def test_fail_before_v3_rename_seam_refuses(self):
         _seed_v2_db(self.db, with_schema_version=2, v3_result_shape=False)
-        store = SQLiteExecutionStartStore(self.db)
+        store = self._raw_v2_store()
         store._fail_before_v3_rename = True
         with self.assertRaises(ExecutionStartMigrationError):
             store.migrate_to_v3()
@@ -160,7 +170,7 @@ class MigrationTests(unittest.TestCase):
         original schema, version 2, and NO execution_start_results_v3 residue.
         """
         _seed_v2_db(self.db, with_schema_version=2, v3_result_shape=False)
-        store = SQLiteExecutionStartStore(self.db)
+        store = self._raw_v2_store()
         store._fail_after_v3_create = True
         with self.assertRaises(ExecutionStartMigrationError):
             store.migrate_to_v3()
@@ -221,7 +231,6 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(self._version(self.db), 2)
         conn.close()
         store = SQLiteExecutionStartStore(self.db)
-        store.migrate_to_v3()
         self.assertEqual(self._version(self.db), SCHEMA_VERSION_LATEST)
         store.close()
 

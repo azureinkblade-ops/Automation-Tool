@@ -623,3 +623,46 @@ attempt. A future live proof requires new authority and fresh identities.
 `EA-4D.4F-R12E-R6: FAIL / TERMINAL`
 
 `PUSH: NO`
+
+
+## 2026-08-28 R12E-R6F start-store schema compatibility remediation - PASS / COMMITTED
+
+EA-4D.4F-R12E-R6F: PASS / COMMITTED
+
+- R6F commit SHA: `<pending>`
+- R6F parent SHA: `f712266bf4c81a09f9fd01df9f8985a4edfb2d32`
+- Frozen R11 design SHA: `79b1f2bb37655290dbddb231bb5631c0c5619f716a204ad5cb2f195372112a70`
+
+LIVE PROOF RESULT:
+- Definitive starts: 1 (budget consumed)
+- Remaining: 0
+- PID: 9432
+- Exit code: 2
+- Failure boundary: POST-LAUNCH START-STORE SCHEMA COMPATIBILITY
+- Original SQLite error: `sqlite3.OperationalError: no such column: runtime_binding_id`
+
+REMEDIATION RESULT:
+- R6F focused: 10 passed
+- StartResult persistence: 39 passed
+- Start-store migration: 11 passed
+- Full Hermes Core: 1,335 passed, 104 subtests, 0 failures
+- Prohibited-capability audit: CLEAR
+- Singleton-enforced schema_version table
+- Idempotent bootstrap with concurrent-thread safety
+- Lenient schema version reads (accepts both old and new shapes)
+- Migration idempotency (returns early if already at target version)
+- No live Codex process
+- No Codex process has been invoked
+- No EXECUTING projection
+- Live invocation budget remaining: 0
+- Durable preflight state: PREPARED (transport registry), PID: none, definitive starts: 0
+
+Authority boundary:
+
+- R11 design: UNCHANGED / FROZEN.
+- Binary successor: PASS / RE-FROZEN.
+- R12D: COMPLETE / COMMITTED.
+- R12E: FAIL / TERMINAL.
+- R12E-R6F: PASS / COMMITTED.
+- Kilo / GPU / ComfyUI / Studio Bible / image pipeline: NO.
+- Push: NO.
