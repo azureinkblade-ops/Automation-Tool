@@ -1,5 +1,11 @@
 # EA-4E.4 OpenCode One-Shot Live Qualification Result
 
+## Disposition
+
+`EA-4E.4 OPENCODE FINAL LIVE REQUALIFICATION = PASS / COMMITTED / FROZEN / NOT PUSHED`
+
+---
+
 ## Historical Attempts
 
 ### Attempt 1: Original (Pre-Remediation)
@@ -13,6 +19,8 @@
 | return_code | 0 |
 | RESULT | HOLD (spool capture broken) |
 
+**Historical diagnosis at the time of Attempt 1:** The original file-handle capture path (`stdout=stdout_handle`) produced empty spool files. Later investigation determined the precise internal cause was not proven; the failing boundary was the original file-handle capture path itself.
+
 ### Attempt 2: Post-PIPE (Pre-Parser)
 
 | Field | Value |
@@ -25,13 +33,23 @@
 | JSONL_PARSE | FAIL |
 | RESULT | HOLD (parser incompatible) |
 
+**Root cause:** Parser expected flat `{"type":"text","text":"..."}` but OpenCode emitted nested `{"type":"text","part":{"text":"..."}}`.
+
 ---
 
-# POST-PARSER FINAL LIVE REQUALIFICATION
+## Final Qualification
 
-## Disposition
+### PIPE Remediation
 
-`EA-4E.4 OPENCODE FINAL LIVE REQUALIFICATION = PASS / COMMITTED / FROZEN / NOT PUSHED`
+Capture subsequently verified working. Implemented in commit `ef4a9e8704ca472f2b6d7f304e94293b51188dd0`.
+
+### Parser Remediation
+
+Nested `part.text` schema qualified offline and committed. Implemented in commit `39fe9620498e1bbcec5565dba440184403060f3c`.
+
+### Final Post-Parser Live Attempt
+
+PASS.
 
 ---
 
@@ -197,6 +215,18 @@ The post-parser final live requalification has passed all qualification gates:
 - No unauthorized capability execution
 
 The EA-4E.4 OpenCode governed receiver is qualified for production activation pending separate authorization.
+
+---
+
+## Milestone Summary
+
+| Milestone | Status | Commit |
+|-----------|--------|--------|
+| Task-delivery correction | FROZEN | `c1d0e1a390474d7f7ad780a6da3f280009cfc770` |
+| Output-capture remediation (PIPE) | COMMITTED | `ef4a9e8704ca472f2b6d7f304e94293b51188dd0` |
+| Model-binding evidence refresh | COMMITTED | `6537384f6d488496b3f34f032b9d423f5cb08a1e` |
+| Parser compatibility (nested-text) | COMMITTED | `39fe9620498e1bbcec5565dba440184403060f3c` |
+| Final live qualification evidence | COMMITTED | `83ad1f576e8a077da7c97eace18c6e7acc665749` |
 
 ---
 
