@@ -70,6 +70,57 @@ OPENCODE_CONFIG_DIR = HERMES_RUNTIME_ROOT / "config"
 OPENCODE_HOME_OPENCODE = OPENCODE_EFFECTIVE_HOME / ".opencode"
 # The out-of-repo cwd is the Hermes runtime root; no .opencode/ exists there.
 OPENCODE_CWD = HERMES_RUNTIME_ROOT
+OPENCODE_AGENT_ID = "hermes-ea4e-opencode-receiver"
+
+
+def _permission_policy_material() -> dict[str, Any]:
+    """Canonical permission policy material for the OpenCode transport contract."""
+    config_path = OPENCODE_HOME_OPENCODE / "config.json"
+    if config_path.exists():
+        import json as _json
+        return _json.loads(config_path.read_text(encoding="utf-8"))
+    return {"agent": {OPENCODE_AGENT_ID: {"permission": {"*": "deny", "read": "allow", "edit": "deny", "write": "deny", "bash": "deny", "mcp": "deny", "browser": "deny", "task": "deny"}}}}
+
+
+def _isolation_policy_material() -> dict[str, Any]:
+    """Canonical isolation policy material for the OpenCode transport contract.
+    
+    Builds the environment policy from the actual qualified implementation.
+    """
+    runtime = HERMES_RUNTIME_ROOT
+    bin_dir = Path(PINNED_OPENCODE_PATH).resolve().parent
+    env_names = (
+        "SYSTEMROOT", "WINDIR", "TEMP", "TMP",
+    )
+    env = []
+    for name in env_names:
+        if name in os.environ:
+            env.append((name, os.environ[name]))
+    env.append(("OPENCODE_TEST_HOME", str(OPENCODE_EFFECTIVE_HOME)))
+    env.append(("HOME", str(OPENCODE_EFFECTIVE_HOME)))
+    env.append(("USERPROFILE", str(OPENCODE_EFFECTIVE_HOME)))
+    env.append(("OPENCODE_CONFIG_DIR", str(OPENCODE_CONFIG_DIR)))
+    env.append(("OPENCODE_DISABLE_PROJECT_CONFIG", "1"))
+    env.append(("OPENCODE_PURE", "1"))
+    env.append(("PATH", os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")])))
+    
+    env_keys = sorted([k for k, v in env])
+    
+    return {
+        "runtime_root": str(runtime),
+        "cwd": str(OPENCODE_CWD),
+        "effective_home": str(OPENCODE_EFFECTIVE_HOME),
+        "config_root": str(OPENCODE_CONFIG_DIR),
+        "runtime_root_within_repo": False,
+        "cwd_within_repo": False,
+        "ambient_inherited": False,
+        "config_isolation": "HOME, OPENCODE_CONFIG_DIR redirected to Hermes-controlled runtime root",
+        "environment_keys": env_keys,
+        "project_config_disabled": True,
+        "pure_env_set": True,
+        "stdin_policy": "subprocess.DEVNULL",
+        "stdin_bytes_written": 0,
+    }
 
 
 def _canonical_material(
@@ -81,20 +132,86 @@ def _canonical_material(
     input_delivery: str = INPUT_DELIVERY,
     structured_output: str = STRUCTURED_OUTPUT,
 ) -> dict[str, Any]:
-    """Canonical material describing the qualified OpenCode transport/interface.
+    """Canonical material describing the qualified OpenCode transport/interface."""
+    permission_material = _permission_policy_material()
+    isolation_material = _isolation_policy_material()
 
-    This deliberately does NOT claim a universal ``approval_policy=never`` or
-    any equivalent ``--no-network`` flag. Those are not established by the
-    installed OpenCode 1.18.11 CLI surface inspected here.
-    """
     return {
+        # Binary identity
         "adapter_version": PINNED_OPENCODE_ADAPTER_VERSION,
+        "binary_path": PINNED_OPENCODE_PATH,
         "binary_sha256": binary_sha256,
         "binary_version": binary_version,
+
+        # Source
+        "source_repository": "https://github.com/anomalyco/opencode",
+        "source_tag": "v1.18.11",
+        "source_commit": "012c2f57f976489d88bd4598a056b4bdcdd428ee",
+
+        # Transport interface
         "input_delivery": input_delivery,
         "pure": pure,
+        "pure_semantics": "plugin-suppression only",
         "structured_output": structured_output,
         "transport": transport,
+
+        # Fixed argv policy
+        "fixed_argv_policy": [
+            "<opencode_executable>", "run", "--format", "json", "--pure",
+            "--agent", OPENCODE_AGENT_ID, "<task_message>",
+        ],
+        "fixed_argv_note": "positional task input; no task-controlled flags",
+
+        # Receiver/agent
+        "agent_id": OPENCODE_AGENT_ID,
+        "receiver_id": "opencode-cli-agent",
+
+        # Model policy
+        "model_selection_policy": "LIVE-GATE DEFERRED",
+        "profile_model_field": "ABSENT",
+
+        # Permission policy (hash-bound)
+        "global_default_deny": True,
+        "permission_policy_sha256": sha256_payload(permission_material),
+        "unknown_tool_policy": "DENY",
+
+        # Explicit capability bindings (hash-bound)
+        "filesystem_write_policy": "DENY",
+        "shell_policy": "DENY",
+        "task_network_policy": "DENY",
+        "mcp_policy": "DENY",
+        "subagent_policy": "DENY",
+
+        # Isolation policy (hash-bound)
+        "ambient_inherited": False,
+        "config_isolation": "HOME, OPENCODE_CONFIG_DIR redirected to Hermes-controlled runtime root",
+        "config_root": str(OPENCODE_CONFIG_DIR),
+        "cwd": str(OPENCODE_CWD),
+        "cwd_within_repo": False,
+        "effective_home": str(OPENCODE_EFFECTIVE_HOME),
+        "isolation_policy_sha256": sha256_payload(isolation_material),
+        "runtime_root": str(HERMES_RUNTIME_ROOT),
+        "runtime_root_within_repo": False,
+
+        # Process lifecycle
+        "process_primitive": "subprocess.Popen",
+        "shell": False,
+        "start_policy": "Popen with DEVNULL stdin, PIPE stdout/stderr",
+        "pid_observable": True,
+        "poll_policy": "process.poll() returns Optional[int]",
+        "terminate_policy": "process.terminate()",
+        "kill_policy": "process.kill()",
+        "stdin_policy": "subprocess.DEVNULL",
+        "stdin_bytes_written": 0,
+        "timeout_default": DEFAULT_TIMEOUT_SECONDS,
+        "timeout_max": MAX_TIMEOUT_SECONDS,
+        "timeout_min": MIN_TIMEOUT_SECONDS,
+
+        # Registry policy
+        "default_receiver": False,
+        "failover": "OFF",
+        "production_routing": "OFF",
+        "registry_policy": "explicit static initialization via register_adapter()",
     }
 
 
@@ -223,17 +340,18 @@ class OpenCodeTransportContract:
     pure: bool
     input_delivery: str
     structured_output: str
+    permission_policy_sha256: str = ""
+    isolation_policy_sha256: str = ""
 
     def material(self) -> dict[str, Any]:
-        return {
-            "adapter_version": self.adapter_version,
-            "binary_sha256": self.binary_sha256,
-            "binary_version": self.binary_version,
-            "input_delivery": self.input_delivery,
-            "pure": self.pure,
-            "structured_output": self.structured_output,
-            "transport": self.transport,
-        }
+        return _canonical_material(
+            self.binary_sha256,
+            self.binary_version,
+            transport=self.transport,
+            pure=self.pure,
+            input_delivery=self.input_delivery,
+            structured_output=self.structured_output,
+        )
 
 
 def opencode_transport_contract(
@@ -245,6 +363,8 @@ def opencode_transport_contract(
     input_delivery: str = INPUT_DELIVERY,
     structured_output: str = STRUCTURED_OUTPUT,
 ) -> OpenCodeTransportContract:
+    permission_material = _permission_policy_material()
+    isolation_material = _isolation_policy_material()
     return OpenCodeTransportContract(
         adapter_version=PINNED_OPENCODE_ADAPTER_VERSION,
         binary_sha256=binary_sha256,
@@ -253,6 +373,8 @@ def opencode_transport_contract(
         pure=pure,
         input_delivery=input_delivery,
         structured_output=structured_output,
+        permission_policy_sha256=sha256_payload(permission_material),
+        isolation_policy_sha256=sha256_payload(isolation_material),
     )
 
 
@@ -370,7 +492,7 @@ def _ordered_run_json_args() -> tuple[str, ...]:
     Input is delivered positionally; stdin is not a governed input
     channel for this adapter.
     """
-    return ("run", "--format", "json", "--pure", "--agent", "hermes-ea4e-opencode-receiver")
+    return ("run", "--format", "json", "--pure", "--agent", OPENCODE_AGENT_ID)
 
 
 @dataclass(frozen=True)

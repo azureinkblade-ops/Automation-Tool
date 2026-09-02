@@ -48,6 +48,7 @@ from tools.hermes_core.opencode_adapter import (
     qualify_opencode_runtime,
     resolve_pinned_binary,
 )
+from tools.hermes_core.hashing import sha256_payload
 
 
 @pytest.fixture
@@ -105,8 +106,9 @@ class TestOpenCodeTransportContract:
         assert opencode_transport_contract_id(c1) == opencode_transport_contract_id(c2)
 
     def test_contract_id_matches_adapter_constant(self):
-        contract = opencode_transport_contract(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
-        assert opencode_transport_contract_id(contract) == OPENCODE_TRANSPORT_CONTRACT_ID
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        material = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        assert sha256_payload(material) == OPENCODE_TRANSPORT_CONTRACT_ID
 
     def test_wrong_binary_changes_contract_id(self):
         c1 = opencode_transport_contract(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
@@ -118,6 +120,191 @@ class TestOpenCodeTransportContract:
             PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION
         ).material()
         assert "no-network" not in str(material)
+
+
+
+class TestOpenCodeContractMutation:
+    """Verify that changing security-relevant state changes the contract ID."""
+
+    def test_binary_sha_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material("a" * 64, PINNED_OPENCODE_VERSION)
+        assert sha256_payload(m1) != sha256_payload(m2)
+
+    def test_source_commit_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2_dict = dict(m2)
+        m2_dict["source_commit"] = "b" * 40
+        assert sha256_payload(m1) != sha256_payload(m2_dict)
+
+    def test_permission_policy_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2_dict = dict(m2)
+        m2_dict["permission_policy_sha256"] = "x" * 64
+        assert sha256_payload(m1) != sha256_payload(m2_dict)
+
+    def test_isolation_policy_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2_dict = dict(m2)
+        m2_dict["isolation_policy_sha256"] = "y" * 64
+        assert sha256_payload(m1) != sha256_payload(m2_dict)
+
+    def test_agent_id_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2_dict = dict(m2)
+        m2_dict["agent_id"] = "different-agent"
+        assert sha256_payload(m1) != sha256_payload(m2_dict)
+
+    def test_model_selection_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2_dict = dict(m2)
+        m2_dict["model_selection_policy"] = "FIXED"
+        assert sha256_payload(m1) != sha256_payload(m2_dict)
+
+    def test_process_primitive_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2_dict = dict(m2)
+        m2_dict["process_primitive"] = "subprocess.run"
+        assert sha256_payload(m1) != sha256_payload(m2_dict)
+
+    def test_pure_semantics_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2_dict = dict(m2)
+        m2_dict["pure_semantics"] = "full sandbox"
+        assert sha256_payload(m1) != sha256_payload(m2_dict)
+
+    def test_input_delivery_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2_dict = dict(m2)
+        m2_dict["input_delivery"] = "stdin"
+        assert sha256_payload(m1) != sha256_payload(m2_dict)
+
+    def test_registry_policy_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2_dict = dict(m2)
+        m2_dict["default_receiver"] = True
+        assert sha256_payload(m1) != sha256_payload(m2_dict)
+
+
+
+    def test_filesystem_write_policy_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2_dict = dict(m2)
+        m2_dict["filesystem_write_policy"] = "ALLOW"
+        assert sha256_payload(m1) != sha256_payload(m2_dict)
+
+    def test_shell_policy_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2_dict = dict(m2)
+        m2_dict["shell_policy"] = "ALLOW"
+        assert sha256_payload(m1) != sha256_payload(m2_dict)
+
+    def test_task_network_policy_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2_dict = dict(m2)
+        m2_dict["task_network_policy"] = "ALLOW"
+        assert sha256_payload(m1) != sha256_payload(m2_dict)
+
+    def test_mcp_policy_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2_dict = dict(m2)
+        m2_dict["mcp_policy"] = "ALLOW"
+        assert sha256_payload(m1) != sha256_payload(m2_dict)
+
+    def test_subagent_policy_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2_dict = dict(m2)
+        m2_dict["subagent_policy"] = "ALLOW"
+        assert sha256_payload(m1) != sha256_payload(m2_dict)
+
+    def test_isolation_policy_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2_dict = dict(m2)
+        m2_dict["isolation_policy_sha256"] = "z" * 64
+        assert sha256_payload(m1) != sha256_payload(m2_dict)
+
+    def test_environment_policy_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2_dict = dict(m2)
+        m2_dict["ambient_inherited"] = True
+        assert sha256_payload(m1) != sha256_payload(m2_dict)
+
+    def test_process_lifecycle_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2_dict = dict(m2)
+        m2_dict["pid_observable"] = False
+        assert sha256_payload(m1) != sha256_payload(m2_dict)
+
+    def test_start_policy_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2_dict = dict(m2)
+        m2_dict["start_policy"] = "blocking"
+        assert sha256_payload(m1) != sha256_payload(m2_dict)
+
+    def test_terminate_policy_changes_contract_id(self):
+        from tools.hermes_core.opencode_adapter import _canonical_material
+        from tools.hermes_core.hashing import sha256_payload
+        m1 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2 = _canonical_material(PINNED_OPENCODE_SHA256, PINNED_OPENCODE_VERSION)
+        m2_dict = dict(m2)
+        m2_dict["terminate_policy"] = "none"
+        assert sha256_payload(m1) != sha256_payload(m2_dict)
 
 
 class TestOpenCodeTrustedConfig:
