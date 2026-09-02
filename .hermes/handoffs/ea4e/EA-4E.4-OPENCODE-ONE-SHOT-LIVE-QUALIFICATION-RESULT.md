@@ -1,8 +1,37 @@
 # EA-4E.4 OpenCode One-Shot Live Qualification Result
 
+## Historical Attempts
+
+### Attempt 1: Original (Pre-Remediation)
+
+| Field | Value |
+|-------|-------|
+| delegation_id | `ea4e4-delegation-003` |
+| launch_attempt_id | `ea4e4-launch-003` |
+| Task | `Return exactly: EA4E4_OPENCODE_LIVE_OK` |
+| PID | 12112 |
+| return_code | 0 |
+| RESULT | HOLD (spool capture broken) |
+
+### Attempt 2: Post-PIPE (Pre-Parser)
+
+| Field | Value |
+|-------|-------|
+| delegation_id | `e3ce9bec-01d2-4c04-9a00-2869fe7722d4` |
+| launch_attempt_id | `c445febd-a622-4695-a988-b1c620c89b3f` |
+| PID | 35372 |
+| return_code | 0 |
+| STREAM_CAPTURE | PASS |
+| JSONL_PARSE | FAIL |
+| RESULT | HOLD (parser incompatible) |
+
+---
+
+# POST-PARSER FINAL LIVE REQUALIFICATION
+
 ## Disposition
 
-`EA-4E.4 HOLD / OpenCodeLiveProcess SPOOL CAPTURE DOES NOT WORK`
+`EA-4E.4 OPENCODE FINAL LIVE REQUALIFICATION = PASS / COMMITTED / FROZEN / NOT PUSHED`
 
 ---
 
@@ -10,52 +39,120 @@
 
 | Field | Value |
 |-------|-------|
-| HEAD | `c1d0e1a390474d7f7ad780a6da3f280009cfc770` |
-| Parent | `b75c69df7b59c8121b2f00b306e37b938deb49b2` |
+| HEAD | `39fe9620498e1bbcec5565dba440184403060f3c` |
+| Parent | `6537384f6d488496b3f34f032b9d423f5cb08a1e` |
 | STAGED | 0 |
 
 ---
 
-## 2. REQUALIFICATION ATTEMPT
+## 2. FROZEN TRANSPORT
 
 | Field | Value |
 |-------|-------|
-| delegation_id | `e3ce9bec-01d2-4c04-9a00-2869fe7722d4` |
-| launch_attempt_id | `c445febd-a622-4695-a988-b1c620c89b3f` |
-| Task | `Return exactly: EA4E4_OPENCODE_LIVE_OK` |
-| Task SHA-256 | `b85eb724ade8677fb6840fb3e71c6569a59857744d4818954e2f810e5fd386a3` |
-| PID | 29896 (varies per attempt) |
+| OPENCODE_TRANSPORT_CONTRACT_ID | `192b55d0aca65f261fa3e2701db63863f2761cacd20bb9422e73cde772e9ea5f` |
+| PERMISSION_POLICY_SHA256 | `9c4b23c8c9f0ad3202de21ba8c6ac81376906ecf708409c687b7e857ba5a9a1a` |
+| ISOLATION_POLICY_SHA256 | `a95c4d61d0923edeb6a20397f75f143b7d09e805cc6b792958aaa2609de1228e` |
+
+---
+
+## 3. MODEL BINDING
+
+| Field | Value |
+|-------|-------|
+| EA4E4_MODEL_BINDING_ID | `cfcf7353842b923579db1676484bba6d0cba77927bdd592439898dde71773371` |
+| PROVIDER | `ollama` |
+| MODEL | `qwen3:14b` |
+| PROVIDER_MODEL_CHANGED | NO |
+
+---
+
+## 4. PROVIDER PREFLIGHT
+
+| Field | Value |
+|-------|-------|
+| OLLAMA_REACHABLE | YES |
+| qwen3:14b_AVAILABLE | YES |
+| AUTHENTICATION_REQUIRED | NO |
+
+---
+
+## 5. AUTHORITY
+
+| Field | Value |
+|-------|-------|
+| delegation_id | `d0809f7d-3084-499e-8c1e-2694c9a13332` |
+| launch_attempt_id | `78f86581-e3ec-434b-a5f0-97a5d92c9ab9` |
+| LAUNCH_ATTEMPT_RECORDED | YES |
+
+---
+
+## 6. START
+
+| Field | Value |
+|-------|-------|
 | PROCESS_STARTED | YES |
-| terminal_state | TERMINAL |
+| PID | 4324 |
+| START_RESULT_PERSISTED | YES |
+| EXECUTING_PROJECTION_COMMITTED | YES |
+
+---
+
+## 7. PROCESS
+
+| Field | Value |
+|-------|-------|
 | return_code | 0 |
+| timed_out | NO |
+| terminated | NO |
+| killed | NO |
 
 ---
 
-## 3. ROOT CAUSE
+## 8. PIPE CAPTURE
 
-**OpenCodeLiveProcess spool-based output capture does not work.**
-
-The `OpenCodeLiveProcess.start()` method creates spool files and passes file handles to `subprocess.Popen(stdout=stdout_handle, stderr=stderr_handle)`. However, OpenCode writes its JSONL output directly to the spool directory via its own internal mechanism, NOT through the stdout pipe that Python's subprocess captures.
-
-Evidence:
-- **Direct CLI invocation works**: Running `opencode run --format json --pure --agent hermes-ea4e-opencode-receiver "Return exactly: EA4E4_OPENCODE_LIVE_OK"` directly produces correct JSONL output including `{"type":"text","text":"EA4E4_OPENCODE_LIVE_OK"}`
-- **Adapter invocation fails**: The same command via `adapter.execute()` produces empty spool files (0 bytes)
-- **Process runs correctly**: PID is created, process terminates with return code 0, but no output is captured
-
-### Task Delivery Verified Working
-
-The task IS delivered correctly to argv:
-```
-['opencode.exe', 'run', '--format json', '--pure', '--agent', 'hermes-ea4e-opencode-receiver', 'Return exactly: EA4E4_OPENCODE_LIVE_OK']
-```
-
-### Spool Capture Broken
-
-The `poll()` method reads from `owned.stdout_path` and `owned.stderr_path`, but these files remain 0 bytes because OpenCode doesn't write to the stdout pipe - it writes directly to its own spool/output files in the working directory.
+| Field | Value |
+|-------|-------|
+| STDOUT_TOTAL_BYTES | 944 |
+| STDOUT_RETAINED_BYTES | 944 |
+| STDOUT_TRUNCATED | NO |
+| STDERR_TOTAL_BYTES | 96 |
+| STDERR_RETAINED_BYTES | 96 |
+| STDERR_TRUNCATED | NO |
+| STDOUT_READER_ALIVE_AT_RESULT | NO |
+| STDERR_READER_ALIVE_AT_RESULT | NO |
+| STDOUT_READER_ERROR | NONE |
+| STDERR_READER_ERROR | NONE |
+| STREAM_CAPTURE | PASS |
+| STREAM_FINALIZATION | PASS |
 
 ---
 
-## 4. CAPABILITY AUDIT
+## 9. JSONL PARSE
+
+| Field | Value |
+|-------|-------|
+| JSONL_PARSE | PASS |
+| NORMALIZED_TEXT | `EA4E4_OPENCODE_LIVE_OK` |
+| RESULT_TEXT_MATCH | YES |
+
+---
+
+## 10. RESULT CHAIN
+
+| Field | Value |
+|-------|-------|
+| PROCESS_TERMINAL | YES |
+| STREAMS_FINALIZED | YES |
+| JSONL_PARSE | PASS |
+| NORMALIZED_RESULT | `EA4E4_OPENCODE_LIVE_OK` |
+| DELEGATION_RESULT_CREATED | YES |
+| RESULT_PERSISTED | YES |
+| EVIDENCE_PERSISTED | YES |
+| RESULT_RETURNED_TO_HERMES | YES |
+
+---
+
+## 11. SECURITY AUDIT
 
 | Field | Value |
 |-------|-------|
@@ -67,42 +164,39 @@ The `poll()` method reads from `owned.stdout_path` and `owned.stderr_path`, but 
 | TASK_NETWORK_TOOL_USED | NO |
 | MCP_EXECUTION_OCCURRED | NO |
 | SUBAGENT_EXECUTION_OCCURRED | NO |
+| POLICY_WIDENING | NO |
 
 ---
 
-## 5. REPOSITORY
+## 12. ACCOUNTING
 
 | Field | Value |
 |-------|-------|
-| TRACKED_REPOSITORY_MUTATION_FROM_LIVE_TASK | 0 |
+| POST_PARSER_PROMPT_INVOCATIONS | 1 |
+| MODEL_INVOCATION | YES (tokens: 8185 total, 25 input, 32 output) |
 
 ---
 
-## 6. LIVE COUNTS
+## 13. REPOSITORY
 
 | Field | Value |
 |-------|-------|
-| LIVE_OPENCODE_TASKS | 1 (requalification attempt) |
-| LIVE_MODEL_INVOCATIONS | 1 (Ollama/qwen3:14b was invoked) |
-| LIVE_KILO_TASKS | 0 |
-| LIVE_KILO_MODELS | 0 |
-| LIVE_ACP | 0 |
-| GPU | NO |
-| COMFYUI | NO |
+| TRACKED_REPOSITORY_MUTATION_FROM_TASK | 0 |
 
 ---
 
-## 7. EVIDENCE
+## 14. GOVERNANCE
 
-Artifact: `.hermes/handoffs/ea4e/EA-4E.4-OPENCODE-ONE-SHOT-LIVE-QUALIFICATION-RESULT.md`
+`EA-4E.4 OPENCODE FINAL LIVE REQUALIFICATION = PASS / COMMITTED / FROZEN / NOT PUSHED`
 
----
+The post-parser final live requalification has passed all qualification gates:
+- PIPE capture verified working (944 bytes stdout captured)
+- Nested-text parser verified working (correctly parsed `EA4E4_OPENCODE_LIVE_OK`)
+- Full result-persistence chain verified
+- Security audit clean
+- No unauthorized capability execution
 
-## 8. GOVERNANCE
-
-`EA-4E.4 HOLD / OpenCodeLiveProcess SPOOL CAPTURE DOES NOT WORK`
-
-The frozen EA-4E.2 receiver's `OpenCodeLiveProcess` cannot capture OpenCode output via spool file handles. This is a fundamental architectural issue with the live process implementation, not a task-delivery issue. The task delivery fix is verified working.
+The EA-4E.4 OpenCode governed receiver is qualified for production activation pending separate authorization.
 
 ---
 
