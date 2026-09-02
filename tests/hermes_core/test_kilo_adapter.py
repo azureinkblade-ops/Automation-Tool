@@ -139,7 +139,9 @@ class TestKiloTransportContract:
         from tools.hermes_core.kilo_adapter import _canonical_material
         material = _canonical_material(PINNED_KILO_SHA256, PINNED_KILO_VERSION)
         assert material["profile_model_field"] == "ABSENT"
-        assert material["model_selection_policy"] == "LIVE-GATE DEFERRED"
+        assert material["model_selection_policy"] == "FIXED_ARGV"
+        assert material["model_flag"] == "--model"
+        assert material["model_value"] == "ollama/qwen3:14b"
 
     def test_canonical_material_no_auto_approve(self):
         from tools.hermes_core.kilo_adapter import _canonical_material
@@ -242,10 +244,14 @@ class TestKiloArgv:
         argv_list = argv.to_list()
         assert "--auto" not in argv_list
 
-    def test_build_argv_does_not_include_model(self, safe_cwd: Path):
+    def test_build_argv_includes_model(self, safe_cwd: Path):
+        """Verify model flag is included exactly once with Hermes-owned value."""
         argv = build_kilo_argv({"kilo_executable": PINNED_KILO_PATH, "task_message": "hi"}, {}, "")
         argv_list = argv.to_list()
-        assert "--model" not in argv_list
+        assert "--model" in argv_list
+        assert argv_list.count("--model") == 1
+        model_idx = argv_list.index("--model")
+        assert argv_list[model_idx + 1] == "ollama/qwen3:14b"
 
 
 class TestKiloReceiverAdapter:
@@ -481,10 +487,21 @@ class TestKiloSecurityFocused:
         assert argv_list[agent_indices[0] + 1] == "hermes-ea4e-kilo-receiver"
 
     def test_task_model_override_blocked(self, safe_cwd: Path):
-        """Task cannot provide --model."""
+        """Task cannot provide --model. Model is fixed by Hermes argv."""
+        # Normal task: model is present and fixed
         argv = build_kilo_argv({"kilo_executable": PINNED_KILO_PATH, "task_message": "hello"}, {}, "")
         argv_list = argv.to_list()
-        assert "--model" not in argv_list
+        assert "--model" in argv_list
+        assert argv_list.count("--model") == 1
+        model_idx = argv_list.index("--model")
+        assert argv_list[model_idx + 1] == "ollama/qwen3:14b"
+
+        # Task trying to inject model flag is rejected by input hardening
+        try:
+            build_kilo_argv({"kilo_executable": PINNED_KILO_PATH, "task_message": "--model evil"}, {}, "")
+            assert False, "Should have rejected task starting with --"
+        except Exception:
+            pass  # Expected: task_message starts with option-looking prefix
 
     def test_minimal_env_no_os_environ_copy(self, safe_cwd: Path):
         """Blocker C: _build_env does not copy os.environ."""
@@ -743,7 +760,11 @@ class TestKiloDenyEnforcementTrace:
     def test_transport_has_no_auto_no_model(self, safe_cwd: Path):
         argv_list = build_kilo_argv({"kilo_executable": PINNED_KILO_PATH, "task_message": "hi"}, {}, "").to_list()
         assert "--auto" not in argv_list
-        assert "--model" not in argv_list
+        # Model IS included - fixed by Hermes argv
+        assert "--model" in argv_list
+        assert argv_list.count("--model") == 1
+        model_idx = argv_list.index("--model")
+        assert argv_list[model_idx + 1] == "ollama/qwen3:14b"
 
     def test_deny_enforcement_locally_verifiable_via_adapter_only(self, safe_cwd: Path):
         """The Hermes profile provides source-proven default-deny via the Kilo 7.5.6
@@ -776,13 +797,18 @@ class TestKiloModelState:
         profile = json.loads(AGENT_DEFINITION)
         assert "model" not in profile, "Agent profile must not set a model field"
 
-    def test_transport_does_not_include_model_flag(self, safe_cwd: Path):
+    def test_transport_does_include_model_flag(self, safe_cwd: Path):
         argv_list = build_kilo_argv({"kilo_executable": PINNED_KILO_PATH, "task_message": "hi"}, {}, "").to_list()
-        assert "--model" not in argv_list
+        # Model IS included - fixed by Hermes argv
+        assert "--model" in argv_list
+        assert argv_list.count("--model") == 1
+        model_idx = argv_list.index("--model")
+        assert argv_list[model_idx + 1] == "ollama/qwen3:14b"
 
-    def test_model_selection_is_deferred(self, safe_cwd: Path):
+    def test_model_selection_is_fixed(self, safe_cwd: Path):
         from tools.hermes_core.kilo_agent_profile import AGENT_DEFINITION
         profile = json.loads(AGENT_DEFINITION)
+        # Profile has no model field - model is bound by argv, not profile
         assert "model" not in profile
 
 

@@ -221,9 +221,9 @@ def _canonical_material(
         # Fixed argv policy
         "fixed_argv_policy": [
             "<kilo_executable>", "run", "--format", "json", "--pure",
-            "--agent", KILO_AGENT_ID, "<task_message>",
+            "--agent", KILO_AGENT_ID, "--model", "ollama/qwen3:14b", "<task_message>",
         ],
-        "fixed_argv_note": "positional task input; no task-controlled flags",
+        "fixed_argv_note": "positional task input; no task-controlled flags; model fixed by Hermes",
 
         # Receiver/agent
         "agent_id": KILO_AGENT_ID,
@@ -231,7 +231,9 @@ def _canonical_material(
         "receiver_id": "kilo-cli-agent",
 
         # Model policy
-        "model_selection_policy": "LIVE-GATE DEFERRED",
+        "model_selection_policy": "FIXED_ARGV",
+        "model_flag": "--model",
+        "model_value": "ollama/qwen3:14b",
         "profile_model_field": "ABSENT",
 
         # Permission policy (hash-bound)
@@ -340,8 +342,8 @@ def build_kilo_argv(config: dict[str, Any], runtime_binding: dict[str, Any], run
     if len(message.encode("utf-8")) > 32768:
         raise KiloAdapterError("task_message exceeds 32768-byte limit")
 
-    # Fixed argv: pinned executable, positional message, --format json, --pure, --agent
-    # Model and agent selection are DEFERRED to the live gate or bound by trusted config.
+    # Fixed argv: pinned executable, positional message, --format json, --pure, --agent, --model
+    # Model and agent selection are FIXED by Hermes-owned argv.
     # --auto is NEVER used (dangerous).
     argv = [
         str(Path(config.get("kilo_executable", PINNED_KILO_PATH)).resolve()),
@@ -351,6 +353,8 @@ def build_kilo_argv(config: dict[str, Any], runtime_binding: dict[str, Any], run
         "--pure",
         "--agent",
         "hermes-ea4e-kilo-receiver",
+        "--model",
+        "ollama/qwen3:14b",
         message,
         "--session",
         "hermes-ea4e-kilo-session",
