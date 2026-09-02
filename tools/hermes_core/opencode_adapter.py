@@ -23,8 +23,9 @@ import hashlib
 import json
 import os
 import subprocess
+import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
@@ -131,6 +132,10 @@ def _canonical_material(
     pure: bool = True,
     input_delivery: str = INPUT_DELIVERY,
     structured_output: str = STRUCTURED_OUTPUT,
+    stdout_capture: str = "PIPE",
+    stderr_capture: str = "PIPE",
+    stream_drain_policy: str = "concurrent-threads",
+    spool_owner: str = "HERMES",
 ) -> dict[str, Any]:
     """Canonical material describing the qualified OpenCode transport/interface."""
     permission_material = _permission_policy_material()
@@ -153,6 +158,17 @@ def _canonical_material(
         "pure": pure,
         "pure_semantics": "plugin-suppression only",
         "structured_output": structured_output,
+        "stdout_capture": stdout_capture,
+        "stderr_capture": stderr_capture,
+        "stream_drain_policy": stream_drain_policy,
+        "spool_owner": spool_owner,
+        "stdout_retention_limit": 1048576,
+        "stderr_retention_limit": 131072,
+        "overflow_policy": "RETAIN_BOUNDED_DRAIN_REMAINDER",
+        "stdin_policy": "DEVNULL_ZERO_BYTES",
+        "reader_error_policy": "FAIL_CAPTURE",
+        "reader_join_policy": "JOIN_WITH_TIMEOUT_5S",
+        "reader_finalization_policy": "REQUIRE_DEAD_BEFORE_RESULT",
         "transport": transport,
 
         # Fixed argv policy
@@ -347,6 +363,10 @@ class OpenCodeTransportContract:
     structured_output: str
     permission_policy_sha256: str = ""
     isolation_policy_sha256: str = ""
+    stdout_capture: str = "PIPE"
+    stderr_capture: str = "PIPE"
+    stream_drain_policy: str = "concurrent-threads"
+    spool_owner: str = "HERMES"
 
     def material(self) -> dict[str, Any]:
         return _canonical_material(
@@ -356,6 +376,10 @@ class OpenCodeTransportContract:
             pure=self.pure,
             input_delivery=self.input_delivery,
             structured_output=self.structured_output,
+            stdout_capture=self.stdout_capture,
+            stderr_capture=self.stderr_capture,
+            stream_drain_policy=self.stream_drain_policy,
+            spool_owner=self.spool_owner,
         )
 
 
@@ -367,6 +391,10 @@ def opencode_transport_contract(
     pure: bool = True,
     input_delivery: str = INPUT_DELIVERY,
     structured_output: str = STRUCTURED_OUTPUT,
+    stdout_capture: str = "PIPE",
+    stderr_capture: str = "PIPE",
+    stream_drain_policy: str = "concurrent-threads",
+    spool_owner: str = "HERMES",
 ) -> OpenCodeTransportContract:
     permission_material = _permission_policy_material()
     isolation_material = _isolation_policy_material()
@@ -380,6 +408,10 @@ def opencode_transport_contract(
         structured_output=structured_output,
         permission_policy_sha256=sha256_payload(permission_material),
         isolation_policy_sha256=sha256_payload(isolation_material),
+        stdout_capture=stdout_capture,
+        stderr_capture=stderr_capture,
+        stream_drain_policy=stream_drain_policy,
+        spool_owner=spool_owner,
     )
 
 
@@ -581,6 +613,10 @@ class OpenCodeProcessResult:
     timed_out: bool = False
     cancelled: bool = False
     duration_seconds: float = 0.0
+    stdout_truncated: bool = False
+    stdout_total_bytes: int = 0
+    stderr_truncated: bool = False
+    stderr_total_bytes: int = 0
 
 
 class OpenCodeProcessProtocol:
@@ -602,6 +638,14 @@ class OpenCodeProcessProtocol:
 
 
 @dataclass
+class _StreamMetadata:
+    total_bytes: int = 0
+    retained_bytes: int = 0
+    truncated: bool = False
+    error: Optional[str] = None
+
+
+@dataclass
 class _OwnedProcess:
     process: subprocess.Popen
     spool: Path
@@ -610,15 +654,22 @@ class _OwnedProcess:
     started_at: float
     run_id: str
     collected: bool = False
+    stdout_reader: Optional[threading.Thread] = None
+    stderr_reader: Optional[threading.Thread] = None
+    stdout_meta: _StreamMetadata = field(default_factory=_StreamMetadata)
+    stderr_meta: _StreamMetadata = field(default_factory=_StreamMetadata)
 
 
 class OpenCodeLiveProcess(OpenCodeProcessProtocol):
     """One trusted OpenCode process for the selected `run --format json --pure` transport.
 
-    Output is written to a per-run spool directory that is created and owned by
-    the process controller, inside the caller-provided trusted spool directory.
-    The installed OpenCode package directory is never used as a spool root.
+    Uses concurrent stream draining via PIPE to avoid handle-inheritance
+    issues with the OpenCode/Bun `run` command on Windows. Output is
+    captured to spool files owned by Hermes.
     """
+
+    STDOUT_RETENTION_LIMIT = 1024 * 1024  # 1 MiB
+    STDERR_RETENTION_LIMIT = 128 * 1024   # 128 KiB
 
     def __init__(
         self,
@@ -640,23 +691,19 @@ class OpenCodeLiveProcess(OpenCodeProcessProtocol):
         for path in (output_path, stdout_path, stderr_path):
             if path.exists():
                 raise OpenCodeProcessError(f"adapter output already exists: {path}")
-        stdout_handle = stdout_path.open("xb")
-        stderr_handle = stderr_path.open("xb")
         creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         try:
             process = self._popen(
                 argv.to_list(),
                 stdin=subprocess.DEVNULL,
-                stdout=stdout_handle,
-                stderr=stderr_handle,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 cwd=argv.cwd,
                 env=dict(argv.env),
                 shell=False,
                 creationflags=creationflags,
             )
         except Exception:
-            stdout_handle.close()
-            stderr_handle.close()
             raise
         owned = _OwnedProcess(
             process=process,
@@ -667,16 +714,61 @@ class OpenCodeLiveProcess(OpenCodeProcessProtocol):
             run_id=run_id,
         )
         self._owned[process.pid] = owned
-        try:
-            if process.stdin is None:
-                raise OpenCodeProcessError("OpenCode stdin pipe is unavailable")
-            process.stdin.write(stdin_data.encode("utf-8"))
-            process.stdin.close()
-        except Exception:
-            if process.poll() is None:
-                process.terminate()
-            return process.pid
+        # Start reader threads to concurrently drain stdout/stderr
+        stdout_reader = threading.Thread(
+            target=self._drain_stream,
+            args=(process.stdout, stdout_path, owned.stdout_meta, self.STDOUT_RETENTION_LIMIT),
+            daemon=True,
+        )
+        stderr_reader = threading.Thread(
+            target=self._drain_stream,
+            args=(process.stderr, stderr_path, owned.stderr_meta, self.STDERR_RETENTION_LIMIT),
+            daemon=True,
+        )
+        owned.stdout_reader = stdout_reader
+        owned.stderr_reader = stderr_reader
+        stdout_reader.start()
+        stderr_reader.start()
         return process.pid
+
+    def _drain_stream(
+        self,
+        stream: BinaryIO,
+        path: Path,
+        meta: _StreamMetadata,
+        retention_limit: int,
+    ) -> None:
+        """Drain a byte stream to a bounded retention file.
+
+        Continues reading to EOF even after retention limit is reached.
+        Truncation metadata is stored in the _StreamMetadata object.
+        """
+        total_bytes = 0
+        retained_bytes = 0
+        try:
+            with path.open("xb") as h:
+                while True:
+                    chunk = stream.read(8192)
+                    if not chunk:
+                        break
+                    total_bytes += len(chunk)
+                    remaining = retention_limit - retained_bytes
+                    if remaining > 0:
+                        if len(chunk) > remaining:
+                            h.write(chunk[:remaining])
+                            retained_bytes += remaining
+                        else:
+                            h.write(chunk)
+                            retained_bytes += len(chunk)
+                    # Continue reading to EOF, discarding excess bytes
+        except FileExistsError:
+            meta.error = "file_exists"
+        except Exception as e:
+            meta.error = str(e)
+        finally:
+            meta.total_bytes = total_bytes
+            meta.retained_bytes = retained_bytes
+            meta.truncated = total_bytes > retention_limit
 
     def poll(self, pid: int) -> Optional[OpenCodeProcessResult]:
         owned = self._owned.get(pid)
@@ -687,26 +779,38 @@ class OpenCodeLiveProcess(OpenCodeProcessProtocol):
             return None
         if owned.collected:
             raise OpenCodeProcessError("terminal process result was already collected")
-        # Close any open file handles (they may already be closed)
-        for handle_name in ("stdout_handle", "stderr_handle"):
-            handle = getattr(owned, handle_name, None)
-            if handle is not None:
-                try:
-                    handle.close()
-                except Exception:
-                    pass
+        # Join stdout reader and verify termination
+        if owned.stdout_reader is not None:
+            owned.stdout_reader.join(timeout=5.0)
+            if owned.stdout_reader.is_alive():
+                raise OpenCodeProcessError("stdout stream capture failed: reader thread did not terminate")
+        # Join stderr reader and verify termination
+        if owned.stderr_reader is not None:
+            owned.stderr_reader.join(timeout=5.0)
+            if owned.stderr_reader.is_alive():
+                raise OpenCodeProcessError("stderr stream capture failed: reader thread did not terminate")
+        # Check for reader errors - capture failure even if process succeeded
+        if owned.stdout_meta.error is not None:
+            raise OpenCodeProcessError(f"stdout stream capture failed: {owned.stdout_meta.error}")
+        if owned.stderr_meta.error is not None:
+            raise OpenCodeProcessError(f"stderr stream capture failed: {owned.stderr_meta.error}")
+        # All stream finalization passed - mark collected and return result
         owned.collected = True
         return OpenCodeProcessResult(
             pid=pid,
             returncode=returncode,
-            stdout=self._read_bounded(owned.stdout_path, 1024 * 1024),
-            stderr=self._read_bounded(owned.stderr_path, 128 * 1024),
+            stdout=self._read_bounded(owned.stdout_path, self.STDOUT_RETENTION_LIMIT),
+            stderr=self._read_bounded(owned.stderr_path, self.STDERR_RETENTION_LIMIT),
             final_output=(
                 self._read_bounded(owned.stdout_path, 256 * 1024)
                 if (owned.stdout_path).exists()
                 else ""
             ),
             duration_seconds=max(0.0, self._monotonic() - owned.started_at),
+            stdout_truncated=owned.stdout_meta.truncated,
+            stdout_total_bytes=owned.stdout_meta.total_bytes,
+            stderr_truncated=owned.stderr_meta.truncated,
+            stderr_total_bytes=owned.stderr_meta.total_bytes,
         )
 
     def terminate(self, pid: int) -> None:
@@ -728,6 +832,8 @@ class OpenCodeLiveProcess(OpenCodeProcessProtocol):
         return bool(self._owned)
 
     def _read_bounded(self, path: Path, limit: int) -> str:
+        if not path.exists():
+            return ""
         with path.open("rb") as h:
             data = h.read(limit + 1)
         return data.decode("utf-8", errors="replace")

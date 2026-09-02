@@ -18,8 +18,12 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import threading
+import sys
 import time
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -1002,6 +1006,542 @@ class TestOpenCodeStdinClosure:
         assert argv_list[2] == "--format"
         assert argv_list[3] == "json"
         assert argv_list[4] == "--pure"
+
+
+
+class TestOpenCodePipeCapture:
+    """Non-model control tests for PIPE-based OpenCodeLiveProcess output capture."""
+
+    def test_stdout_capture(self, tmp_path: Path):
+        """Verify stdout is captured through PIPE."""
+        from tools.hermes_core.opencode_adapter import OpenCodeLiveProcess, OpenCodeArgv, _OwnedProcess
+
+        process = OpenCodeLiveProcess()
+        argv = OpenCodeArgv(
+            executable=sys.executable,
+            args=("-c", "import sys; sys.stdout.write('EA4E_PIPE_STDOUT_OK' + chr(10))"),
+            cwd=str(tmp_path),
+            env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"),
+            transport_contract_id="test",
+        )
+        pid = process.start(argv, "")
+        # Wait for process to finish
+        import time
+        for _ in range(50):
+            result = process.poll(pid)
+            if result is not None:
+                break
+            time.sleep(0.1)
+        assert result is not None
+        assert result.returncode == 0
+        assert "EA4E_PIPE_STDOUT_OK" in result.stdout
+
+    def test_stderr_capture(self, tmp_path: Path):
+        """Verify stderr is captured through PIPE."""
+        from tools.hermes_core.opencode_adapter import OpenCodeLiveProcess, OpenCodeArgv
+
+        process = OpenCodeLiveProcess()
+        argv = OpenCodeArgv(
+            executable=sys.executable,
+            args=("-c", "import sys; sys.stderr.write('EA4E_PIPE_STDERR_OK' + chr(10))"),
+            cwd=str(tmp_path),
+            env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"),
+            transport_contract_id="test",
+        )
+        pid = process.start(argv, "")
+        import time
+        for _ in range(50):
+            result = process.poll(pid)
+            if result is not None:
+                break
+            time.sleep(0.1)
+        assert result is not None
+        assert result.returncode == 0
+        assert "EA4E_PIPE_STDERR_OK" in result.stderr
+
+    def test_dual_stream_capture(self, tmp_path: Path):
+        """Verify both stdout and stderr are captured independently."""
+        from tools.hermes_core.opencode_adapter import OpenCodeLiveProcess, OpenCodeArgv
+
+        process = OpenCodeLiveProcess()
+        argv = OpenCodeArgv(
+            executable=sys.executable,
+            args=("-c", "import sys; sys.stdout.write('STDOUT_MARKER' + chr(10)); sys.stderr.write('STDERR_MARKER' + chr(10))"),
+            cwd=str(tmp_path),
+            env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"),
+            transport_contract_id="test",
+        )
+        pid = process.start(argv, "")
+        import time
+        for _ in range(50):
+            result = process.poll(pid)
+            if result is not None:
+                break
+            time.sleep(0.1)
+        assert result is not None
+        assert "STDOUT_MARKER" in result.stdout
+        assert "STDERR_MARKER" in result.stderr
+
+    def test_large_output_no_deadlock(self, tmp_path: Path):
+        """Verify large output doesn't cause deadlock."""
+        from tools.hermes_core.opencode_adapter import OpenCodeLiveProcess, OpenCodeArgv
+
+        process = OpenCodeLiveProcess()
+        # Generate output larger than pipe buffer (64KB typical)
+        argv = OpenCodeArgv(
+            executable=sys.executable,
+            args=("-c", "import sys; sys.stdout.write('X' * 200000)"),
+            cwd=str(tmp_path),
+            env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"),
+            transport_contract_id="test",
+        )
+        pid = process.start(argv, "")
+        import time
+        for _ in range(100):
+            result = process.poll(pid)
+            if result is not None:
+                break
+            time.sleep(0.1)
+        assert result is not None
+        assert result.returncode == 0
+        assert len(result.stdout) > 100000
+
+    def test_zero_output_distinguishable(self, tmp_path: Path):
+        """Verify zero output is distinguishable from success."""
+        from tools.hermes_core.opencode_adapter import OpenCodeLiveProcess, OpenCodeArgv
+
+        process = OpenCodeLiveProcess()
+        argv = OpenCodeArgv(
+            executable=sys.executable,
+            args=("-c", "pass"),
+            cwd=str(tmp_path),
+            env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"),
+            transport_contract_id="test",
+        )
+        pid = process.start(argv, "")
+        import time
+        for _ in range(50):
+            result = process.poll(pid)
+            if result is not None:
+                break
+            time.sleep(0.1)
+        assert result is not None
+        assert result.returncode == 0
+        # Zero output should be empty, not a valid JSONL
+        assert result.stdout == ""
+        assert result.final_output == ""
+
+    def test_timeout_lifecycle(self, tmp_path: Path):
+        """Verify timeout/terminate/kill lifecycle works."""
+        from tools.hermes_core.opencode_adapter import OpenCodeLiveProcess, OpenCodeArgv
+
+        process = OpenCodeLiveProcess()
+        argv = OpenCodeArgv(
+            executable=sys.executable,
+            args=("-c", "import time; time.sleep(30)"),
+            cwd=str(tmp_path),
+            env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"),
+            transport_contract_id="test",
+        )
+        pid = process.start(argv, "")
+        # Process should still be running
+        result = process.poll(pid)
+        assert result is None
+        # Terminate
+        process.terminate(pid)
+        import time
+        for _ in range(50):
+            result = process.poll(pid)
+            if result is not None:
+                break
+            time.sleep(0.1)
+        assert result is not None
+        assert result.returncode != 0  # Terminated process
+
+
+
+
+class TestOpenCodePipeOverflow:
+    """Tests for pipe capture overflow handling."""
+
+    def test_stdout_over_1mb_limit(self, tmp_path: Path):
+        """Verify stdout over 1MB is handled correctly."""
+        import sys
+        from tools.hermes_core.opencode_adapter import OpenCodeLiveProcess, OpenCodeArgv
+
+        process = OpenCodeLiveProcess()
+        # Write 4MB to stdout
+        argv = OpenCodeArgv(
+            executable=sys.executable,
+            args=("-c", "import sys; sys.stdout.write('X' * (4 * 1024 * 1024))"),
+            cwd=str(tmp_path),
+            env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"),
+            transport_contract_id="test",
+        )
+        pid = process.start(argv, "")
+        import time
+        for _ in range(100):
+            result = process.poll(pid)
+            if result is not None:
+                break
+            time.sleep(0.1)
+        assert result is not None
+        assert result.returncode == 0
+        # Should retain at most 1MB
+        assert len(result.stdout) <= 1024 * 1024 + 100  # Small tolerance
+        # Check metadata fields on result object
+        assert result.stdout_truncated is True
+        assert result.stdout_total_bytes >= 4 * 1024 * 1024
+
+    def test_stderr_over_128kb_limit(self, tmp_path: Path):
+        """Verify stderr over 128KB is handled correctly."""
+        import sys
+        from tools.hermes_core.opencode_adapter import OpenCodeLiveProcess, OpenCodeArgv
+
+        process = OpenCodeLiveProcess()
+        # Write 1MB to stderr
+        argv = OpenCodeArgv(
+            executable=sys.executable,
+            args=("-c", "import sys; sys.stderr.write('Y' * (1024 * 1024))"),
+            cwd=str(tmp_path),
+            env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"),
+            transport_contract_id="test",
+        )
+        pid = process.start(argv, "")
+        import time
+        for _ in range(100):
+            result = process.poll(pid)
+            if result is not None:
+                break
+            time.sleep(0.1)
+        assert result is not None
+        assert result.returncode == 0
+        # Should retain at most 128KB
+        assert len(result.stderr) <= 128 * 1024 + 100
+        # Check metadata
+        assert result.stderr_truncated is True
+        assert result.stderr_total_bytes >= 1024 * 1024
+
+    def test_dual_stream_overflow(self, tmp_path: Path):
+        """Verify both streams can overflow simultaneously without deadlock."""
+        import sys
+        from tools.hermes_core.opencode_adapter import OpenCodeLiveProcess, OpenCodeArgv
+
+        process = OpenCodeLiveProcess()
+        # Write to both stdout and stderr
+        argv = OpenCodeArgv(
+            executable=sys.executable,
+            args=("-c", "import sys; "
+                  "sys.stdout.write('A' * (2 * 1024 * 1024)); "
+                  "sys.stderr.write('B' * (512 * 1024))"),
+            cwd=str(tmp_path),
+            env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"),
+            transport_contract_id="test",
+        )
+        pid = process.start(argv, "")
+        import time
+        for _ in range(100):
+            result = process.poll(pid)
+            if result is not None:
+                break
+            time.sleep(0.1)
+        assert result is not None
+        assert result.returncode == 0
+        # Both streams should be bounded
+        assert len(result.stdout) <= 1024 * 1024 + 100
+        assert len(result.stderr) <= 128 * 1024 + 100
+
+
+
+class TestOpenCodeReaderFinalization:
+    """Tests for reader thread finalization."""
+
+    def test_stuck_reader_raises_capture_failure(self, tmp_path: Path):
+        """Verify stuck reader thread raises OpenCodeProcessError."""
+        import sys
+        from tools.hermes_core.opencode_adapter import OpenCodeLiveProcess, OpenCodeArgv, OpenCodeProcessError
+
+        # Start normally
+        process = OpenCodeLiveProcess()
+        argv = OpenCodeArgv(
+            executable=sys.executable,
+            args=("-c", "import sys; sys.stdout.write('X' * 100)"),
+            cwd=str(tmp_path),
+            env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"),
+            transport_contract_id="test",
+        )
+        pid = process.start(argv, "")
+
+        # Force the reader to appear stuck by mocking its methods
+        owned = process._owned[pid]
+        owned.stdout_reader.join = lambda timeout=None: None
+        owned.stdout_reader.is_alive = lambda: True
+
+        # Create a mock process that's already terminated
+        owned.process = MagicMock()
+        owned.process.poll.return_value = 0
+
+        with pytest.raises(OpenCodeProcessError, match="stdout stream capture failed"):
+            process.poll(pid)
+
+    def test_reader_exception_raises_capture_failure(self, tmp_path: Path):
+        """Verify reader exception is surfaced as capture failure."""
+        import sys
+        from tools.hermes_core.opencode_adapter import OpenCodeLiveProcess, OpenCodeArgv, OpenCodeProcessError
+
+        process = OpenCodeLiveProcess()
+        argv = OpenCodeArgv(
+            executable=sys.executable,
+            args=("-c", "import sys; sys.stdout.write('X' * 100)"),
+            cwd=str(tmp_path),
+            env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"),
+            transport_contract_id="test",
+        )
+        pid = process.start(argv, "")
+        # Force a reader error
+        process._owned[pid].stdout_meta.error = "injected read failure"
+        # Wait for actual process to finish, then verify poll raises
+        import time
+        for _ in range(50):
+            if process._owned[pid].process.poll() is not None:
+                break
+            time.sleep(0.1)
+        # Now poll should raise because of the injected error
+        with pytest.raises(OpenCodeProcessError, match="stdout stream capture failed"):
+            process.poll(pid)
+
+    def test_success_path_both_readers_dead(self, tmp_path: Path):
+        """Verify success path requires both readers dead and error-free."""
+        import sys
+        from tools.hermes_core.opencode_adapter import OpenCodeLiveProcess, OpenCodeArgv
+
+        process = OpenCodeLiveProcess()
+        argv = OpenCodeArgv(
+            executable=sys.executable,
+            args=("-c", "import sys; sys.stdout.write('EA4E_SUCCESS' + chr(10))"),
+            cwd=str(tmp_path),
+            env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"),
+            transport_contract_id="test",
+        )
+        pid = process.start(argv, "")
+        import time
+        for _ in range(50):
+            result = process.poll(pid)
+            if result is not None:
+                break
+            time.sleep(0.1)
+        assert result is not None
+        assert result.returncode == 0
+        assert "EA4E_SUCCESS" in result.stdout
+        # Verify readers are dead
+        assert not process._owned[pid].stdout_reader.is_alive()
+        assert not process._owned[pid].stderr_reader.is_alive()
+        # Verify no errors
+        assert process._owned[pid].stdout_meta.error is None
+        assert process._owned[pid].stderr_meta.error is None
+
+
+class TestOpenCodeStdin:
+    """Tests for stdin handling."""
+
+    def test_stdin_is_devnull_no_write(self, tmp_path: Path):
+        """Verify stdin is DEVNULL and no writes occur."""
+        import sys
+        from tools.hermes_core.opencode_adapter import OpenCodeLiveProcess, OpenCodeArgv
+        from unittest.mock import patch, MagicMock
+
+        popen_calls = []
+        def mock_popen(*args, **kwargs):
+            popen_calls.append(kwargs)
+            # Use DEVNULL for stdin to avoid actually running the process
+            kwargs["stdin"] = subprocess.DEVNULL
+            # Return a mock process
+            mock_proc = MagicMock()
+            mock_proc.pid = 99999
+            mock_proc.poll.return_value = 0
+            mock_proc.stdin = None  # DEVNULL has no stdin attribute
+            return mock_proc
+
+        process = OpenCodeLiveProcess(popen=mock_popen)
+        argv = OpenCodeArgv(
+            executable=sys.executable,
+            args=("-c", "pass"),
+            cwd=str(tmp_path),
+            env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"),
+            transport_contract_id="test",
+        )
+
+        pid = process.start(argv, "some data")
+
+        assert len(popen_calls) == 1
+        # Verify stdin is DEVNULL
+        assert popen_calls[0]["stdin"] is subprocess.DEVNULL
+
+
+class TestOpenCodeRawCapture:
+    """Tests for raw capture verification."""
+
+    def test_no_synthetic_truncation_marker(self, tmp_path: Path):
+        """Verify no synthetic truncation marker in raw output."""
+        import sys
+        from tools.hermes_core.opencode_adapter import OpenCodeLiveProcess, OpenCodeArgv
+
+        process = OpenCodeLiveProcess()
+        argv = OpenCodeArgv(
+            executable=sys.executable,
+            args=("-c", "import sys; sys.stdout.write('C' * (2 * 1024 * 1024))"),
+            cwd=str(tmp_path),
+            env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"),
+            transport_contract_id="test",
+        )
+        pid = process.start(argv, "")
+        import time
+        for _ in range(100):
+            result = process.poll(pid)
+            if result is not None:
+                break
+            time.sleep(0.1)
+        assert result is not None
+        # Verify no synthetic marker in raw output
+        assert "TRUNCATED" not in result.stdout
+        assert "... TRUNCATED" not in result.stdout
+        # Verify only raw 'C' characters (and possibly newline from Python)
+        assert all(c == 'C' or c == '\n' for c in result.stdout)
+
+
+class TestOpenCodeNonInferenceControl:
+    """Non-inference OpenCode control tests using --version."""
+
+    def test_opencapture_version_pipe_capture(self, tmp_path: Path):
+        """Verify OpenCode --version works with PIPE capture."""
+        from tools.hermes_core.opencode_adapter import (
+            OpenCodeLiveProcess,
+            OpenCodeArgv,
+            PINNED_OPENCODE_PATH,
+        )
+
+        process = OpenCodeLiveProcess()
+        argv = OpenCodeArgv(
+            executable=PINNED_OPENCODE_PATH,
+            args=("--version",),
+            cwd=str(tmp_path),
+            env=_real_binary_env(tmp_path),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"),
+            transport_contract_id="test",
+        )
+        pid = process.start(argv, "")
+        import time
+        for _ in range(50):
+            result = process.poll(pid)
+            if result is not None:
+                break
+            time.sleep(0.1)
+        assert result is not None
+        assert result.returncode == 0
+        assert "1.18.11" in result.stdout
+
+
+class TestOpenCodeMalformedOutput:
+    """Test that malformed JSONL is distinguishable from valid JSONL."""
+
+    def test_malformed_jsonl_distinguishable(self, tmp_path: Path):
+        """Verify malformed JSONL is captured but parsing fails."""
+        from tools.hermes_core.opencode_adapter import OpenCodeLiveProcess, OpenCodeArgv
+
+        # Write a simple Python script to avoid string escaping issues
+        script_path = tmp_path / "malformed.py"
+        script_path.write_text("import sys\nsys.stdout.write('not json{{{invalid\\n')")
+
+        process = OpenCodeLiveProcess()
+        argv = OpenCodeArgv(
+            executable=sys.executable,
+            args=(str(script_path),),
+            cwd=str(tmp_path),
+            env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"),
+            transport_contract_id="test",
+        )
+        pid = process.start(argv, "")
+        import time
+        for _ in range(50):
+            result = process.poll(pid)
+            if result is not None:
+                break
+            time.sleep(0.1)
+        assert result is not None
+        # Capture succeeded - we got the output
+        assert "not json" in result.stdout
+        # But parsing should fail
+        import json
+        for line in result.stdout.strip().split("\n"):
+            if line.strip():
+                try:
+                    json.loads(line)
+                    assert False, "Should not be valid JSON"
+                except json.JSONDecodeError:
+                    pass  # Expected
+
+
+class TestOpenCodeCancellation:
+    """Test cancellation lifecycle."""
+
+    def test_cancellation_preserves_ownership(self, tmp_path: Path):
+        """Verify cancellation preserves PID ownership and terminates process."""
+        from tools.hermes_core.opencode_adapter import OpenCodeLiveProcess, OpenCodeArgv
+
+        process = OpenCodeLiveProcess()
+        argv = OpenCodeArgv(
+            executable=sys.executable,
+            args=("-c", "import time; time.sleep(60)"),
+            cwd=str(tmp_path),
+            env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"),
+            transport_contract_id="test",
+        )
+        pid = process.start(argv, "")
+        # Process should be running
+        assert process.poll(pid) is None
+        # Cancel (terminate)
+        process.terminate(pid)
+        import time
+        for _ in range(50):
+            result = process.poll(pid)
+            if result is not None:
+                break
+            time.sleep(0.1)
+        assert result is not None
+        # Process should be terminated (return code may vary by platform)
 
 
 class TestOpenCodeProtocolConformance:

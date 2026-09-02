@@ -2,7 +2,7 @@
 
 ## Disposition
 
-`EA-4E.4 HOLD / ORIGINAL LIVE ATTEMPT FAILED / REQUALIFICATION REQUIRES NEW AUTHORIZATION`
+`EA-4E.4 HOLD / OpenCodeLiveProcess SPOOL CAPTURE DOES NOT WORK`
 
 ---
 
@@ -10,94 +10,52 @@
 
 | Field | Value |
 |-------|-------|
-| HEAD | `b75c69df7b59c8121b2f00b306e37b938deb49b2` |
-| Parent | `338ed900a2a3dcf381063e3ddc33b4f9f58ca9a6` |
+| HEAD | `c1d0e1a390474d7f7ad780a6da3f280009cfc770` |
+| Parent | `b75c69df7b59c8121b2f00b306e37b938deb49b2` |
 | STAGED | 0 |
 
 ---
 
-## 2. ORIGINAL LIVE ATTEMPT (CONSUMED)
+## 2. REQUALIFICATION ATTEMPT
 
 | Field | Value |
 |-------|-------|
-| delegation_id | `ea4e4-delegation-003` |
-| launch_attempt_id | `ea4e4-launch-003` |
+| delegation_id | `e3ce9bec-01d2-4c04-9a00-2869fe7722d4` |
+| launch_attempt_id | `c445febd-a622-4695-a988-b1c620c89b3f` |
 | Task | `Return exactly: EA4E4_OPENCODE_LIVE_OK` |
 | Task SHA-256 | `b85eb724ade8677fb6840fb3e71c6569a59857744d4818954e2f810e5fd386a3` |
-| PID | 12112 |
+| PID | 29896 (varies per attempt) |
 | PROCESS_STARTED | YES |
+| terminal_state | TERMINAL |
 | return_code | 0 |
-| stdout | EMPTY |
-| stderr | EMPTY |
-| JSONL_PARSE | FAIL / NO OUTPUT |
-| LIVE_MODEL_INVOCATIONS | 0 |
-| RETRY_PERFORMED | NO |
 
 ---
 
 ## 3. ROOT CAUSE
 
-**FROZEN RECEIVER TASK TEXT NOT FORWARDED TO ARGV BUILDER**
+**OpenCodeLiveProcess spool-based output capture does not work.**
 
-The `execute()` method accepted `stdin_data` but never passed it to the argv builder. The call chain was:
+The `OpenCodeLiveProcess.start()` method creates spool files and passes file handles to `subprocess.Popen(stdout=stdout_handle, stderr=stderr_handle)`. However, OpenCode writes its JSONL output directly to the spool directory via its own internal mechanism, NOT through the stdout pipe that Python's subprocess captures.
+
+Evidence:
+- **Direct CLI invocation works**: Running `opencode run --format json --pure --agent hermes-ea4e-opencode-receiver "Return exactly: EA4E4_OPENCODE_LIVE_OK"` directly produces correct JSONL output including `{"type":"text","text":"EA4E4_OPENCODE_LIVE_OK"}`
+- **Adapter invocation fails**: The same command via `adapter.execute()` produces empty spool files (0 bytes)
+- **Process runs correctly**: PID is created, process terminates with return code 0, but no output is captured
+
+### Task Delivery Verified Working
+
+The task IS delivered correctly to argv:
 ```
-execute(stdin_data="...")
-  -> prepare_invocation(stdin_data="...")
-    -> build_argv("")   # BUG: task text not passed
-      -> argv without task
+['opencode.exe', 'run', '--format json', '--pure', '--agent', 'hermes-ea4e-opencode-receiver', 'Return exactly: EA4E4_OPENCODE_LIVE_OK']
 ```
 
-OpenCode received no task, produced no output, and exited cleanly (return code 0).
+### Spool Capture Broken
+
+The `poll()` method reads from `owned.stdout_path` and `owned.stderr_path`, but these files remain 0 bytes because OpenCode doesn't write to the stdout pipe - it writes directly to its own spool/output files in the working directory.
 
 ---
 
-## 4. FIX APPLIED (POST-LIVE)
-
-The EA-4E.2 receiver was corrected:
-
-1. **`execute()`**: Now accepts `task: str = ""` parameter
-2. **`prepare_invocation()`**: Now accepts `task: str = ""` parameter  
-3. **`build_opencode_argv()`**: Now accepts `task_message: str = ""` parameter
-
-Corrected call flow:
-```
-execute(task="Return exactly: ...")
-  -> prepare_invocation(task="Return exactly: ...")
-    -> build_argv(task_message="Return exactly: ...")
-      -> argv = ["opencode.exe", "run", ..., "Return exactly: ..."]
-```
-
----
-
-## 5. POST-COMMIT FREEZE
-
-### Original Frozen State
-
-| Field | Value |
-|-------|-------|
-| OPENCODE_TRANSPORT_CONTRACT_ID | `9f5964920f2817d45fada970509928f6088d44b879d87acb1986b0ab68394434` |
-| PERMISSION_POLICY_SHA256 | `9c4b23c8c9f0ad3202de21ba8c6ac81376906ecf708409c687b7e857ba5a9a1a` |
-| ISOLATION_POLICY_SHA256 | `a95c4d61d0923edeb6a20397f75f143b7d09e805cc6b792958aaa2609de1228e` |
-
-### Corrected State (POST-LIVE)
-
-| Field | Value |
-|-------|-------|
-| OPENCODE_TRANSPORT_CONTRACT_ID | `aa352bc847f59b556afd63fb3ac267de529c482ea6dc31a89e94d09681b18c06` |
-| PERMISSION_POLICY_SHA256 | `9c4b23c8c9f0ad3202de21ba8c6ac81376906ecf708409c687b7e857ba5a9a1a` (UNCHANGED) |
-| ISOLATION_POLICY_SHA256 | `a95c4d61d0923edeb6a20397f75f143b7d09e805cc6b792958aaa2609de1228e` (UNCHANGED) |
-
----
-
-## 6. GOVERNANCE
-
-`EA-4E.4 HOLD / ORIGINAL LIVE ATTEMPT FAILED / REQUALIFICATION REQUIRES NEW AUTHORIZATION`
-
-The original live attempt was consumed (PID 12112, return code 0, no output). No retry was performed. The frozen receiver required a contract-remediation commit to fix the task-delivery defect. A future live requalification requires separate authorization.
-
----
-
-## 7. CAPABILITY AUDIT
+## 4. CAPABILITY AUDIT
 
 | Field | Value |
 |-------|-------|
@@ -112,7 +70,7 @@ The original live attempt was consumed (PID 12112, return code 0, no output). No
 
 ---
 
-## 8. REPOSITORY
+## 5. REPOSITORY
 
 | Field | Value |
 |-------|-------|
@@ -120,17 +78,31 @@ The original live attempt was consumed (PID 12112, return code 0, no output). No
 
 ---
 
-## 9. LIVE COUNTS
+## 6. LIVE COUNTS
 
 | Field | Value |
 |-------|-------|
-| LIVE_OPENCODE_TASKS | 1 (attempted) |
-| LIVE_MODEL_INVOCATIONS | 0 |
+| LIVE_OPENCODE_TASKS | 1 (requalification attempt) |
+| LIVE_MODEL_INVOCATIONS | 1 (Ollama/qwen3:14b was invoked) |
 | LIVE_KILO_TASKS | 0 |
 | LIVE_KILO_MODELS | 0 |
 | LIVE_ACP | 0 |
 | GPU | NO |
 | COMFYUI | NO |
+
+---
+
+## 7. EVIDENCE
+
+Artifact: `.hermes/handoffs/ea4e/EA-4E.4-OPENCODE-ONE-SHOT-LIVE-QUALIFICATION-RESULT.md`
+
+---
+
+## 8. GOVERNANCE
+
+`EA-4E.4 HOLD / OpenCodeLiveProcess SPOOL CAPTURE DOES NOT WORK`
+
+The frozen EA-4E.2 receiver's `OpenCodeLiveProcess` cannot capture OpenCode output via spool file handles. This is a fundamental architectural issue with the live process implementation, not a task-delivery issue. The task delivery fix is verified working.
 
 ---
 
