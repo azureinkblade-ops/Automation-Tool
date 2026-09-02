@@ -10,8 +10,8 @@
 
 | Field | Value |
 |-------|-------|
-| HEAD | `b75c69df7b59c8121b2f00b306e37b938deb49b2` |
-| Parent | `338ed900a2a3dcf381063e3ddc33b4f9f58ca9a6` |
+| HEAD | `ef4a9e8704ca472f2b6d7f304e94293b51188dd0` |
+| Parent | `c1d0e1a390474d7f7ad780a6da3f280009cfc770` |
 | STAGED | 0 |
 
 ---
@@ -20,7 +20,7 @@
 
 | Field | Value |
 |-------|-------|
-| OPENCODE_TRANSPORT_CONTRACT_ID | `2348c9e484ed1e20f958c7af4238d596a5d7cda8bae87b57d1450ffd499244d7` |
+| OPENCODE_TRANSPORT_CONTRACT_ID | `42028ecbf32ca4f42363ffa8c773c836e4fc836192bb5123d05bfffa679b3741` |
 | PERMISSION_POLICY_SHA256 | `9c4b23c8c9f0ad3202de21ba8c6ac81376906ecf708409c687b7e857ba5a9a1a` |
 | ISOLATION_POLICY_SHA256 | `a95c4d61d0923edeb6a20397f75f143b7d09e805cc6b792958aaa2609de1228e` |
 
@@ -127,16 +127,16 @@ The isolated `config.json` contains:
 
 ## 6. BINDING ID
 
-**EA4E4_MODEL_BINDING_ID**: `2b45284eec7c86a6debf92f0774e21e9ad7d2c6d4009192f645149633bd45046`
+**EA4E4_MODEL_BINDING_ID**: `02b74b840ef00db7c2de2b7fe3be753300b93e2a9e9750f9427c91bb1ae5caba`
 
 ### Canonical Material (non-secret):
 
 ```json
 {
-  "opencode_transport_contract_id": "2348c9e484ed1e20f958c7af4238d596a5d7cda8bae87b57d1450ffd499244d7",
-  "provider_id": "ollama",
-  "model_id": "qwen3:14b",
-  "selection_mechanism": "Hermes-owned OPENCODE_CONFIG_DIR redirect",
+  "opencode_transport_contract_id": "42028ecbf32ca4f42363ffa8c773c836e4fc836192bb5123d05bfffa679b3741",
+  "provider": "ollama",
+  "model": "qwen3:14b",
+  "selection_mechanism": "CONFIG",
   "config_location": "C:\\Users\\David\\AppData\\Local\\Hermes\\runtime\\ea4e\\opencode\\config\\config.json",
   "config_location_within_repo": false,
   "ambient_user_config_used": false,
@@ -193,7 +193,7 @@ OpenCode's `opencode run` creates a fresh session by default (no `--continue` or
 
 | Field | Value |
 |-------|-------|
-| OPENCODE_TRANSPORT_CONTRACT_ID | `2348c9e484ed1e20f958c7af4238d596a5d7cda8bae87b57d1450ffd499244d7` (UNCHANGED) |
+| OPENCODE_TRANSPORT_CONTRACT_ID | `42028ecbf32ca4f42363ffa8c773c836e4fc836192bb5123d05bfffa679b3741` (UNCHANGED) |
 | FROZEN_RECEIVER_CONTRACT_CHANGED | NO |
 
 The model binding is entirely external to the frozen EA-4E.2 receiver contract. No adapter code was modified.
@@ -216,9 +216,9 @@ The model binding is entirely external to the frozen EA-4E.2 receiver contract. 
 
 | Field | Value |
 |-------|-------|
-| HEAD | `b75c69df7b59c8121b2f00b306e37b938deb49b2` |
+| HEAD | `ef4a9e8704ca472f2b6d7f304e94293b51188dd0` |
 | STAGED | 0 |
-| COMMIT | NO |
+| COMMIT | YES |
 | PUSH | NO |
 
 The model binding configuration is outside the repository (in `LOCALAPPDATA/Hermes/runtime/`).
