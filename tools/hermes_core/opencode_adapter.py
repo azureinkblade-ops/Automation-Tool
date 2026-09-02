@@ -212,6 +212,11 @@ def _canonical_material(
         "failover": "OFF",
         "production_routing": "OFF",
         "registry_policy": "explicit static initialization via register_adapter()",
+
+        # Task delivery
+        "task_delivery_path": "execute(task) -> prepare_invocation(task) -> build_argv(task_message) -> positional argv",
+        "empty_task_policy": "FAIL_BEFORE_PROCESS_START",
+        "whitespace_task_policy": "FAIL_BEFORE_PROCESS_START",
     }
 
 
@@ -531,6 +536,7 @@ def build_opencode_argv(
     binding: QualifiedRuntimeBinding,
     *,
     runtime_run_id: str,
+    task_message: str = "",
 ) -> OpenCodeArgv:
     config.validate()
     if (
@@ -548,9 +554,13 @@ def build_opencode_argv(
     ):
         raise OpenCodeTransportQualificationError("unsafe runtime_run_id")
     spool = Path(config.spool_directory)
+    # Build args with optional task message
+    args = _ordered_run_json_args()
+    if task_message:
+        args = args + (task_message,)
     result = OpenCodeArgv(
         executable=binding.executable,
-        args=_ordered_run_json_args(),
+        args=args,
         cwd=str(Path(config.working_directory).resolve()),
         env=config.environment,
         input_schema_file=config.output_schema_file,
@@ -677,8 +687,14 @@ class OpenCodeLiveProcess(OpenCodeProcessProtocol):
             return None
         if owned.collected:
             raise OpenCodeProcessError("terminal process result was already collected")
-        owned.stdout_handle.close()
-        owned.stderr_handle.close()
+        # Close any open file handles (they may already be closed)
+        for handle_name in ("stdout_handle", "stderr_handle"):
+            handle = getattr(owned, handle_name, None)
+            if handle is not None:
+                try:
+                    handle.close()
+                except Exception:
+                    pass
         owned.collected = True
         return OpenCodeProcessResult(
             pid=pid,
@@ -856,12 +872,15 @@ class OpenCodeReceiverAdapter:
         launch_attempt_id: str,
         delegation_id: str,
         stdin_data: str,
+        task: str = "",
     ) -> tuple[InvocationRecord, Sequence[str], bool]:
         runtime_run_id = "opencode-run-" + hashlib.sha256(
             idempotency_key.encode("utf-8")
         ).hexdigest()[:32]
         binding = _resolve_binding(self._config, runtime_binding=self._runtime_binding)
-        argv = build_opencode_argv(self._config, binding, runtime_run_id=runtime_run_id)
+        # Use task from parameter, falling back to stdin_data for backward compat
+        task_text = task if task else stdin_data
+        argv = build_opencode_argv(self._config, binding, runtime_run_id=runtime_run_id, task_message=task_text)
         record = InvocationRecord(
             idempotency_key=idempotency_key,
             runtime_run_id=runtime_run_id,
@@ -879,12 +898,18 @@ class OpenCodeReceiverAdapter:
         launch_attempt_id: str,
         delegation_id: str,
         stdin_data: str,
+        task: str = "",
     ) -> ExecutionOutcome:
+        # Fail closed: reject empty/whitespace-only tasks before process start
+        task_text = task if task else stdin_data
+        if task_text.strip() == "":
+            raise OpenCodeAdapterError("governed task is empty")
         record, argv_list, replayed = self.prepare_invocation(
             idempotency_key=idempotency_key,
             launch_attempt_id=launch_attempt_id,
             delegation_id=delegation_id,
             stdin_data=stdin_data,
+            task=task,
         )
         if replayed:
             return ExecutionOutcome(

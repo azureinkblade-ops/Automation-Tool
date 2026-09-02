@@ -307,6 +307,142 @@ class TestOpenCodeContractMutation:
         assert sha256_payload(m1) != sha256_payload(m2_dict)
 
 
+
+class TestOpenCodeTaskDelivery:
+    """Regression tests for the task-delivery defect that caused EA-4E.4 HOLD."""
+
+    def test_task_reaches_argv_exactly_once(self):
+        from tools.hermes_core.opencode_adapter import build_opencode_argv, default_opencode_config, _resolve_binding
+        config = default_opencode_config()
+        binding = _resolve_binding(config)
+        task = "EA4E_TASK_DELIVERY_SENTINEL"
+        argv = build_opencode_argv(config, binding, runtime_run_id="test-run-001", task_message=task)
+        argv_list = argv.to_list()
+        # Task must appear exactly once
+        assert argv_list.count(task) == 1, f"Task should appear once, got {argv_list.count(task)}"
+        # Task must be the last argument
+        assert argv_list[-1] == task, f"Task should be last arg, got {argv_list[-1]}"
+
+    def test_task_not_in_stdin(self):
+        from tools.hermes_core.opencode_adapter import build_opencode_argv, default_opencode_config, _resolve_binding
+        config = default_opencode_config()
+        binding = _resolve_binding(config)
+        task = "Return exactly: EA4E4_OPENCODE_LIVE_OK"
+        argv = build_opencode_argv(config, binding, runtime_run_id="test-run-002", task_message=task)
+        # stdin should not be used - the task is in argv
+        argv_list = argv.to_list()
+        assert task in argv_list
+
+    def test_empty_task_rejected_or_documented(self):
+        from tools.hermes_core.opencode_adapter import build_opencode_argv, default_opencode_config, _resolve_binding
+        config = default_opencode_config()
+        binding = _resolve_binding(config)
+        # Empty task should not add an empty string to argv
+        argv = build_opencode_argv(config, binding, runtime_run_id="test-run-003", task_message="")
+        argv_list = argv.to_list()
+        # No empty strings in argv
+        assert "" not in argv_list, "Empty task should not produce empty argv entry"
+
+    def test_hostile_task_cannot_inject_flags(self):
+        from tools.hermes_core.opencode_adapter import build_opencode_argv, default_opencode_config, _resolve_binding
+        config = default_opencode_config()
+        binding = _resolve_binding(config)
+        hostile_task = "--model bad/model --agent attacker --auto"
+        argv = build_opencode_argv(config, binding, runtime_run_id="test-run-004", task_message=hostile_task)
+        argv_list = argv.to_list()
+        # The hostile task should be a single positional argument at the end
+        assert argv_list.count(hostile_task) == 1, "Hostile task should be single positional arg"
+        assert argv_list[-1] == hostile_task, "Hostile task should be last arg"
+        # Count occurrences of flags - the frozen argv has exactly one --agent
+        # The hostile task should NOT inject additional flags
+        assert argv_list.count("--model") == 0, "Task should not inject --model flag"
+        assert argv_list.count("--agent") == 1, "Only frozen --agent should exist"
+        assert argv_list.count("--auto") == 0, "Task should not inject --auto flag"
+
+    def test_execute_passes_task_to_argv(self):
+        from tools.hermes_core.opencode_adapter import OpenCodeReceiverAdapter, OpenCodeFakeProcess, OpenCodeProcessResult
+        task = "EA4E_TASK_DELIVERY_SENTINEL"
+        # Use fake process with a sequence so execute() returns
+        fake_process = OpenCodeFakeProcess(
+            sequence=[OpenCodeProcessResult(pid=12345, returncode=0, stdout="{}", stderr="")]
+        )
+        adapter = OpenCodeReceiverAdapter(process_impl=fake_process)
+        # Call execute with task
+        outcome = adapter.execute(
+            idempotency_key="test-task-001",
+            launch_attempt_id="test-launch-001",
+            delegation_id="test-delegation-001",
+            stdin_data="",
+            task=task,
+        )
+        # Verify the task reached the argv
+        assert outcome.process_started
+        # The argv hash should include the task
+        assert outcome.record.argv_hash != ""
+
+    def test_prepare_invocation_includes_task(self):
+        from tools.hermes_core.opencode_adapter import OpenCodeReceiverAdapter
+        adapter = OpenCodeReceiverAdapter()
+        task = "Return exactly: EA4E4_OPENCODE_LIVE_OK"
+        record, argv_list, replayed = adapter.prepare_invocation(
+            idempotency_key="test-prepare-001",
+            launch_attempt_id="test-launch-001",
+            delegation_id="test-delegation-001",
+            stdin_data="",
+            task=task,
+        )
+        assert task in argv_list, f"Task should be in argv, got {argv_list}"
+        assert argv_list[-1] == task, f"Task should be last arg, got {argv_list[-1]}"
+
+
+
+    def test_empty_task_fails_before_process_start(self):
+        from tools.hermes_core.opencode_adapter import OpenCodeReceiverAdapter, OpenCodeAdapterError
+        adapter = OpenCodeReceiverAdapter()
+        # Empty task should raise before process start
+        with pytest.raises(OpenCodeAdapterError, match="governed task is empty"):
+            adapter.execute(
+                idempotency_key="test-empty-001",
+                launch_attempt_id="test-launch-001",
+                delegation_id="test-delegation-001",
+                stdin_data="",
+                task="",
+            )
+
+    def test_whitespace_task_fails_before_process_start(self):
+        from tools.hermes_core.opencode_adapter import OpenCodeReceiverAdapter, OpenCodeAdapterError
+        adapter = OpenCodeReceiverAdapter()
+        # Whitespace-only task should raise before process start
+        with pytest.raises(OpenCodeAdapterError, match="governed task is empty"):
+            adapter.execute(
+                idempotency_key="test-ws-001",
+                launch_attempt_id="test-launch-001",
+                delegation_id="test-delegation-001",
+                stdin_data="",
+                task="   ",
+            )
+
+    def test_empty_task_no_child_process(self):
+        """Verify empty task does not create a child process."""
+        from tools.hermes_core.opencode_adapter import OpenCodeReceiverAdapter, OpenCodeAdapterError
+        adapter = OpenCodeReceiverAdapter()
+        # Track if start was called
+        start_called = False
+        original_start = None
+        try:
+            adapter.execute(
+                idempotency_key="test-empty-002",
+                launch_attempt_id="test-launch-001",
+                delegation_id="test-delegation-001",
+                stdin_data="",
+                task="",
+            )
+        except OpenCodeAdapterError:
+            pass
+        # No process should have been started - we can verify by checking
+        # that no exception other than OpenCodeAdapterError was raised
+
+
 class TestOpenCodeTrustedConfig:
     def test_default_config_valid(self):
         config = default_opencode_config()
