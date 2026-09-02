@@ -63,7 +63,7 @@ EA-4E.2 remains: FROZEN / COMMITTED / NON-LIVE QUALIFIED / NOT PUSHED
 | SUBAGENT | DENIED — `agent` → deny |
 | ARBITRARY_TOOL | DENIED — wildcard `"*": "deny"` |
 | TASK_CONTENT_REQUIRED_FOR_SECURITY | NO |
-| PERMISSION_POLICY_SHA256 | `0687421bd7d2718caeb0671ce7a586fcf7c8fe6e7a4f4472001bf886d625538a` |
+| PERMISSION_POLICY_SHA256 | `87e74bf20efc07c1b89e1dff5e8e75fba08f96f18677afdbbac411ce4cc87cf3` |
 
 ### Permission Keys (14, all deny)
 
@@ -114,7 +114,7 @@ Keys: `HOME`, `HOMEDRIVE`, `HOMEPATH`, `KILO_CONFIG_DIR`, `KILO_HOME`, `KILO_PUR
 | KILO_EFFECTIVE_HOME | `C:\Users\David\AppData\Local\Hermes\runtime\ea4e\kilo\home` |
 | KILO_CONFIG_DIR | `C:\Users\David\AppData\Local\Hermes\runtime\ea4e\kilo\config` |
 | RUNTIME_ROOT_WITHIN_REPO | NO |
-| ISOLATION_POLICY_SHA256 | `5a739b621c4444837de8316bb88d17b66a2f87a9222e1e8e6ef28b0fff7e2ce6` |
+| ISOLATION_POLICY_SHA256 | `d93b5fdcfe41f7e988898eb894f0856121e4dd688092ff2915e395da765744e9` |
 
 ---
 
