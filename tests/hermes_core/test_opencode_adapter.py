@@ -23,6 +23,7 @@ import threading
 import sys
 import time
 from pathlib import Path
+import pytest
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1363,6 +1364,10 @@ class TestOpenCodeReaderFinalization:
         # Verify no errors
         assert process._owned[pid].stdout_meta.error is None
         assert process._owned[pid].stderr_meta.error is None
+
+
+
+
 
 
 class TestOpenCodeStdin:

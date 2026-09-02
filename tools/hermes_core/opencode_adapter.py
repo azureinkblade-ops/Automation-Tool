@@ -169,6 +169,7 @@ def _canonical_material(
         "reader_error_policy": "FAIL_CAPTURE",
         "reader_join_policy": "JOIN_WITH_TIMEOUT_5S",
         "reader_finalization_policy": "REQUIRE_DEAD_BEFORE_RESULT",
+        "parser_schema": "OPENCODE_JSONL_NESTED_PART_TEXT",
         "transport": transport,
 
         # Fixed argv policy
@@ -940,6 +941,9 @@ class OpenCodeReceiverAdapter:
         empty or contains no recognizable event, a parse error is
         raised so the caller can distinguish a malformed transcript
         from a genuine terminal result.
+
+        Supports both flat (``{"type":"text","text":"..."}``) and nested
+        (``{"type":"text","part":{"text":"..."}}``) text event formats.
         """
         lines = [line for line in stdout.splitlines() if line.strip()]
         if not lines:
@@ -950,7 +954,23 @@ class OpenCodeReceiverAdapter:
                 events.append(json.loads(line))
             except json.JSONDecodeError as exc:
                 raise OpenCodeParseError(f"invalid JSONL line: {exc}") from exc
-        text_events = [e for e in events if e.get("type") == "text" and isinstance(e.get("text"), str) and e["text"].strip()]
+        # Extract text events - support flat and nested formats
+        text_events = []
+        for e in events:
+            if e.get("type") == "text":
+                # Try flat format: {"type": "text", "text": "..."}
+                text = e.get("text")
+                if isinstance(text, str) and text.strip():
+                    text_events.append(e)
+                else:
+                    # Try nested format: {"type": "text", "part": {"text": "..."}}
+                    part = e.get("part")
+                    if isinstance(part, dict):
+                        nested_text = part.get("text")
+                        if isinstance(nested_text, str) and nested_text.strip():
+                            # Add flat text field for uniform access
+                            e["text"] = nested_text
+                            text_events.append(e)
         if text_events:
             return {"type": "text", "text": text_events[-1]["text"].strip(), "events": events}
         error_events = [e for e in events if e.get("type") == "error"]
