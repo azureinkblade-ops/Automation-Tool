@@ -141,7 +141,7 @@ class TestKiloTransportContract:
         assert material["profile_model_field"] == "ABSENT"
         assert material["model_selection_policy"] == "FIXED_ARGV"
         assert material["model_flag"] == "--model"
-        assert material["model_value"] == "ollama/qwen3:14b"
+        assert material["model_value"] == "kilo/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
 
     def test_canonical_material_no_auto_approve(self):
         from tools.hermes_core.kilo_adapter import _canonical_material
@@ -251,7 +251,7 @@ class TestKiloArgv:
         assert "--model" in argv_list
         assert argv_list.count("--model") == 1
         model_idx = argv_list.index("--model")
-        assert argv_list[model_idx + 1] == "ollama/qwen3:14b"
+        assert argv_list[model_idx + 1] == "kilo/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
 
 
 class TestKiloReceiverAdapter:
@@ -494,7 +494,7 @@ class TestKiloSecurityFocused:
         assert "--model" in argv_list
         assert argv_list.count("--model") == 1
         model_idx = argv_list.index("--model")
-        assert argv_list[model_idx + 1] == "ollama/qwen3:14b"
+        assert argv_list[model_idx + 1] == "kilo/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
 
         # Task trying to inject model flag is rejected by input hardening
         try:
@@ -764,7 +764,7 @@ class TestKiloDenyEnforcementTrace:
         assert "--model" in argv_list
         assert argv_list.count("--model") == 1
         model_idx = argv_list.index("--model")
-        assert argv_list[model_idx + 1] == "ollama/qwen3:14b"
+        assert argv_list[model_idx + 1] == "kilo/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
 
     def test_deny_enforcement_locally_verifiable_via_adapter_only(self, safe_cwd: Path):
         """The Hermes profile provides source-proven default-deny via the Kilo 7.5.6
@@ -803,7 +803,7 @@ class TestKiloModelState:
         assert "--model" in argv_list
         assert argv_list.count("--model") == 1
         model_idx = argv_list.index("--model")
-        assert argv_list[model_idx + 1] == "ollama/qwen3:14b"
+        assert argv_list[model_idx + 1] == "kilo/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
 
     def test_model_selection_is_fixed(self, safe_cwd: Path):
         from tools.hermes_core.kilo_agent_profile import AGENT_DEFINITION

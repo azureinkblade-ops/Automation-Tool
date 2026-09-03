@@ -221,9 +221,9 @@ def _canonical_material(
         # Fixed argv policy
         "fixed_argv_policy": [
             "<kilo_executable>", "run", "--format", "json", "--pure",
-            "--agent", KILO_AGENT_ID, "--model", "ollama/qwen3:14b", "<task_message>",
+            "--agent", KILO_AGENT_ID, "--model", "kilo/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "<task_message>",
         ],
-        "fixed_argv_note": "positional task input; no task-controlled flags; model fixed by Hermes",
+        "fixed_argv_note": "positional task input; no task-controlled flags; model fixed by Hermes; free model",
 
         # Receiver/agent
         "agent_id": KILO_AGENT_ID,
@@ -233,7 +233,7 @@ def _canonical_material(
         # Model policy
         "model_selection_policy": "FIXED_ARGV",
         "model_flag": "--model",
-        "model_value": "ollama/qwen3:14b",
+        "model_value": "kilo/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
         "profile_model_field": "ABSENT",
 
         # Permission policy (hash-bound)
@@ -354,10 +354,8 @@ def build_kilo_argv(config: dict[str, Any], runtime_binding: dict[str, Any], run
         "--agent",
         "hermes-ea4e-kilo-receiver",
         "--model",
-        "ollama/qwen3:14b",
+        "kilo/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
         message,
-        "--session",
-        "hermes-ea4e-kilo-session",
     ]
 
     class ArgvList(Sequence[str]):
