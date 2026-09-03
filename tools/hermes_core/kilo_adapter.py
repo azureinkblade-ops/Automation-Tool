@@ -68,9 +68,9 @@ from tools.hermes_core.receiver_adapter import (
 # Note: register_adapter is imported inside register_kilo_adapter() to avoid
 # circular imports. The explicit registration is in receiver_registry.py.
 
-PINNED_KILO_PATH = r"C:\Users\David\.vscode\extensions\kilocode.kilo-code-7.5.6-win32-x64\bin\kilo.exe"
-PINNED_KILO_SHA256 = "e78c0006cad1e65238e8c5b32ee937128c474f07b8d3b3fa3d0b24c32ab79860"
-PINNED_KILO_VERSION = "7.5.6"
+PINNED_KILO_PATH = r"C:\Users\David\.vscode\extensions\kilocode.kilo-code-7.5.9-win32-x64\bin\kilo.exe"
+PINNED_KILO_SHA256 = "ec8737555947a145f3418962890f539b6b175ba3de125689f7ccb197d0004a36"
+PINNED_KILO_VERSION = "7.5.9"
 PINNED_KILO_ADAPTER_VERSION = "ea4e.3"
 PINNED_KILO_TRANSPORT = "kilo-run"
 KILO_AGENT_ID = "hermes-ea4e-kilo-receiver"
@@ -390,9 +390,25 @@ class KiloOutputParser:
                 events.append(json.loads(line))
             except json.JSONDecodeError as exc:
                 raise KiloParseError(f"invalid JSONL line: {exc}") from exc
-        text_events = [e for e in events if e.get("type") == "text" and isinstance(e.get("text"), str) and e["text"].strip()]
+
+        # Extract text from Kilo 7.5.6 JSONL events.
+        # Kilo nests the assistant text under event["part"]["text"].
+        # Historical top-level event["text"] is preserved for backward compatibility.
+        def _extract_text(event: dict) -> str | None:
+            part = event.get("part")
+            if isinstance(part, dict):
+                text = part.get("text")
+                if isinstance(text, str) and text.strip():
+                    return text.strip()
+            text = event.get("text")
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+            return None
+
+        text_events = [e for e in events if e.get("type") == "text" and _extract_text(e) is not None]
         if text_events:
-            return {"type": "text", "text": text_events[-1]["text"].strip(), "events": events}
+            return {"type": "text", "text": _extract_text(text_events[-1]), "events": events}
+
         error_events = [e for e in events if e.get("type") == "error"]
         if error_events:
             return {"type": "error", "error": error_events[-1].get("error", {}), "events": events}

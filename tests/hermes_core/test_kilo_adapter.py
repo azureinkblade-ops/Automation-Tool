@@ -319,6 +319,71 @@ class TestKiloReceiverAdapter:
         with pytest.raises(KiloParseError):
             parser.parse_output('{"type":"text","text":"ok"}\nbad json\n')
 
+    def test_parse_output_nested_part_text_kilo_756(self):
+        """Kilo 7.5.6 nests text under event["part"]["text"]."""
+        parser = KiloOutputParser()
+        result = parser.parse_output(
+            '{"type":"text","part":{"text":"EA4E5_KILO_LIVE_OK"}}\n'
+        )
+        assert result["type"] == "text"
+        assert result["text"] == "EA4E5_KILO_LIVE_OK"
+
+    def test_parse_output_nested_part_text_with_whitespace(self):
+        """Nested part.text is stripped."""
+        parser = KiloOutputParser()
+        result = parser.parse_output(
+            '{"type":"text","part":{"text":"  hello  "}}\n'
+        )
+        assert result["text"] == "hello"
+
+    def test_parse_output_nested_part_text_multiple_events(self):
+        """Multiple nested text events: last one wins."""
+        parser = KiloOutputParser()
+        result = parser.parse_output(
+            '{"type":"text","part":{"text":"first"}}\n'
+            '{"type":"text","part":{"text":"second"}}\n'
+        )
+        assert result["text"] == "second"
+
+    def test_parse_output_nested_part_malformed_raises(self):
+        """Missing part.text with no top-level text raises."""
+        parser = KiloOutputParser()
+        with pytest.raises(KiloParseError):
+            parser.parse_output('{"type":"text","part":{}}\n')
+
+    def test_parse_output_nested_part_not_object_raises(self):
+        """Non-object part with no top-level text raises."""
+        parser = KiloOutputParser()
+        with pytest.raises(KiloParseError):
+            parser.parse_output('{"type":"text","part":"bad"}\n')
+
+    def test_parse_output_nested_part_text_non_string_raises(self):
+        """Non-string part.text with no top-level text raises."""
+        parser = KiloOutputParser()
+        with pytest.raises(KiloParseError):
+            parser.parse_output('{"type":"text","part":{"text":42}}\n')
+
+    def test_parse_output_nested_part_preferred_over_top_level(self):
+        """When both part.text and text exist, part.text wins."""
+        parser = KiloOutputParser()
+        result = parser.parse_output(
+            '{"type":"text","text":"top","part":{"text":"nested"}}\n'
+        )
+        assert result["text"] == "nested"
+
+    def test_parse_output_full_kilo_756_session(self):
+        """Full Kilo 7.5.6 JSONL session with step_start, text, step_finish."""
+        parser = KiloOutputParser()
+        stdout = (
+            '{"type":"step_start","timestamp":1234,"sessionID":"abc","part":{"id":"p1"}}\n'
+            '{"type":"text","timestamp":1235,"sessionID":"abc","part":{"id":"p2","text":"EA4E5_KILO_LIVE_OK"}}\n'
+            '{"type":"step_finish","timestamp":1236,"sessionID":"abc","part":{"id":"p3","reason":"stop"}}\n'
+        )
+        result = parser.parse_output(stdout)
+        assert result["type"] == "text"
+        assert result["text"] == "EA4E5_KILO_LIVE_OK"
+        assert len(result["events"]) == 3
+
     def test_classify_start_state(self):
         adapter = KiloAdapter()
         assert adapter.classify_start_state(None, None) == "start_state_unknown"
