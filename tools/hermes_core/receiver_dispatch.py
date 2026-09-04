@@ -204,9 +204,13 @@ class ExecutionAuthorityValidator:
         *,
         router_contract_id: str,
         qualified_receivers: Optional[dict[str, dict[str, str]]] = None,
+        now: str | None = None,
+        clock: Any | None = None,
     ) -> None:
         self._router_contract_id = router_contract_id
         self._qualified = qualified_receivers or QUALIFIED_RECEIVERS
+        self._now = now
+        self._clock = clock
 
     def validate(
         self,
@@ -304,7 +308,10 @@ class ExecutionAuthorityValidator:
             )
 
         # 9. Authority must not be expired
-        now = datetime.now(timezone.utc)
+        if self._now is not None:
+            now = datetime.fromisoformat(self._now.replace("Z", "+00:00"))
+        else:
+            now = datetime.now(timezone.utc)
         expires = datetime.fromisoformat(authority.expires_at.replace("Z", "+00:00"))
         if now >= expires:
             return DispatchDecision(

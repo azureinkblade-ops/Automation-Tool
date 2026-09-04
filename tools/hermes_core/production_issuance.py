@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from tools.hermes_core.hashing import canonical_json, sha256_payload
@@ -165,7 +165,6 @@ class ClockCollaborator:
 
     def now_plus_seconds(self, seconds: int) -> str:
         """Compute expiry time from injected now."""
-        from datetime import datetime, timedelta, timezone
         base = datetime.fromisoformat(self._now)
         if base.tzinfo is None:
             base = base.replace(tzinfo=timezone.utc)
@@ -290,6 +289,7 @@ class ProductionIssuancePolicy:
         request: ProductionIssuanceRequest,
     ) -> ProductionIssuanceResult:
         """Issue authority then activation after all policy gates pass."""
+        # Use injected clock for deterministic timestamps
         now = self._clock.now_iso()
         expires = self._clock.now_plus_seconds(request.requested_authority_ttl_seconds)
 
