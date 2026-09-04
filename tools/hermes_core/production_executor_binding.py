@@ -550,6 +550,18 @@ class ProductionExecutorBindingController:
             return None
         return entry[2]
 
+    def get_binding_for_receiver(self, receiver_id: str) -> ProductionExecutorBindingHandle | None:
+        """Retrieve existing bound handle for a receiver ID, if any."""
+        for entry in self._bound_enablements.values():
+            if entry[0] == receiver_id:
+                return entry[2]
+        return None
+
+    @property
+    def active_binding_count(self) -> int:
+        """Return the number of active bindings."""
+        return len(self._bound_enablements)
+
     def bind(
         self,
         enablement: ProductionExecutorBindingEnablement,
@@ -630,6 +642,49 @@ class ProductionExecutorBindingController:
         )
 
         return handle
+
+    def remove_expired_binding(
+        self,
+        receiver_id: str,
+        *,
+        expected_enablement_id: str | None = None,
+        expected_binding_id: str | None = None,
+    ) -> bool:
+        """Remove an expired binding entry from the active ledger and registry.
+
+        Narrow lifecycle API for synchronous expiration cleanup.
+        Only removes the binding for the specified receiver_id.
+
+        Validates authoritative binding identity before mutation:
+        - If expected_enablement_id is provided, must match the authoritative enablement ID
+        - If expected_binding_id is provided, must match the authoritative binding ID
+
+        Returns True if an entry was removed, False if no matching entry existed.
+        Raises BindingPolicyError if identity validation fails.
+        """
+        # Find the enablement_id for this receiver
+        target_eid = None
+        for eid, entry in self._bound_enablements.items():
+            if entry[0] == receiver_id:
+                target_eid = eid
+                break
+
+        if target_eid is None:
+            return False
+
+        # Validate authoritative binding identity
+        handle = self._bound_enablements[target_eid][2]
+        if expected_enablement_id is not None and handle.enablement_id != expected_enablement_id:
+            raise BindingPolicyError("ENABLEMENT_ID_MISMATCH", "REJECT")
+        if expected_binding_id is not None and handle.binding_id != expected_binding_id:
+            raise BindingPolicyError("BINDING_ID_MISMATCH", "REJECT")
+
+        # Remove from registry first (authoritative lifecycle owner)
+        handle.registry.unregister(receiver_id)
+
+        # Remove from active ledger
+        del self._bound_enablements[target_eid]
+        return True
 
     def teardown(self, binding: ProductionExecutorBindingHandle) -> bool:
         """Teardown/unregister the exact binding.
