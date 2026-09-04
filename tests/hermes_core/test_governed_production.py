@@ -242,10 +242,13 @@ def test_ttl_above_max(coordinator):
 
 # --- Determinism tests ---
 
-def test_same_request_same_clock_same_decision(coordinator):
-    request = _make_request()
-    result1 = coordinator.execute(request)
-    result2 = coordinator.execute(request)
+def test_same_request_same_clock_same_decision(fixed_clock, executor_registry):
+    request1 = _make_request(request_id="same-decision-1")
+    coord1 = GovernedProductionCoordinator(clock=fixed_clock, executor_registry=executor_registry)
+    result1 = coord1.execute(request1)
+    request2 = _make_request(request_id="same-decision-2")
+    coord2 = GovernedProductionCoordinator(clock=fixed_clock, executor_registry=executor_registry)
+    result2 = coord2.execute(request2)
     assert result1.route_decision == result2.route_decision
     assert result1.issuance_policy_decision == result2.issuance_policy_decision
     assert result1.execution_decision == result2.execution_decision
@@ -253,10 +256,12 @@ def test_same_request_same_clock_same_decision(coordinator):
 
 def test_same_request_same_clock_same_issued_at(fixed_clock, executor_registry):
     """Same request + same clock = same issued_at."""
-    request = _make_request(request_id="same-issued")
-    coord = GovernedProductionCoordinator(clock=fixed_clock, executor_registry=executor_registry)
-    result1 = coord.execute(request)
-    result2 = coord.execute(request)
+    request1 = _make_request(request_id="same-issued-1")
+    coord1 = GovernedProductionCoordinator(clock=fixed_clock, executor_registry=executor_registry)
+    result1 = coord1.execute(request1)
+    request2 = _make_request(request_id="same-issued-2")
+    coord2 = GovernedProductionCoordinator(clock=fixed_clock, executor_registry=executor_registry)
+    result2 = coord2.execute(request2)
     # Both should have same issuance result
     assert result1.issuance_policy_decision == result2.issuance_policy_decision
     assert result1.authority_issued == result2.authority_issued
@@ -264,10 +269,12 @@ def test_same_request_same_clock_same_issued_at(fixed_clock, executor_registry):
 
 def test_same_request_same_clock_same_expires_at(fixed_clock, executor_registry):
     """Same request + same clock = same expires_at."""
-    request = _make_request(request_id="same-expiry")
-    coord = GovernedProductionCoordinator(clock=fixed_clock, executor_registry=executor_registry)
-    result1 = coord.execute(request)
-    result2 = coord.execute(request)
+    request1 = _make_request(request_id="same-expiry-1")
+    coord1 = GovernedProductionCoordinator(clock=fixed_clock, executor_registry=executor_registry)
+    result1 = coord1.execute(request1)
+    request2 = _make_request(request_id="same-expiry-2")
+    coord2 = GovernedProductionCoordinator(clock=fixed_clock, executor_registry=executor_registry)
+    result2 = coord2.execute(request2)
     # Both should have same authority validity
     assert result1.authority_valid == result2.authority_valid
 

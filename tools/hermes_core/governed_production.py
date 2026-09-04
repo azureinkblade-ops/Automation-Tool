@@ -77,6 +77,7 @@ class GovernedExecutionRequest:
     requested_execution_scope: str = "production"
     requested_attempt_limit: int = 1
     requested_authority_ttl_seconds: int = 3600
+    task_payload: str | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -126,6 +127,7 @@ class GovernedProductionCoordinator:
         clock: ClockCollaborator,
         executor_registry: Optional[ExecutorRegistry] = None,
         policy: Optional[ProductionIssuancePolicy] = None,
+        max_invocations: int = 1,
     ) -> None:
         self._clock = clock
         self._executor_registry = executor_registry or ExecutorRegistry()
@@ -137,6 +139,8 @@ class GovernedProductionCoordinator:
                 now=clock.now_iso(),
             ),
         )
+        self._invocation_count = 0
+        self._max_invocations = max_invocations
 
     @property
     def executor_registry(self) -> ExecutorRegistry:
@@ -150,6 +154,29 @@ class GovernedProductionCoordinator:
 
         Returns structured result. Does NOT invoke real receivers.
         """
+        # Step 0: Check invocation budget
+        if self._invocation_count >= self._max_invocations:
+            return GovernedProductionResult(
+                request_id=request.request_id,
+                receiver_id=request.receiver_id,
+                route_decision="NOT_EVALUATED",
+                issuance_policy_decision="NOT_EVALUATED",
+                issuance_policy_reason="LIVE_INVOCATION_BUDGET_EXHAUSTED",
+                authority_issued=False,
+                authority_valid=None,
+                activation_issued=False,
+                activation_valid=None,
+                execution_request_created=False,
+                adapter_resolution=None,
+                execution_decision="REJECT",
+                executor_called=False,
+                execution_status=None,
+                execution_output=None,
+                reason="LIVE_INVOCATION_BUDGET_EXHAUSTED",
+                attempt_count=0,
+            )
+        self._invocation_count += 1
+
         # Step 1: Route
         from tools.hermes_core.receiver_router import get_default_router
         router = get_default_router()
@@ -262,6 +289,7 @@ class GovernedProductionCoordinator:
             )
 
         # Step 4: Build execution request
+        task_payload = request.task_payload or f"Return exactly: EA4E18_{request.receiver_id.upper()}_GOVERNED_EXECUTION_OK"
         execution_request = ProductionExecutionRequest(
             receiver_id=request.receiver_id,
             delegation_id=f"ea4e18-delegation-{request.request_id}",
@@ -270,7 +298,7 @@ class GovernedProductionCoordinator:
             transport_contract_id=request.transport_contract_id,
             model_binding_id=request.model_binding_id,
             execution_scope=request.requested_execution_scope,
-            task_payload=f"Return exactly: EA4E18_{request.receiver_id.upper()}_GOVERNED_EXECUTION_OK",
+            task_payload=task_payload,
             attempt_limit=request.requested_attempt_limit,
         )
 

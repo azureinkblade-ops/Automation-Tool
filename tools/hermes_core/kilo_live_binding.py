@@ -44,6 +44,7 @@ class RealKiloProductionExecutor:
 
     def __init__(self, *, kilo_executable: Optional[str] = None) -> None:
         self._kilo_executable = kilo_executable
+        self._invocation_count = 0
 
     @property
     def executor_id(self) -> str:
@@ -51,6 +52,7 @@ class RealKiloProductionExecutor:
 
     def execute(self, request: ProductionExecutionRequest) -> ProductionExecutorResult:
         """Execute one Kilo task through the adapter."""
+        self._invocation_count += 1
         config = {"task_message": request.task_payload}
         if self._kilo_executable:
             config["kilo_executable"] = self._kilo_executable

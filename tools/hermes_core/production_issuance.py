@@ -196,6 +196,7 @@ class ProductionIssuancePolicy:
         self._qualified = qualified_receivers or QUALIFIED_RECEIVERS
         self._max_attempt_limit = max_attempt_limit
         self._max_authority_ttl = max_authority_ttl
+        self._issued_requests: dict[str, tuple[str, str]] = {}  # request_id -> (receiver_id, canonical_hash)
 
     def evaluate(
         self,
@@ -259,8 +260,20 @@ class ProductionIssuancePolicy:
         if request.requested_authority_ttl_seconds > self._max_authority_ttl:
             return self._reject(request, "TTL_ABOVE_MAX")
 
+        # Gate 13: Request-ID collision check
+        canonical_hash = sha256_payload(request.to_canonical_dict())
+        if request.request_id in self._issued_requests:
+            existing_receiver, existing_hash = self._issued_requests[request.request_id]
+            if existing_receiver != request.receiver_id:
+                return self._reject(request, "CROSS_RECEIVER_REPLAY")
+            if existing_hash != canonical_hash:
+                return self._reject(request, "REQUEST_ID_COLLISION")
+
         # All gates pass — issue authority then activation
-        return self._issue(request)
+        result = self._issue(request)
+        if result.policy_decision == "ELIGIBLE":
+            self._issued_requests[request.request_id] = (request.receiver_id, canonical_hash)
+        return result
 
     def _reject(
         self,
@@ -442,5 +455,10 @@ def compute_ea4e17_issuance_contract_id() -> str:
         "max_attempt_limit": MAX_ISSUABLE_ATTEMPT_LIMIT,
         "max_authority_ttl": MAX_AUTHORITY_TTL_SECONDS,
         "default_issuance_decision": DEFAULT_ISSUANCE_DECISION,
+        "replay_policy": {
+            "cross_receiver_replay_precedence": True,
+            "request_id_collision_check": True,
+            "identical_duplicate_allowed": True,
+        },
     }
     return sha256_payload(canonical)
