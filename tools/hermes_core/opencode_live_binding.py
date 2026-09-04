@@ -43,7 +43,7 @@ class RealOpenCodeProductionExecutor:
     """
 
     def __init__(self) -> None:
-        pass
+        self._invocation_count = 0
 
     @property
     def executor_id(self) -> str:
@@ -51,6 +51,7 @@ class RealOpenCodeProductionExecutor:
 
     def execute(self, request: ProductionExecutionRequest) -> ProductionExecutorResult:
         """Execute one OpenCode task through the adapter."""
+        self._invocation_count += 1
         adapter = OpenCodeReceiverAdapter(process_impl=OpenCodeLiveProcess())
         outcome = adapter.execute(
             idempotency_key=f"ea4e16-{uuid.uuid4()}",
