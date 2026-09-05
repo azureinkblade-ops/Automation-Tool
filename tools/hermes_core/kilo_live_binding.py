@@ -45,10 +45,16 @@ class RealKiloProductionExecutor:
     def __init__(self, *, kilo_executable: Optional[str] = None) -> None:
         self._kilo_executable = kilo_executable
         self._invocation_count = 0
+        self._last_outcome: Optional[ExecutionOutcome] = None
 
     @property
     def executor_id(self) -> str:
-        return "real-kilo-production-executor"
+        return "RealKiloProductionExecutor"
+
+    @property
+    def last_outcome(self) -> Optional[ExecutionOutcome]:
+        """Return the last adapter ExecutionOutcome for forensic accounting."""
+        return self._last_outcome
 
     def execute(self, request: ProductionExecutionRequest) -> ProductionExecutorResult:
         """Execute one Kilo task through the adapter."""
@@ -64,6 +70,7 @@ class RealKiloProductionExecutor:
             delegation_id=f"ea4e15-delegation-{uuid.uuid4()}",
             stdin_data="",
         )
+        self._last_outcome = outcome
 
         if outcome.verified_result and outcome.verified_result.valid:
             text = outcome.verified_result.payload.get("text", "")
