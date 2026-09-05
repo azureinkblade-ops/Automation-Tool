@@ -44,10 +44,16 @@ class RealOpenCodeProductionExecutor:
 
     def __init__(self) -> None:
         self._invocation_count = 0
+        self._last_outcome: Optional[ExecutionOutcome] = None
 
     @property
     def executor_id(self) -> str:
-        return "real-opencode-production-executor"
+        return "RealOpenCodeProductionExecutor"
+
+    @property
+    def last_outcome(self) -> Optional[ExecutionOutcome]:
+        """Return the last adapter ExecutionOutcome for forensic accounting."""
+        return self._last_outcome
 
     def execute(self, request: ProductionExecutionRequest) -> ProductionExecutorResult:
         """Execute one OpenCode task through the adapter."""
@@ -60,6 +66,7 @@ class RealOpenCodeProductionExecutor:
             stdin_data="",
             task=request.task_payload,
         )
+        self._last_outcome = outcome
 
         if outcome.verified_result and outcome.verified_result.valid:
             text = outcome.verified_result.payload.get("text", "")

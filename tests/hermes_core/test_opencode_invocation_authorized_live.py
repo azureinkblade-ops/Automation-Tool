@@ -1,0 +1,314 @@
+"""Tests for EA-4E.25 OpenCode fully governed invocation-authorized live qualification."""
+
+from __future__ import annotations
+
+import os
+import shutil
+import uuid
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from tools.hermes_core.opencode_invocation_authorized_live import (
+    EXPECTED_LIVE_OUTPUT,
+    LiveClock,
+    OpenCodeInvocationAuthorizedLiveResult,
+    run_opencode_invocation_authorized_live_qualification,
+)
+from tools.hermes_core.opencode_live_binding import RealOpenCodeProductionExecutor
+from tools.hermes_core.production_executor_binding import (
+    QUALIFIED_EXECUTOR_IMPLEMENTATIONS,
+)
+from tools.hermes_core.receiver_router import QUALIFIED_RECEIVERS
+
+
+# Spool directory used by OpenCode adapter - must be cleaned before live tests
+OPENCODE_SPOOL_DIR = r"C:\Users\David\AppData\Local\Hermes\runtime\ea4e\opencode\spool"
+
+
+@pytest.fixture(autouse=True)
+def clean_spool_directory():
+    """Clean the spool directory before each test to avoid file conflicts."""
+    if os.path.exists(OPENCODE_SPOOL_DIR):
+        shutil.rmtree(OPENCODE_SPOOL_DIR)
+    os.makedirs(OPENCODE_SPOOL_DIR, exist_ok=True)
+    yield
+    # Clean up after test
+    if os.path.exists(OPENCODE_SPOOL_DIR):
+        shutil.rmtree(OPENCODE_SPOOL_DIR)
+    os.makedirs(OPENCODE_SPOOL_DIR, exist_ok=True)
+
+
+class TestOpenCodeExecutorIdentity:
+    """Verify OpenCode executor identity matches canonical EA-4E.21 identity."""
+
+    def test_executor_id_matches_canonical(self):
+        """Real OpenCode executor must report the canonical identity."""
+        exec = RealOpenCodeProductionExecutor()
+        assert exec.executor_id == "RealOpenCodeProductionExecutor"
+
+    def test_canonical_identity_matches_contract(self):
+        """EA-4E.21 canonical identity must match the real executor."""
+        canonical = QUALIFIED_EXECUTOR_IMPLEMENTATIONS["opencode-cli-agent"]["executor_identity"]
+        exec = RealOpenCodeProductionExecutor()
+        assert exec.executor_id == canonical
+
+    def test_no_identity_masking_wrapper(self):
+        """No wrapper may relabel the executor identity."""
+        exec = RealOpenCodeProductionExecutor()
+        # The executor_id must be the canonical one, not a masked version
+        assert exec.executor_id == "RealOpenCodeProductionExecutor"
+        assert exec.executor_id != "real-opencode-production-executor"
+
+    def test_last_outcome_property_exists(self):
+        """Executor must expose last_outcome for forensic accounting."""
+        exec = RealOpenCodeProductionExecutor()
+        assert hasattr(exec, "last_outcome")
+        assert exec.last_outcome is None  # No outcome until execute() called
+
+
+class TestLiveClock:
+    """Verify live clock behavior."""
+
+    def test_live_clock_returns_current_time(self):
+        """Live clock must return actual runtime time."""
+        clock = LiveClock()
+        now = clock.now_iso()
+        assert now is not None
+        assert "2026" in now  # Should be current year
+
+    def test_fixed_clock_returns_fixed_time(self):
+        """Fixed clock must return the fixed qualification time."""
+        clock = LiveClock(fixed="2026-01-01T00:00:00Z")
+        assert clock.now_iso() == "2026-01-01T00:00:00Z"
+
+    def test_live_clock_plus_seconds(self):
+        """Live clock must compute expiry correctly."""
+        clock = LiveClock()
+        now = clock.now_iso()
+        expires = clock.now_plus_seconds(300)
+        assert expires > now
+
+    def test_fixed_clock_plus_seconds(self):
+        """Fixed clock must compute expiry from fixed time."""
+        clock = LiveClock(fixed="2026-01-01T00:00:00Z")
+        expires = clock.now_plus_seconds(300)
+        assert expires == "2026-01-01T00:05:00+00:00"
+
+
+class TestOpenCodeQualificationResult:
+    """Verify result dataclass defaults."""
+
+    def test_default_values(self):
+        """Result must have safe defaults."""
+        result = OpenCodeInvocationAuthorizedLiveResult()
+        assert result.live_result == "NOT_RUN"
+        assert result.ea4e25_disposition == "HOLD"
+        assert result.router_bypassed is True
+        assert result.issuance_bypassed is True
+        assert result.authority_validation_bypassed is True
+        assert result.activation_validation_bypassed is True
+        assert result.ea4e21_binding_controller_bypassed is True
+        assert result.ea4e22_resolver_bypassed is True
+        assert result.ea4e23_invocation_authorization_bypassed is True
+        assert result.ea4e23_atomic_claim_bypassed is True
+        assert result.production_execution_boundary_bypassed is True
+        assert result.opencode_adapter_bypassed is True
+
+    def test_zero_live_accounting(self):
+        """Result must start with zero live accounting."""
+        result = OpenCodeInvocationAuthorizedLiveResult()
+        assert result.new_opencode_tasks == 0
+        assert result.new_kilo_tasks == 0
+        assert result.new_model_invoke_attempts == 0
+        assert result.new_receiver_processes == 0
+        assert result.real_opencode_executor_calls == 0
+        assert result.real_kilo_executor_calls == 0
+
+
+class TestOpenCodeQualificationNonLive:
+    """Non-live tests for the OpenCode qualification harness."""
+
+    def test_expected_output_constant(self):
+        """Expected output must match the authorized task."""
+        assert EXPECTED_LIVE_OUTPUT == "EA4E25R_OPENCODE_INVOCATION_AUTHORIZED_LIVE_OK"
+
+    def test_qualified_receivers_has_opencode(self):
+        """OpenCode must be in qualified receivers."""
+        assert "opencode-cli-agent" in QUALIFIED_RECEIVERS
+        oc = QUALIFIED_RECEIVERS["opencode-cli-agent"]
+        assert oc["transport_contract_id"] == "192b55d0aca65f261fa3e2701db63863f2761cacd20bb9422e73cde772e9ea5f"
+        assert oc["model_binding_id"] == "cfcf7353842b923579db1676484bba6d0cba77927bdd592439898dde71773371"
+
+    def test_qualified_executors_has_opencode(self):
+        """OpenCode must be in qualified executors."""
+        assert "opencode-cli-agent" in QUALIFIED_EXECUTOR_IMPLEMENTATIONS
+        oc = QUALIFIED_EXECUTOR_IMPLEMENTATIONS["opencode-cli-agent"]
+        assert oc["executor_identity"] == "RealOpenCodeProductionExecutor"
+
+    def test_opencode_transport_contract_unchanged(self):
+        """OpenCode transport contract must remain frozen."""
+        oc = QUALIFIED_RECEIVERS["opencode-cli-agent"]
+        assert oc["transport_contract_id"] == "192b55d0aca65f261fa3e2701db63863f2761cacd20bb9422e73cde772e9ea5f"
+
+    def test_opencode_model_binding_unchanged(self):
+        """OpenCode model binding must remain frozen."""
+        oc = QUALIFIED_RECEIVERS["opencode-cli-agent"]
+        assert oc["model_binding_id"] == "cfcf7353842b923579db1676484bba6d0cba77927bdd592439898dde71773371"
+
+
+class TestOpenCodeLiveQualification:
+    """Live qualification tests - these execute real OpenCode."""
+
+    def test_live_qualification_passes_with_live_clock(self):
+        """Live qualification must pass with live clock."""
+        result = run_opencode_invocation_authorized_live_qualification(use_live_clock=True)
+        assert result.live_result == "PASS"
+        assert result.output_exact_match is True
+        assert result.normalized_output == EXPECTED_LIVE_OUTPUT
+
+    def test_live_qualification_exact_output(self):
+        """Live qualification must produce exact expected output."""
+        result = run_opencode_invocation_authorized_live_qualification(use_live_clock=True)
+        assert result.normalized_output == "EA4E25R_OPENCODE_INVOCATION_AUTHORIZED_LIVE_OK"
+
+    def test_governance_path_not_bypassed(self):
+        """All governance components must be exercised (not bypassed)."""
+        result = run_opencode_invocation_authorized_live_qualification(use_live_clock=True)
+        assert result.router_bypassed is False
+        assert result.issuance_bypassed is False
+        assert result.authority_validation_bypassed is False
+        assert result.activation_validation_bypassed is False
+        assert result.ea4e21_binding_controller_bypassed is False
+        assert result.ea4e22_resolver_bypassed is False
+        assert result.ea4e23_invocation_authorization_bypassed is False
+        assert result.ea4e23_atomic_claim_bypassed is False
+        assert result.production_execution_boundary_bypassed is False
+        assert result.opencode_adapter_bypassed is False
+
+    def test_exactly_one_opencode_task(self):
+        """Exactly one OpenCode task must be executed."""
+        result = run_opencode_invocation_authorized_live_qualification(use_live_clock=True)
+        assert result.opencode_real_executor_call_count == 1
+        assert result.real_opencode_executor_calls == 1
+
+    def test_exactly_one_adapter_call(self):
+        """Exactly one adapter call must be made."""
+        result = run_opencode_invocation_authorized_live_qualification(use_live_clock=True)
+        assert result.opencode_adapter_live_call_count == 1
+        assert result.real_opencode_adapter_calls == 1
+
+    def test_exactly_one_process_start(self):
+        """Exactly one receiver process must be started."""
+        result = run_opencode_invocation_authorized_live_qualification(use_live_clock=True)
+        assert result.opencode_receiver_process_start_count == 1
+
+    def test_exactly_one_model_invocation(self):
+        """Exactly one model invocation must occur."""
+        result = run_opencode_invocation_authorized_live_qualification(use_live_clock=True)
+        assert result.model_invocation_count == 1
+
+    def test_authorization_consumed(self):
+        """Authorization must be consumed after execution."""
+        result = run_opencode_invocation_authorized_live_qualification(use_live_clock=True)
+        assert result.live_authorization_consumed is True
+
+    def test_second_claim_rejected(self):
+        """Second claim with same authorization must be rejected."""
+        result = run_opencode_invocation_authorized_live_qualification(use_live_clock=True)
+        assert result.second_claim_result == "DENY"
+
+    def test_second_claim_no_executor_call(self):
+        """Second claim must not call executor."""
+        result = run_opencode_invocation_authorized_live_qualification(use_live_clock=True)
+        assert result.second_claim_real_executor_called is False
+        assert result.second_claim_opencode_adapter_called is False
+        assert result.second_claim_process_started is False
+        assert result.second_claim_model_invoked is False
+
+    def test_binding_teardown(self):
+        """Binding must be torn down after execution."""
+        result = run_opencode_invocation_authorized_live_qualification(use_live_clock=True)
+        assert result.opencode_binding_teardown_attempted is True
+        assert result.opencode_binding_teardown_result == "SUCCESS"
+        assert result.post_teardown_opencode_binding_count == 0
+
+    def test_no_persistent_binding(self):
+        """No persistent binding must remain after teardown."""
+        result = run_opencode_invocation_authorized_live_qualification(use_live_clock=True)
+        assert result.persistent_opencode_binding_present is False
+        assert result.persistent_kilo_binding_present is False
+
+    def test_no_kilo_activity(self):
+        """No Kilo activity must occur during OpenCode qualification."""
+        result = run_opencode_invocation_authorized_live_qualification(use_live_clock=True)
+        assert result.new_kilo_tasks == 0
+        assert result.real_kilo_executor_calls == 0
+        assert result.real_kilo_adapter_calls == 0
+        assert result.kilo_real_executor_instantiations == 0
+        assert result.kilo_real_executor_calls == 0
+        assert result.kilo_receiver_processes_started == 0
+
+    def test_exact_live_accounting(self):
+        """Exact live accounting must match authorized maximums."""
+        result = run_opencode_invocation_authorized_live_qualification(use_live_clock=True)
+        assert result.new_opencode_tasks == 1
+        assert result.new_kilo_tasks == 0
+        assert result.new_model_invoke_attempts == 1
+        assert result.new_receiver_processes == 1
+        assert result.real_opencode_executor_calls == 1
+        assert result.real_kilo_executor_calls == 0
+        assert result.real_opencode_adapter_calls == 1
+        assert result.real_kilo_adapter_calls == 0
+        assert result.live_bindings_created == 1
+        assert result.live_invocation_authorizations_issued == 1
+        assert result.live_invocation_authorization_claims_granted == 1
+        assert result.live_dispatch_executions == 1
+        assert result.production_execution_boundary_real_executions == 1
+
+    def test_no_retry_no_fallback_no_failover(self):
+        """No retry, fallback, or failover must occur."""
+        result = run_opencode_invocation_authorized_live_qualification(use_live_clock=True)
+        assert result.automatic_retry_attempts == 0
+        assert result.fallback_attempts == 0
+        assert result.failover_attempts == 0
+
+    def test_ea4e25_disposition_pass(self):
+        """EA-4E.25 disposition must be PASS on success."""
+        result = run_opencode_invocation_authorized_live_qualification(use_live_clock=True)
+        assert result.ea4e25_disposition == "PASS"
+
+
+class TestOpenCodeActualEventAccounting:
+    """Verify actual event accounting sources."""
+
+    def test_adapter_call_count_from_actual_event(self):
+        """Adapter call count must come from actual adapter execution."""
+        result = run_opencode_invocation_authorized_live_qualification(use_live_clock=True)
+        real_executor = getattr(result, "_real_executor", None)
+        assert real_executor is not None
+        assert real_executor.last_outcome is not None
+        # Adapter call count should be derived from outcome.record
+        assert result.opencode_adapter_live_call_count == 1
+
+    def test_process_start_from_actual_event(self):
+        """Process start count must come from actual process start."""
+        result = run_opencode_invocation_authorized_live_qualification(use_live_clock=True)
+        real_executor = getattr(result, "_real_executor", None)
+        assert real_executor is not None
+        outcome = real_executor.last_outcome
+        assert outcome is not None
+        assert outcome.process_started is True
+        assert result.opencode_receiver_process_start_count == 1
+
+    def test_no_synthetic_wrapper_counts(self):
+        """No synthetic wrapper counters must be used."""
+        result = run_opencode_invocation_authorized_live_qualification(use_live_clock=True)
+        # The accounting must come from actual events, not wrapper guesses
+        real_executor = getattr(result, "_real_executor", None)
+        assert real_executor is not None
+        assert real_executor.last_outcome is not None
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
