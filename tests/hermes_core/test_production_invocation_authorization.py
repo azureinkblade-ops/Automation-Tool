@@ -1268,8 +1268,8 @@ def test_replay_collision_precedence(invocation_policy, binding_controller, exec
 
     cross_result = invocation_policy.claim_for_execution(auth_cross, handle, {})
     assert cross_result.binding_authorized is False
-    # Should be consumed (cross-receiver replay after consumption)
-    assert cross_result.policy_reason == "INVOCATION_AUTHORIZATION_ALREADY_CONSUMED"
+    # Cross-receiver replay takes precedence over consumed-state classification.
+    assert cross_result.policy_reason == "CROSS_RECEIVER_INVOCATION_REPLAY"
 
 
 def test_real_executor_instantiations_zero():

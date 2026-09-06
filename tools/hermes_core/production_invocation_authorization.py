@@ -149,6 +149,7 @@ class ProductionInvocationAuthorizationPolicy:
         self._clock = clock
         self._max_ttl_seconds = max_ttl_seconds
         self._consumed_authorizations: set[str] = set()
+        self._authorization_identities: dict[str, tuple[str, str]] = {}
         self._lock = threading.RLock()
 
     def evaluate(
@@ -156,6 +157,8 @@ class ProductionInvocationAuthorizationPolicy:
         authorization: ProductionInvocationAuthorization,
         handle: ProductionExecutorBindingHandle,
         bound_meta: dict[str, tuple[str, str]],
+        *,
+        expected_execution_request_id: str | None = None,
     ) -> ProductionInvocationAuthorizationResult:
         """Evaluate an invocation authorization.
 
@@ -204,6 +207,17 @@ class ProductionInvocationAuthorizationPolicy:
                 invocation_authorization_id=authorization.invocation_authorization_id,
                 policy_decision="DENY",
                 policy_reason="INVALID_ATTEMPT_NUMBER",
+                binding_authorized=False,
+            )
+
+        if (
+            expected_execution_request_id is not None
+            and authorization.execution_request_id != expected_execution_request_id
+        ):
+            return ProductionInvocationAuthorizationResult(
+                invocation_authorization_id=authorization.invocation_authorization_id,
+                policy_decision="DENY",
+                policy_reason="REQUEST_IDENTITY_MISMATCH",
                 binding_authorized=False,
             )
 
@@ -279,6 +293,8 @@ class ProductionInvocationAuthorizationPolicy:
         authorization: ProductionInvocationAuthorization,
         handle: ProductionExecutorBindingHandle,
         bound_meta: dict[str, tuple[str, str]],
+        *,
+        expected_execution_request_id: str | None = None,
     ) -> ProductionInvocationAuthorizationResult:
         """Atomically validate and claim an authorization for execution.
 
@@ -292,10 +308,29 @@ class ProductionInvocationAuthorizationPolicy:
         Thread-safe: uses lock to ensure atomic check-and-consume.
         """
         with self._lock:
-            # Check if already consumed
-            if authorization.invocation_authorization_id in self._consumed_authorizations:
+            authorization_id = authorization.invocation_authorization_id
+            canonical_hash = sha256_payload(authorization.to_canonical_dict())
+            existing_identity = self._authorization_identities.get(authorization_id)
+            if existing_identity is not None:
+                existing_receiver, existing_hash = existing_identity
+                if existing_receiver != authorization.receiver_id:
+                    return ProductionInvocationAuthorizationResult(
+                        invocation_authorization_id=authorization_id,
+                        policy_decision="DENY",
+                        policy_reason="CROSS_RECEIVER_INVOCATION_REPLAY",
+                        binding_authorized=False,
+                    )
+                if existing_hash != canonical_hash:
+                    return ProductionInvocationAuthorizationResult(
+                        invocation_authorization_id=authorization_id,
+                        policy_decision="DENY",
+                        policy_reason="INVOCATION_AUTHORIZATION_ID_COLLISION",
+                        binding_authorized=False,
+                    )
+
+            if authorization_id in self._consumed_authorizations:
                 return ProductionInvocationAuthorizationResult(
-                    invocation_authorization_id=authorization.invocation_authorization_id,
+                    invocation_authorization_id=authorization_id,
                     policy_decision="DENY",
                     policy_reason="INVOCATION_AUTHORIZATION_ALREADY_CONSUMED",
                     binding_authorized=False,
@@ -303,12 +338,21 @@ class ProductionInvocationAuthorizationPolicy:
                 )
 
             # Perform full evaluation
-            result = self.evaluate(authorization, handle, bound_meta)
+            result = self.evaluate(
+                authorization,
+                handle,
+                bound_meta,
+                expected_execution_request_id=expected_execution_request_id,
+            )
             if not result.binding_authorized:
                 return result
 
             # Atomically mark as consumed
-            self._consumed_authorizations.add(authorization.invocation_authorization_id)
+            self._authorization_identities[authorization_id] = (
+                authorization.receiver_id,
+                canonical_hash,
+            )
+            self._consumed_authorizations.add(authorization_id)
 
         return result
 
