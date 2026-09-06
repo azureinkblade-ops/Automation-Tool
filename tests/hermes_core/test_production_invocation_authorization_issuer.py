@@ -17,6 +17,7 @@ from tools.hermes_core.production_invocation_authorization_issuer import (
     ProductionInvocationAuthorizationIssuer,
     compute_ea4e28_issuer_contract_id,
 )
+from tests.hermes_core.durable_auth_test_support import qualification_store
 
 
 NOW = "2026-01-01T00:00:00Z"
@@ -64,8 +65,11 @@ def issue_request(receiver_id="kilo-cli-agent", **changes):
 
 
 @pytest.fixture
-def issuer():
-    return ProductionInvocationAuthorizationIssuer(clock=BindingClock(now=NOW))
+def issuer(tmp_path):
+    return ProductionInvocationAuthorizationIssuer(
+        clock=BindingClock(now=NOW),
+        store=qualification_store(tmp_path),
+    )
 
 
 @pytest.mark.parametrize("receiver_id", ["kilo-cli-agent", "opencode-cli-agent"])
@@ -164,9 +168,10 @@ def test_resolution_identity_mismatch_denies(issuer, changes, reason):
     assert result.policy_reason == reason
 
 
-def test_expired_binding_denies():
+def test_expired_binding_denies(tmp_path):
     issuer = ProductionInvocationAuthorizationIssuer(
-        clock=BindingClock(now="2026-01-01T01:00:00Z")
+        clock=BindingClock(now="2026-01-01T01:00:00Z"),
+        store=qualification_store(tmp_path),
     )
     result = issuer.issue(issue_request(), resolved(expires_at="2026-01-01T01:00:00Z"))
     assert result.policy_reason == "BINDING_EXPIRED"

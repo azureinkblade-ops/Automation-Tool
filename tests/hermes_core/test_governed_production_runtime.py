@@ -40,6 +40,10 @@ from tools.hermes_core.production_execution import (
     ProductionExecutorResult,
 )
 from tools.hermes_core.receiver_router import compute_ea4e6_router_contract_id
+from tests.hermes_core.durable_auth_test_support import (
+    QualificationDurablePolicy,
+    qualification_store,
+)
 
 
 # Fixed deterministic qualification clock
@@ -188,12 +192,22 @@ def binding_controller(binding_clock):
     )
 
 
-@pytest.fixture
-def runtime(fixed_clock, executor_registry, binding_controller):
+def _durable_runtime(clock, executor_registry, binding_controller, tmp_path, name):
     return GovernedProductionRuntime(
-        clock=fixed_clock,
+        clock=clock,
         executor_registry=executor_registry,
         binding_controller=binding_controller,
+        invocation_authorization_policy=QualificationDurablePolicy(
+            clock=clock,
+            store=qualification_store(tmp_path, name),
+        ),
+    )
+
+
+@pytest.fixture
+def runtime(fixed_clock, executor_registry, binding_controller, tmp_path):
+    return _durable_runtime(
+        fixed_clock, executor_registry, binding_controller, tmp_path, "runtime.sqlite3"
     )
 
 
@@ -707,16 +721,14 @@ class TestFailClosedMatrix:
         assert result.opencode_executor_calls == 0
 
     # --- Case 24: Kilo failure does not fall back to OpenCode ---
-    def test_case_24_kilo_failure_no_fallback(self, fixed_clock, binding_controller, executor_registry, binding_clock):
+    def test_case_24_kilo_failure_no_fallback(self, fixed_clock, binding_controller, executor_registry, binding_clock, tmp_path):
         # Create a failing Kilo executor
         failing_kilo = FakeFailingKiloExecutor()
         _bind_receiver(binding_controller, executor_registry, "kilo-cli-agent", binding_clock)
         # Register the failing executor AFTER binding to overwrite the qualification executor
         executor_registry.register("kilo-cli-agent", failing_kilo)
-        runtime = GovernedProductionRuntime(
-            clock=fixed_clock,
-            executor_registry=executor_registry,
-            binding_controller=binding_controller,
+        runtime = _durable_runtime(
+            fixed_clock, executor_registry, binding_controller, tmp_path, "case24.sqlite3"
         )
         request = _make_authorized_request(binding_controller, receiver_id="kilo-cli-agent")
         result = runtime.execute(request)
@@ -728,14 +740,12 @@ class TestFailClosedMatrix:
         assert result.automatic_retry_attempts == 0
 
     # --- Case 25: OpenCode failure does not fall back to Kilo ---
-    def test_case_25_opencode_failure_no_fallback(self, fixed_clock, binding_controller, executor_registry, binding_clock):
+    def test_case_25_opencode_failure_no_fallback(self, fixed_clock, binding_controller, executor_registry, binding_clock, tmp_path):
         failing_opencode = FakeFailingOpenCodeExecutor()
         _bind_receiver(binding_controller, executor_registry, "opencode-cli-agent", binding_clock)
         executor_registry.register("opencode-cli-agent", failing_opencode)
-        runtime = GovernedProductionRuntime(
-            clock=fixed_clock,
-            executor_registry=executor_registry,
-            binding_controller=binding_controller,
+        runtime = _durable_runtime(
+            fixed_clock, executor_registry, binding_controller, tmp_path, "case25.sqlite3"
         )
         request = _make_authorized_request(binding_controller, receiver_id="opencode-cli-agent")
         result = runtime.execute(request)
@@ -747,14 +757,12 @@ class TestFailClosedMatrix:
         assert result.automatic_retry_attempts == 0
 
     # --- Case 26: Executor failure after claim consumes authorization ---
-    def test_case_26_executor_failure_consumes_auth(self, fixed_clock, binding_controller, executor_registry, binding_clock):
+    def test_case_26_executor_failure_consumes_auth(self, fixed_clock, binding_controller, executor_registry, binding_clock, tmp_path):
         failing_kilo = FakeFailingKiloExecutor()
         _bind_receiver(binding_controller, executor_registry, "kilo-cli-agent", binding_clock)
         executor_registry.register("kilo-cli-agent", failing_kilo)
-        runtime = GovernedProductionRuntime(
-            clock=fixed_clock,
-            executor_registry=executor_registry,
-            binding_controller=binding_controller,
+        runtime = _durable_runtime(
+            fixed_clock, executor_registry, binding_controller, tmp_path, "case26.sqlite3"
         )
         request = _make_authorized_request(
             binding_controller, receiver_id="kilo-cli-agent", request_id="req-26"
@@ -913,13 +921,11 @@ class TestDefaultState:
 # --------------------------------------------------------------------------- #
 
 class TestDeterminism:
-    def test_same_request_same_decision(self, fixed_clock, executor_registry, binding_controller, binding_clock):
+    def test_same_request_same_decision(self, fixed_clock, executor_registry, binding_controller, binding_clock, tmp_path):
         _bind_receiver(binding_controller, executor_registry, "kilo-cli-agent", binding_clock)
         request = _make_authorized_request(binding_controller, request_id="same-1")
-        result1 = GovernedProductionRuntime(
-            clock=fixed_clock,
-            executor_registry=executor_registry,
-            binding_controller=binding_controller,
+        result1 = _durable_runtime(
+            fixed_clock, executor_registry, binding_controller, tmp_path, "det1.sqlite3"
         ).execute(request)
 
         # Re-bind
@@ -932,17 +938,15 @@ class TestDeterminism:
         registry2.register("opencode-cli-agent", FakeOpenCodeQualificationExecutor())
         _bind_receiver(binding_controller2, registry2, "kilo-cli-agent", binding_clock)
 
-        result2 = GovernedProductionRuntime(
-            clock=fixed_clock,
-            executor_registry=registry2,
-            binding_controller=binding_controller2,
+        result2 = _durable_runtime(
+            fixed_clock, registry2, binding_controller2, tmp_path, "det2.sqlite3"
         ).execute(_make_authorized_request(binding_controller2, request_id="same-1"))
 
         assert result1.route_decision == result2.route_decision
         assert result1.issuance_policy_decision == result2.issuance_policy_decision
         assert result1.execution_decision == result2.execution_decision
 
-    def test_task_text_does_not_affect_receiver_selection(self, runtime, binding_controller, executor_registry, binding_clock):
+    def test_task_text_does_not_affect_receiver_selection(self, runtime, binding_controller, executor_registry, binding_clock, tmp_path):
         _bind_receiver(binding_controller, executor_registry, "kilo-cli-agent", binding_clock)
         request1 = _make_authorized_request(
             binding_controller, receiver_id="kilo-cli-agent", task_payload="Task A"
@@ -964,10 +968,12 @@ class TestDeterminism:
             receiver_id="kilo-cli-agent",
             task_payload="Task B completely different",
         )
-        result2 = GovernedProductionRuntime(
-            clock=ClockCollaborator(now=QUALIFICATION_CLOCK),
-            executor_registry=registry2,
-            binding_controller=binding_controller2,
+        result2 = _durable_runtime(
+            ClockCollaborator(now=QUALIFICATION_CLOCK),
+            registry2,
+            binding_controller2,
+            tmp_path,
+            "task-text.sqlite3",
         ).execute(request2)
 
         assert result1.route_decision == result2.route_decision

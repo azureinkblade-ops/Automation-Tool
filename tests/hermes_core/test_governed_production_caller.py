@@ -37,6 +37,7 @@ from tools.hermes_core.production_invocation_authorization_issuer import (
 )
 from tools.hermes_core.production_issuance import ClockCollaborator
 from tools.hermes_core.receiver_router import compute_ea4e6_router_contract_id
+from tests.hermes_core.durable_auth_test_support import qualification_store
 
 
 NOW = "2026-01-01T00:00:00Z"
@@ -84,8 +85,9 @@ def real_path_tripwires(monkeypatch):
 
 
 @pytest.fixture
-def system():
+def system(tmp_path):
     clock = BindingClock(now=NOW)
+    auth_store = qualification_store(tmp_path)
     registry = ExecutorRegistry()
     controller = ProductionExecutorBindingController(
         policy=ProductionExecutorBindingPolicy(clock=clock), clock=clock
@@ -94,12 +96,13 @@ def system():
         clock=ClockCollaborator(now=NOW),
         executor_registry=registry,
         binding_controller=controller,
+        invocation_authorization_store=auth_store,
     )
     caller = GovernedProductionCaller(
         resolver=GovernedBoundExecutorResolver(
             binding_controller=controller, executor_registry=registry, clock=clock
         ),
-        issuer=ProductionInvocationAuthorizationIssuer(clock=clock),
+        issuer=ProductionInvocationAuthorizationIssuer(clock=clock, store=auth_store),
         runtime=runtime,
     )
     return caller, controller, registry, clock

@@ -8,7 +8,6 @@ capability.
 
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -29,11 +28,20 @@ from tools.hermes_core.production_invocation_authorization import (
     ProductionInvocationAuthorization,
     compute_ea4e23_invocation_contract_id,
 )
+from tools.hermes_core.durable_invocation_authorization_store import (
+    DurableAuthorizationStoreConflict,
+    DurableAuthorizationStoreError,
+    DurableInvocationAuthorizationStore,
+)
 
 
-ISSUER_SCHEMA_ID = "hermes.production-invocation-authorization-issuer/v1"
-ISSUER_SCHEMA_VERSION = "ea4e.28"
-ISSUER_ARTIFACT_VERSION = "1"
+ISSUER_SCHEMA_ID = "hermes.production-invocation-authorization-issuer/v2"
+ISSUER_SCHEMA_VERSION = "ea4e.28r1"
+ISSUER_ARTIFACT_VERSION = "2"
+
+LEGACY_EA4E28_ISSUER_CONTRACT_ID = (
+    "cbf86c71356366d489920b226dfb181c3fcafc581ec567d19433a94159a6c5da"
+)
 
 
 @dataclass(frozen=True)
@@ -75,12 +83,14 @@ class ProductionInvocationAuthorizationIssueResult:
 class ProductionInvocationAuthorizationIssuer:
     """Issue bounded authorization without routing, binding, or execution."""
 
-    def __init__(self, *, clock: BindingClock) -> None:
+    def __init__(
+        self,
+        *,
+        clock: BindingClock,
+        store: DurableInvocationAuthorizationStore | None = None,
+    ) -> None:
         self._clock = clock
-        self._issued: dict[
-            str, tuple[str, ProductionInvocationAuthorization]
-        ] = {}
-        self._lock = threading.RLock()
+        self._store = store
 
     def issue(
         self,
@@ -88,17 +98,20 @@ class ProductionInvocationAuthorizationIssuer:
         resolution: GovernedExecutorResolution,
     ) -> ProductionInvocationAuthorizationIssueResult:
         request_hash = sha256_payload(request.to_canonical_dict())
-        with self._lock:
-            existing = self._issued.get(request.issue_request_id)
-            if existing is not None and existing[0] != request_hash:
-                return self._deny("ISSUE_REQUEST_ID_COLLISION")
+        reason = self._validate(request, resolution)
+        if reason is not None:
+            return self._deny(reason)
+        if self._store is None:
+            return self._deny("DURABLE_INVOCATION_AUTHORIZATION_STORE_REQUIRED")
 
-            reason = self._validate(request, resolution)
-            if reason is not None:
-                return self._deny(reason)
-
+        try:
+            existing = self._store.get_issued(
+                request.issue_request_id, request_hash
+            )
             if existing is not None:
-                _, authorization = existing
+                authorization = ProductionInvocationAuthorization(
+                    **existing.authorization_payload
+                )
                 return ProductionInvocationAuthorizationIssueResult(
                     policy_decision="ALLOW",
                     policy_reason="IDEMPOTENT_ISSUANCE_REPLAY",
@@ -126,12 +139,28 @@ class ProductionInvocationAuthorizationIssuer:
                 delegation_class=request.delegation_class,
                 nonce=request.nonce,
             )
-            self._issued[request.issue_request_id] = (request_hash, authorization)
+            persisted = self._store.persist_issued(
+                issue_request_id=request.issue_request_id,
+                issue_request_hash=request_hash,
+                authorization_payload=authorization.to_canonical_dict(),
+            )
+            committed_authorization = ProductionInvocationAuthorization(
+                **persisted.authorization_payload
+            )
             return ProductionInvocationAuthorizationIssueResult(
                 policy_decision="ALLOW",
-                policy_reason="INVOCATION_AUTHORIZATION_ISSUED",
-                authorization=authorization,
+                policy_reason=(
+                    "IDEMPOTENT_ISSUANCE_REPLAY"
+                    if persisted.replayed
+                    else "INVOCATION_AUTHORIZATION_ISSUED"
+                ),
+                authorization=committed_authorization,
+                idempotent_replay=persisted.replayed,
             )
+        except DurableAuthorizationStoreConflict:
+            return self._deny("ISSUE_REQUEST_ID_COLLISION")
+        except DurableAuthorizationStoreError:
+            return self._deny("AUTHORIZATION_PERSISTENCE_FAILED")
 
     def _validate(
         self,
@@ -190,8 +219,9 @@ class ProductionInvocationAuthorizationIssuer:
         )
 
 
-def compute_ea4e28_issuer_contract_id() -> str:
-    canonical = {
+def ea4e28_issuer_contract_payload() -> dict[str, object]:
+    """Return the canonical restart-durable issuer contract payload."""
+    return {
         "schema_id": ISSUER_SCHEMA_ID,
         "schema_version": ISSUER_SCHEMA_VERSION,
         "artifact_version": ISSUER_ARTIFACT_VERSION,
@@ -210,11 +240,20 @@ def compute_ea4e28_issuer_contract_id() -> str:
         "same_id_conflict": "DENY",
         "replay_revalidates_resolution": True,
         "authorization_id_binds_issuance_window": True,
+        "authorization_persisted_before_return": True,
+        "authorization_visible_before_durable_commit": False,
+        "persistence_failure_returns_usable_authorization": False,
+        "restart_durable_issuance_state_required": True,
+        "emits_restart_durable_ea4e23_authorization": True,
         "qualified_receiver_required": True,
         "default_decision": "DENY",
         "routing_capability": False,
         "binding_capability": False,
+        "activation_capability": False,
         "execution_capability": False,
         "io_capability": False,
     }
-    return sha256_payload(canonical)
+
+
+def compute_ea4e28_issuer_contract_id() -> str:
+    return sha256_payload(ea4e28_issuer_contract_payload())

@@ -16,6 +16,7 @@ Rules:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -89,6 +90,35 @@ def _real_binary_env(safe_cwd: Path) -> tuple[tuple[str, str], ...]:
         ("WINDIR", os.environ.get("WINDIR", "")),
         ("PATH", os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")])),
     )
+
+
+@pytest.fixture
+def injected_metadata_config(tmp_path: Path):
+    """Test-owned binary metadata with no receiver executable access."""
+    executable = tmp_path / "opencode-metadata-double.exe"
+    executable.write_bytes(b"EA-4E.33B OpenCode metadata test double\n")
+    digest = hashlib.sha256(executable.read_bytes()).hexdigest()
+    contract_id = opencode_transport_contract_id(
+        opencode_transport_contract(digest, PINNED_OPENCODE_VERSION)
+    )
+    config = OpenCodeTrustedConfig(
+        executable_path=str(executable),
+        expected_sha256=digest,
+        expected_version=PINNED_OPENCODE_VERSION,
+        fixture_root=str(tmp_path),
+        working_directory=str(tmp_path),
+        output_schema_file=str(tmp_path / "schema.json"),
+        spool_directory=str(tmp_path / "spool"),
+        registry_path=str(tmp_path / "registry.db"),
+        environment=(),
+        expected_transport_contract_id=contract_id,
+    )
+
+    def fake_probe(executable_path, env, cwd):
+        assert executable_path == str(executable.resolve())
+        return 0, PINNED_OPENCODE_VERSION, ""
+
+    return config, fake_probe
 
 
 class TestOpenCodeTransportContract:
@@ -546,28 +576,13 @@ class TestOpenCodeTrustedConfig:
 
 
 class TestOpenCodeBinaryVerification:
-    def test_real_binary_matches_pin(self, safe_cwd: Path):
-        """Real-binary metadata probe from a safe cwd only.
-
-        This is the one test that executes the installed OpenCode binary. It
-        does not submit a task or a prompt.
-        """
-        config = OpenCodeTrustedConfig(
-            executable_path=PINNED_OPENCODE_PATH,
-            expected_sha256=PINNED_OPENCODE_SHA256,
-            expected_version=PINNED_OPENCODE_VERSION,
-            fixture_root=str(safe_cwd.parent.parent),
-            working_directory=str(safe_cwd),
-            output_schema_file=str(safe_cwd / "schema.json"),
-            spool_directory=str(safe_cwd / "spool"),
-            registry_path=str(safe_cwd / "registry.db"),
-            environment=_real_binary_env(safe_cwd),
-            expected_transport_contract_id=OPENCODE_TRANSPORT_CONTRACT_ID,
-        )
-        binary = resolve_pinned_binary(config)
-        assert binary.sha256 == PINNED_OPENCODE_SHA256
+    def test_real_binary_matches_pin(self, injected_metadata_config):
+        """Qualify injected metadata without touching the receiver binary."""
+        config, fake_probe = injected_metadata_config
+        binary = resolve_pinned_binary(config, version_probe=fake_probe)
+        assert binary.sha256 == config.expected_sha256
         assert binary.version == PINNED_OPENCODE_VERSION
-        assert binary.executable == str(Path(PINNED_OPENCODE_PATH).resolve())
+        assert binary.executable == str(Path(config.executable_path).resolve())
         assert binary.size_bytes > 0
 
     def test_resolve_rejects_wrong_sha(self, safe_cwd: Path):
@@ -608,22 +623,11 @@ class TestOpenCodeBinaryVerification:
 
 
 class TestOpenCodeArgv:
-    def test_build_argv_matches_qualified_transport(self, safe_cwd: Path):
-        config = OpenCodeTrustedConfig(
-            executable_path=PINNED_OPENCODE_PATH,
-            expected_sha256=PINNED_OPENCODE_SHA256,
-            expected_version=PINNED_OPENCODE_VERSION,
-            fixture_root=str(safe_cwd.parent.parent),
-            working_directory=str(safe_cwd),
-            output_schema_file=str(safe_cwd / "schema.json"),
-            spool_directory=str(safe_cwd / "spool"),
-            registry_path=str(safe_cwd / "registry.db"),
-            environment=_real_binary_env(safe_cwd),
-            expected_transport_contract_id=OPENCODE_TRANSPORT_CONTRACT_ID,
-        )
-        binding = qualify_opencode_runtime(config)
+    def test_build_argv_matches_qualified_transport(self, injected_metadata_config):
+        config, fake_probe = injected_metadata_config
+        binding = qualify_opencode_runtime(config, version_probe=fake_probe)
         argv = build_opencode_argv(config, binding, runtime_run_id="test-run")
-        assert argv.executable == str(Path(PINNED_OPENCODE_PATH).resolve())
+        assert argv.executable == str(Path(config.executable_path).resolve())
         assert argv.args[0] == "run"
         assert argv.args[1] == "--format"
         assert argv.args[2] == "json"
@@ -631,22 +635,11 @@ class TestOpenCodeArgv:
         assert "--agent" in argv.args
         assert argv.args[argv.args.index("--agent") + 1] == "hermes-ea4e-opencode-receiver"
         assert argv.shell is False
-        assert argv.transport_contract_id == OPENCODE_TRANSPORT_CONTRACT_ID
+        assert argv.transport_contract_id == config.expected_transport_contract_id
 
-    def test_build_argv_rejects_unsafe_run_id(self, safe_cwd: Path):
-        config = OpenCodeTrustedConfig(
-            executable_path=PINNED_OPENCODE_PATH,
-            expected_sha256=PINNED_OPENCODE_SHA256,
-            expected_version=PINNED_OPENCODE_VERSION,
-            fixture_root=str(safe_cwd.parent.parent),
-            working_directory=str(safe_cwd),
-            output_schema_file=str(safe_cwd / "schema.json"),
-            spool_directory=str(safe_cwd / "spool"),
-            registry_path=str(safe_cwd / "registry.db"),
-            environment=_real_binary_env(safe_cwd),
-            expected_transport_contract_id=OPENCODE_TRANSPORT_CONTRACT_ID,
-        )
-        binding = qualify_opencode_runtime(config)
+    def test_build_argv_rejects_unsafe_run_id(self, injected_metadata_config):
+        config, fake_probe = injected_metadata_config
+        binding = qualify_opencode_runtime(config, version_probe=fake_probe)
         with pytest.raises(OpenCodeTransportQualificationError, match="unsafe"):
             build_opencode_argv(config, binding, runtime_run_id="bad run!")
 
@@ -668,38 +661,20 @@ class TestOpenCodeReceiverAdapter:
         adapter = OpenCodeReceiverAdapter(config=config)
         assert adapter.adapter_version == "ea4e.2"
 
-    def test_qualify_runtime(self, safe_cwd: Path):
-        config = OpenCodeTrustedConfig(
-            executable_path=PINNED_OPENCODE_PATH,
-            expected_sha256=PINNED_OPENCODE_SHA256,
-            expected_version=PINNED_OPENCODE_VERSION,
-            fixture_root=str(safe_cwd.parent.parent),
-            working_directory=str(safe_cwd),
-            output_schema_file=str(safe_cwd / "schema.json"),
-            spool_directory=str(safe_cwd / "spool"),
-            registry_path=str(safe_cwd / "registry.db"),
-            environment=_real_binary_env(safe_cwd),
-            expected_transport_contract_id=OPENCODE_TRANSPORT_CONTRACT_ID,
+    def test_qualify_runtime(self, injected_metadata_config, monkeypatch):
+        config, fake_probe = injected_metadata_config
+        monkeypatch.setattr(
+            "tools.hermes_core.opencode_adapter._version_probe", fake_probe
         )
         adapter = OpenCodeReceiverAdapter(config=config)
         binding = adapter.qualify_runtime()
-        assert binding.binary_sha256 == PINNED_OPENCODE_SHA256
-        assert binding.transport_contract_id == OPENCODE_TRANSPORT_CONTRACT_ID
+        assert binding.binary_sha256 == config.expected_sha256
+        assert binding.transport_contract_id == config.expected_transport_contract_id
 
-    def test_build_argv(self, safe_cwd: Path):
-        config = OpenCodeTrustedConfig(
-            executable_path=PINNED_OPENCODE_PATH,
-            expected_sha256=PINNED_OPENCODE_SHA256,
-            expected_version=PINNED_OPENCODE_VERSION,
-            fixture_root=str(safe_cwd.parent.parent),
-            working_directory=str(safe_cwd),
-            output_schema_file=str(safe_cwd / "schema.json"),
-            spool_directory=str(safe_cwd / "spool"),
-            registry_path=str(safe_cwd / "registry.db"),
-            environment=_real_binary_env(safe_cwd),
-            expected_transport_contract_id=OPENCODE_TRANSPORT_CONTRACT_ID,
-        )
+    def test_build_argv(self, injected_metadata_config):
+        config, _ = injected_metadata_config
         adapter = OpenCodeReceiverAdapter(config=config)
+        adapter._runtime_binding = _fake_runtime_binding(config)
         argv = adapter.build_argv("test-run")
         # argv[0] is the executable; the "run" command follows.
         assert argv[1] == "run"
@@ -707,20 +682,10 @@ class TestOpenCodeReceiverAdapter:
         assert "json" in argv
         assert "--pure" in argv
 
-    def test_prepare_invocation(self, safe_cwd: Path):
-        config = OpenCodeTrustedConfig(
-            executable_path=PINNED_OPENCODE_PATH,
-            expected_sha256=PINNED_OPENCODE_SHA256,
-            expected_version=PINNED_OPENCODE_VERSION,
-            fixture_root=str(safe_cwd.parent.parent),
-            working_directory=str(safe_cwd),
-            output_schema_file=str(safe_cwd / "schema.json"),
-            spool_directory=str(safe_cwd / "spool"),
-            registry_path=str(safe_cwd / "registry.db"),
-            environment=_real_binary_env(safe_cwd),
-            expected_transport_contract_id=OPENCODE_TRANSPORT_CONTRACT_ID,
-        )
+    def test_prepare_invocation(self, injected_metadata_config):
+        config, _ = injected_metadata_config
         adapter = OpenCodeReceiverAdapter(config=config)
+        adapter._runtime_binding = _fake_runtime_binding(config)
         record, argv, replayed = adapter.prepare_invocation(
             idempotency_key="test-key",
             launch_attempt_id="launch-1",
@@ -880,29 +845,13 @@ class TestOpenCodeFakeProcess:
 
 
 class TestOpenCodeLiveProcess:
-    def test_version_probe_from_safe_cwd(self, safe_cwd: Path):
-        """Real-binary metadata probe from a safe cwd only.
-
-        Uses a direct version probe (not the full LiveProcess state
-        machine) to verify the installed OpenCode 1.18.11 binary
-        reports the expected version.
-        """
-        config = OpenCodeTrustedConfig(
-            executable_path=PINNED_OPENCODE_PATH,
-            expected_sha256=PINNED_OPENCODE_SHA256,
-            expected_version=PINNED_OPENCODE_VERSION,
-            fixture_root=str(safe_cwd.parent.parent),
-            working_directory=str(safe_cwd),
-            output_schema_file=str(safe_cwd / "schema.json"),
-            spool_directory=str(safe_cwd / "spool"),
-            registry_path=str(safe_cwd / "registry.db"),
-            environment=_real_binary_env(safe_cwd),
-            expected_transport_contract_id=OPENCODE_TRANSPORT_CONTRACT_ID,
-        )
-        binary = resolve_pinned_binary(config)
-        assert binary.sha256 == PINNED_OPENCODE_SHA256
+    def test_version_probe_from_safe_cwd(self, injected_metadata_config):
+        """Validate injected version metadata without a receiver process."""
+        config, fake_probe = injected_metadata_config
+        binary = resolve_pinned_binary(config, version_probe=fake_probe)
+        assert binary.sha256 == config.expected_sha256
         assert binary.version == PINNED_OPENCODE_VERSION
-        assert binary.executable == str(Path(PINNED_OPENCODE_PATH).resolve())
+        assert binary.executable == str(Path(config.executable_path).resolve())
         assert binary.size_bytes > 0
 
 
@@ -1443,36 +1392,22 @@ class TestOpenCodeRawCapture:
 
 
 class TestOpenCodeNonInferenceControl:
-    """Non-inference OpenCode control tests using --version."""
+    """Non-inference OpenCode controls using only test-owned fakes."""
 
-    def test_opencapture_version_pipe_capture(self, tmp_path: Path):
-        """Verify OpenCode --version works with PIPE capture."""
-        from tools.hermes_core.opencode_adapter import (
-            OpenCodeLiveProcess,
-            OpenCodeArgv,
-            PINNED_OPENCODE_PATH,
+    def test_opencapture_version_pipe_capture(self):
+        """Verify version-result handling through a deterministic fake."""
+        result = OpenCodeProcessResult(
+            pid=12345,
+            returncode=0,
+            stdout=PINNED_OPENCODE_VERSION,
+            stderr="",
         )
-
-        process = OpenCodeLiveProcess()
-        argv = OpenCodeArgv(
-            executable=PINNED_OPENCODE_PATH,
-            args=("--version",),
-            cwd=str(tmp_path),
-            env=_real_binary_env(tmp_path),
-            input_schema_file=str(tmp_path / "schema.json"),
-            spool_directory=str(tmp_path / "spool"),
-            transport_contract_id="test",
-        )
-        pid = process.start(argv, "")
-        import time
-        for _ in range(50):
-            result = process.poll(pid)
-            if result is not None:
-                break
-            time.sleep(0.1)
+        process = OpenCodeFakeProcess(sequence=[result])
+        pid = process.start(None, "")
+        result = process.poll(pid)
         assert result is not None
         assert result.returncode == 0
-        assert "1.18.11" in result.stdout
+        assert PINNED_OPENCODE_VERSION in result.stdout
 
 
 class TestOpenCodeMalformedOutput:

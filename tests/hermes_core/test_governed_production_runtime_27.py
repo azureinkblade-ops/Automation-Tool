@@ -20,6 +20,10 @@ from tests.hermes_core.test_governed_production_runtime import (
     _make_authorized_request,
     _make_request,
 )
+from tests.hermes_core.durable_auth_test_support import (
+    QualificationDurablePolicy,
+    qualification_store,
+)
 
 
 @pytest.fixture
@@ -40,12 +44,23 @@ def binding_controller(binding_clock):
     )
 
 
-@pytest.fixture
-def runtime(binding_controller, executor_registry):
+def _durable_runtime(binding_controller, executor_registry, tmp_path, name):
+    clock = ClockCollaborator(now=QUALIFICATION_CLOCK)
     return GovernedProductionRuntime(
-        clock=ClockCollaborator(now=QUALIFICATION_CLOCK),
+        clock=clock,
         binding_controller=binding_controller,
         executor_registry=executor_registry,
+        invocation_authorization_policy=QualificationDurablePolicy(
+            clock=clock,
+            store=qualification_store(tmp_path, name),
+        ),
+    )
+
+
+@pytest.fixture
+def runtime(binding_controller, executor_registry, tmp_path):
+    return _durable_runtime(
+        binding_controller, executor_registry, tmp_path, "runtime27.sqlite3"
     )
 
 
@@ -215,26 +230,22 @@ class TestNoAutomaticAuthorization:
 
 
 class TestPreservedRuntimeControls:
-    def test_19_executor_failure_has_no_fallback(self, binding_controller, executor_registry, binding_clock):
+    def test_19_executor_failure_has_no_fallback(self, binding_controller, executor_registry, binding_clock, tmp_path):
         _bind(binding_controller, executor_registry, binding_clock)
         executor_registry.register("kilo-cli-agent", FakeFailingKiloExecutor())
-        runtime = GovernedProductionRuntime(
-            clock=ClockCollaborator(now=QUALIFICATION_CLOCK),
-            binding_controller=binding_controller,
-            executor_registry=executor_registry,
+        runtime = _durable_runtime(
+            binding_controller, executor_registry, tmp_path, "case19.sqlite3"
         )
         result = runtime.execute(_make_authorized_request(binding_controller))
         assert result.execution_status == "FAILURE"
         assert result.fallback_attempts == 0
         assert result.opencode_executor_calls == 0
 
-    def test_20_executor_failure_has_no_retry(self, binding_controller, executor_registry, binding_clock):
+    def test_20_executor_failure_has_no_retry(self, binding_controller, executor_registry, binding_clock, tmp_path):
         _bind(binding_controller, executor_registry, binding_clock)
         executor_registry.register("kilo-cli-agent", FakeFailingKiloExecutor())
-        runtime = GovernedProductionRuntime(
-            clock=ClockCollaborator(now=QUALIFICATION_CLOCK),
-            binding_controller=binding_controller,
-            executor_registry=executor_registry,
+        runtime = _durable_runtime(
+            binding_controller, executor_registry, tmp_path, "case20.sqlite3"
         )
         result = runtime.execute(_make_authorized_request(binding_controller))
         assert result.automatic_retry_attempts == 0
@@ -254,14 +265,12 @@ class TestPreservedRuntimeControls:
         assert result.automatic_invocation_authorization_enabled is False
 
     def test_24_external_auth_is_consumed_before_executor_failure(
-        self, binding_controller, executor_registry, binding_clock
+        self, binding_controller, executor_registry, binding_clock, tmp_path
     ):
         _bind(binding_controller, executor_registry, binding_clock)
         executor_registry.register("kilo-cli-agent", FakeFailingKiloExecutor())
-        runtime = GovernedProductionRuntime(
-            clock=ClockCollaborator(now=QUALIFICATION_CLOCK),
-            binding_controller=binding_controller,
-            executor_registry=executor_registry,
+        runtime = _durable_runtime(
+            binding_controller, executor_registry, tmp_path, "case24.sqlite3"
         )
         request = _make_authorized_request(binding_controller)
         assert runtime.execute(request).execution_status == "FAILURE"

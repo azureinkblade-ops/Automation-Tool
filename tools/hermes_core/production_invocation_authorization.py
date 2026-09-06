@@ -48,15 +48,27 @@ from tools.hermes_core.production_execution import (
     compute_ea4e14_execution_contract_id,
 )
 from tools.hermes_core.production_issuance import ClockCollaborator
+from tools.hermes_core.durable_invocation_authorization_store import (
+    DurableAuthorizationStoreConflict,
+    DurableAuthorizationStoreError,
+    DurableAuthorizationStoreIntegrityError,
+    DurableInvocationAuthorizationStore,
+)
 
 
 # --------------------------------------------------------------------------- #
 # Schema
 # --------------------------------------------------------------------------- #
 
-INVOCATION_SCHEMA_ID = "hermes.production-invocation-authorization.receiver-dispatch/v1"
-INVOCATION_SCHEMA_VERSION = "ea4e.23"
-INVOCATION_ARTIFACT_VERSION = "1"
+INVOCATION_SCHEMA_ID = "hermes.production-invocation-authorization.receiver-dispatch/v2"
+INVOCATION_SCHEMA_VERSION = "ea4e.23r1"
+INVOCATION_ARTIFACT_VERSION = "2"
+AUTHORIZATION_STORE_SCHEMA_ID = "hermes.production-invocation-authorization-store/v1"
+AUTHORIZATION_STORE_SCHEMA_VERSION = "1"
+
+LEGACY_EA4E23_INVOCATION_CONTRACT_ID = (
+    "1d34f4c19b6f7e05cd42e6e43dc656e8d2fe8cb53a6187b20ce65983c70243d8"
+)
 
 # Maximum invocation authorization TTL (seconds)
 MAX_INVOCATION_AUTHORIZATION_TTL_SECONDS = 300
@@ -144,12 +156,14 @@ class ProductionInvocationAuthorizationPolicy:
         self,
         *,
         clock: BindingClock,
+        store: DurableInvocationAuthorizationStore | None = None,
         max_ttl_seconds: int = MAX_INVOCATION_AUTHORIZATION_TTL_SECONDS,
     ) -> None:
         self._clock = clock
+        self._store = store
         self._max_ttl_seconds = max_ttl_seconds
+        # Compatibility-only observation cache; durable state is authoritative.
         self._consumed_authorizations: set[str] = set()
-        self._authorization_identities: dict[str, tuple[str, str]] = {}
         self._lock = threading.RLock()
 
     def evaluate(
@@ -164,16 +178,42 @@ class ProductionInvocationAuthorizationPolicy:
 
         Returns ALLOW only if all gates pass.
         """
-        # Step 1: Check if authorization has already been consumed
-        with self._lock:
-            if authorization.invocation_authorization_id in self._consumed_authorizations:
-                return ProductionInvocationAuthorizationResult(
-                    invocation_authorization_id=authorization.invocation_authorization_id,
-                    policy_decision="DENY",
-                    policy_reason="INVOCATION_AUTHORIZATION_ALREADY_CONSUMED",
-                    binding_authorized=False,
-                    consumed=True,
-                )
+        if self._store is None:
+            return self._deny(
+                authorization, "DURABLE_INVOCATION_AUTHORIZATION_STORE_REQUIRED"
+            )
+        try:
+            state = self._store.inspect(authorization.to_canonical_dict())
+        except DurableAuthorizationStoreConflict as exc:
+            reason = (
+                "CROSS_RECEIVER_INVOCATION_REPLAY"
+                if "cross-receiver" in str(exc)
+                else "INVOCATION_AUTHORIZATION_ID_COLLISION"
+            )
+            return self._deny(authorization, reason)
+        except DurableAuthorizationStoreError:
+            return self._deny(authorization, "INVOCATION_AUTHORIZATION_STATE_INVALID")
+        if state.consumed:
+            return self._deny(
+                authorization,
+                "INVOCATION_AUTHORIZATION_ALREADY_CONSUMED",
+                consumed=True,
+            )
+        return self._evaluate_fields(
+            authorization,
+            handle,
+            bound_meta,
+            expected_execution_request_id=expected_execution_request_id,
+        )
+
+    def _evaluate_fields(
+        self,
+        authorization: ProductionInvocationAuthorization,
+        handle: ProductionExecutorBindingHandle,
+        bound_meta: dict[str, tuple[str, str]],
+        *,
+        expected_execution_request_id: str | None = None,
+    ) -> ProductionInvocationAuthorizationResult:
 
         # Step 2: Validate receiver match
         if authorization.receiver_id != handle.receiver_id:
@@ -288,6 +328,21 @@ class ProductionInvocationAuthorizationPolicy:
             binding_authorized=True,
         )
 
+    @staticmethod
+    def _deny(
+        authorization: ProductionInvocationAuthorization,
+        reason: str,
+        *,
+        consumed: bool = False,
+    ) -> ProductionInvocationAuthorizationResult:
+        return ProductionInvocationAuthorizationResult(
+            invocation_authorization_id=authorization.invocation_authorization_id,
+            policy_decision="DENY",
+            policy_reason=reason,
+            binding_authorized=False,
+            consumed=consumed,
+        )
+
     def claim_for_execution(
         self,
         authorization: ProductionInvocationAuthorization,
@@ -307,64 +362,63 @@ class ProductionInvocationAuthorizationPolicy:
 
         Thread-safe: uses lock to ensure atomic check-and-consume.
         """
-        with self._lock:
-            authorization_id = authorization.invocation_authorization_id
-            canonical_hash = sha256_payload(authorization.to_canonical_dict())
-            existing_identity = self._authorization_identities.get(authorization_id)
-            if existing_identity is not None:
-                existing_receiver, existing_hash = existing_identity
-                if existing_receiver != authorization.receiver_id:
-                    return ProductionInvocationAuthorizationResult(
-                        invocation_authorization_id=authorization_id,
-                        policy_decision="DENY",
-                        policy_reason="CROSS_RECEIVER_INVOCATION_REPLAY",
-                        binding_authorized=False,
-                    )
-                if existing_hash != canonical_hash:
-                    return ProductionInvocationAuthorizationResult(
-                        invocation_authorization_id=authorization_id,
-                        policy_decision="DENY",
-                        policy_reason="INVOCATION_AUTHORIZATION_ID_COLLISION",
-                        binding_authorized=False,
-                    )
+        if self._store is None:
+            return self._deny(
+                authorization, "DURABLE_INVOCATION_AUTHORIZATION_STORE_REQUIRED"
+            )
 
-            if authorization_id in self._consumed_authorizations:
-                return ProductionInvocationAuthorizationResult(
-                    invocation_authorization_id=authorization_id,
-                    policy_decision="DENY",
-                    policy_reason="INVOCATION_AUTHORIZATION_ALREADY_CONSUMED",
-                    binding_authorized=False,
-                    consumed=True,
-                )
-
-            # Perform full evaluation
-            result = self.evaluate(
+        def validate() -> str | None:
+            result = self._evaluate_fields(
                 authorization,
                 handle,
                 bound_meta,
                 expected_execution_request_id=expected_execution_request_id,
             )
-            if not result.binding_authorized:
-                return result
+            return None if result.binding_authorized else result.policy_reason
 
-            # Atomically mark as consumed
-            self._authorization_identities[authorization_id] = (
-                authorization.receiver_id,
-                canonical_hash,
+        try:
+            claim = self._store.claim(
+                authorization.to_canonical_dict(),
+                consumed_at=self._clock.now_iso(),
+                validate=validate,
             )
-            self._consumed_authorizations.add(authorization_id)
+        except DurableAuthorizationStoreIntegrityError:
+            return self._deny(authorization, "INVOCATION_AUTHORIZATION_STATE_INVALID")
+        except DurableAuthorizationStoreConflict:
+            return self._deny(authorization, "INVOCATION_AUTHORIZATION_ID_COLLISION")
+        except DurableAuthorizationStoreError:
+            return self._deny(authorization, "INVOCATION_AUTHORIZATION_STORE_ERROR")
 
-        return result
+        if not claim.allowed:
+            return self._deny(
+                authorization, claim.reason, consumed=claim.consumed
+            )
+        with self._lock:
+            self._consumed_authorizations.add(
+                authorization.invocation_authorization_id
+            )
+        return ProductionInvocationAuthorizationResult(
+            invocation_authorization_id=authorization.invocation_authorization_id,
+            policy_decision="ALLOW",
+            policy_reason=claim.reason,
+            binding_authorized=True,
+            consumed=True,
+        )
 
     def mark_consumed(self, invocation_authorization_id: str) -> None:
-        """Mark an authorization as consumed."""
-        with self._lock:
-            self._consumed_authorizations.add(invocation_authorization_id)
+        """Reject unvalidated direct consumption under the durable contract."""
+        raise DurableAuthorizationStoreError(
+            "direct mark_consumed is not permitted; use claim_for_execution"
+        )
 
     def is_consumed(self, invocation_authorization_id: str) -> bool:
         """Check if an authorization has been consumed."""
-        with self._lock:
-            return invocation_authorization_id in self._consumed_authorizations
+        if self._store is None:
+            return False
+        try:
+            return self._store.inspect_by_id(invocation_authorization_id).consumed
+        except DurableAuthorizationStoreError:
+            return False
 
 
 # --------------------------------------------------------------------------- #
@@ -532,9 +586,9 @@ class GovernedInvocationCoordinator:
 # Contract computation
 # --------------------------------------------------------------------------- #
 
-def compute_ea4e23_invocation_contract_id() -> str:
-    """Compute the deterministic EA-4E.23 invocation contract ID."""
-    canonical = {
+def ea4e23_invocation_contract_payload() -> dict[str, Any]:
+    """Return the canonical restart-durable invocation contract payload."""
+    return {
         "schema_id": INVOCATION_SCHEMA_ID,
         "schema_version": INVOCATION_SCHEMA_VERSION,
         "artifact_version": INVOCATION_ARTIFACT_VERSION,
@@ -548,8 +602,29 @@ def compute_ea4e23_invocation_contract_id() -> str:
         "default_invocation_authorization_decision": "DENY",
         "explicit_receiver_matching": True,
         "exact_binding_identity_required": True,
+        "exact_enablement_identity_required": True,
+        "exact_execution_request_identity_required": True,
         "binding_valid_at_use_required": True,
-        "consumption_semantics": "atomic_at_execution_attempt_boundary",
+        "authorization_store_schema_id": AUTHORIZATION_STORE_SCHEMA_ID,
+        "authorization_store_schema_version": AUTHORIZATION_STORE_SCHEMA_VERSION,
+        "authorization_identity_lifetime": "restart_durable",
+        "authorization_issuance_state_lifetime": "restart_durable",
+        "authorization_consumption_state_lifetime": "restart_durable",
+        "consumption_semantics": "atomic_durable_at_execution_attempt_boundary",
+        "consumed_remains_consumed_after_restart": True,
+        "unconsumed_valid_authorization_survives_restart": True,
+        "expiry_rechecked_against_current_clock_after_restart": True,
+        "canonical_collision_identity_survives_restart": True,
+        "replay_protection_survives_restart": True,
+        "single_use_survives_restart": True,
+        "attempt_limit_survives_restart": True,
+        "corrupt_durable_state": "DENY",
+        "missing_durable_state": "DENY",
+        "unsupported_store_schema": "DENY",
+        "durable_consume_committed_before_executor_call": True,
+        "persistence_lock_held_during_executor_call": False,
+        "failed_executor_attempt_consumes_authorization": True,
+        "pre_execution_rejection_consumes_authorization": False,
         "replay_collision_semantics": "cross_receiver_precedence",
         "no_auto_create_authorization": True,
         "no_retry": True,
@@ -561,4 +636,8 @@ def compute_ea4e23_invocation_contract_id() -> str:
         "default_inert_state": True,
         "fake_qualification_only": True,
     }
-    return sha256_payload(canonical)
+
+
+def compute_ea4e23_invocation_contract_id() -> str:
+    """Compute the deterministic EA-4E.23r1 invocation contract ID."""
+    return sha256_payload(ea4e23_invocation_contract_payload())

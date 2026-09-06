@@ -27,9 +27,13 @@ from tools.hermes_core.production_invocation_authorization_issuer import (
 )
 
 
-CALLER_SCHEMA_ID = "hermes.governed-production-caller/v1"
-CALLER_SCHEMA_VERSION = "ea4e.29"
-CALLER_ARTIFACT_VERSION = "1"
+CALLER_SCHEMA_ID = "hermes.governed-production-caller/v2"
+CALLER_SCHEMA_VERSION = "ea4e.29r1"
+CALLER_ARTIFACT_VERSION = "2"
+
+LEGACY_EA4E29_CALLER_CONTRACT_ID = (
+    "aa9b2e1a6bb2307e814bb66913f7fdb8134a3fbb0273bfb8be000da6e480ee9a"
+)
 
 
 @dataclass(frozen=True)
@@ -115,8 +119,9 @@ class GovernedProductionCaller:
         )
 
 
-def compute_ea4e29_caller_contract_id() -> str:
-    canonical = {
+def ea4e29_caller_contract_payload() -> dict[str, object]:
+    """Return the canonical restart-durable caller contract payload."""
+    return {
         "schema_id": CALLER_SCHEMA_ID,
         "schema_version": CALLER_SCHEMA_VERSION,
         "artifact_version": CALLER_ARTIFACT_VERSION,
@@ -130,10 +135,21 @@ def compute_ea4e29_caller_contract_id() -> str:
         "receiver_identity_match_required": True,
         "preexisting_resolution_required": True,
         "runtime_is_not_issuer": True,
+        "receives_only_durably_committed_authorization": True,
+        "passes_authorization_explicitly_to_runtime": True,
+        "authorization_synthesis": False,
+        "issuer_bypass": False,
+        "durable_store_bypass": False,
+        "auto_reissue_after_deny": False,
+        "auto_refresh_expired_authorization": False,
+        "direct_receiver_execution": False,
         "receiver_selection": False,
         "binding_creation": False,
         "retry": False,
         "fallback": False,
         "failover": False,
     }
-    return sha256_payload(canonical)
+
+
+def compute_ea4e29_caller_contract_id() -> str:
+    return sha256_payload(ea4e29_caller_contract_payload())

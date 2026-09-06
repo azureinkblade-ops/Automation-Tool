@@ -18,6 +18,13 @@ from tools.hermes_core.production_invocation_authorization import (
     MAX_INVOCATION_AUTHORIZATION_TTL_SECONDS,
     MAX_AUTHORIZED_ATTEMPTS,
 )
+from tools.hermes_core.durable_invocation_authorization_store import (
+    DurableAuthorizationStoreError,
+)
+from tests.hermes_core.durable_auth_test_support import (
+    QualificationDurablePolicy,
+    qualification_store,
+)
 from tools.hermes_core.production_executor_binding import (
     BindingClock,
     ExecutorRegistry,
@@ -128,8 +135,11 @@ def executor_registry():
 
 
 @pytest.fixture
-def invocation_policy(fixed_clock):
-    return ProductionInvocationAuthorizationPolicy(clock=fixed_clock)
+def invocation_policy(fixed_clock, tmp_path):
+    return QualificationDurablePolicy(
+        clock=fixed_clock,
+        store=qualification_store(tmp_path),
+    )
 
 
 @pytest.fixture
@@ -704,12 +714,11 @@ def test_default_invocation_decision_is_deny(fixed_clock):
 
 
 def test_mark_consumed_idempotent(fixed_clock):
-    """Test marking consumed is idempotent."""
+    """Direct unvalidated consumption is rejected by the durable policy."""
     policy = ProductionInvocationAuthorizationPolicy(clock=fixed_clock)
-    policy.mark_consumed("auth-001")
-    policy.mark_consumed("auth-001")  # Duplicate
-    assert policy.is_consumed("auth-001")
-    assert len(policy._consumed_authorizations) == 1
+    with pytest.raises(DurableAuthorizationStoreError):
+        policy.mark_consumed("auth-001")
+    assert policy.is_consumed("auth-001") is False
 
 
 # ---------------------------------------------------------------------------

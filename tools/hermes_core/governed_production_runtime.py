@@ -54,6 +54,9 @@ from tools.hermes_core.production_invocation_authorization import (
     ProductionInvocationAuthorizationPolicy,
     compute_ea4e23_invocation_contract_id,
 )
+from tools.hermes_core.durable_invocation_authorization_store import (
+    DurableInvocationAuthorizationStore,
+)
 from tools.hermes_core.production_issuance import (
     ClockCollaborator,
     ProductionIssuancePolicy,
@@ -73,9 +76,13 @@ from tools.hermes_core.receiver_router import (
 # Integration schema
 # --------------------------------------------------------------------------- #
 
-INTEGRATION_SCHEMA_ID = "hermes.dual-receiver-governed-production-runtime/v1"
-INTEGRATION_SCHEMA_VERSION = "ea4e.26"
-INTEGRATION_ARTIFACT_VERSION = "1"
+INTEGRATION_SCHEMA_ID = "hermes.dual-receiver-governed-production-runtime/v2"
+INTEGRATION_SCHEMA_VERSION = "ea4e.26r1"
+INTEGRATION_ARTIFACT_VERSION = "2"
+
+LEGACY_EA4E26_INTEGRATION_CONTRACT_ID = (
+    "c49556e63645fefc31a3f03df726d99447620b7ae6ae4a2c78b96ae0feeb8393"
+)
 
 # Fixed deterministic qualification clock
 QUALIFICATION_CLOCK = "2026-01-01T00:00:00Z"
@@ -197,6 +204,8 @@ class GovernedProductionRuntime:
         clock: ClockCollaborator,
         executor_registry: Optional[ExecutorRegistry] = None,
         binding_controller: Optional[ProductionExecutorBindingController] = None,
+        invocation_authorization_store: DurableInvocationAuthorizationStore | None = None,
+        invocation_authorization_policy: ProductionInvocationAuthorizationPolicy | None = None,
         max_invocations: int = 1,
     ) -> None:
         self._clock = clock
@@ -210,7 +219,13 @@ class GovernedProductionRuntime:
             executor_registry=self._executor_registry,
             clock=BindingClock(now=clock.now_iso()),
         )
-        self._invocation_policy = ProductionInvocationAuthorizationPolicy(clock=clock)
+        self._invocation_policy = (
+            invocation_authorization_policy
+            or ProductionInvocationAuthorizationPolicy(
+                clock=clock,
+                store=invocation_authorization_store,
+            )
+        )
         self._boundary = ProductionExecutionBoundary(
             executor_registry=self._executor_registry,
             authority_validator=ExecutionAuthorityValidator(
@@ -437,9 +452,9 @@ class GovernedProductionRuntime:
 # Integration contract computation
 # --------------------------------------------------------------------------- #
 
-def compute_ea4e26_integration_contract_id() -> str:
-    """Compute the deterministic EA-4E.26 integration contract ID."""
-    canonical = {
+def ea4e26_integration_contract_payload() -> dict[str, Any]:
+    """Return the canonical restart-durable runtime contract payload."""
+    return {
         "schema_id": INTEGRATION_SCHEMA_ID,
         "schema_version": INTEGRATION_SCHEMA_VERSION,
         "artifact_version": INTEGRATION_ARTIFACT_VERSION,
@@ -461,7 +476,11 @@ def compute_ea4e26_integration_contract_id() -> str:
         "no_auto_bind": True,
         "ea4e22_resolution_required": True,
         "invocation_authorization_required": True,
-        "atomic_claim_required": True,
+        "external_invocation_authorization_required": True,
+        "runtime_issues_invocation_authorization": False,
+        "no_auto_authorization": True,
+        "restart_durable_invocation_authorization_required": True,
+        "atomic_durable_claim_required": True,
         "max_invocation_auth_ttl_seconds": 300,
         "max_authorized_attempts": 1,
         "default_invocation_authorization": "DENY",
@@ -473,4 +492,8 @@ def compute_ea4e26_integration_contract_id() -> str:
         "persistent_production_execution_disabled": True,
         "fake_qualification_only": True,
     }
-    return sha256_payload(canonical)
+
+
+def compute_ea4e26_integration_contract_id() -> str:
+    """Compute the deterministic EA-4E.26r1 integration contract ID."""
+    return sha256_payload(ea4e26_integration_contract_payload())

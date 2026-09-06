@@ -27,6 +27,10 @@ from tools.hermes_core.production_invocation_authorization import (
     ProductionInvocationAuthorizationPolicy,
 )
 from tools.hermes_core.production_issuance import ClockCollaborator
+from tests.hermes_core.durable_auth_test_support import (
+    QualificationDurablePolicy,
+    qualification_store,
+)
 
 
 # Fixed deterministic qualification clock
@@ -48,8 +52,11 @@ def binding_clock():
 
 
 @pytest.fixture
-def invocation_policy(binding_clock):
-    return ProductionInvocationAuthorizationPolicy(clock=binding_clock)
+def invocation_policy(binding_clock, tmp_path):
+    return QualificationDurablePolicy(
+        clock=binding_clock,
+        store=qualification_store(tmp_path),
+    )
 
 
 @pytest.fixture
@@ -230,6 +237,7 @@ class TestDirectCrossReceiverAuthIsolation:
             receiver_id="kilo-cli-agent",
             binding_id=opencode_resolution.binding_handle.binding_id,
             enablement_id=opencode_resolution.binding_handle.enablement_id,
+            invocation_auth_id="ea4e26b-kilo-to-opencode-auth-001",
         )
         result1 = invocation_policy.claim_for_execution(kilo_auth, opencode_resolution.binding_handle, {})
         assert result1.policy_decision == "DENY"
@@ -240,6 +248,7 @@ class TestDirectCrossReceiverAuthIsolation:
             receiver_id="opencode-cli-agent",
             binding_id=kilo_resolution.binding_handle.binding_id,
             enablement_id=kilo_resolution.binding_handle.enablement_id,
+            invocation_auth_id="ea4e26b-opencode-to-kilo-auth-001",
         )
         result2 = invocation_policy.claim_for_execution(opencode_auth, kilo_resolution.binding_handle, {})
         assert result2.policy_decision == "DENY"
@@ -383,7 +392,7 @@ class TestDirectInvocationAuthExpired:
     """Directly prove invocation authorization expiration at EA-4E.23."""
 
     def test_expired_authorization_denied(
-        self, binding_controller, executor_registry, resolver, binding_clock
+        self, binding_controller, executor_registry, resolver, binding_clock, tmp_path
     ):
         """An authorization with expires_at <= now must be denied."""
         _bind_receiver(binding_controller, executor_registry, "kilo-cli-agent", binding_clock)
@@ -394,7 +403,10 @@ class TestDirectInvocationAuthExpired:
 
         # Create a clock that is AFTER the auth expiry
         expired_clock = BindingClock(now="2026-01-01T01:00:00Z")  # After 00:05:00Z expiry
-        expired_policy = ProductionInvocationAuthorizationPolicy(clock=expired_clock)
+        expired_policy = QualificationDurablePolicy(
+            clock=expired_clock,
+            store=qualification_store(tmp_path),
+        )
 
         # Create auth that expires at 00:05:00Z
         auth = _create_authorization(
@@ -413,7 +425,7 @@ class TestDirectInvocationAuthExpired:
         assert result.policy_reason == "INVOCATION_AUTHORIZATION_EXPIRED"
 
     def test_expired_authorization_actually_expired(
-        self, binding_controller, executor_registry, resolver, binding_clock
+        self, binding_controller, executor_registry, resolver, binding_clock, tmp_path
     ):
         """Verify the expired auth test actually exercises expiration."""
         _bind_receiver(binding_controller, executor_registry, "kilo-cli-agent", binding_clock)
@@ -433,14 +445,20 @@ class TestDirectInvocationAuthExpired:
 
         # Clock at 00:06:00Z (after expiry)
         late_clock = BindingClock(now="2026-01-01T00:06:00Z")
-        late_policy = ProductionInvocationAuthorizationPolicy(clock=late_clock)
+        late_policy = QualificationDurablePolicy(
+            clock=late_clock,
+            store=qualification_store(tmp_path, "late.sqlite3"),
+        )
 
         result = late_policy.claim_for_execution(auth, handle, {})
         assert result.policy_reason == "INVOCATION_AUTHORIZATION_EXPIRED"
 
         # Clock at 00:04:00Z (before expiry) should succeed
         early_clock = BindingClock(now="2026-01-01T00:04:00Z")
-        early_policy = ProductionInvocationAuthorizationPolicy(clock=early_clock)
+        early_policy = QualificationDurablePolicy(
+            clock=early_clock,
+            store=qualification_store(tmp_path, "early.sqlite3"),
+        )
         result2 = early_policy.claim_for_execution(
             _create_authorization(
                 receiver_id="kilo-cli-agent",
@@ -609,7 +627,7 @@ class TestRegressionIsolation:
         router = get_default_router()
         assert router is not None
 
-    def test_invocation_policy_isolated_per_test(self, binding_controller, executor_registry, resolver, binding_clock):
+    def test_invocation_policy_isolated_per_test(self, binding_controller, executor_registry, resolver, binding_clock, tmp_path):
         """Each test must use its own invocation policy (no shared state leak)."""
         _bind_receiver(binding_controller, executor_registry, "kilo-cli-agent", binding_clock)
 
@@ -620,8 +638,14 @@ class TestRegressionIsolation:
         # Create two separate policies
         clock1 = BindingClock(now=QUALIFICATION_CLOCK)
         clock2 = BindingClock(now=QUALIFICATION_CLOCK)
-        policy1 = ProductionInvocationAuthorizationPolicy(clock=clock1)
-        policy2 = ProductionInvocationAuthorizationPolicy(clock=clock2)
+        policy1 = QualificationDurablePolicy(
+            clock=clock1,
+            store=qualification_store(tmp_path, "policy1.sqlite3"),
+        )
+        policy2 = QualificationDurablePolicy(
+            clock=clock2,
+            store=qualification_store(tmp_path, "policy2.sqlite3"),
+        )
 
         auth = _create_authorization(
             receiver_id="kilo-cli-agent",
