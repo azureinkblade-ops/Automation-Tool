@@ -7870,6 +7870,11 @@ def create_local_stable_diffusion_image(
     input_image: Path | None = None,
     strength: float | None = None,
     quality_mode: str = "",
+    controlnet_model: str = "",
+    controlnet_image: Path | None = None,
+    controlnet_scale: float | None = None,
+    control_guidance_start: float | None = None,
+    control_guidance_end: float | None = None,
 ) -> dict[str, Any]:
     status = local_stable_diffusion_status()
     if not status.get("ready"):
@@ -7927,6 +7932,21 @@ def create_local_stable_diffusion_image(
         command.extend(["--lora-path", str(lora_path), "--lora-scale", os.environ.get("LOCAL_SD_LORA_SCALE", "0.75")])
     if input_image and input_image.exists():
         command.extend(["--input-image", str(input_image), "--strength", str(strength if strength is not None else os.environ.get("LOCAL_SD_IMG2IMG_STRENGTH", "0.52"))])
+    # ControlNet (pose conditioning): only when BOTH model + image are set.
+    # Matches local_image_generator CLI contract and tests/test_pose_resolver.py.
+    cn_model = (controlnet_model or os.environ.get("LOCAL_SD_CONTROLNET_MODEL", "") or "").strip()
+    cn_image = Path(controlnet_image) if controlnet_image else None
+    if cn_model and cn_image is not None and cn_image.exists():
+        cn_scale = controlnet_scale if controlnet_scale is not None else float(os.environ.get("LOCAL_SD_CONTROLNET_SCALE", "0.65"))
+        cg_start = control_guidance_start if control_guidance_start is not None else float(os.environ.get("LOCAL_SD_CONTROL_GUIDANCE_START", "0.0"))
+        cg_end = control_guidance_end if control_guidance_end is not None else float(os.environ.get("LOCAL_SD_CONTROL_GUIDANCE_END", "0.75"))
+        command.extend([
+            "--controlnet-model", cn_model,
+            "--controlnet-image", str(cn_image),
+            "--controlnet-scale", str(cn_scale),
+            "--control-guidance-start", str(cg_start),
+            "--control-guidance-end", str(cg_end),
+        ])
     with _LOCAL_SD_GPU_LOCK:
         timeout = int(status.get("timeoutSeconds") or 360)
         gen_env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
@@ -7947,6 +7967,41 @@ def create_local_stable_diffusion_image(
         metadata.setdefault("model", status.get("model", ""))
         metadata.setdefault("loraTrack", lora_track)
         metadata.setdefault("loraPath", str(lora_path) if lora_path else "")
+        # EA4F-1 thin wiring: optional hand repair after local SD succeeds.
+        # Fully inert unless HAND_REPAIR_ENABLED=1 and HAND_REPAIR_MASK_PATH exists.
+        try:
+            from app_config import HAND_REPAIR_ENABLED  # type: ignore
+        except Exception:
+            HAND_REPAIR_ENABLED = os.environ.get("HAND_REPAIR_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+        if HAND_REPAIR_ENABLED:
+            mask_env = (os.environ.get("HAND_REPAIR_MASK_PATH") or "").strip()
+            if mask_env:
+                mask_path = Path(mask_env)
+                if mask_path.exists():
+                    try:
+                        from hand_repair.integration import maybe_repair_hands
+                        work = target.parent / "hand-repair"
+                        repaired = maybe_repair_hands(
+                            source_path=target,
+                            work_dir=work,
+                            mask_path=mask_path,
+                            region=os.environ.get("HAND_REPAIR_REGION", "hands"),
+                        )
+                        if repaired and Path(repaired).exists() and Path(repaired) != target:
+                            # Promote repaired image into the target path so callers stay unchanged.
+                            import shutil as _shutil
+                            _shutil.copy2(repaired, target)
+                        metadata["handRepair"] = {
+                            "enabled": True,
+                            "mask": str(mask_path),
+                            "output": str(target),
+                        }
+                    except Exception as hand_exc:
+                        metadata["handRepair"] = {"enabled": True, "error": str(hand_exc)[:400]}
+                else:
+                    metadata["handRepair"] = {"enabled": True, "skipped": "mask path missing"}
+            else:
+                metadata["handRepair"] = {"enabled": True, "skipped": "HAND_REPAIR_MASK_PATH unset"}
         return metadata
 
 

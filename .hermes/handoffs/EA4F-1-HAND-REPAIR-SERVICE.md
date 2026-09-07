@@ -198,3 +198,7 @@ image_path = maybe_repair_hands(
 ```
 
 Do not land the `app.py` call site until Step 1-4 tests are green on the machine and a single writer claims the monolith lane.
+
+### Update: app.py thin wiring applied
+See `.hermes/handoffs/EA4F-1-APP-WIRING-PATCH.md`.
+Flag default remains off; requires HAND_REPAIR_MASK_PATH when enabled.

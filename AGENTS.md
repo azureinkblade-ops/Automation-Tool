@@ -89,3 +89,9 @@ Any transfer of `app.py` ownership requires an explicit handoff.
   `.hermes/handoffs/EA4F-1-HAND-REPAIR-SERVICE.md`.
   Scope: `hand_repair/`, `gpu_runtime.py`, `local_object_refiner.py` import
   boundary, `app_config` flags. No broad `app.py` ownership.
+
+- **EA4F-2 - Pose + ControlNet cleanup.** Owner: Grok session on
+  `feature/ea4f-regional-hand-repair-pilot`. Brief:
+  `.hermes/handoffs/EA4F-2-POSE-CONTROLNET-CLEANUP.md`.
+  Scope: pose_conditioning, create_local_stable_diffusion_image ControlNet kwargs,
+  pose map C test alignment. No Visual Director prompt freeze changes.

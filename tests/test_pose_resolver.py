@@ -28,7 +28,7 @@ def test_resolver_known_template_id():
     # Conditioning input is the DERIVED detector map (not a hand-authored skeleton).
     path = PR.resolve_pose_reference(shot)
     assert path is not None and path.exists()
-    assert path.name == "climax_kneel_detected_B.png"
+    assert path.name == "climax_kneel_detected_C.png"  # production_candidate map C
     # Source reference is tracked separately.
     src = PR.pose_source_path(tid)
     assert src is not None and src.exists()
