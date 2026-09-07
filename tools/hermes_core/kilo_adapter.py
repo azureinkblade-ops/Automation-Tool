@@ -2,7 +2,7 @@
 
 Selected transport: `kilo run --format json --pure --agent hermes-ea4e-kilo-receiver`
 
-This uses the installed Kilo 7.5.6 non-interactive structured-output mode.
+This uses the installed Kilo 7.5.15 non-interactive structured-output mode.
 It does NOT open a listener socket. It emits raw JSON events on stdout for a
 requested task/session.
 
@@ -68,9 +68,9 @@ from tools.hermes_core.receiver_adapter import (
 # Note: register_adapter is imported inside register_kilo_adapter() to avoid
 # circular imports. The explicit registration is in receiver_registry.py.
 
-PINNED_KILO_PATH = r"C:\Users\David\.vscode\extensions\kilocode.kilo-code-7.5.9-win32-x64\bin\kilo.exe"
-PINNED_KILO_SHA256 = "ec8737555947a145f3418962890f539b6b175ba3de125689f7ccb197d0004a36"
-PINNED_KILO_VERSION = "7.5.9"
+PINNED_KILO_PATH = r"C:\Users\David\.vscode\extensions\kilocode.kilo-code-7.5.15-win32-x64\bin\kilo.exe"
+PINNED_KILO_SHA256 = "78414b3fc2b908ee5cfd52433697c8493c97de2930cbedb4508c9babcb681c25"
+PINNED_KILO_VERSION = "7.5.15"
 PINNED_KILO_ADAPTER_VERSION = "ea4e.3"
 PINNED_KILO_TRANSPORT = "kilo-run"
 KILO_AGENT_ID = "hermes-ea4e-kilo-receiver"
@@ -123,7 +123,7 @@ def _permission_policy_material() -> dict[str, Any]:
     }
 
 
-def _build_env() -> dict[str, str]:
+def _build_env(*, binary_path: str = PINNED_KILO_PATH) -> dict[str, str]:
     """Construct a MINIMAL Hermes-owned environment for Kilo.
 
     The child process receives ONLY explicitly listed variables.
@@ -147,15 +147,17 @@ def _build_env() -> dict[str, str]:
         "KILO_PURE": "1",
         "TEMP": str(KILO_EFFECTIVE_HOME / "tmp"),
         "TMP": str(KILO_EFFECTIVE_HOME / "tmp"),
-        "PATH": str(Path(PINNED_KILO_PATH).resolve().parent),
+        "PATH": str(Path(binary_path).resolve().parent),
         "SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows"),
         "PROCESSOR_ARCHITECTURE": os.environ.get("PROCESSOR_ARCHITECTURE", "AMD64"),
     }
 
 
-def _isolation_policy_material() -> dict[str, Any]:
+def _isolation_policy_material(
+    *, binary_path: str = PINNED_KILO_PATH
+) -> dict[str, Any]:
     """Canonical isolation policy material for the Kilo transport contract."""
-    env = _build_env()
+    env = _build_env(binary_path=binary_path)
     return {
         "runtime_root": str(HERMES_RUNTIME_ROOT),
         "cwd": str(KILO_CWD),
@@ -186,6 +188,9 @@ def _canonical_material(
     binary_sha256: str,
     binary_version: str,
     *,
+    binary_path: str = PINNED_KILO_PATH,
+    source_commit: str = "UNAVAILABLE_IN_INSTALLED_VSIX_METADATA",
+    source_tag: str = "UNAVAILABLE_IN_INSTALLED_VSIX_METADATA",
     transport: str = PINNED_KILO_TRANSPORT,
     pure: bool = True,
     input_delivery: str = INPUT_DELIVERY,
@@ -197,19 +202,19 @@ def _canonical_material(
     That permission-mode switch is dangerous and is not qualified here.
     """
     permission_material = _permission_policy_material()
-    isolation_material = _isolation_policy_material()
+    isolation_material = _isolation_policy_material(binary_path=binary_path)
 
     return {
         # Binary identity
         "adapter_version": PINNED_KILO_ADAPTER_VERSION,
-        "binary_path": PINNED_KILO_PATH,
+        "binary_path": binary_path,
         "binary_sha256": binary_sha256,
         "binary_version": binary_version,
 
         # Source
-        "source_commit": "fa02955bfa17b60e57e0d7406d200a73337472ee",
+        "source_commit": source_commit,
         "source_repository": "https://github.com/Kilo-Org/kilocode",
-        "source_tag": "v7.5.6",
+        "source_tag": source_tag,
 
         # Transport interface
         "input_delivery": input_delivery,

@@ -48,6 +48,11 @@ from tools.hermes_core.production_execution import (
     compute_ea4e14_execution_contract_id,
 )
 from tools.hermes_core.production_issuance import ClockCollaborator
+from tools.hermes_core.kilo_successor_binding import (
+    CURRENT_EA4E17_ISSUANCE_CONTRACT_ID,
+    CURRENT_EA4E21_BINDING_CONTRACT_ID,
+    CURRENT_EA4E22_INTEGRATION_CONTRACT_ID,
+)
 from tools.hermes_core.durable_invocation_authorization_store import (
     DurableAuthorizationStoreConflict,
     DurableAuthorizationStoreError,
@@ -593,10 +598,10 @@ def ea4e23_invocation_contract_payload() -> dict[str, Any]:
         "schema_version": INVOCATION_SCHEMA_VERSION,
         "artifact_version": INVOCATION_ARTIFACT_VERSION,
         "ea4e14_execution_contract_id": compute_ea4e14_execution_contract_id(),
-        "ea4e17_issuance_contract_id": "26400d2dfca800213c33be298af1e1074498d6d85bb84cd06577c739c24f6e78",
+        "ea4e17_issuance_contract_id": CURRENT_EA4E17_ISSUANCE_CONTRACT_ID,
         "ea4e18_integration_contract_id": compute_ea4e18_integration_contract_id(),
-        "ea4e21_binding_contract_id": "99a3ddb77e057cdcf5d4950af73cc88801d82d9a4ad2b4e3e96f8c227947a3e7",
-        "ea4e22_integration_contract_id": "e30a178c43ab2f98262b287b8ff79aaf9d8849f8d12205b30dd40820b056f47a",
+        "ea4e21_binding_contract_id": CURRENT_EA4E21_BINDING_CONTRACT_ID,
+        "ea4e22_integration_contract_id": CURRENT_EA4E22_INTEGRATION_CONTRACT_ID,
         "max_invocation_authorization_ttl_seconds": MAX_INVOCATION_AUTHORIZATION_TTL_SECONDS,
         "max_authorized_attempts": MAX_AUTHORIZED_ATTEMPTS,
         "default_invocation_authorization_decision": "DENY",

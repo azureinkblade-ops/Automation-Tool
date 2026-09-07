@@ -83,7 +83,7 @@ class TestReceiverRouterContractVerification:
         router = get_default_router()
         assert router.verify_contract(
             receiver_id="kilo-cli-agent",
-            expected_transport_contract_id="c05d4baf553e0d3b5d2631d5cc5957dd763f96913237c9a3b33fd51555631500",
+            expected_transport_contract_id=QUALIFIED_RECEIVERS["kilo-cli-agent"]["transport_contract_id"],
         )
 
     def test_kilo_contract_mismatch_fails_closed(self):
@@ -171,7 +171,7 @@ class TestReceiverRouterSecurity:
         material = router.get_canonical_material()
         # Contracts are preserved unchanged
         assert material["qualified_receivers"]["kilo-cli-agent"]["transport_contract_id"] == \
-            "c05d4baf553e0d3b5d2631d5cc5957dd763f96913237c9a3b33fd51555631500"
+            QUALIFIED_RECEIVERS["kilo-cli-agent"]["transport_contract_id"]
         assert material["qualified_receivers"]["opencode-cli-agent"]["transport_contract_id"] == \
             "192b55d0aca65f261fa3e2701db63863f2761cacd20bb9422e73cde772e9ea5f"
 

@@ -92,7 +92,7 @@ class TestKiloTransportContract:
         from tools.hermes_core.hashing import sha256_payload
         material = _canonical_material(PINNED_KILO_SHA256, PINNED_KILO_VERSION)
         # Source commit is hardcoded; changing it would require editing the source
-        assert material["source_commit"] == "fa02955bfa17b60e57e0d7406d200a73337472ee"
+        assert material["source_commit"] == "UNAVAILABLE_IN_INSTALLED_VSIX_METADATA"
 
     def test_canonical_material_binds_agent_profile(self):
         from tools.hermes_core.kilo_adapter import _canonical_material

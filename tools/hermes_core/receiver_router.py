@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from typing import Any, Optional, Sequence
 
 from tools.hermes_core.hashing import canonical_json, sha256_payload
+from tools.hermes_core.kilo_adapter import KILO_TRANSPORT_CONTRACT_ID
+from tools.hermes_core.kilo_successor_binding import KILO_MODEL_BINDING_ID
 
 
 # --------------------------------------------------------------------------- #
@@ -33,8 +35,8 @@ QUALIFIED_RECEIVERS: dict[str, dict[str, str]] = {
         "receiver_class": "OPENCODE",
     },
     "kilo-cli-agent": {
-        "transport_contract_id": "c05d4baf553e0d3b5d2631d5cc5957dd763f96913237c9a3b33fd51555631500",
-        "model_binding_id": "b327fad4d90292b3e451c7ec4aa06d123eca091ac84eb7b116400ec96ca45544",
+        "transport_contract_id": KILO_TRANSPORT_CONTRACT_ID,
+        "model_binding_id": KILO_MODEL_BINDING_ID,
         "receiver_class": "KILO",
     },
 }

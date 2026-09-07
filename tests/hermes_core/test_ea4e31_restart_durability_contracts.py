@@ -39,12 +39,12 @@ def test_old_contract_chain_is_preserved_as_historical_constants():
     assert ea29.LEGACY_EA4E29_CALLER_CONTRACT_ID == OLD_IDS["ea4e29"]
 
 
-def test_unaffected_contracts_remain_frozen():
-    assert compute_ea4e14_execution_contract_id() == "89f25b6c4a50a4c78ccf399af5391a4666d594085d17d38e2cf89d33bd8719b6"
-    assert compute_ea4e17_issuance_contract_id() == "26400d2dfca800213c33be298af1e1074498d6d85bb84cd06577c739c24f6e78"
-    assert compute_ea4e18_integration_contract_id() == "d03fa98111e8ac6d356de093e7259854a0b2ae0c986e263b65f798343451b459"
-    assert compute_ea4e21_binding_contract_id() == "99a3ddb77e057cdcf5d4950af73cc88801d82d9a4ad2b4e3e96f8c227947a3e7"
-    assert compute_ea4e22_integration_contract_id() == "e30a178c43ab2f98262b287b8ff79aaf9d8849f8d12205b30dd40820b056f47a"
+def test_current_upstream_contracts_remain_sealed():
+    assert compute_ea4e14_execution_contract_id() == "b057272ee70a4f5fceb9500ccf699097ed2de2edfc21e8f47fe3f9247e52f20b"
+    assert compute_ea4e17_issuance_contract_id() == "5082b1a227a53cfe711bcf3c5d2193cd47031d75d7ec7650d8ab4c2389194e93"
+    assert compute_ea4e18_integration_contract_id() == "56471e6509ccc2e99a7b609354748c51a0ada18bda8b92648c21bec584c1ceb3"
+    assert compute_ea4e21_binding_contract_id() == "a25a6ba03b6a44f35511bec4b89c332043cd252ea3d1e185bd1b0a5c966fee33"
+    assert compute_ea4e22_integration_contract_id() == "0e9d206a0b5d78592bafad624421439774e6c7ffe34a7c9d4c41a66aeb0504bd"
 
 
 def test_ea4e23_contract_is_deterministic_and_new():
