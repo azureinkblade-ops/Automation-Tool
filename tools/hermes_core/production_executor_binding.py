@@ -580,7 +580,7 @@ class ProductionExecutorBindingController:
         # POLICY CLASSIFICATION MUST PRECEDE any existing-handle resolution
         # Pass only receiver_id and canonical_hash (not handle) to policy
         bound_meta = {k: (v[0], v[1]) for k, v in self._bound_enablements.items()}
-        result = self._policy.evaluate(enablement, registry.bound_count, bound_meta)
+        result = self._policy.evaluate(enablement, self.active_binding_count, bound_meta)
 
         # Only IDENTICAL_DUPLICATE may resolve to an existing handle
         # All other results (ALLOW, COLLISION, REPLAY, other REJECT) are handled here
