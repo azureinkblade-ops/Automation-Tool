@@ -92,14 +92,31 @@ def repair_hands(
             reasons=(f"source image not found: {source}",),
         )
 
-    if request.mask_path is None or not Path(request.mask_path).exists():
-        # Early versions require an explicit mask. Future slices may add a
-        # coarse hand detector. For now we refuse to invent a mask.
-        return HandRepairResult(
-            status="rejected",
-            output_path=source,
-            reasons=("mask_path is required for hand repair in EA4F-1",),
-        )
+    mask_path = Path(request.mask_path) if request.mask_path else None
+    if mask_path is None or not mask_path.exists():
+        # Optional coarse stub when HAND_REPAIR_AUTO_MASK is on (EA4F-1 pilot).
+        auto_mask = _flag_enabled("HAND_REPAIR_AUTO_MASK", "0")
+        if auto_mask:
+            try:
+                from .mask_stub import ensure_mask_for_source
+
+                mask_path = ensure_mask_for_source(
+                    source, work_dir, region=request.region, mask_path=None
+                )
+            except Exception as exc:
+                return HandRepairResult(
+                    status="error",
+                    output_path=source,
+                    reasons=(f"auto mask failed: {type(exc).__name__}: {exc}",),
+                )
+        else:
+            return HandRepairResult(
+                status="rejected",
+                output_path=source,
+                reasons=("mask_path is required for hand repair in EA4F-1 (set HAND_REPAIR_AUTO_MASK=1 for stub)",),
+            )
+    else:
+        mask_path = Path(mask_path)
 
     prompt = get_hand_prompt(request.region, request.prompt)
     _ = get_hand_negative(request.negative_prompt)
@@ -108,7 +125,7 @@ def repair_hands(
         object_type="hand",
         target_region=request.region,
         prompt=prompt,
-        mask_path=Path(request.mask_path),
+        mask_path=Path(mask_path),
         guide_path=Path(request.guide_path) if request.guide_path else None,
     )
 

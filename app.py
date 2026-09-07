@@ -31548,6 +31548,12 @@ def make_chapter_image_prompts(title: str, chapter: str, phrases: list[str], nov
                 out = pkg.get("image_prompts")
                 if isinstance(out, list) and len(out) >= 3 and all(isinstance(x, str) and x.strip() for x in out):
                     vd_prompts = [str(x).strip() for x in out[:3]]
+                    # EA4F-2: remember Director shots for optional pose ControlNet at generate time
+                    try:
+                        from pose_conditioning import remember_shots
+                        remember_shots(pkg.get("shots") or [], meta={"novel": novel_id, "source": "visual_director"})
+                    except Exception as _pose_exc:
+                        print(f"[pose-conditioning] remember_shots failed: {_pose_exc}")
                     for _w in (pkg.get("canon_warnings", []) or []):
                         print(f"[visual-director] canon_warning: {_w}")
                     print(f"[visual-director] enabled: returned {len(vd_prompts)} canon-locked prompts for {novel or title}")
@@ -32188,7 +32194,23 @@ def create_prompt_fallback_image(
         if provider == "local_stable_diffusion":
             try:
                 started = time.perf_counter()
-                info = create_local_stable_diffusion_image(prompt, target, orientation=orientation)
+                # EA4F-2: optional pose ControlNet from remembered Director shot / prompt heuristic
+                _pose_kwargs = {}
+                try:
+                    from pose_conditioning import kwargs_for_generator
+                    _pose_kwargs = kwargs_for_generator(index=index, prompt=prompt)
+                    if _pose_kwargs:
+                        print(f"[pose-conditioning] ControlNet kwargs for index={index}: model={_pose_kwargs.get('controlnet_model')} image={_pose_kwargs.get('controlnet_image')}")
+                except Exception as _pose_exc:
+                    print(f"[pose-conditioning] kwargs resolve failed: {_pose_exc}")
+                info = create_local_stable_diffusion_image(prompt, target, orientation=orientation, **_pose_kwargs)
+                if _pose_kwargs:
+                    info = dict(info or {})
+                    info["poseControlNet"] = {
+                        "model": str(_pose_kwargs.get("controlnet_model") or ""),
+                        "image": str(_pose_kwargs.get("controlnet_image") or ""),
+                        "scale": _pose_kwargs.get("controlnet_scale"),
+                    }
                 archive_generated_promo_image(target, abbr, prompt, f"local-sd-{index}")
                 source = f"local_stable_diffusion:{info.get('model', '')}"
                 note_provider("local_stable_diffusion", started, True, source, source)

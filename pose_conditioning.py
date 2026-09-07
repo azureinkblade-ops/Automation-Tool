@@ -74,3 +74,69 @@ def controlnet_cli_args(
         "--control-guidance-start", str(start),
         "--control-guidance-end", str(end),
     ]
+
+
+# --- Session shot memory (flagged Director wiring) ---
+# When Visual Director builds a package, callers can remember the shot plan so
+# create_prompt_fallback_image can resolve ControlNet pose by image index.
+_LAST_SHOTS: list[dict] = []
+_LAST_PACKAGE_META: dict = {}
+
+
+def remember_shots(shots: list[dict] | None, *, meta: dict | None = None) -> None:
+    """Store the latest Director shot plan for pose conditioning by index."""
+    global _LAST_SHOTS, _LAST_PACKAGE_META
+    _LAST_SHOTS = list(shots or [])
+    _LAST_PACKAGE_META = dict(meta or {})
+
+
+def clear_shots() -> None:
+    remember_shots([])
+
+
+def shot_for_index(index: int) -> dict | None:
+    if not _LAST_SHOTS:
+        return None
+    # 1-based or 0-based: accept both
+    if 0 <= index < len(_LAST_SHOTS):
+        return _LAST_SHOTS[index]
+    if 1 <= index <= len(_LAST_SHOTS):
+        return _LAST_SHOTS[index - 1]
+    return None
+
+
+def resolve_conditioning_for_index(index: int) -> dict:
+    """Resolve ControlNet kwargs from remembered Director shot at index."""
+    shot = shot_for_index(index)
+    if not shot:
+        return {"pose_enrichment": {"pose_condition_source": "none", "reason": "no remembered shot"}}
+    return resolve_conditioning_for_shot(shot)
+
+
+def resolve_conditioning_from_text(text: str) -> dict:
+    """Heuristic pseudo-shot from free text (prompt fallback when no package)."""
+    text_l = (text or "").lower()
+    shot: dict = {"action": text or "", "type": ""}
+    if "kneel" in text_l or "kneeling" in text_l:
+        shot["type"] = "climax" if "altar" in text_l or "touch" in text_l else "ritual"
+    return resolve_conditioning_for_shot(shot)
+
+
+def pose_controlnet_enabled() -> bool:
+    return os.environ.get("POSE_CONTROLNET_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def kwargs_for_generator(index: int | None = None, prompt: str = "") -> dict:
+    """Return only controlnet_* kwargs safe to spread into create_local_stable_diffusion_image.
+
+    Prefers remembered Director shot at index; falls back to prompt text heuristic.
+    Empty dict when POSE_CONTROLNET_ENABLED is off or no map resolves.
+    """
+    if not pose_controlnet_enabled():
+        return {}
+    result: dict = {}
+    if index is not None:
+        result = resolve_conditioning_for_index(int(index))
+    if not result.get("controlnet_image") and prompt:
+        result = resolve_conditioning_from_text(prompt)
+    return {k: v for k, v in result.items() if k.startswith("control")}

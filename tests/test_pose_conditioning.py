@@ -37,3 +37,30 @@ def test_cli_args_complete():
     assert "--controlnet-model" in args
     assert "--controlnet-scale" in args
     assert args[args.index("--controlnet-scale") + 1] == "0.85"
+
+
+def test_remember_shots_and_index():
+    PC.clear_shots()
+    shots = [
+        {"type": "establishing", "action": "standing at entrance"},
+        {"type": "travel", "action": "climbing stairs"},
+        {"type": "climax", "action": "kneeling, touching altar"},
+    ]
+    PC.remember_shots(shots, meta={"novel": "hp"})
+    assert PC.shot_for_index(2)["type"] == "climax"
+    cond = PC.resolve_conditioning_for_index(2)
+    assert cond.get("controlnet_image") is not None
+    # flag off -> empty kwargs
+    import os
+    os.environ.pop("POSE_CONTROLNET_ENABLED", None)
+    assert PC.kwargs_for_generator(index=2, prompt="kneeling") == {}
+    os.environ["POSE_CONTROLNET_ENABLED"] = "1"
+    kw = PC.kwargs_for_generator(index=2, prompt="")
+    assert "controlnet_image" in kw
+    os.environ.pop("POSE_CONTROLNET_ENABLED", None)
+    PC.clear_shots()
+
+
+def test_resolve_from_text_kneel():
+    r = PC.resolve_conditioning_from_text("Liang kneeling on one knee touching the altar")
+    assert r.get("controlnet_image") is not None

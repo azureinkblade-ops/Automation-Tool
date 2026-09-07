@@ -80,3 +80,17 @@ def test_public_exports():
     assert callable(repair_hands)
     assert HandRepairRequest is not None
     assert HandRepairResult is not None
+
+
+def test_auto_mask_when_enabled(tiny_rgb, tmp_path, monkeypatch):
+    monkeypatch.setenv("HAND_REPAIR_ENABLED", "1")
+    monkeypatch.setenv("HAND_REPAIR_AUTO_MASK", "1")
+    # Without a real backend the refine path may error after mask; we only
+    # assert we no longer reject solely for missing mask before backend.
+    result = repair_hands(
+        HandRepairRequest(source_path=tiny_rgb, mask_path=None),
+        work_dir=tmp_path / "work",
+    )
+    # disabled path for VISUAL_OBJECT_REFINEMENT or error/pending - not "mask required"
+    assert not any("mask_path is required" in r for r in result.reasons)
+    assert result.status in {"disabled", "pending_review", "rejected", "error", "accepted"}
