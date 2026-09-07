@@ -9,9 +9,12 @@ from .service import (
     HandRepairResult,
     repair_hands,
 )
+from .integration import maybe_repair_hands, repair_hands_detailed
 
 __all__ = [
     "HandRepairRequest",
     "HandRepairResult",
     "repair_hands",
+    "maybe_repair_hands",
+    "repair_hands_detailed",
 ]

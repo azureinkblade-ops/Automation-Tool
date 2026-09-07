@@ -172,3 +172,29 @@ No em dashes in commit messages, file names, or machine-parsed strings.
 ---
 
 **Next slice after this one:** EA4F-2 (Pose + ControlNet integration cleanup) once hand repair is stable behind the flag.
+
+---
+
+## Progress log
+
+| Commit | What |
+|--------|------|
+| `61bc0cc2f4a27a40ce3f1cd394082b37540e32e5` | Skeleton package + tests + this handoff |
+| (this commit) | C1 gpu_runtime + clean local_object_refiner; C2 app_config flags; C3 integration helper (wiring example, no app.py edit); C4 AGENTS ownership note |
+
+### app.py wiring example (not applied yet - still flag-off and mask-required)
+
+After a main promo image is written to `image_path`:
+
+```python
+from hand_repair.integration import maybe_repair_hands
+
+image_path = maybe_repair_hands(
+    source_path=image_path,
+    work_dir=Path(campaign_dir) / "hand-repair",
+    mask_path=hand_mask_path,  # required in EA4F-1
+    region="hands",
+)
+```
+
+Do not land the `app.py` call site until Step 1-4 tests are green on the machine and a single writer claims the monolith lane.

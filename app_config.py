@@ -197,3 +197,8 @@ COMMENT_ASSISTANT_INTERVAL_HOURS = max(1, int(os.environ.get("COMMENT_ASSISTANT_
 # No API credits configured, so local/fallback paths fire instantly instead of
 # burning quota on a network round-trip + 429. Set ENABLE_EXTERNAL_AI=1 to re-enable.
 EXTERNAL_AI_ENABLED = os.environ.get("ENABLE_EXTERNAL_AI", "0").strip() == "1"
+
+# --- Hand / regional repair (EA4F-1) ---
+# Off by default. Enable only after mask + backend path is verified.
+HAND_REPAIR_ENABLED = os.environ.get("HAND_REPAIR_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+HAND_REPAIR_AUTO_ACCEPT = os.environ.get("HAND_REPAIR_AUTO_ACCEPT", "0").strip().lower() in {"1", "true", "yes", "on"}

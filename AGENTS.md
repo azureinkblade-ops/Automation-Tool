@@ -71,11 +71,21 @@ dashes (brand rule). Keep em dashes out of machine-parsed strings.
   and strategy:
   reasoning/strategy session
 
+- Regional hand repair pilot (EA4F, isolated modules outside `app.py`):
+  Grok session on branch `feature/ea4f-regional-hand-repair-pilot`
+  (does not own `app.py` unless a thin wiring commit is explicitly claimed)
+
 Any transfer of `app.py` ownership requires an explicit handoff.
 
 ## Active handoffs
 
-- **Phase C — connect `compose_aivsb_scene_prompt()` to
+- **Phase C - connect `compose_aivsb_scene_prompt()` to
   `make_chapter_image_prompts()`.** Owner: editing session
   `20260715_060146_c55923`. Brief:
   `.hermes/handoffs/PHASE-C-aivsb-reasoning-integration.md`.
+
+- **EA4F-1 - Hand Repair Service Boundary.** Owner: Grok session on
+  `feature/ea4f-regional-hand-repair-pilot`. Brief:
+  `.hermes/handoffs/EA4F-1-HAND-REPAIR-SERVICE.md`.
+  Scope: `hand_repair/`, `gpu_runtime.py`, `local_object_refiner.py` import
+  boundary, `app_config` flags. No broad `app.py` ownership.
