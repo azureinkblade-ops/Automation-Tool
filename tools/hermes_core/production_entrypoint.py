@@ -75,6 +75,10 @@ class ProductionEntryPoint:
         verify_frozen_executor_paths(composition.config)
         self._composition = composition
 
+    @property
+    def master_enable(self) -> str:
+        return self._composition.config.master_enable
+
     def handle(self, request: ProductionEntryPointRequest) -> ProductionEntryPointResult:
         if self._composition.config.master_enable != "ENABLED":
             return self._deny("PRODUCTION_MASTER_ENABLE_DISABLED")
