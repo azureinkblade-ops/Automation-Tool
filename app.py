@@ -43041,6 +43041,9 @@ def configure_governed_production_action(runtime_config):
     from tools.hermes_core.production_app_config import build_factory_config
     from tools.hermes_core.production_app_factory import ProductionAppFactory
     from tools.hermes_core.production_app_host import ProductionAppHostAction
+    from tools.hermes_core.production_app_lifecycle import (
+        ProductionAppRequestLifecycleOwner,
+    )
 
     if runtime_config is None:
         raise ValueError("MISSING_GOVERNED_PRODUCTION_RUNTIME_CONFIG")
@@ -43049,10 +43052,14 @@ def configure_governed_production_action(runtime_config):
 
     components = ProductionAppFactory.build(build_factory_config(runtime_config))
     host = ProductionAppHostAction(components.user_action)
+    lifecycle = ProductionAppRequestLifecycleOwner(
+        host,
+        components.composition.binding_controller,
+    )
 
     global _GOVERNED_PRODUCTION_COMPONENTS, _GOVERNED_PRODUCTION_HOST
     _GOVERNED_PRODUCTION_COMPONENTS = components
-    _GOVERNED_PRODUCTION_HOST = host
+    _GOVERNED_PRODUCTION_HOST = lifecycle
     return components
 
 
