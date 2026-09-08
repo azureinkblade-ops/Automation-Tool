@@ -43032,6 +43032,38 @@ def run_regression_dashboard(mode: str = "quick") -> dict[str, Any]:
     return report
 
 
+_GOVERNED_PRODUCTION_COMPONENTS = None
+_GOVERNED_PRODUCTION_HOST = None
+
+
+def configure_governed_production_action(runtime_config):
+    """Explicitly inject a prepared, default-disabled governed app composition."""
+    from tools.hermes_core.production_app_config import build_factory_config
+    from tools.hermes_core.production_app_factory import ProductionAppFactory
+    from tools.hermes_core.production_app_host import ProductionAppHostAction
+
+    if runtime_config is None:
+        raise ValueError("MISSING_GOVERNED_PRODUCTION_RUNTIME_CONFIG")
+    if runtime_config.register_real_executors:
+        raise ValueError("APP_HOST_REAL_EXECUTOR_AUTO_REGISTRATION_FORBIDDEN")
+
+    components = ProductionAppFactory.build(build_factory_config(runtime_config))
+    host = ProductionAppHostAction(components.user_action)
+
+    global _GOVERNED_PRODUCTION_COMPONENTS, _GOVERNED_PRODUCTION_HOST
+    _GOVERNED_PRODUCTION_COMPONENTS = components
+    _GOVERNED_PRODUCTION_HOST = host
+    return components
+
+
+def submit_governed_production_action(payload: dict[str, Any]) -> dict[str, Any]:
+    """Pass one explicit request envelope to the injected qualified action."""
+    from tools.hermes_core.production_app_host import ProductionAppHostAction
+
+    host = _GOVERNED_PRODUCTION_HOST or ProductionAppHostAction(None)
+    return host.submit(payload).to_public_dict()
+
+
 class Handler(BaseHTTPRequestHandler):
     def send_json(self, payload: dict[str, Any], status: int = 200) -> None:
         data = json.dumps(payload).encode("utf-8")
@@ -43624,11 +43656,19 @@ class Handler(BaseHTTPRequestHandler):
             "/api/settings",
             "/api/set-agent-posts",
             "/api/agent-posts-status",
+            "/api/governed-production-action",
         }:
             self.send_error(404)
             return
         try:
             body = read_json_body(self)
+            if self.path == "/api/governed-production-action":
+                result = submit_governed_production_action(body)
+                status = 200 if result.get("ok") else 403
+                if result.get("reason") == "MISSING_GOVERNED_ACTION_DEPENDENCY":
+                    status = 503
+                self.send_json(result, status)
+                return
             if self.path == "/api/r2-upload":
                 self.send_json(upload_folder_media_to_r2(str(body.get("folder") or "")))
                 return
