@@ -438,6 +438,6 @@ def test_clock_rollback_behavior_matches_current_clock_contract(tmp_path):
 
 def test_sealed_contract_chain_is_unchanged():
     assert compute_ea4e23_invocation_contract_id() == "7bc3d2e036beacaef5aaabd054730dfbd49c57a0c36bbaab6f56894798be4687"
-    assert compute_ea4e26_integration_contract_id() == "2e7a4b360c54541ff408e8430d3ac9a28cdee76e0feef5e1da03b87a889657ba"
+    assert compute_ea4e26_integration_contract_id() == "52edc7ad0be1bf446034ad31189a9172a6a35c98c8619b113f4a836320b8887e"
     assert compute_ea4e28_issuer_contract_id() == "90c96695f6294bed90eed1b630b1b44f7faca859b6b818ea2a744c1b753eb5b1"
-    assert compute_ea4e29_caller_contract_id() == "00c6808dada4c9cf74a0310a31c9a51b10c1a8ee770f8f6c8a45d4d1f4962dd2"
+    assert compute_ea4e29_caller_contract_id() == "2d2e42ebbaaa1eacabfbd9a09cf3a542f0424b26c96fb4e6b0a7984245039d87"

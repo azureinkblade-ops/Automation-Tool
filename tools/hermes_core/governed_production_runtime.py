@@ -6,9 +6,8 @@ preserving every existing governance boundary:
 
     explicit receiver
     -> router
-    -> issuance
-    -> authority validation
-    -> activation validation
+    -> externally issued authority validation
+    -> externally supplied activation validation
     -> EA-4E.21 pre-existing binding check
     -> EA-4E.22 bound-executor resolution
     -> EA-4E.23 invocation authorization
@@ -27,7 +26,10 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from tools.hermes_core.hashing import sha256_payload
-from tools.hermes_core.production_activation import ProductionActivationValidator
+from tools.hermes_core.production_activation import (
+    ProductionActivation,
+    ProductionActivationValidator,
+)
 from tools.hermes_core.production_executor_binding import (
     BindingClock,
     ExecutorRegistry,
@@ -57,13 +59,11 @@ from tools.hermes_core.production_invocation_authorization import (
 from tools.hermes_core.durable_invocation_authorization_store import (
     DurableInvocationAuthorizationStore,
 )
-from tools.hermes_core.production_issuance import (
-    ClockCollaborator,
-    ProductionIssuancePolicy,
-    ProductionIssuanceRequest,
-    compute_ea4e17_issuance_contract_id,
+from tools.hermes_core.production_issuance import ClockCollaborator
+from tools.hermes_core.receiver_dispatch import (
+    DispatchAuthority,
+    ExecutionAuthorityValidator,
 )
-from tools.hermes_core.receiver_dispatch import ExecutionAuthorityValidator
 from tools.hermes_core.receiver_router import (
     RoutingRequest,
     get_default_router,
@@ -77,8 +77,8 @@ from tools.hermes_core.receiver_router import (
 # --------------------------------------------------------------------------- #
 
 INTEGRATION_SCHEMA_ID = "hermes.dual-receiver-governed-production-runtime/v2"
-INTEGRATION_SCHEMA_VERSION = "ea4e.26r1"
-INTEGRATION_ARTIFACT_VERSION = "2"
+INTEGRATION_SCHEMA_VERSION = "ea4e.26r2"
+INTEGRATION_ARTIFACT_VERSION = "3"
 
 LEGACY_EA4E26_INTEGRATION_CONTRACT_ID = (
     "c49556e63645fefc31a3f03df726d99447620b7ae6ae4a2c78b96ae0feeb8393"
@@ -110,6 +110,8 @@ class GovernedProductionRuntimeRequest:
     requested_authority_ttl_seconds: int = 3600
     task_payload: str | None = None
     invocation_authorization: ProductionInvocationAuthorization | None = None
+    execution_authority: DispatchAuthority | None = None
+    activation: ProductionActivation | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -249,12 +251,18 @@ class GovernedProductionRuntime:
 
     def execute(
         self,
-        request: GovernedProductionRuntimeRequest,
+        request: GovernedProductionRuntimeRequest | None,
     ) -> GovernedProductionRuntimeResult:
         """Execute the full dual-receiver governed production runtime path.
 
         Returns structured result. Does NOT invoke real receivers.
         """
+        if request is None or not isinstance(request, GovernedProductionRuntimeRequest):
+            return GovernedProductionRuntimeResult(
+                reason="MISSING_OR_MALFORMED_RUNTIME_REQUEST",
+                ea4e26_disposition="FAIL",
+            )
+
         result = GovernedProductionRuntimeResult(
             request_id=request.request_id,
             receiver_id=request.receiver_id,
@@ -276,36 +284,19 @@ class GovernedProductionRuntime:
         result.route_decision = "SELECTED"
         result.router_bypassed = False
 
-        # Step 2: Issuance
-        issuance_policy = ProductionIssuancePolicy(clock=self._clock)
-        issuance_request = ProductionIssuanceRequest(
-            request_id=request.request_id,
-            receiver_id=request.receiver_id,
-            routing_result=route_result,
-            router_contract_id=request.router_contract_id,
-            transport_contract_id=request.transport_contract_id,
-            model_binding_id=request.model_binding_id,
-            delegation_class=request.delegation_class,
-            requested_operation=request.requested_operation,
-            requested_execution_scope=request.requested_execution_scope,
-            requested_attempt_limit=request.requested_attempt_limit,
-            requested_authority_ttl_seconds=request.requested_authority_ttl_seconds,
-            request_nonce=f"ea4e26-{request.request_id}",
-        )
-        issuance_result = issuance_policy.evaluate(issuance_request)
-
-        if issuance_result.policy_decision != "ELIGIBLE":
-            result.issuance_policy_decision = issuance_result.policy_decision
-            result.reason = f"ISSUANCE_REJECTED:{issuance_result.policy_reason}"
+        # Step 2: Validate externally issued execution authority. Runtime never
+        # creates, refreshes, or replaces this artifact.
+        authority = request.execution_authority
+        if authority is None:
+            result.reason = "AUTHORITY_REJECTED:EXECUTION_AUTHORITY_MISSING"
             result.ea4e26_disposition = "FAIL"
             return result
-
-        result.issuance_policy_decision = "ELIGIBLE"
-        result.issuance_bypassed = False
-
-        # Step 3: Authority validation
+        if not isinstance(authority, DispatchAuthority):
+            result.reason = "AUTHORITY_REJECTED:MALFORMED_AUTHORITY"
+            result.ea4e26_disposition = "FAIL"
+            return result
         authority_result = self._boundary._authority_validator.validate(
-            issuance_result.authority, route_result,
+            authority, route_result,
         )
         if authority_result.dispatch_decision != "AUTHORIZED":
             result.authority_valid = False
@@ -315,10 +306,29 @@ class GovernedProductionRuntime:
 
         result.authority_valid = True
         result.authority_validation_bypassed = False
+        result.issuance_policy_decision = "EXTERNAL_AUTHORITY"
+        result.issuance_bypassed = False
 
-        # Step 4: Activation validation
+        authority_mismatch = self._external_authority_mismatch(request, authority)
+        if authority_mismatch is not None:
+            result.authority_valid = False
+            result.reason = f"AUTHORITY_REJECTED:{authority_mismatch}"
+            result.ea4e26_disposition = "FAIL"
+            return result
+
+        # Step 3: Validate independently supplied activation. Runtime never
+        # creates or enables activation.
+        activation = request.activation
+        if activation is None:
+            result.reason = "ACTIVATION_REJECTED:PRODUCTION_ACTIVATION_MISSING"
+            result.ea4e26_disposition = "FAIL"
+            return result
+        if not isinstance(activation, ProductionActivation):
+            result.reason = "ACTIVATION_REJECTED:MALFORMED_ACTIVATION"
+            result.ea4e26_disposition = "FAIL"
+            return result
         activation_result = self._boundary._activation_validator.validate(
-            issuance_result.activation, receiver_id=request.receiver_id,
+            activation, receiver_id=request.receiver_id,
         )
         if activation_result.dispatch_decision != "AUTHORIZED":
             result.activation_valid = False
@@ -329,7 +339,16 @@ class GovernedProductionRuntime:
         result.activation_valid = True
         result.activation_validation_bypassed = False
 
-        # Step 5: Pre-existing binding check (EA-4E.21)
+        activation_mismatch = self._external_activation_mismatch(
+            request, authority, activation
+        )
+        if activation_mismatch is not None:
+            result.activation_valid = False
+            result.reason = f"ACTIVATION_REJECTED:{activation_mismatch}"
+            result.ea4e26_disposition = "FAIL"
+            return result
+
+        # Step 4: Pre-existing binding check (EA-4E.21)
         handle = self._binding_controller.get_binding_for_receiver(request.receiver_id)
         if handle is None:
             result.binding_decision = "REJECT"
@@ -349,7 +368,7 @@ class GovernedProductionRuntime:
         result.binding_decision = "ALLOW"
         result.binding_check_bypassed = False
 
-        # Step 6: EA-4E.22 bound-executor resolution
+        # Step 5: EA-4E.22 bound-executor resolution
         ea4e22_result = self._resolver.resolve_governed_executor(request.receiver_id)
 
         if ea4e22_result.resolution_decision != "RESOLVED":
@@ -363,7 +382,7 @@ class GovernedProductionRuntime:
         result.ea4e22_resolution_reason = ea4e22_result.resolution_reason
         result.ea4e22_resolution_bypassed = False
 
-        # Step 7: EA-4E.23 invocation authorization must be supplied by the caller.
+        # Step 6: EA-4E.23 invocation authorization must be supplied by the caller.
         invocation_auth = request.invocation_authorization
         result.invocation_authorization_bypassed = False
         if invocation_auth is None:
@@ -373,7 +392,7 @@ class GovernedProductionRuntime:
             result.ea4e26_disposition = "FAIL"
             return result
 
-        # Step 8: Atomic claim
+        # Step 7: Atomic claim
         bound_meta = {}
         claim_result = self._invocation_policy.claim_for_execution(
             invocation_auth,
@@ -393,14 +412,14 @@ class GovernedProductionRuntime:
 
         result.live_invocation_authorization_claims_granted = 1
 
-        # Step 8b: Check invocation budget (after claim, so pre-execution rejections don't consume)
+        # Step 7b: Check invocation budget (after claim, so pre-execution rejections don't consume)
         if self._invocation_count >= self._max_invocations:
             result.reason = "INVOCATION_BUDGET_EXHAUSTED"
             result.ea4e26_disposition = "FAIL"
             return result
         self._invocation_count += 1
 
-        # Step 9: Production execution through boundary
+        # Step 8: Production execution through boundary
         # Use exact deterministic output marker per receiver
         if request.task_payload:
             task_payload = request.task_payload
@@ -424,8 +443,8 @@ class GovernedProductionRuntime:
 
         exec_result = self._boundary.execute(
             receiver_id=request.receiver_id,
-            authority=issuance_result.authority,
-            activation=issuance_result.activation,
+            authority=authority,
+            activation=activation,
             execution_request=execution_request,
         )
 
@@ -437,7 +456,7 @@ class GovernedProductionRuntime:
         result.execution_status = exec_result.execution_status
         result.execution_output = exec_result.executor_output
 
-        # Step 10: Receiver-specific accounting
+        # Step 9: Receiver-specific accounting
         if request.receiver_id == "kilo-cli-agent":
             result.kilo_executor_calls = 1 if exec_result.executor_called else 0
         elif request.receiver_id == "opencode-cli-agent":
@@ -446,6 +465,53 @@ class GovernedProductionRuntime:
         result.ea4e26_disposition = "PASS"
         result.reason = "GOVERNED_EXECUTION_OK"
         return result
+
+    @staticmethod
+    def _external_authority_mismatch(
+        request: GovernedProductionRuntimeRequest,
+        authority: DispatchAuthority,
+    ) -> str | None:
+        if authority.receiver_id != request.receiver_id or authority.scope.receiver_id != request.receiver_id:
+            return "AUTHORITY_RECEIVER_MISMATCH"
+        if authority.router_contract_id != request.router_contract_id:
+            return "AUTHORITY_ROUTER_CONTRACT_MISMATCH"
+        if authority.transport_contract_id != request.transport_contract_id:
+            return "AUTHORITY_TRANSPORT_MISMATCH"
+        if authority.model_binding_id != request.model_binding_id:
+            return "AUTHORITY_MODEL_BINDING_MISMATCH"
+        if authority.delegation_class != request.delegation_class:
+            return "AUTHORITY_DELEGATION_CLASS_MISMATCH"
+        if authority.scope.operation != request.requested_operation:
+            return "AUTHORITY_OPERATION_SCOPE_MISMATCH"
+        if authority.scope.attempt_limit != request.requested_attempt_limit:
+            return "AUTHORITY_ATTEMPT_SCOPE_MISMATCH"
+        return None
+
+    @staticmethod
+    def _external_activation_mismatch(
+        request: GovernedProductionRuntimeRequest,
+        authority: DispatchAuthority,
+        activation: ProductionActivation,
+    ) -> str | None:
+        if activation.receiver_id != request.receiver_id:
+            return "ACTIVATION_RECEIVER_MISMATCH"
+        if activation.router_contract_id != request.router_contract_id:
+            return "ACTIVATION_ROUTER_CONTRACT_MISMATCH"
+        if activation.transport_contract_id != request.transport_contract_id:
+            return "ACTIVATION_TRANSPORT_MISMATCH"
+        if activation.model_binding_id != request.model_binding_id:
+            return "ACTIVATION_MODEL_BINDING_MISMATCH"
+        if activation.execution_scope != request.requested_execution_scope:
+            return "ACTIVATION_EXECUTION_SCOPE_MISMATCH"
+        if activation.delegation_class != request.delegation_class:
+            return "ACTIVATION_DELEGATION_CLASS_MISMATCH"
+        if activation.receiver_id != authority.receiver_id:
+            return "ACTIVATION_AUTHORITY_RECEIVER_MISMATCH"
+        if activation.transport_contract_id != authority.transport_contract_id:
+            return "ACTIVATION_AUTHORITY_TRANSPORT_MISMATCH"
+        if activation.model_binding_id != authority.model_binding_id:
+            return "ACTIVATION_AUTHORITY_MODEL_MISMATCH"
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -459,7 +525,6 @@ def ea4e26_integration_contract_payload() -> dict[str, Any]:
         "schema_version": INTEGRATION_SCHEMA_VERSION,
         "artifact_version": INTEGRATION_ARTIFACT_VERSION,
         "ea4e14_execution_contract_id": compute_ea4e14_execution_contract_id(),
-        "ea4e17_issuance_contract_id": compute_ea4e17_issuance_contract_id(),
         "ea4e18_integration_contract_id": compute_ea4e18_integration_contract_id(),
         "ea4e21_binding_contract_id": compute_ea4e21_binding_contract_id(),
         "ea4e22_integration_contract_id": compute_ea4e22_integration_contract_id(),
@@ -472,6 +537,13 @@ def ea4e26_integration_contract_payload() -> dict[str, Any]:
             for k, v in sorted(QUALIFIED_RECEIVERS.items())
         },
         "explicit_receiver_required": True,
+        "external_execution_authority_required": True,
+        "runtime_creates_execution_authority": False,
+        "runtime_issues_execution_authority": False,
+        "explicit_activation_required": True,
+        "runtime_creates_activation": False,
+        "runtime_auto_activates": False,
+        "execution_authority_and_activation_independent": True,
         "preexisting_binding_required": True,
         "no_auto_bind": True,
         "ea4e22_resolution_required": True,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests.hermes_core.ea4e26r_test_support import external_authority_and_activation
 from tools.hermes_core.durable_invocation_authorization_store import (
     DurableInvocationAuthorizationStore,
 )
@@ -343,6 +344,9 @@ def test_kilo_fake_user_action_through_factory(tmp_path):
     )
     assert TRIPWIRE_HITS["invocation"] == 0
     bind_fake(components.composition, "kilo-cli-agent")
+    authority, activation = external_authority_and_activation(
+        "kilo-cli-agent", "ea4e42-kilo"
+    )
     result = components.user_action.submit(
         ProductionAppUserActionRequest(
             request_id="ea4e42-kilo",
@@ -353,6 +357,8 @@ def test_kilo_fake_user_action_through_factory(tmp_path):
             authorization_issue_request=issue_request(
                 "kilo-cli-agent", "ea4e42-kilo", components.composition
             ),
+            execution_authority=authority,
+            activation=activation,
         )
     )
     assert result.user_action_decision == "ALLOW"
@@ -377,6 +383,9 @@ def test_opencode_fake_user_action_through_factory(tmp_path):
     )
     assert TRIPWIRE_HITS["invocation"] == 0
     bind_fake(components.composition, "opencode-cli-agent")
+    authority, activation = external_authority_and_activation(
+        "opencode-cli-agent", "ea4e42-oc"
+    )
     result = components.user_action.submit(
         ProductionAppUserActionRequest(
             request_id="ea4e42-oc",
@@ -387,6 +396,8 @@ def test_opencode_fake_user_action_through_factory(tmp_path):
             authorization_issue_request=issue_request(
                 "opencode-cli-agent", "ea4e42-oc", components.composition
             ),
+            execution_authority=authority,
+            activation=activation,
         )
     )
     assert result.user_action_decision == "ALLOW"

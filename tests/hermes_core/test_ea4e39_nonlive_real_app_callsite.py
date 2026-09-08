@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests.hermes_core.ea4e26r_test_support import external_authority_and_activation
 from tools.hermes_core.kilo_adapter import KiloAdapter, KiloProcessController
 from tools.hermes_core.kilo_live_binding import RealKiloProductionExecutor
 from tools.hermes_core.opencode_adapter import OpenCodeLiveProcess, OpenCodeReceiverAdapter
@@ -164,6 +165,11 @@ def live_callsite(composition, feature_gate="ENABLED"):
 
 
 def cs_request(receiver_id="kilo-cli-agent", request_id="ea4e39-a", composition=None, **changes):
+    authority, activation = (
+        external_authority_and_activation(receiver_id, request_id)
+        if composition is not None and receiver_id in QUALIFIED_RECEIVERS
+        else (None, None)
+    )
     fields = {
         "request_id": request_id,
         "receiver_id": receiver_id,
@@ -175,6 +181,8 @@ def cs_request(receiver_id="kilo-cli-agent", request_id="ea4e39-a", composition=
             if composition is not None
             else None
         ),
+        "execution_authority": authority,
+        "activation": activation,
     }
     fields.update(changes)
     return ProductionAppCallSiteRequest(**fields)

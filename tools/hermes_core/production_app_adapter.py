@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from tools.hermes_core.production_activation import ProductionActivation
 from tools.hermes_core.production_application_caller import (
     ProductionApplicationCaller,
     ProductionApplicationRequest,
@@ -20,6 +21,7 @@ from tools.hermes_core.production_invocation_authorization_issuer import (
     ProductionInvocationAuthorizationIssueRequest,
 )
 from tools.hermes_core.production_wiring import classify_receiver
+from tools.hermes_core.receiver_dispatch import DispatchAuthority
 
 
 ALLOWED_RUNTIME_SCOPES = frozenset({"production"})
@@ -35,6 +37,8 @@ class ProductionAppAdapterRequest:
     authorization_issue_request: ProductionInvocationAuthorizationIssueRequest | None = None
     transport_contract_id: str | None = None
     model_binding_id: str | None = None
+    execution_authority: DispatchAuthority | None = None
+    activation: ProductionActivation | None = None
 
 
 @dataclass
@@ -82,6 +86,8 @@ class ProductionAppAdapter:
             authorization_issue_request=issue,
             transport_contract_id=request.transport_contract_id,
             model_binding_id=request.model_binding_id,
+            execution_authority=request.execution_authority,
+            activation=request.activation,
         )
         try:
             caller_result = self._caller.submit(app_request)

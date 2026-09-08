@@ -46,6 +46,7 @@ from tools.hermes_core.production_wiring import (
     verify_frozen_executor_paths,
 )
 from tools.hermes_core.receiver_router import RoutingRequest, compute_ea4e6_router_contract_id
+from tests.hermes_core.ea4e26r_test_support import external_authority_and_activation
 
 
 NOW = "2026-01-01T00:00:00Z"
@@ -163,6 +164,10 @@ def caller_request(receiver_id="kilo-cli-agent", request_id="ea4e35-request-1", 
         "transport_contract_id": receiver["transport_contract_id"],
         "model_binding_id": receiver["model_binding_id"],
     }
+    if receiver_id in QUALIFIED_RECEIVERS:
+        authority, activation = external_authority_and_activation(receiver_id, request_id)
+        fields["execution_authority"] = authority
+        fields["activation"] = activation
     fields.update(runtime_changes)
     runtime_request = GovernedProductionRuntimeRequest(**fields)
     issue_request = ProductionInvocationAuthorizationIssueRequest(

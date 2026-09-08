@@ -44,6 +44,9 @@ from tests.hermes_core.durable_auth_test_support import (
     QualificationDurablePolicy,
     qualification_store,
 )
+from tests.hermes_core.ea4e26r_test_support import external_authority_and_activation
+from tools.hermes_core.production_activation import build_production_activation
+from tools.hermes_core.receiver_dispatch import compute_ea4e7_authority_contract_id
 
 
 # Fixed deterministic qualification clock
@@ -217,6 +220,10 @@ def _make_request(
     task_payload: str | None = None,
 ) -> GovernedProductionRuntimeRequest:
     bindings = QUALIFIED_RECEIVERS.get(receiver_id, {})
+    authority = None
+    activation = None
+    if receiver_id in QUALIFIED_RECEIVERS:
+        authority, activation = external_authority_and_activation(receiver_id, request_id)
     return GovernedProductionRuntimeRequest(
         request_id=request_id,
         receiver_id=receiver_id,
@@ -224,6 +231,8 @@ def _make_request(
         transport_contract_id=bindings.get("transport_contract_id", ""),
         model_binding_id=bindings.get("model_binding_id", ""),
         task_payload=task_payload,
+        execution_authority=authority,
+        activation=activation,
     )
 
 
@@ -306,7 +315,7 @@ class TestKiloFakePath:
         result = runtime.execute(request)
 
         assert result.route_decision == "SELECTED"
-        assert result.issuance_policy_decision == "ELIGIBLE"
+        assert result.issuance_policy_decision == "EXTERNAL_AUTHORITY"
         assert result.authority_valid is True
         assert result.activation_valid is True
         assert result.binding_decision == "ALLOW"
@@ -339,7 +348,7 @@ class TestOpenCodeFakePath:
         result = runtime.execute(request)
 
         assert result.route_decision == "SELECTED"
-        assert result.issuance_policy_decision == "ELIGIBLE"
+        assert result.issuance_policy_decision == "EXTERNAL_AUTHORITY"
         assert result.authority_valid is True
         assert result.activation_valid is True
         assert result.binding_decision == "ALLOW"
@@ -505,7 +514,7 @@ class TestFailClosedMatrix:
 
     # --- Case 7: Activation missing ---
     def test_case_07_activation_missing(self, runtime):
-        request = _make_request(receiver_id="kilo-cli-agent")
+        request = replace(_make_request(receiver_id="kilo-cli-agent"), activation=None)
         result = runtime.execute(request)
         assert result.ea4e26_disposition == "FAIL"
         assert result.kilo_executor_calls == 0
@@ -514,6 +523,19 @@ class TestFailClosedMatrix:
     # --- Case 8: Activation disabled ---
     def test_case_08_activation_disabled(self, runtime):
         request = _make_request(receiver_id="kilo-cli-agent")
+        request = replace(
+            request,
+            activation=build_production_activation(
+                receiver_id=request.receiver_id,
+                router_contract_id=request.router_contract_id,
+                authority_contract_id=compute_ea4e7_authority_contract_id(),
+                transport_contract_id=request.transport_contract_id,
+                model_binding_id=request.model_binding_id,
+                activation_mode="DISABLED",
+                execution_scope=request.requested_execution_scope,
+                delegation_class=request.delegation_class,
+            ),
+        )
         result = runtime.execute(request)
         assert result.ea4e26_disposition == "FAIL"
         assert result.kilo_executor_calls == 0

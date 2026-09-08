@@ -38,6 +38,7 @@ from tools.hermes_core.production_invocation_authorization_issuer import (
 from tools.hermes_core.production_issuance import ClockCollaborator
 from tools.hermes_core.receiver_router import compute_ea4e6_router_contract_id
 from tests.hermes_core.durable_auth_test_support import qualification_store
+from tests.hermes_core.ea4e26r_test_support import external_authority_and_activation
 
 
 NOW = "2026-01-01T00:00:00Z"
@@ -136,12 +137,15 @@ def bind(system, receiver_id):
 
 def caller_request(receiver_id="kilo-cli-agent", request_id="request-001", handle=None):
     receiver = QUALIFIED_RECEIVERS[receiver_id]
+    authority, activation = external_authority_and_activation(receiver_id, request_id)
     runtime_request = GovernedProductionRuntimeRequest(
         request_id=request_id,
         receiver_id=receiver_id,
         router_contract_id=compute_ea4e6_router_contract_id(),
         transport_contract_id=receiver["transport_contract_id"],
         model_binding_id=receiver["model_binding_id"],
+        execution_authority=authority,
+        activation=activation,
     )
     issue_request = ProductionInvocationAuthorizationIssueRequest(
         issue_request_id=f"issue-{request_id}",

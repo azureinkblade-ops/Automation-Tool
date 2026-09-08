@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from tools.hermes_core.production_activation import ProductionActivation
 from tools.hermes_core.governed_production_caller import (
     GovernedProductionCallerRequest,
     GovernedProductionCallerResult,
@@ -41,6 +42,7 @@ from tools.hermes_core.receiver_router import (
     RoutingRequest,
     compute_ea4e6_router_contract_id,
 )
+from tools.hermes_core.receiver_dispatch import DispatchAuthority
 
 
 @dataclass(frozen=True)
@@ -54,6 +56,8 @@ class ProductionEntryPointRequest:
     transport_contract_id: str | None = None
     model_binding_id: str | None = None
     authorization_issue_request: ProductionInvocationAuthorizationIssueRequest | None = None
+    execution_authority: DispatchAuthority | None = None
+    activation: ProductionActivation | None = None
 
 
 @dataclass
@@ -148,6 +152,8 @@ class ProductionEntryPoint:
             transport_contract_id=transport,
             model_binding_id=model,
             task_payload=request.task_payload,
+            execution_authority=request.execution_authority,
+            activation=request.activation,
         )
         caller_result = self._composition.caller.invoke(
             GovernedProductionCallerRequest(runtime_request, issue_request)
