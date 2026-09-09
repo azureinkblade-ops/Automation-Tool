@@ -13,6 +13,7 @@ from tests.hermes_core.test_ea4e52_nonlive_app_host_integration import (
     _bind,
     _configure,
     _payload as _governed_payload,
+    _issue_activation_authorization,
     _provision_issue,
     _ready,
 )
@@ -261,6 +262,7 @@ def test_actual_fake_executor_failures_still_teardown(tmp_path, error):
         authority,
         activation,
         provisioned.issue_request,
+        _issue_activation_authorization(receiver_id, request_id, activation),
     )
 
     result = app.submit_governed_production_action(payload)

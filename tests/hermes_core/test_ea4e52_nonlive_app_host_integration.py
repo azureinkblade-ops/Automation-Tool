@@ -18,6 +18,9 @@ from tools.hermes_core.production_app_binding import (
     ProductionAppBindingRequest,
 )
 from tools.hermes_core.production_app_config import ProductionAppRuntimeConfig
+from tools.hermes_core.production_activation_authorization_store import (
+    ProductionActivationAuthStoreBootstrapper,
+)
 from tools.hermes_core.production_app_invocation_authorization import (
     ProductionAppInvocationAuthorizationProvisioner,
     ProductionAppInvocationAuthorizationRequest,
@@ -65,6 +68,7 @@ def reset_app_host(monkeypatch):
     monkeypatch.setattr(app, "_GOVERNED_PRODUCTION_COMPONENTS", None)
     monkeypatch.setattr(app, "_GOVERNED_PRODUCTION_HOST", None)
     monkeypatch.setattr(app, "_GOVERNED_PRODUCTION_RECOVERY", None)
+    monkeypatch.setattr(app, "_GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER", None)
 
 
 def _bootstrap_store(tmp_path):
@@ -118,6 +122,10 @@ def _synthetic_preflight(tmp_path, receiver_id: str):
 
 def _configure(tmp_path, receiver_id: str, *, gate="ENABLED", master="ENABLED"):
     store_path, anchor_path = _bootstrap_store(tmp_path)
+    activation_store = ProductionActivationAuthStoreBootstrapper().bootstrap(
+        tmp_path / "ea4e60.activation-auth.sqlite",
+        bootstrap_explicit=True,
+    )
     fake = FakeQualifiedExecutor(receiver_id)
     registry = ExecutorRegistry()
     registry.register(receiver_id, fake)
@@ -134,6 +142,11 @@ def _configure(tmp_path, receiver_id: str, *, gate="ENABLED", master="ENABLED"):
             executor_registry=registry,
             register_real_executors=False,
             credential_preflight=_synthetic_preflight(tmp_path, receiver_id),
+            activation_authorization_store=activation_store,
+            activation_authorization_governing_commit=(
+                "d61945f96e11b19ef0dcbd008c4d301647c8acad"
+            ),
+            activation_authorization_readiness_status="PASS",
         )
     )
     return components, fake, clock
@@ -185,7 +198,9 @@ def _provision_issue(receiver_id, request_id, authority, handle):
     )
 
 
-def _payload(receiver_id, request_id, authority, activation, issue):
+def _payload(
+    receiver_id, request_id, authority, activation, issue, activation_authorization=None
+):
     spec = QUALIFIED_RECEIVERS[receiver_id]
     return {
         "request_id": request_id,
@@ -196,10 +211,33 @@ def _payload(receiver_id, request_id, authority, activation, issue):
         "production_activation_explicit": True,
         "execution_authority": asdict(authority) if authority is not None else None,
         "activation": asdict(activation) if activation is not None else None,
+        "activation_authorization": activation_authorization,
         "authorization_issue_request": asdict(issue) if issue is not None else None,
         "transport_contract_id": spec["transport_contract_id"],
         "model_binding_id": spec["model_binding_id"],
     }
+
+
+def _issue_activation_authorization(receiver_id, request_id, activation):
+    spec = QUALIFIED_RECEIVERS[receiver_id]
+    result = app.issue_production_activation_authorization(
+        {
+            "request_id": request_id,
+            "receiver_id": receiver_id,
+            "governing_commit": "d61945f96e11b19ef0dcbd008c4d301647c8acad",
+            "router_contract_id": activation.router_contract_id,
+            "authority_contract_id": activation.authority_contract_id,
+            "transport_contract_id": spec["transport_contract_id"],
+            "model_binding_id": spec["model_binding_id"],
+            "feature_gate_state": "ENABLED",
+            "activation_mode": "ENABLED",
+            "operator_intent": "EXPLICIT",
+            "requested_ttl_seconds": 300,
+            "nonce": f"activation-auth-{request_id}",
+        }
+    )
+    assert result["decision"] == "AUTHORIZED"
+    return result["authorization"]
 
 
 def _ready(tmp_path, receiver_id: str, request_id: str):
@@ -211,8 +249,16 @@ def _ready(tmp_path, receiver_id: str, request_id: str):
     )
     provisioned = _provision_issue(receiver_id, request_id, authority, binding.handle)
     assert provisioned.provisioning_decision == "PROVISIONED"
+    activation_authorization = _issue_activation_authorization(
+        receiver_id, request_id, activation
+    )
     return components, fake, _payload(
-        receiver_id, request_id, authority, activation, provisioned.issue_request
+        receiver_id,
+        request_id,
+        authority,
+        activation,
+        provisioned.issue_request,
+        activation_authorization,
     )
 
 

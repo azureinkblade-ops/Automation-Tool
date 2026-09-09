@@ -1,9 +1,10 @@
 """In-process lifecycle ownership for one governed production request.
 
-The owner requires an existing explicit binding, delegates once to the
-qualified host action, and tears down that exact binding in ``finally``.
-It does not bind, issue authority, activate production, retry, or select a
-fallback receiver.
+The owner requires an existing explicit binding, validates and consumes a
+pre-issued activation authorization, delegates once to the qualified host
+action, and tears down request activation and that exact binding in ``finally``.
+It does not bind, issue authority, issue activation authorization, retry, or
+select a fallback receiver.
 """
 
 from __future__ import annotations
@@ -14,6 +15,8 @@ from typing import Any, Mapping
 from tools.hermes_core.production_app_host import (
     ProductionAppHostAction,
     ProductionAppHostResult,
+    _activation,
+    _execution_authority,
 )
 from tools.hermes_core.production_app_recovery import (
     SUPPORTED_RECEIVERS,
@@ -22,6 +25,13 @@ from tools.hermes_core.production_app_recovery import (
 from tools.hermes_core.production_executor_binding import (
     ProductionExecutorBindingController,
 )
+from tools.hermes_core.production_activation_authorization import (
+    ProductionActivationAuthorizationPolicy,
+    ProductionActivationAuthorizationValidator,
+    ProductionAppActivationTransitionOwner,
+    activation_authorization_from_mapping,
+)
+from tools.hermes_core.receiver_router import ReceiverRouter, RoutingRequest
 
 
 class ProductionRequestAdmissionController:
@@ -52,7 +62,7 @@ class ProductionRequestAdmissionController:
 
 
 class ProductionAppRequestLifecycleOwner:
-    """Own one already-bound governed request through in-process teardown."""
+    """Own one already-bound governed request through request-scoped teardown."""
 
     def __init__(
         self,
@@ -62,6 +72,12 @@ class ProductionAppRequestLifecycleOwner:
         recovery_store: ProductionRecoveryStore | None = None,
         host_instance_id: str | None = None,
         credential_preflight: Any = None,
+        activation_authorization_policy: ProductionActivationAuthorizationPolicy | None = None,
+        activation_authorization_validator: ProductionActivationAuthorizationValidator | None = None,
+        activation_transition_owner: ProductionAppActivationTransitionOwner | None = None,
+        authority_validator: Any = None,
+        router: ReceiverRouter | None = None,
+        activation_feature_gate_state: str = "DISABLED",
     ) -> None:
         self._governed_action = governed_action
         self._binding_controller = binding_controller
@@ -73,6 +89,12 @@ class ProductionAppRequestLifecycleOwner:
         self._recovery_store = recovery_store
         self._host_instance_id = host_instance_id
         self._preflight = credential_preflight
+        self._activation_authorization_policy = activation_authorization_policy
+        self._activation_authorization_validator = activation_authorization_validator
+        self._activation_transition_owner = activation_transition_owner
+        self._authority_validator = authority_validator
+        self._router = router
+        self._activation_feature_gate_state = activation_feature_gate_state
 
     def submit(self, payload: Mapping[str, Any] | None) -> ProductionAppHostResult:
         if self._governed_action is None or self._binding_controller is None:
@@ -157,21 +179,81 @@ class ProductionAppRequestLifecycleOwner:
         result: ProductionAppHostResult | None = None
         action_error: Exception | None = None
         cleanup_error: str | None = None
+        activation_recovery_required = False
         try:
-            result = self._governed_action.submit(payload)
+            activation_dependencies = (
+                self._activation_authorization_policy,
+                self._activation_authorization_validator,
+                self._activation_transition_owner,
+                self._authority_validator,
+                self._router,
+            )
+            if any(item is not None for item in activation_dependencies):
+                if not all(item is not None for item in activation_dependencies):
+                    result = self._deny("MISSING_ACTIVATION_AUTHORIZATION_DEPENDENCY")
+                elif self._activation_feature_gate_state != "ENABLED":
+                    result = self._deny("OUTER_FEATURE_GATE_DISABLED")
+                else:
+                    try:
+                        authority = _execution_authority(payload.get("execution_authority"))
+                        production_activation = _activation(payload.get("activation"))
+                        activation_authorization = activation_authorization_from_mapping(
+                            payload.get("activation_authorization")
+                        )
+                    except (KeyError, TypeError, ValueError):
+                        result = self._deny("INVALID_GOVERNANCE_ARTIFACT")
+                    else:
+                        route = self._router.route(RoutingRequest(receiver_id=receiver_id))
+                        authority_result = self._authority_validator.validate(authority, route)
+                        if not authority_result.authority_valid:
+                            result = self._deny(
+                                f"EXECUTION_AUTHORITY_INVALID:{authority_result.reason}"
+                            )
+                        else:
+                            claim = self._activation_authorization_policy.claim(
+                                activation_authorization,
+                                validator=self._activation_authorization_validator,
+                                request_id=payload["request_id"],
+                                receiver_id=receiver_id,
+                                feature_gate_state=self._activation_feature_gate_state,
+                            )
+                            if claim.decision != "AUTHORIZED":
+                                result = self._deny(
+                                    f"ACTIVATION_AUTHORIZATION_DENIED:{claim.reason}"
+                                )
+                            else:
+                                transition = self._activation_transition_owner.transition(
+                                    request_id=payload["request_id"],
+                                    receiver_id=receiver_id,
+                                    claimed_authorization=claim,
+                                    production_activation=production_activation,
+                                )
+                                activation_recovery_required = transition.recovery_required
+                                if transition.decision != "AUTHORIZED":
+                                    result = self._deny(
+                                        f"PRODUCTION_ACTIVATION_DENIED:{transition.reason}"
+                                    )
+            if result is None:
+                result = self._governed_action.submit(payload)
         except Exception as exc:
             action_error = exc
         finally:
             if self._recovery_store is not None:
                 self._recovery_store.transition(payload["request_id"], "TEARDOWN_PENDING")
+            if self._activation_transition_owner is not None:
+                try:
+                    if not self._activation_transition_owner.teardown(payload["request_id"]):
+                        cleanup_error = "ACTIVATION_TEARDOWN_NOT_CONFIRMED"
+                except Exception as exc:
+                    cleanup_error = f"ACTIVATION_TEARDOWN_EXCEPTION:{type(exc).__name__}"
             try:
                 if not self._binding_controller.teardown(binding):
-                    cleanup_error = "BINDING_TEARDOWN_NOT_CONFIRMED"
+                    cleanup_error = cleanup_error or "BINDING_TEARDOWN_NOT_CONFIRMED"
             except Exception as exc:
-                cleanup_error = f"BINDING_TEARDOWN_EXCEPTION:{type(exc).__name__}"
+                cleanup_error = cleanup_error or f"BINDING_TEARDOWN_EXCEPTION:{type(exc).__name__}"
 
             if self._recovery_store is not None:
-                if cleanup_error is None:
+                if cleanup_error is None and not activation_recovery_required:
                     self._recovery_store.mark_clean(payload["request_id"])
                 else:
                     self._recovery_store.transition(

@@ -49,6 +49,9 @@ class ProductionAppRuntimeConfig:
     recovery_process_controller: object | None = None
     credential_preflight: object | None = None
     accounting_ledger: object | None = None
+    activation_authorization_store: object | None = None
+    activation_authorization_governing_commit: str | None = None
+    activation_authorization_readiness_status: str = "HOLD"
 
 
 def canonicalize_feature_gate(value: object) -> str:

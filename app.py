@@ -43035,6 +43035,7 @@ def run_regression_dashboard(mode: str = "quick") -> dict[str, Any]:
 _GOVERNED_PRODUCTION_COMPONENTS = None
 _GOVERNED_PRODUCTION_HOST = None
 _GOVERNED_PRODUCTION_RECOVERY = None
+_GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER = None
 
 
 def configure_governed_production_action(runtime_config):
@@ -43050,12 +43051,29 @@ def configure_governed_production_action(runtime_config):
         ProductionAppRecoveryOwner,
         ProductionRecoveryStore,
     )
+    from tools.hermes_core.production_activation_authorization import (
+        ProductionActivationAuthorizationIssuer,
+        ProductionActivationAuthorizationPolicy,
+        ProductionActivationAuthorizationValidator,
+        ProductionAppActivationTransitionOwner,
+    )
+    from tools.hermes_core.production_activation_authorization_store import (
+        ProductionActivationAuthorizationStore,
+    )
     from uuid import uuid4
 
     if runtime_config is None:
         raise ValueError("MISSING_GOVERNED_PRODUCTION_RUNTIME_CONFIG")
     if runtime_config.register_real_executors:
         raise ValueError("APP_HOST_REAL_EXECUTOR_AUTO_REGISTRATION_FORBIDDEN")
+    activation_store = runtime_config.activation_authorization_store
+    if activation_store is None:
+        raise ValueError("MISSING_ESTABLISHED_ACTIVATION_AUTHORIZATION_STORE")
+    if not isinstance(activation_store, ProductionActivationAuthorizationStore):
+        raise ValueError("INVALID_ACTIVATION_AUTHORIZATION_STORE")
+    governing_commit = runtime_config.activation_authorization_governing_commit
+    if not isinstance(governing_commit, str) or not governing_commit:
+        raise ValueError("MISSING_ACTIVATION_AUTHORIZATION_GOVERNING_COMMIT")
 
     components = ProductionAppFactory.build(build_factory_config(runtime_config))
     host = ProductionAppHostAction(components.user_action)
@@ -43065,6 +43083,26 @@ def configure_governed_production_action(runtime_config):
     ).with_name("production-recovery.sqlite3")
     recovery_store = ProductionRecoveryStore.initialize(recovery_path)
     host_instance_id = runtime_config.recovery_host_instance_id or f"host-{uuid4()}"
+    activation_policy = ProductionActivationAuthorizationPolicy(
+        store=activation_store,
+        clock=components.composition.clock,
+        governing_commit=governing_commit,
+        readiness_status=runtime_config.activation_authorization_readiness_status,
+        recovery_blocked=recovery_store.has_unresolved,
+    )
+    activation_validator = ProductionActivationAuthorizationValidator(
+        store=activation_store,
+        clock=components.composition.clock,
+    )
+    activation_transition_owner = ProductionAppActivationTransitionOwner(
+        store=activation_store,
+        clock=components.composition.clock,
+        activation_validator=components.composition.activation_validator,
+        recovery_marker=lambda request_id: recovery_store.transition(
+            request_id, "RECOVERY_REQUIRED", cleanup_state="PENDING"
+        ),
+    )
+    activation_issuer = ProductionActivationAuthorizationIssuer(activation_policy)
     lifecycle = ProductionAppRequestLifecycleOwner(
         host,
         components.composition.binding_controller,
@@ -43072,6 +43110,12 @@ def configure_governed_production_action(runtime_config):
         recovery_store,
         host_instance_id,
         credential_preflight=components.composition.credential_preflight,
+        activation_authorization_policy=activation_policy,
+        activation_authorization_validator=activation_validator,
+        activation_transition_owner=activation_transition_owner,
+        authority_validator=components.composition.authority_validator,
+        router=components.composition.router,
+        activation_feature_gate_state=runtime_config.callsite_feature_gate,
     )
     recovery = ProductionAppRecoveryOwner(
         recovery_store,
@@ -43084,11 +43128,27 @@ def configure_governed_production_action(runtime_config):
     )
 
     global _GOVERNED_PRODUCTION_COMPONENTS, _GOVERNED_PRODUCTION_HOST
-    global _GOVERNED_PRODUCTION_RECOVERY
+    global _GOVERNED_PRODUCTION_RECOVERY, _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER
     _GOVERNED_PRODUCTION_COMPONENTS = components
     _GOVERNED_PRODUCTION_HOST = lifecycle
     _GOVERNED_PRODUCTION_RECOVERY = recovery
+    _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER = activation_issuer
     return components
+
+
+def issue_production_activation_authorization(payload: dict[str, Any]) -> dict[str, Any]:
+    """Explicitly issue one request-bound authorization; never execute or bind."""
+    from tools.hermes_core.production_activation_authorization import (
+        activation_authorization_request_from_mapping,
+    )
+
+    if _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER is None:
+        return {"decision": "DENIED", "reason": "ACTIVATION_AUTH_ISSUER_NOT_CONFIGURED", "authorization": None}
+    try:
+        request = activation_authorization_request_from_mapping(payload)
+    except (KeyError, TypeError, ValueError):
+        return {"decision": "DENIED", "reason": "MALFORMED_REQUEST", "authorization": None}
+    return _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER.issue(request).to_public_dict()
 
 
 def submit_governed_production_action(payload: dict[str, Any]) -> dict[str, Any]:
