@@ -199,12 +199,16 @@ class ProductionAppRecoveryOwner:
         binding_controller: Any,
         liveness_inspector: Any,
         process_controller: Any,
+        accounting_ledger: Any = None,
+        accounting_clock: Any = None,
     ) -> None:
         self._store = store
         self._admission = admission_controller
         self._bindings = binding_controller
         self._liveness = liveness_inspector
         self._processes = process_controller
+        self._accounting = accounting_ledger
+        self._accounting_clock = accounting_clock
 
     def reconcile(self, request_id: str) -> ProductionRecoveryResult:
         record = self._store.load(request_id)
@@ -228,6 +232,7 @@ class ProductionAppRecoveryOwner:
         terminated = 0
         torn_down = 0
         if record.process_state == "STARTED":
+            self._record_process_accounting(record, "PROCESS_ORPHANED")
             process_result = self._recover_process(record)
             if process_result == "FAILED":
                 return self._fail(record, "PROCESS_OWNERSHIP_MISMATCH")
@@ -249,6 +254,8 @@ class ProductionAppRecoveryOwner:
             return self._fail(record, "ADMISSION_RELEASE_FAILED", terminated=terminated)
 
         self._store.mark_clean(request_id)
+        if record.process_state == "STARTED":
+            self._record_process_accounting(record, "PROCESS_RECOVERED")
         return ProductionRecoveryResult(
             decision="ALLOW",
             reason="RECOVERED",
@@ -256,6 +263,29 @@ class ProductionAppRecoveryOwner:
             binding_teardown_count=torn_down,
             process_termination_count=terminated,
         )
+
+    def _record_process_accounting(
+        self, record: ProductionRecoveryRecord, event_type: str
+    ) -> None:
+        if self._accounting is None:
+            return
+        try:
+            if self._accounting_clock is None:
+                return
+            self._accounting.record_process_event(
+                request_id=record.request_id,
+                receiver_id=record.receiver_id,
+                process_attempt_id=record.process_token or "",
+                event_type=event_type,
+                correlation_id=record.request_id,
+                created_at=self._accounting_clock.now_iso(),
+                binding_id=record.binding_id,
+                process_id=record.process_id,
+                process_token=record.process_token,
+            )
+        except Exception:
+            # Recovery is already post-boundary; accounting cannot skip cleanup.
+            return
 
     def _recover_process(self, record: ProductionRecoveryRecord) -> str:
         if not record.process_id or not record.process_token:
