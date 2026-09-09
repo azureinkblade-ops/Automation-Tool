@@ -8,6 +8,7 @@ fallback receiver.
 
 from __future__ import annotations
 
+from threading import Lock
 from typing import Any, Mapping
 
 from tools.hermes_core.production_app_host import (
@@ -19,6 +20,33 @@ from tools.hermes_core.production_executor_binding import (
 )
 
 
+class ProductionRequestAdmissionController:
+    """Fail closed when another request owns the single lifecycle slot."""
+
+    def __init__(self) -> None:
+        self._state_lock = Lock()
+        self._owner_request_id: str | None = None
+
+    def acquire(self, request_id: str) -> bool:
+        with self._state_lock:
+            if self._owner_request_id is not None:
+                return False
+            self._owner_request_id = request_id
+            return True
+
+    def release(self, request_id: str) -> bool:
+        with self._state_lock:
+            if self._owner_request_id != request_id:
+                return False
+            self._owner_request_id = None
+            return True
+
+    @property
+    def owner_request_id(self) -> str | None:
+        with self._state_lock:
+            return self._owner_request_id
+
+
 class ProductionAppRequestLifecycleOwner:
     """Own one already-bound governed request through in-process teardown."""
 
@@ -26,9 +54,15 @@ class ProductionAppRequestLifecycleOwner:
         self,
         governed_action: ProductionAppHostAction | None,
         binding_controller: ProductionExecutorBindingController | None,
+        admission_controller: ProductionRequestAdmissionController | None = None,
     ) -> None:
         self._governed_action = governed_action
         self._binding_controller = binding_controller
+        self._admission_controller = (
+            admission_controller
+            if admission_controller is not None
+            else ProductionRequestAdmissionController()
+        )
 
     def submit(self, payload: Mapping[str, Any] | None) -> ProductionAppHostResult:
         if self._governed_action is None or self._binding_controller is None:
@@ -41,6 +75,23 @@ class ProductionAppRequestLifecycleOwner:
         if not isinstance(receiver_id, str) or not receiver_id.strip():
             return self._governed_action.submit(payload)
 
+        request_id = payload.get("request_id")
+        if not isinstance(request_id, str) or not request_id.strip():
+            return self._deny("MISSING_REQUEST_ID")
+
+        if not self._admission_controller.acquire(request_id):
+            return self._deny("PRODUCTION_REQUEST_CONCURRENCY_LIMIT")
+
+        try:
+            return self._submit_admitted(payload, receiver_id)
+        finally:
+            self._admission_controller.release(request_id)
+
+    def _submit_admitted(
+        self,
+        payload: Mapping[str, Any],
+        receiver_id: str,
+    ) -> ProductionAppHostResult:
         binding = self._binding_controller.get_binding_for_receiver(receiver_id)
         if binding is None:
             return self._deny("MISSING_EXPLICIT_BINDING")

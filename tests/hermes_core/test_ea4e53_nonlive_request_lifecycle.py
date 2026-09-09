@@ -85,7 +85,11 @@ class RaisingFakeExecutor:
 
 
 def _payload(receiver_id="kilo-cli-agent"):
-    return {"receiver_id": receiver_id, "task_payload": "EA4E53_FAKE"}
+    return {
+        "request_id": "ea4e53-fake",
+        "receiver_id": receiver_id,
+        "task_payload": "EA4E53_FAKE",
+    }
 
 
 def _owner(*, result=None, action_error=None, teardown_result=True, teardown_error=None):
