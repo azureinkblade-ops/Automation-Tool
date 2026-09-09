@@ -10,6 +10,7 @@ Does not mutate master enable, activation, receiver, authority, binding, or stor
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from tools.hermes_core.production_app_callsite import REAL_APP_CALLSITE_FEATURE_GATE_DEFAULT
 from tools.hermes_core.production_app_factory import ProductionAppFactoryConfig
@@ -42,6 +43,10 @@ class ProductionAppRuntimeConfig:
     callsite_feature_gate: str | None = APPLICATION_FEATURE_GATE_DEFAULT
     executor_registry: ExecutorRegistry | None = None
     register_real_executors: bool = False
+    recovery_store_path: Path | None = None
+    recovery_host_instance_id: str | None = None
+    recovery_liveness_inspector: object | None = None
+    recovery_process_controller: object | None = None
 
 
 def canonicalize_feature_gate(value: object) -> str:

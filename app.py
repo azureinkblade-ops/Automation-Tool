@@ -43034,6 +43034,7 @@ def run_regression_dashboard(mode: str = "quick") -> dict[str, Any]:
 
 _GOVERNED_PRODUCTION_COMPONENTS = None
 _GOVERNED_PRODUCTION_HOST = None
+_GOVERNED_PRODUCTION_RECOVERY = None
 
 
 def configure_governed_production_action(runtime_config):
@@ -43043,7 +43044,13 @@ def configure_governed_production_action(runtime_config):
     from tools.hermes_core.production_app_host import ProductionAppHostAction
     from tools.hermes_core.production_app_lifecycle import (
         ProductionAppRequestLifecycleOwner,
+        ProductionRequestAdmissionController,
     )
+    from tools.hermes_core.production_app_recovery import (
+        ProductionAppRecoveryOwner,
+        ProductionRecoveryStore,
+    )
+    from uuid import uuid4
 
     if runtime_config is None:
         raise ValueError("MISSING_GOVERNED_PRODUCTION_RUNTIME_CONFIG")
@@ -43052,14 +43059,32 @@ def configure_governed_production_action(runtime_config):
 
     components = ProductionAppFactory.build(build_factory_config(runtime_config))
     host = ProductionAppHostAction(components.user_action)
+    admission = ProductionRequestAdmissionController()
+    recovery_path = runtime_config.recovery_store_path or Path(
+        runtime_config.wiring.auth_store_path
+    ).with_name("production-recovery.sqlite3")
+    recovery_store = ProductionRecoveryStore.initialize(recovery_path)
+    host_instance_id = runtime_config.recovery_host_instance_id or f"host-{uuid4()}"
     lifecycle = ProductionAppRequestLifecycleOwner(
         host,
         components.composition.binding_controller,
+        admission,
+        recovery_store,
+        host_instance_id,
+    )
+    recovery = ProductionAppRecoveryOwner(
+        recovery_store,
+        admission,
+        components.composition.binding_controller,
+        runtime_config.recovery_liveness_inspector,
+        runtime_config.recovery_process_controller,
     )
 
     global _GOVERNED_PRODUCTION_COMPONENTS, _GOVERNED_PRODUCTION_HOST
+    global _GOVERNED_PRODUCTION_RECOVERY
     _GOVERNED_PRODUCTION_COMPONENTS = components
     _GOVERNED_PRODUCTION_HOST = lifecycle
+    _GOVERNED_PRODUCTION_RECOVERY = recovery
     return components
 
 
@@ -43069,6 +43094,20 @@ def submit_governed_production_action(payload: dict[str, Any]) -> dict[str, Any]
 
     host = _GOVERNED_PRODUCTION_HOST or ProductionAppHostAction(None)
     return host.submit(payload).to_public_dict()
+
+
+def reconcile_governed_production_recovery(request_id: str) -> dict[str, Any]:
+    """Explicitly reconcile one durable lifecycle record; never run at startup."""
+    if _GOVERNED_PRODUCTION_RECOVERY is None:
+        return {"decision": "DENY", "reason": "RECOVERY_OWNER_NOT_CONFIGURED"}
+    result = _GOVERNED_PRODUCTION_RECOVERY.reconcile(request_id)
+    return {
+        "decision": result.decision,
+        "reason": result.reason,
+        "requestId": result.request_id,
+        "bindingTeardownCount": result.binding_teardown_count,
+        "processTerminationCount": result.process_termination_count,
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
