@@ -209,6 +209,7 @@ class GovernedProductionRuntime:
         invocation_authorization_store: DurableInvocationAuthorizationStore | None = None,
         invocation_authorization_policy: ProductionInvocationAuthorizationPolicy | None = None,
         max_invocations: int = 1,
+        accounting_ledger=None,
     ) -> None:
         self._clock = clock
         self._executor_registry = executor_registry or ExecutorRegistry()
@@ -240,6 +241,7 @@ class GovernedProductionRuntime:
         )
         self._invocation_count = 0
         self._max_invocations = max_invocations
+        self._accounting = accounting_ledger
 
     @property
     def binding_controller(self) -> ProductionExecutorBindingController:
@@ -419,6 +421,37 @@ class GovernedProductionRuntime:
             return result
         self._invocation_count += 1
 
+        process_attempt_id = f"{request.request_id}:process"
+        model_attempt_id = f"{request.request_id}:model"
+        if self._accounting is not None:
+            from tools.hermes_core.production_accounting import ProductionAccountingError
+
+            try:
+                self._accounting.record_process_event(
+                    request_id=request.request_id,
+                    receiver_id=request.receiver_id,
+                    process_attempt_id=process_attempt_id,
+                    event_type="PROCESS_START_INTENT",
+                    correlation_id=request.request_id,
+                    created_at=self._clock.now_iso(),
+                    execution_authority_id=authority.authority_id,
+                    binding_id=handle.binding_id,
+                )
+                self._accounting.record_model_event(
+                    request_id=request.request_id,
+                    receiver_id=request.receiver_id,
+                    model_invocation_attempt_id=model_attempt_id,
+                    event_type="MODEL_INVOCATION_INTENT",
+                    correlation_id=request.request_id,
+                    created_at=self._clock.now_iso(),
+                    model_binding_id=request.model_binding_id,
+                    invocation_authorization_id=invocation_auth.invocation_authorization_id,
+                )
+            except ProductionAccountingError:
+                result.reason = "ACCOUNTING_INTENT_WRITE_FAILED"
+                result.ea4e26_disposition = "FAIL"
+                return result
+
         # Step 8: Production execution through boundary
         # Use exact deterministic output marker per receiver
         if request.task_payload:
@@ -456,6 +489,17 @@ class GovernedProductionRuntime:
         result.execution_status = exec_result.execution_status
         result.execution_output = exec_result.executor_output
 
+        if self._accounting is not None:
+            self._record_observed_accounting(
+                request=request,
+                authority=authority,
+                handle=handle,
+                invocation_auth=invocation_auth,
+                exec_result=exec_result,
+                process_attempt_id=process_attempt_id,
+                model_attempt_id=model_attempt_id,
+            )
+
         # Step 9: Receiver-specific accounting
         if request.receiver_id == "kilo-cli-agent":
             result.kilo_executor_calls = 1 if exec_result.executor_called else 0
@@ -465,6 +509,75 @@ class GovernedProductionRuntime:
         result.ea4e26_disposition = "PASS"
         result.reason = "GOVERNED_EXECUTION_OK"
         return result
+
+    def _record_observed_accounting(
+        self,
+        *,
+        request: GovernedProductionRuntimeRequest,
+        authority: DispatchAuthority,
+        handle: ProductionExecutorBindingHandle,
+        invocation_auth: ProductionInvocationAuthorization,
+        exec_result: Any,
+        process_attempt_id: str,
+        model_attempt_id: str,
+    ) -> None:
+        from tools.hermes_core.production_accounting import ProductionAccountingError
+
+        process_started = exec_result.process_started is True
+        model_invoked = exec_result.model_invoked is True
+        process_start_failed = getattr(exec_result, "process_start_failed", False) is True
+        process_exited = getattr(exec_result, "process_exited", False) is True
+        model_completed = getattr(exec_result, "model_invocation_completed", False) is True
+        model_failed = getattr(exec_result, "model_invocation_failed", False) is True
+        process_id = exec_result.process_id if isinstance(getattr(exec_result, "process_id", None), str) and exec_result.process_id else None
+        process_token = exec_result.process_token if isinstance(getattr(exec_result, "process_token", None), str) and exec_result.process_token else None
+
+        def record_process(event_type: str) -> None:
+            try:
+                self._accounting.record_process_event(
+                    request_id=request.request_id,
+                    receiver_id=request.receiver_id,
+                    process_attempt_id=process_attempt_id,
+                    event_type=event_type,
+                    correlation_id=request.request_id,
+                    created_at=self._clock.now_iso(),
+                    execution_authority_id=authority.authority_id,
+                    binding_id=handle.binding_id,
+                    process_id=process_id,
+                    process_token=process_token,
+                )
+            except ProductionAccountingError:
+                pass
+
+        def record_model(event_type: str) -> None:
+            try:
+                self._accounting.record_model_event(
+                    request_id=request.request_id,
+                    receiver_id=request.receiver_id,
+                    model_invocation_attempt_id=model_attempt_id,
+                    event_type=event_type,
+                    correlation_id=request.request_id,
+                    created_at=self._clock.now_iso(),
+                    model_binding_id=request.model_binding_id,
+                    invocation_authorization_id=invocation_auth.invocation_authorization_id,
+                    process_id=process_id,
+                )
+            except ProductionAccountingError:
+                pass
+
+        if process_started and process_id and process_token:
+            record_process("PROCESS_STARTED")
+            if process_exited:
+                record_process("PROCESS_EXITED")
+        elif process_start_failed and not process_started:
+            record_process("PROCESS_START_FAILED")
+
+        if model_invoked:
+            record_model("MODEL_INVOCATION_ENTERED")
+            if model_completed and not model_failed:
+                record_model("MODEL_INVOCATION_COMPLETED")
+            elif model_failed and not model_completed:
+                record_model("MODEL_INVOCATION_FAILED")
 
     @staticmethod
     def _external_authority_mismatch(

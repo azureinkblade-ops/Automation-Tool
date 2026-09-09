@@ -43071,6 +43071,7 @@ def configure_governed_production_action(runtime_config):
         admission,
         recovery_store,
         host_instance_id,
+        credential_preflight=components.composition.credential_preflight,
     )
     recovery = ProductionAppRecoveryOwner(
         recovery_store,
@@ -43078,6 +43079,8 @@ def configure_governed_production_action(runtime_config):
         components.composition.binding_controller,
         runtime_config.recovery_liveness_inspector,
         runtime_config.recovery_process_controller,
+        accounting_ledger=components.composition.accounting_ledger,
+        accounting_clock=components.composition.clock,
     )
 
     global _GOVERNED_PRODUCTION_COMPONENTS, _GOVERNED_PRODUCTION_HOST

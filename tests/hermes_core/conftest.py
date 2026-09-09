@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import yaml  # noqa: F401  keep PyYAML importable after app.py mutates sys.path
+
 import asyncio
 import json
 import os

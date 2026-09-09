@@ -66,9 +66,11 @@ class ProductionAppBindingProvisioner:
         self,
         controller: ProductionExecutorBindingController | None,
         registry: ExecutorRegistry | None,
+        preflight: object | None = None,
     ) -> None:
         self._controller = controller
         self._registry = registry
+        self._preflight = preflight
 
     def bind(self, request: ProductionAppBindingRequest | None) -> ProductionAppBindingResult:
         if self._controller is None:
@@ -127,6 +129,19 @@ class ProductionAppBindingProvisioner:
         existing = self._registry.resolve(request.receiver_id)
         if existing is None or getattr(existing, "executor_id", None) != request.executor_id:
             return self._deny("EXECUTOR_NOT_REGISTERED")
+
+        if self._preflight is not None:
+            preflight_result = self._preflight.check(
+                self._preflight.config_for(
+                    request.receiver_id,
+                    transport_contract_id=request.transport_contract_id,
+                    model_binding_id=request.model_binding_id,
+                )
+            )
+            if not preflight_result.ready:
+                return self._deny(
+                    f"CREDENTIAL_PREFLIGHT_DENIED:{preflight_result.failure_code}"
+                )
 
         enablement = ProductionExecutorBindingEnablement(
             enablement_id=request.enablement_id,

@@ -47,6 +47,8 @@ class ProductionAppRuntimeConfig:
     recovery_host_instance_id: str | None = None
     recovery_liveness_inspector: object | None = None
     recovery_process_controller: object | None = None
+    credential_preflight: object | None = None
+    accounting_ledger: object | None = None
 
 
 def canonicalize_feature_gate(value: object) -> str:
@@ -73,4 +75,6 @@ def build_factory_config(
         callsite_feature_gate=gate,
         executor_registry=runtime_config.executor_registry,
         register_real_executors=runtime_config.register_real_executors,
+        credential_preflight=runtime_config.credential_preflight,
+        accounting_ledger=runtime_config.accounting_ledger,
     )

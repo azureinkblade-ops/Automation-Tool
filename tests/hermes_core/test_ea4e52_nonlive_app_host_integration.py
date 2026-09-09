@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import yaml  # noqa: F401  imported before app.py so later hermes_core imports keep PyYAML
+
 from dataclasses import asdict
 from io import BytesIO
 import inspect
@@ -62,6 +64,7 @@ class FakeQualifiedExecutor:
 def reset_app_host(monkeypatch):
     monkeypatch.setattr(app, "_GOVERNED_PRODUCTION_COMPONENTS", None)
     monkeypatch.setattr(app, "_GOVERNED_PRODUCTION_HOST", None)
+    monkeypatch.setattr(app, "_GOVERNED_PRODUCTION_RECOVERY", None)
 
 
 def _bootstrap_store(tmp_path):
@@ -77,6 +80,40 @@ def _bootstrap_store(tmp_path):
     )
     assert result.bootstrap_decision == "INITIALIZED"
     return store_path, anchor_path
+
+
+def _synthetic_preflight(tmp_path, receiver_id: str):
+    from tools.hermes_core.production_credential_preflight import (
+        KILO_MODEL_BINDING_ID,
+        KILO_TRANSPORT_ID,
+        LOCAL_AUTH_STATE_REFERENCE,
+        OPENCODE_MODEL_BINDING_ID,
+        OPENCODE_TRANSPORT_ID,
+        ProductionCredentialReadinessPreflight,
+        ReceiverCredentialPolicy,
+    )
+
+    name = "kilo" if receiver_id == "kilo-cli-agent" else "opencode"
+    root = tmp_path / "cred" / name
+    state = root / f"{name}.db"
+    root.mkdir(parents=True, exist_ok=True)
+    state.write_bytes(b"synthetic-local-auth-state")
+    policy = ReceiverCredentialPolicy(
+        receiver_id=receiver_id,
+        provider_id=name,
+        config_identity=f"hermes-ea4e-{name}-local-auth-state",
+        credential_source_type=LOCAL_AUTH_STATE_REFERENCE,
+        credential_reference=str(state),
+        credential_reference_id=f"{name}-local-auth-state",
+        allowed_root=str(root),
+        transport_contract_id=(
+            KILO_TRANSPORT_ID if receiver_id == "kilo-cli-agent" else OPENCODE_TRANSPORT_ID
+        ),
+        model_binding_id=(
+            KILO_MODEL_BINDING_ID if receiver_id == "kilo-cli-agent" else OPENCODE_MODEL_BINDING_ID
+        ),
+    )
+    return ProductionCredentialReadinessPreflight({receiver_id: policy})
 
 
 def _configure(tmp_path, receiver_id: str, *, gate="ENABLED", master="ENABLED"):
@@ -96,6 +133,7 @@ def _configure(tmp_path, receiver_id: str, *, gate="ENABLED", master="ENABLED"):
             callsite_feature_gate=gate,
             executor_registry=registry,
             register_real_executors=False,
+            credential_preflight=_synthetic_preflight(tmp_path, receiver_id),
         )
     )
     return components, fake, clock
@@ -107,6 +145,7 @@ def _bind(components, receiver_id: str):
     return ProductionAppBindingProvisioner(
         components.composition.binding_controller,
         components.composition.executor_registry,
+        preflight=components.composition.credential_preflight,
     ).bind(
         ProductionAppBindingRequest(
             enablement_id=f"enable-{receiver_id}",

@@ -61,6 +61,7 @@ class ProductionAppRequestLifecycleOwner:
         admission_controller: ProductionRequestAdmissionController | None = None,
         recovery_store: ProductionRecoveryStore | None = None,
         host_instance_id: str | None = None,
+        credential_preflight: Any = None,
     ) -> None:
         self._governed_action = governed_action
         self._binding_controller = binding_controller
@@ -71,6 +72,7 @@ class ProductionAppRequestLifecycleOwner:
         )
         self._recovery_store = recovery_store
         self._host_instance_id = host_instance_id
+        self._preflight = credential_preflight
 
     def submit(self, payload: Mapping[str, Any] | None) -> ProductionAppHostResult:
         if self._governed_action is None or self._binding_controller is None:
@@ -113,6 +115,21 @@ class ProductionAppRequestLifecycleOwner:
         payload: Mapping[str, Any],
         receiver_id: str,
     ) -> ProductionAppHostResult:
+        if self._preflight is not None:
+            preflight_result = self._preflight.check(
+                self._preflight.config_for(
+                    receiver_id,
+                    transport_contract_id=payload.get("transport_contract_id"),
+                    model_binding_id=payload.get("model_binding_id"),
+                )
+            )
+            if not preflight_result.ready:
+                if self._recovery_store is not None:
+                    self._recovery_store.mark_clean(payload["request_id"])
+                return self._deny(
+                    f"CREDENTIAL_PREFLIGHT_DENIED:{preflight_result.failure_code}"
+                )
+
         binding = self._binding_controller.get_binding_for_receiver(receiver_id)
         if binding is None:
             if self._recovery_store is not None:

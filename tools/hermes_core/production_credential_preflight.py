@@ -150,6 +150,30 @@ class ProductionCredentialReadinessPreflight:
             default_credential_policies() if policies is None else policies
         )
 
+    def policy_for(self, receiver_id: str) -> ReceiverCredentialPolicy | None:
+        return self._policies.get(receiver_id)
+
+    def config_for(
+        self,
+        receiver_id: str,
+        *,
+        transport_contract_id: str | None = None,
+        model_binding_id: str | None = None,
+    ) -> dict[str, object]:
+        policy = self.policy_for(receiver_id)
+        if policy is None:
+            return {"receiver_id": receiver_id}
+        return {
+            "receiver_id": receiver_id,
+            "credential_receiver_id": receiver_id,
+            "provider_id": policy.provider_id,
+            "config_identity": policy.config_identity,
+            "credential_source_type": policy.credential_source_type,
+            "credential_reference": policy.credential_reference,
+            "transport_contract_id": transport_contract_id or policy.transport_contract_id,
+            "model_binding_id": model_binding_id or policy.model_binding_id,
+        }
+
     def check(self, config: Mapping[str, object] | None) -> CredentialReadinessResult:
         if not isinstance(config, Mapping):
             return self._deny("", "PREFLIGHT_INTERNAL_ERROR")

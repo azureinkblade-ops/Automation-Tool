@@ -50,6 +50,8 @@ class ProductionAppFactoryConfig:
     callsite_feature_gate: str = REAL_APP_CALLSITE_FEATURE_GATE_DEFAULT
     executor_registry: ExecutorRegistry | None = None
     register_real_executors: bool = False
+    credential_preflight: object | None = None
+    accounting_ledger: object | None = None
 
 
 @dataclass(frozen=True)
@@ -111,6 +113,8 @@ class ProductionAppFactory:
                 clock=config.clock,
                 executor_registry=config.executor_registry,
                 register_real_executors=config.register_real_executors,
+                credential_preflight=config.credential_preflight,
+                accounting_ledger=config.accounting_ledger,
             )
         except ProductionWiringError as exc:
             mapped = {

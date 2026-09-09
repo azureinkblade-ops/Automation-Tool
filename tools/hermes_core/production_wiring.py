@@ -143,6 +143,8 @@ class ProductionComposition:
     authority_validator: ExecutionAuthorityValidator
     activation_validator: ProductionActivationValidator
     clock: ClockCollaborator
+    credential_preflight: object | None = None
+    accounting_ledger: object | None = None
 
     def invoke(
         self, request: GovernedProductionCallerRequest
@@ -235,6 +237,8 @@ def assemble_production_composition(
     clock: ClockCollaborator,
     executor_registry: Optional[ExecutorRegistry] = None,
     register_real_executors: bool = True,
+    credential_preflight=None,
+    accounting_ledger=None,
 ) -> ProductionComposition:
     """Compose production collaborators. Does not enable execution or bind."""
     if config.master_enable not in ("DISABLED", "ENABLED"):
@@ -257,11 +261,25 @@ def assemble_production_composition(
         policy=ProductionExecutorBindingPolicy(clock=binding_clock),
         clock=binding_clock,
     )
+    if credential_preflight is None:
+        from tools.hermes_core.production_credential_preflight import (
+            ProductionCredentialReadinessPreflight,
+        )
+
+        credential_preflight = ProductionCredentialReadinessPreflight()
+    if accounting_ledger is None:
+        from tools.hermes_core.production_accounting import ProductionAccountingLedger
+
+        accounting_path = Path(config.auth_store_path).with_name(
+            "production-accounting.sqlite3"
+        )
+        accounting_ledger = ProductionAccountingLedger.initialize(accounting_path)
     runtime = GovernedProductionRuntime(
         clock=clock,
         executor_registry=registry,
         binding_controller=controller,
         invocation_authorization_store=store,
+        accounting_ledger=accounting_ledger,
     )
     resolver = GovernedBoundExecutorResolver(
         binding_controller=controller,
@@ -291,6 +309,8 @@ def assemble_production_composition(
             router_contract_id=compute_ea4e6_router_contract_id(),
         ),
         clock=clock,
+        credential_preflight=credential_preflight,
+        accounting_ledger=accounting_ledger,
     )
 
 
