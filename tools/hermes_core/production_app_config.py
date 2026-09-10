@@ -24,6 +24,7 @@ from tools.hermes_core.production_wiring import (
 
 FEATURE_GATE_ALLOWED_VALUES = frozenset({"DISABLED", "ENABLED"})
 APPLICATION_FEATURE_GATE_DEFAULT = REAL_APP_CALLSITE_FEATURE_GATE_DEFAULT
+DEFAULT_LOCAL_OPERATOR_ID = "hermes-local-operator"
 
 
 class ProductionAppConfigError(RuntimeError):
@@ -52,6 +53,7 @@ class ProductionAppRuntimeConfig:
     activation_authorization_store: object | None = None
     activation_authorization_governing_commit: str | None = None
     activation_authorization_readiness_status: str = "HOLD"
+    activation_authorization_operator_id: str = DEFAULT_LOCAL_OPERATOR_ID
 
 
 def canonicalize_feature_gate(value: object) -> str:

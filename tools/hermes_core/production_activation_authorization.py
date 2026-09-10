@@ -22,10 +22,12 @@ from tools.hermes_core.receiver_router import compute_ea4e6_router_contract_id
 
 
 ACTIVATION_AUTHORIZATION_SCHEMA_ID = "hermes.production-activation-authorization/v1"
-ACTIVATION_AUTHORIZATION_VERSION = "ea4e.59"
-ACTIVATION_AUTHORIZATION_ARTIFACT_VERSION = "1"
+ACTIVATION_AUTHORIZATION_VERSION = "ea4e.62b"
+ACTIVATION_AUTHORIZATION_ARTIFACT_VERSION = "2"
 ACTIVATION_AUTHORIZATION_DEFAULT_TTL = 300
 ACTIVATION_AUTHORIZATION_MAX_TTL = 300
+ACTIVATION_CAPABILITY_ENTER_REQUEST_SCOPE = "production_activation.enter_request_scope"
+ALLOWED_ACTIVATION_CAPABILITIES = frozenset({ACTIVATION_CAPABILITY_ENTER_REQUEST_SCOPE})
 AUTHORIZED = "AUTHORIZED"
 DENIED = "DENIED"
 
@@ -42,6 +44,21 @@ FAILURE_CODES = frozenset(
         "ACTIVATION_AUTHORIZATION_MISSING", "REQUEST_ID_MISMATCH",
         "RECEIVER_MISMATCH", "ACTIVATION_AUTH_STORE_UNAVAILABLE",
         "INVALID_ACTIVATION_AUTH_TIME", "TRANSITION_REQUIRES_CLAIMED_AUTHORIZATION",
+        "ACTIVATION_STORE_ID_MISSING", "ACTIVATION_STORE_ID_MISMATCH",
+        "ACTIVATION_STORE_EPOCH_MISSING", "ACTIVATION_STORE_EPOCH_MISMATCH",
+        "ACTIVATION_STORE_ANCHOR_MISSING", "ACTIVATION_STORE_ANCHOR_MISMATCH",
+        "EXECUTOR_BINDING_ID_MISSING", "EXECUTOR_BINDING_ID_MISMATCH",
+        "EXECUTOR_BINDING_EXPIRED", "EXECUTOR_BINDING_NOT_RESERVED",
+        "CAPABILITY_SCOPE_MISSING", "CAPABILITY_SCOPE_MISMATCH",
+        "UNKNOWN_CAPABILITY", "WILDCARD_CAPABILITY_FORBIDDEN",
+        "OPERATOR_IDENTITY_MISSING", "OPERATOR_IDENTITY_UNVERIFIED",
+        "OPERATOR_IDENTITY_MISMATCH", "CEREMONY_ID_MISSING", "CEREMONY_ID_REPLAY",
+        "ACTIVATION_AUTH_CANCELLED", "ACTIVATION_AUTH_REVOKED",
+        "CANCELLATION_NOT_ALLOWED_IN_STATE", "REVOCATION_NOT_ALLOWED_IN_STATE",
+        "REVOCATION_TOO_LATE", "CEREMONY_AUDIT_PERSISTENCE_FAILURE",
+        "LEGACY_ACTIVATION_AUTHORIZATION_RETIRED", "CEREMONY_STATE_MISMATCH",
+        "CEREMONY_BINDING_RELEASE_FAILED", "CANCELLATION_REVOCATION_REASON_INVALID",
+        "CREDENTIAL_PREFLIGHT_UNAVAILABLE",
     }
 )
 
@@ -59,6 +76,12 @@ class ProductionActivationAuthorizationRequest:
     activation_mode: str
     operator_intent: str
     nonce: str
+    ceremony_id: str
+    operator_id: str
+    activation_store_id: str
+    activation_store_epoch: int
+    executor_binding_id: str
+    capability_scope: tuple[str, ...]
     requested_ttl_seconds: int = ACTIVATION_AUTHORIZATION_DEFAULT_TTL
 
 
@@ -67,13 +90,19 @@ class ProductionActivationAuthorization:
     activation_authorization_id: str
     schema_id: str
     artifact_version: str
+    ceremony_id: str
     request_id: str
+    operator_id: str
     receiver_id: str
     governing_commit: str
+    activation_store_id: str
+    activation_store_epoch: int
     router_contract_id: str
     authority_contract_id: str
     transport_contract_id: str
     model_binding_id: str
+    executor_binding_id: str
+    capability_scope: tuple[str, ...]
     feature_gate_state: str
     activation_mode: str
     decision: str
@@ -87,13 +116,19 @@ class ProductionActivationAuthorization:
         return {
             "schema_id": self.schema_id,
             "artifact_version": self.artifact_version,
+            "ceremony_id": self.ceremony_id,
             "request_id": self.request_id,
+            "operator_id": self.operator_id,
             "receiver_id": self.receiver_id,
             "governing_commit": self.governing_commit,
+            "activation_store_id": self.activation_store_id,
+            "activation_store_epoch": self.activation_store_epoch,
             "router_contract_id": self.router_contract_id,
             "authority_contract_id": self.authority_contract_id,
             "transport_contract_id": self.transport_contract_id,
             "model_binding_id": self.model_binding_id,
+            "executor_binding_id": self.executor_binding_id,
+            "capability_scope": list(self.capability_scope),
             "feature_gate_state": self.feature_gate_state,
             "activation_mode": self.activation_mode,
             "decision": self.decision,
@@ -166,12 +201,16 @@ class ProductionActivationAuthorizationPolicy:
         governing_commit: str,
         readiness_status: str,
         recovery_blocked: bool | Callable[[], bool] = False,
+        operator_identity_verifier: Any = None,
+        binding_lookup: Callable[[str], Any] | None = None,
     ) -> None:
         self.store = store
         self.clock = clock
         self.governing_commit = governing_commit
         self.readiness_status = readiness_status
         self.recovery_blocked = recovery_blocked
+        self.operator_identity_verifier = operator_identity_verifier
+        self.binding_lookup = binding_lookup
 
     def evaluate(self, request: ProductionActivationAuthorizationRequest | None) -> tuple[str, str]:
         if request is None:
@@ -181,7 +220,8 @@ class ProductionActivationAuthorizationPolicy:
             request.router_contract_id, request.authority_contract_id,
             request.transport_contract_id, request.model_binding_id,
             request.feature_gate_state, request.activation_mode, request.operator_intent,
-            request.nonce,
+            request.nonce, request.ceremony_id, request.operator_id,
+            request.activation_store_id, request.executor_binding_id,
         )
         if not all(isinstance(value, str) and value.strip() for value in required):
             return DENIED, "MALFORMED_REQUEST"
@@ -197,6 +237,44 @@ class ProductionActivationAuthorizationPolicy:
             return DENIED, "MALFORMED_REQUEST"
         if request.governing_commit != self.governing_commit:
             return DENIED, "COMMIT_MISMATCH"
+        try:
+            store_id, store_epoch = self.store.lineage()
+        except ProductionActivationAuthorizationStoreError as exc:
+            return DENIED, exc.reason
+        if request.activation_store_id != store_id:
+            return DENIED, "ACTIVATION_STORE_ID_MISMATCH"
+        if request.activation_store_epoch != store_epoch:
+            return DENIED, "ACTIVATION_STORE_EPOCH_MISMATCH"
+        if type(request.activation_store_epoch) is not int:
+            return DENIED, "ACTIVATION_STORE_EPOCH_MISMATCH"
+        if self.operator_identity_verifier is None:
+            return DENIED, "OPERATOR_IDENTITY_UNVERIFIED"
+        try:
+            if not self.operator_identity_verifier.verify(request.operator_id):
+                return DENIED, "OPERATOR_IDENTITY_UNVERIFIED"
+        except Exception:
+            return DENIED, "OPERATOR_IDENTITY_UNVERIFIED"
+        try:
+            scope = canonicalize_capability_scope(request.capability_scope)
+        except ValueError as exc:
+            return DENIED, str(exc)
+        if not scope:
+            return DENIED, "CAPABILITY_SCOPE_MISSING"
+        if self.binding_lookup is None:
+            return DENIED, "EXECUTOR_BINDING_ID_MISSING"
+        try:
+            binding = self.binding_lookup(request.receiver_id)
+        except Exception:
+            return DENIED, "EXECUTOR_BINDING_ID_MISSING"
+        if binding is None:
+            return DENIED, "EXECUTOR_BINDING_ID_MISSING"
+        if getattr(binding, "binding_id", None) != request.executor_binding_id:
+            return DENIED, "EXECUTOR_BINDING_ID_MISMATCH"
+        try:
+            if _parse_time(binding.expires_at) <= _parse_time(self.clock.now_iso()):
+                return DENIED, "EXECUTOR_BINDING_EXPIRED"
+        except (AttributeError, TypeError, ValueError):
+            return DENIED, "EXECUTOR_BINDING_EXPIRED"
         if request.router_contract_id != compute_ea4e6_router_contract_id():
             return DENIED, "ROUTER_CONTRACT_MISMATCH"
         if request.authority_contract_id != compute_ea4e7_authority_contract_id():
@@ -232,6 +310,9 @@ class ProductionActivationAuthorizationPolicy:
         request_id: str,
         receiver_id: str,
         feature_gate_state: str,
+        operator_id: str | None = None,
+        executor_binding_id: str | None = None,
+        requested_capabilities: tuple[str, ...] | None = None,
     ) -> ProductionActivationAuthorizationClaimResult:
         validation = validator.validate(
             artifact,
@@ -239,13 +320,30 @@ class ProductionActivationAuthorizationPolicy:
             receiver_id=receiver_id,
             governing_commit=self.governing_commit,
             feature_gate_state=feature_gate_state,
+            operator_id=operator_id or (artifact.operator_id if artifact else ""),
+            executor_binding_id=(
+                executor_binding_id or (artifact.executor_binding_id if artifact else "")
+            ),
+            requested_capabilities=(
+                requested_capabilities
+                if requested_capabilities is not None
+                else (artifact.capability_scope if artifact else ())
+            ),
         )
         if not validation.valid or artifact is None:
             return ProductionActivationAuthorizationClaimResult(DENIED, validation.reason)
         try:
+            self.store.record_ceremony_event(
+                artifact, "ACTIVATION_AUTH_VALIDATED", self.clock.now_iso()
+            )
             state = self.store.claim(artifact.activation_authorization_id, self.clock.now_iso())
         except ProductionActivationAuthorizationStoreError as exc:
-            return ProductionActivationAuthorizationClaimResult(DENIED, exc.reason)
+            reason = (
+                "CEREMONY_AUDIT_PERSISTENCE_FAILURE"
+                if exc.reason == "CEREMONY_AUDIT_PERSISTENCE_FAILURE"
+                else exc.reason
+            )
+            return ProductionActivationAuthorizationClaimResult(DENIED, reason)
         return ProductionActivationAuthorizationClaimResult(
             AUTHORIZED, "ACTIVATION_AUTHORIZATION_CLAIMED", artifact, state
         )
@@ -315,9 +413,13 @@ class ProductionActivationAuthorizationValidator:
         *,
         store: ProductionActivationAuthorizationStore,
         clock: ClockCollaborator,
+        operator_identity_verifier: Any = None,
+        binding_lookup: Callable[[str], Any] | None = None,
     ) -> None:
         self._store = store
         self._clock = clock
+        self._operator_identity_verifier = operator_identity_verifier
+        self._binding_lookup = binding_lookup
 
     def validate(
         self,
@@ -327,23 +429,72 @@ class ProductionActivationAuthorizationValidator:
         receiver_id: str,
         governing_commit: str,
         feature_gate_state: str,
+        operator_id: str | None = None,
+        executor_binding_id: str | None = None,
+        requested_capabilities: tuple[str, ...] | None = None,
     ) -> ProductionActivationAuthorizationValidationResult:
         if artifact is None:
             return self._deny("ACTIVATION_AUTHORIZATION_MISSING")
         if artifact.schema_id != ACTIVATION_AUTHORIZATION_SCHEMA_ID:
             return self._deny("MALFORMED_REQUEST")
         if artifact.artifact_version != ACTIVATION_AUTHORIZATION_ARTIFACT_VERSION:
-            return self._deny("MALFORMED_REQUEST")
+            return self._deny("LEGACY_ACTIVATION_AUTHORIZATION_RETIRED")
         if (
             artifact.decision != AUTHORIZED
             or artifact.issuer_id != ProductionActivationAuthorizationIssuer.ISSUER_ID
             or not artifact.verify_hash()
         ):
             return self._deny("MALFORMED_REQUEST")
+        if artifact.request_id != request_id:
+            return self._deny("REQUEST_ID_MISMATCH")
+        if artifact.receiver_id != receiver_id:
+            return self._deny("RECEIVER_MISMATCH")
         expected = QUALIFIED_RECEIVERS.get(receiver_id)
+        operator_id = operator_id or artifact.operator_id
+        executor_binding_id = executor_binding_id or artifact.executor_binding_id
+        requested_capabilities = (
+            requested_capabilities
+            if requested_capabilities is not None
+            else artifact.capability_scope
+        )
+        try:
+            requested_scope = canonicalize_capability_scope(requested_capabilities)
+            artifact_scope = canonicalize_capability_scope(artifact.capability_scope)
+        except ValueError as exc:
+            return self._deny(str(exc))
+        if not requested_scope or not set(requested_scope).issubset(artifact_scope):
+            return self._deny("CAPABILITY_SCOPE_MISMATCH")
+        try:
+            store_id, store_epoch = self._store.lineage()
+        except ProductionActivationAuthorizationStoreError as exc:
+            return self._deny(exc.reason)
+        if artifact.activation_store_id != store_id:
+            return self._deny("ACTIVATION_STORE_ID_MISMATCH")
+        if artifact.activation_store_epoch != store_epoch:
+            return self._deny("ACTIVATION_STORE_EPOCH_MISMATCH")
+        if artifact.operator_id != operator_id:
+            return self._deny("OPERATOR_IDENTITY_MISMATCH")
+        if self._operator_identity_verifier is not None:
+            try:
+                if not self._operator_identity_verifier.verify(operator_id):
+                    return self._deny("OPERATOR_IDENTITY_UNVERIFIED")
+            except Exception:
+                return self._deny("OPERATOR_IDENTITY_UNVERIFIED")
+        if artifact.executor_binding_id != executor_binding_id:
+            return self._deny("EXECUTOR_BINDING_ID_MISMATCH")
+        if self._binding_lookup is not None:
+            binding = self._binding_lookup(receiver_id)
+            if binding is None:
+                return self._deny("EXECUTOR_BINDING_NOT_RESERVED")
+            if getattr(binding, "binding_id", None) != executor_binding_id:
+                return self._deny("EXECUTOR_BINDING_ID_MISMATCH")
+            try:
+                if _parse_time(binding.expires_at) <= _parse_time(self._clock.now_iso()):
+                    return self._deny("EXECUTOR_BINDING_EXPIRED")
+            except (AttributeError, TypeError, ValueError):
+                return self._deny("EXECUTOR_BINDING_EXPIRED")
         checks = (
-            (artifact.request_id == request_id, "REQUEST_ID_MISMATCH"),
-            (artifact.receiver_id == receiver_id, "RECEIVER_MISMATCH"),
+            (bool(artifact.ceremony_id), "CEREMONY_ID_MISSING"),
             (artifact.governing_commit == governing_commit, "COMMIT_MISMATCH"),
             (artifact.router_contract_id == compute_ea4e6_router_contract_id(), "ROUTER_CONTRACT_MISMATCH"),
             (artifact.authority_contract_id == compute_ea4e7_authority_contract_id(), "AUTHORITY_CONTRACT_MISMATCH"),
@@ -367,7 +518,12 @@ class ProductionActivationAuthorizationValidator:
                 return self._deny("MALFORMED_REQUEST")
             if now >= expires:
                 return self._deny("EXPIRED")
-            if self._store.state(artifact.activation_authorization_id) != "ISSUED":
+            durable_state = self._store.state(artifact.activation_authorization_id)
+            if durable_state == "CANCELLED":
+                return self._deny("ACTIVATION_AUTH_CANCELLED")
+            if durable_state == "REVOKED":
+                return self._deny("ACTIVATION_AUTH_REVOKED")
+            if durable_state != "ISSUED":
                 return self._deny("REPLAY")
             stored = self._store.load_artifact(artifact.activation_authorization_id)
             if stored != artifact.to_dict():
@@ -438,7 +594,16 @@ class ProductionAppActivationTransitionOwner:
                 artifact, "PRODUCTION_ACTIVATION_ENTERED", self._clock.now_iso()
             )
         except ProductionActivationAuthorizationStoreError:
-            pass
+            with self._lock:
+                self._active.pop(request_id, None)
+            try:
+                self._store.abort(
+                    artifact.activation_authorization_id, self._clock.now_iso()
+                )
+            except ProductionActivationAuthorizationStoreError:
+                self._mark_recovery(request_id)
+                return self._recovery("CEREMONY_AUDIT_PERSISTENCE_FAILURE")
+            return self._deny("CEREMONY_AUDIT_PERSISTENCE_FAILURE")
         try:
             self._store.consume(artifact.activation_authorization_id, self._clock.now_iso())
         except ProductionActivationAuthorizationStoreError:
@@ -523,13 +688,19 @@ def build_production_activation_authorization(
     fields = {
         "schema_id": ACTIVATION_AUTHORIZATION_SCHEMA_ID,
         "artifact_version": ACTIVATION_AUTHORIZATION_ARTIFACT_VERSION,
+        "ceremony_id": request.ceremony_id,
         "request_id": request.request_id,
+        "operator_id": request.operator_id,
         "receiver_id": request.receiver_id,
         "governing_commit": request.governing_commit,
+        "activation_store_id": request.activation_store_id,
+        "activation_store_epoch": request.activation_store_epoch,
         "router_contract_id": request.router_contract_id,
         "authority_contract_id": request.authority_contract_id,
         "transport_contract_id": request.transport_contract_id,
         "model_binding_id": request.model_binding_id,
+        "executor_binding_id": request.executor_binding_id,
+        "capability_scope": canonicalize_capability_scope(request.capability_scope),
         "feature_gate_state": request.feature_gate_state,
         "activation_mode": request.activation_mode,
         "decision": AUTHORIZED,
@@ -553,12 +724,12 @@ def activation_authorization_from_mapping(
         return None
     if not isinstance(value, Mapping):
         raise TypeError("activation authorization must be a mapping")
-    return ProductionActivationAuthorization(
-        **{
-            name: value[name]
-            for name in ProductionActivationAuthorization.__dataclass_fields__
-        }
-    )
+    fields = {
+        name: value[name]
+        for name in ProductionActivationAuthorization.__dataclass_fields__
+    }
+    fields["capability_scope"] = tuple(fields["capability_scope"])
+    return ProductionActivationAuthorization(**fields)
 
 
 def activation_authorization_request_from_mapping(
@@ -568,13 +739,27 @@ def activation_authorization_request_from_mapping(
         return None
     if not isinstance(value, Mapping):
         raise TypeError("activation authorization request must be a mapping")
-    return ProductionActivationAuthorizationRequest(
-        **{
-            name: value[name]
-            for name in ProductionActivationAuthorizationRequest.__dataclass_fields__
-            if name in value
-        }
-    )
+    fields = {
+        name: value[name]
+        for name in ProductionActivationAuthorizationRequest.__dataclass_fields__
+        if name in value
+    }
+    if "capability_scope" in fields:
+        fields["capability_scope"] = tuple(fields["capability_scope"])
+    return ProductionActivationAuthorizationRequest(**fields)
+
+
+def canonicalize_capability_scope(value: object) -> tuple[str, ...]:
+    if not isinstance(value, (tuple, list, set, frozenset)):
+        raise ValueError("CAPABILITY_SCOPE_MISSING")
+    items = tuple(sorted(set(value)))
+    if any(not isinstance(item, str) or not item for item in items):
+        raise ValueError("UNKNOWN_CAPABILITY")
+    if "*" in items:
+        raise ValueError("WILDCARD_CAPABILITY_FORBIDDEN")
+    if not set(items).issubset(ALLOWED_ACTIVATION_CAPABILITIES):
+        raise ValueError("UNKNOWN_CAPABILITY")
+    return items
 
 
 def _parse_time(value: str) -> datetime:

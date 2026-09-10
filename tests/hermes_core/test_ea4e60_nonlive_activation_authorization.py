@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -19,6 +20,7 @@ from tools.hermes_core.production_app_config import ProductionAppRuntimeConfig
 from tools.hermes_core.production_executor_binding import ExecutorRegistry
 from tools.hermes_core.production_activation import ProductionActivationValidator
 from tools.hermes_core.production_activation_authorization import (
+    ACTIVATION_CAPABILITY_ENTER_REQUEST_SCOPE,
     ACTIVATION_AUTHORIZATION_SCHEMA_ID,
     AUTHORIZED,
     DENIED,
@@ -27,6 +29,10 @@ from tools.hermes_core.production_activation_authorization import (
     ProductionActivationAuthorizationRequest,
     ProductionActivationAuthorizationValidator,
     ProductionAppActivationTransitionOwner,
+)
+from tools.hermes_core.production_activation_authorization_ceremony import (
+    ProductionOperatorIdentity,
+    ProductionOperatorIdentityVerifier,
 )
 from tools.hermes_core.production_activation_authorization_store import (
     ProductionActivationAuthStoreBootstrapper,
@@ -42,6 +48,8 @@ from tools.hermes_core.receiver_router import compute_ea4e6_router_contract_id
 NOW = "2026-01-01T00:00:00+00:00"
 GOVERNING_COMMIT = "d61945f96e11b19ef0dcbd008c4d301647c8acad"
 RECEIVER = "kilo-cli-agent"
+OPERATOR_ID = "ea4e60-local-operator"
+TEST_BINDING_ID = "binding-ea4e60-fake"
 
 
 @pytest.fixture(autouse=True)
@@ -58,8 +66,9 @@ def _store(tmp_path):
     )
 
 
-def _request(request_id="request-1", **changes):
+def _request(store, request_id="request-1", **changes):
     spec = QUALIFIED_RECEIVERS[RECEIVER]
+    store_id, store_epoch = store.lineage()
     values = {
         "request_id": request_id,
         "receiver_id": RECEIVER,
@@ -73,6 +82,12 @@ def _request(request_id="request-1", **changes):
         "operator_intent": "EXPLICIT",
         "requested_ttl_seconds": 300,
         "nonce": f"nonce-{request_id}",
+        "ceremony_id": f"ceremony-{request_id}",
+        "operator_id": OPERATOR_ID,
+        "activation_store_id": store_id,
+        "activation_store_epoch": store_epoch,
+        "executor_binding_id": TEST_BINDING_ID,
+        "capability_scope": (ACTIVATION_CAPABILITY_ENTER_REQUEST_SCOPE,),
     }
     values.update(changes)
     return ProductionActivationAuthorizationRequest(**values)
@@ -87,13 +102,20 @@ def _collaborators(tmp_path, *, now=NOW, readiness="PASS", recovery_blocked=Fals
         governing_commit=GOVERNING_COMMIT,
         readiness_status=readiness,
         recovery_blocked=recovery_blocked,
+        operator_identity_verifier=ProductionOperatorIdentityVerifier(
+            ProductionOperatorIdentity(OPERATOR_ID)
+        ),
+        binding_lookup=lambda _receiver: SimpleNamespace(
+            binding_id=TEST_BINDING_ID,
+            expires_at="2026-01-01T00:30:00+00:00",
+        ),
     )
     return store, clock, policy, ProductionActivationAuthorizationIssuer(policy)
 
 
 def _issue(tmp_path, request_id="request-1"):
     store, clock, policy, issuer = _collaborators(tmp_path)
-    result = issuer.issue(_request(request_id))
+    result = issuer.issue(_request(store, request_id))
     assert result.decision == AUTHORIZED
     assert result.artifact is not None
     return store, clock, policy, result.artifact
@@ -151,7 +173,7 @@ def test_issue_persists_immutable_request_bound_artifact_and_stops(tmp_path):
 )
 def test_issue_policy_denies_invalid_requests_without_issuing(tmp_path, changes, reason):
     store, _, _, issuer = _collaborators(tmp_path)
-    result = issuer.issue(_request(**changes))
+    result = issuer.issue(_request(store, **changes))
     assert result.decision == DENIED
     assert result.reason == reason
     assert result.artifact is None
@@ -160,7 +182,7 @@ def test_issue_policy_denies_invalid_requests_without_issuing(tmp_path, changes,
 
 def test_grok_is_denied_without_fallback(tmp_path):
     store, _, _, issuer = _collaborators(tmp_path)
-    result = issuer.issue(_request(receiver_id="grok-agent"))
+    result = issuer.issue(_request(store, receiver_id="grok-agent"))
     assert result.decision == DENIED
     assert result.reason == "UNSUPPORTED_RECEIVER"
     assert not store.has_outstanding()
@@ -176,7 +198,7 @@ def test_trusted_policy_state_denies_issue(
     store, _, _, issuer = _collaborators(
         tmp_path, readiness=readiness, recovery_blocked=recovery_blocked
     )
-    result = issuer.issue(_request())
+    result = issuer.issue(_request(store))
     assert result.decision == DENIED
     assert result.reason == reason
     assert not store.has_outstanding()
@@ -184,8 +206,8 @@ def test_trusted_policy_state_denies_issue(
 
 def test_one_outstanding_authorization_is_allowed(tmp_path):
     store, _, _, issuer = _collaborators(tmp_path)
-    first = issuer.issue(_request("first"))
-    second = issuer.issue(_request("second"))
+    first = issuer.issue(_request(store, "first"))
+    second = issuer.issue(_request(store, "second"))
     assert first.decision == AUTHORIZED
     assert second.decision == DENIED
     assert second.reason == "CONFLICTING_OUTSTANDING_AUTH"
@@ -348,9 +370,16 @@ def test_fresh_explicit_request_can_follow_expired_authorization(tmp_path):
         clock=late_clock,
         governing_commit=GOVERNING_COMMIT,
         readiness_status="PASS",
+        operator_identity_verifier=ProductionOperatorIdentityVerifier(
+            ProductionOperatorIdentity(OPERATOR_ID)
+        ),
+        binding_lookup=lambda _receiver: SimpleNamespace(
+            binding_id=TEST_BINDING_ID,
+            expires_at="2026-01-01T01:30:00+00:00",
+        ),
     )
     second = ProductionActivationAuthorizationIssuer(policy).issue(
-        _request("fresh-second")
+        _request(store, "fresh-second")
     )
     assert store.state(first.activation_authorization_id) == "EXPIRED"
     assert second.decision == AUTHORIZED
@@ -404,7 +433,7 @@ def test_consume_persistence_failure_clears_activation_and_marks_recovery(tmp_pa
     assert recovery == [artifact.request_id]
 
 
-def test_observational_enter_event_failure_does_not_issue_or_gate_authority(
+def test_mandatory_enter_event_failure_fails_closed(
     tmp_path, monkeypatch
 ):
     store, clock, policy, artifact = _issue(tmp_path)
@@ -430,9 +459,10 @@ def test_observational_enter_event_failure_does_not_issue_or_gate_authority(
         claimed_authorization=claim,
         production_activation=activation,
     )
-    assert result.decision == AUTHORIZED
-    assert owner.is_active(artifact.request_id)
-    assert store.state(artifact.activation_authorization_id) == "CONSUMED"
+    assert result.decision == DENIED
+    assert result.reason == "CEREMONY_AUDIT_PERSISTENCE_FAILURE"
+    assert not owner.is_active(artifact.request_id)
+    assert store.state(artifact.activation_authorization_id) == "ABORTED"
 
 
 def test_app_submit_requires_preissued_activation_authorization(tmp_path):
@@ -507,6 +537,8 @@ def test_app_happy_path_consumes_and_tears_down_request_activation(tmp_path):
 
 def test_explicit_issue_action_does_not_bind_or_execute(tmp_path):
     components, fake, clock = _configure(tmp_path, RECEIVER)
+    binding = _bind(components, RECEIVER)
+    assert binding.binding_decision == "BOUND"
     _, activation = external_authority_and_activation(RECEIVER, "issue-only", clock=clock)
     spec = QUALIFIED_RECEIVERS[RECEIVER]
     result = app.issue_production_activation_authorization(
@@ -526,7 +558,10 @@ def test_explicit_issue_action_does_not_bind_or_execute(tmp_path):
         }
     )
     assert result["decision"] == "AUTHORIZED"
-    assert components.composition.binding_controller.get_binding_for_receiver(RECEIVER) is None
+    assert (
+        components.composition.binding_controller.get_binding_for_receiver(RECEIVER)
+        is binding.handle
+    )
     assert fake.calls == 0
 
 

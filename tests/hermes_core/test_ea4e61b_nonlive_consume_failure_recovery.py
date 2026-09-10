@@ -73,7 +73,7 @@ class NoProcesses:
 
 def _claimed(tmp_path, request_id="request-a", receiver_id=RECEIVER):
     store, clock, policy, issuer = _collaborators(tmp_path)
-    request = _request(request_id)
+    request = _request(store, request_id)
     if receiver_id != RECEIVER:
         spec = QUALIFIED_RECEIVERS[receiver_id]
         request = replace(
@@ -430,7 +430,7 @@ def test_normal_consume_and_transition_failure_paths_remain_unchanged(tmp_path):
 
 def test_grok_remains_denied_without_issuance(tmp_path):
     store, _, _, issuer = _collaborators(tmp_path)
-    result = issuer.issue(_request(receiver_id="grok-agent"))
+    result = issuer.issue(_request(store, receiver_id="grok-agent"))
     assert result.decision == DENIED
     assert result.reason == "UNSUPPORTED_RECEIVER"
     assert not store.has_outstanding()

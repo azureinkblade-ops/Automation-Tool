@@ -43057,6 +43057,11 @@ def configure_governed_production_action(runtime_config):
         ProductionActivationAuthorizationValidator,
         ProductionAppActivationTransitionOwner,
     )
+    from tools.hermes_core.production_activation_authorization_ceremony import (
+        ProductionActivationAuthorizationCeremonyCoordinator,
+        ProductionOperatorIdentity,
+        ProductionOperatorIdentityVerifier,
+    )
     from tools.hermes_core.production_activation_authorization_store import (
         ProductionActivationAuthorizationStore,
     )
@@ -43083,16 +43088,25 @@ def configure_governed_production_action(runtime_config):
     ).with_name("production-recovery.sqlite3")
     recovery_store = ProductionRecoveryStore.initialize(recovery_path)
     host_instance_id = runtime_config.recovery_host_instance_id or f"host-{uuid4()}"
+    operator_verifier = ProductionOperatorIdentityVerifier(
+        ProductionOperatorIdentity(
+            operator_id=runtime_config.activation_authorization_operator_id
+        )
+    )
     activation_policy = ProductionActivationAuthorizationPolicy(
         store=activation_store,
         clock=components.composition.clock,
         governing_commit=governing_commit,
         readiness_status=runtime_config.activation_authorization_readiness_status,
         recovery_blocked=recovery_store.has_unresolved,
+        operator_identity_verifier=operator_verifier,
+        binding_lookup=components.composition.binding_controller.get_binding_for_receiver,
     )
     activation_validator = ProductionActivationAuthorizationValidator(
         store=activation_store,
         clock=components.composition.clock,
+        operator_identity_verifier=operator_verifier,
+        binding_lookup=components.composition.binding_controller.get_binding_for_receiver,
     )
     activation_transition_owner = ProductionAppActivationTransitionOwner(
         store=activation_store,
@@ -43111,7 +43125,14 @@ def configure_governed_production_action(runtime_config):
             )
         ),
     )
-    activation_issuer = ProductionActivationAuthorizationIssuer(activation_policy)
+    raw_activation_issuer = ProductionActivationAuthorizationIssuer(activation_policy)
+    activation_issuer = ProductionActivationAuthorizationCeremonyCoordinator(
+        issuer=raw_activation_issuer,
+        binding_controller=components.composition.binding_controller,
+        operator_identity_verifier=operator_verifier,
+        clock=components.composition.clock,
+        credential_preflight=components.composition.credential_preflight,
+    )
     lifecycle = ProductionAppRequestLifecycleOwner(
         host,
         components.composition.binding_controller,
@@ -43125,6 +43146,7 @@ def configure_governed_production_action(runtime_config):
         authority_validator=components.composition.authority_validator,
         router=components.composition.router,
         activation_feature_gate_state=runtime_config.callsite_feature_gate,
+        activation_ceremony_coordinator=activation_issuer,
     )
     recovery = ProductionAppRecoveryOwner(
         recovery_store,
@@ -43149,17 +43171,37 @@ def configure_governed_production_action(runtime_config):
 
 def issue_production_activation_authorization(payload: dict[str, Any]) -> dict[str, Any]:
     """Explicitly issue one request-bound authorization; never execute or bind."""
-    from tools.hermes_core.production_activation_authorization import (
-        activation_authorization_request_from_mapping,
-    )
-
     if _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER is None:
         return {"decision": "DENIED", "reason": "ACTIVATION_AUTH_ISSUER_NOT_CONFIGURED", "authorization": None}
+    return _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER.issue(payload).to_public_dict()
+
+
+def cancel_production_activation_authorization(
+    authorization: dict[str, Any], operator_id: str, reason: str
+) -> dict[str, Any]:
+    if _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER is None:
+        return {"decision": "DENIED", "reason": "ACTIVATION_AUTH_ISSUER_NOT_CONFIGURED"}
     try:
-        request = activation_authorization_request_from_mapping(payload)
-    except (KeyError, TypeError, ValueError):
-        return {"decision": "DENIED", "reason": "MALFORMED_REQUEST", "authorization": None}
-    return _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER.issue(request).to_public_dict()
+        state = _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER.cancel(
+            authorization, operator_id, reason
+        )
+    except Exception as exc:
+        return {"decision": "DENIED", "reason": getattr(exc, "reason", type(exc).__name__)}
+    return {"decision": "AUTHORIZED", "reason": "ACTIVATION_AUTH_CANCELLED", "state": state}
+
+
+def revoke_production_activation_authorization(
+    authorization: dict[str, Any], operator_id: str, reason: str
+) -> dict[str, Any]:
+    if _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER is None:
+        return {"decision": "DENIED", "reason": "ACTIVATION_AUTH_ISSUER_NOT_CONFIGURED"}
+    try:
+        state = _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER.revoke(
+            authorization, operator_id, reason
+        )
+    except Exception as exc:
+        return {"decision": "DENIED", "reason": getattr(exc, "reason", type(exc).__name__)}
+    return {"decision": "AUTHORIZED", "reason": "ACTIVATION_AUTH_REVOKED", "state": state}
 
 
 def submit_governed_production_action(payload: dict[str, Any]) -> dict[str, Any]:

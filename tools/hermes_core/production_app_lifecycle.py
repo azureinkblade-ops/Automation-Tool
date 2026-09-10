@@ -26,6 +26,7 @@ from tools.hermes_core.production_executor_binding import (
     ProductionExecutorBindingController,
 )
 from tools.hermes_core.production_activation_authorization import (
+    ACTIVATION_CAPABILITY_ENTER_REQUEST_SCOPE,
     ProductionActivationAuthorizationPolicy,
     ProductionActivationAuthorizationValidator,
     ProductionAppActivationTransitionOwner,
@@ -78,6 +79,7 @@ class ProductionAppRequestLifecycleOwner:
         authority_validator: Any = None,
         router: ReceiverRouter | None = None,
         activation_feature_gate_state: str = "DISABLED",
+        activation_ceremony_coordinator: Any = None,
     ) -> None:
         self._governed_action = governed_action
         self._binding_controller = binding_controller
@@ -95,6 +97,7 @@ class ProductionAppRequestLifecycleOwner:
         self._authority_validator = authority_validator
         self._router = router
         self._activation_feature_gate_state = activation_feature_gate_state
+        self._activation_ceremony_coordinator = activation_ceremony_coordinator
 
     def submit(self, payload: Mapping[str, Any] | None) -> ProductionAppHostResult:
         if self._governed_action is None or self._binding_controller is None:
@@ -180,6 +183,7 @@ class ProductionAppRequestLifecycleOwner:
         action_error: Exception | None = None
         cleanup_error: str | None = None
         activation_recovery_required = False
+        activation_authorization = None
         try:
             activation_dependencies = (
                 self._activation_authorization_policy,
@@ -216,6 +220,14 @@ class ProductionAppRequestLifecycleOwner:
                                 request_id=payload["request_id"],
                                 receiver_id=receiver_id,
                                 feature_gate_state=self._activation_feature_gate_state,
+                                operator_id=(
+                                    self._activation_authorization_policy
+                                    .operator_identity_verifier.identity.operator_id
+                                ),
+                                executor_binding_id=binding.binding_id,
+                                requested_capabilities=(
+                                    ACTIVATION_CAPABILITY_ENTER_REQUEST_SCOPE,
+                                ),
                             )
                             if claim.decision != "AUTHORIZED":
                                 result = self._deny(
@@ -251,6 +263,23 @@ class ProductionAppRequestLifecycleOwner:
                     cleanup_error = cleanup_error or "BINDING_TEARDOWN_NOT_CONFIRMED"
             except Exception as exc:
                 cleanup_error = cleanup_error or f"BINDING_TEARDOWN_EXCEPTION:{type(exc).__name__}"
+
+            if (
+                activation_authorization is not None
+                and self._activation_ceremony_coordinator is not None
+            ):
+                try:
+                    self._activation_ceremony_coordinator.complete(
+                        activation_authorization,
+                        success=(
+                            result is not None
+                            and result.decision == "ALLOW"
+                            and cleanup_error is None
+                            and not activation_recovery_required
+                        ),
+                    )
+                except Exception:
+                    cleanup_error = cleanup_error or "CEREMONY_AUDIT_PERSISTENCE_FAILURE"
 
             if self._recovery_store is not None:
                 if cleanup_error is None and not activation_recovery_required:

@@ -341,7 +341,7 @@ class ProductionAppRecoveryOwner:
             )
         except Exception:
             return "FAILED"
-        return state if state in {"ABORTED", "CONSUMED"} else "FAILED"
+        return state if state in {"ABORTED", "CONSUMED", "CANCELLED", "REVOKED"} else "FAILED"
 
     def _record_process_accounting(
         self, record: ProductionRecoveryRecord, event_type: str
