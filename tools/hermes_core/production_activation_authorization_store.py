@@ -213,7 +213,26 @@ class ProductionActivationAuthorizationStore:
             failure="CONSUME_PERSISTENCE_FAILED",
         )
 
-    def abort(self, activation_authorization_id: str, now: str) -> str:
+    def abort(
+        self,
+        activation_authorization_id: str,
+        now: str,
+        *,
+        recovery_request_id: str | None = None,
+        recovery_receiver_id: str | None = None,
+    ) -> str:
+        recovery_fields = (recovery_request_id, recovery_receiver_id)
+        if any(value is not None for value in recovery_fields):
+            if not all(isinstance(value, str) and value for value in recovery_fields):
+                raise ProductionActivationAuthorizationStoreError(
+                    "ACTIVATION_AUTH_RECOVERY_IDENTITY_MISSING"
+                )
+            return self._recover_uncertain_consume(
+                activation_authorization_id,
+                now,
+                request_id=recovery_request_id,
+                receiver_id=recovery_receiver_id,
+            )
         return self._terminal_transition(
             activation_authorization_id,
             now,
@@ -221,6 +240,106 @@ class ProductionActivationAuthorizationStore:
             event_type="ACTIVATION_AUTH_ABORTED",
             failure="ACTIVATION_AUTH_ABORT_FAILED",
         )
+
+    def _recover_uncertain_consume(
+        self,
+        activation_authorization_id: str,
+        now: str,
+        *,
+        request_id: str,
+        receiver_id: str,
+    ) -> str:
+        try:
+            with closing(self._connect()) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = self._load_row(connection, activation_authorization_id)
+                self._validate_recovery_identity(
+                    row,
+                    activation_authorization_id=activation_authorization_id,
+                    request_id=request_id,
+                    receiver_id=receiver_id,
+                )
+                state = str(row["state"])
+                if state == "CONSUMED":
+                    return "CONSUMED"
+                if state == "ABORTED":
+                    return "ABORTED"
+                if state != "CLAIMED":
+                    raise ProductionActivationAuthorizationStoreError(
+                        "ACTIVATION_AUTH_RECOVERY_STATE_INVALID"
+                    )
+                changed = connection.execute(
+                    "UPDATE production_activation_authorizations "
+                    "SET state='ABORTED', updated_at=? "
+                    "WHERE activation_authorization_id=? AND state='CLAIMED'",
+                    (now, activation_authorization_id),
+                ).rowcount
+                if changed != 1:
+                    raise ProductionActivationAuthorizationStoreError(
+                        "ACTIVATION_AUTH_RECOVERY_STATE_INVALID"
+                    )
+                self._insert_event_from_row(
+                    connection,
+                    row,
+                    "ACTIVATION_AUTH_RECOVERY_ABORTED",
+                    now,
+                    "ACTIVATION_AUTH_CONSUME_PERSISTENCE_UNCERTAIN",
+                )
+                connection.commit()
+                return "ABORTED"
+        except ProductionActivationAuthorizationStoreError:
+            raise
+        except (json.JSONDecodeError, TypeError, ValueError, KeyError) as exc:
+            raise ProductionActivationAuthorizationStoreError(
+                "ACTIVATION_AUTH_RECOVERY_MALFORMED"
+            ) from exc
+        except sqlite3.Error as exc:
+            raise ProductionActivationAuthorizationStoreError(
+                "ACTIVATION_AUTH_ABORT_FAILED"
+            ) from exc
+
+    @staticmethod
+    def _validate_recovery_identity(
+        row: sqlite3.Row,
+        *,
+        activation_authorization_id: str,
+        request_id: str,
+        receiver_id: str,
+    ) -> None:
+        payload = json.loads(row["artifact_json"])
+        if not isinstance(payload, dict):
+            raise ProductionActivationAuthorizationStoreError(
+                "ACTIVATION_AUTH_RECOVERY_MALFORMED"
+            )
+        artifact_hash = payload.get("artifact_hash")
+        canonical_fields = {
+            key: value
+            for key, value in payload.items()
+            if key not in {"activation_authorization_id", "artifact_hash"}
+        }
+        computed_hash = hashlib.sha256(
+            json.dumps(
+                canonical_fields,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        checks = (
+            row["activation_authorization_id"] == activation_authorization_id,
+            row["request_id"] == request_id,
+            row["receiver_id"] == receiver_id,
+            payload.get("activation_authorization_id") == activation_authorization_id,
+            payload.get("request_id") == request_id,
+            payload.get("receiver_id") == receiver_id,
+            artifact_hash == row["artifact_hash"] == computed_hash,
+            activation_authorization_id
+            == f"production-activation-auth-{computed_hash[:16]}",
+        )
+        if not all(checks):
+            raise ProductionActivationAuthorizationStoreError(
+                "ACTIVATION_AUTH_RECOVERY_IDENTITY_MISMATCH"
+            )
 
     def _terminal_transition(
         self,

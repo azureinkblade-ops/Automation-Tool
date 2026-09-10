@@ -306,3 +306,31 @@ NEXT_PHASE=EA-4E.60 IMPLEMENTATION + EVIDENCE CHECKPOINT REVIEW
 
 EA-4E.60 stops here. No production activation, live receiver, model, network,
 provider, browser, GPU, or ComfyUI action was performed.
+
+## EA-4E.61B Prospective Test-Evidence Reconciliation
+
+The original EA-4E.60 qualification observed 191 passing predecessor tests, but
+four of those tests came from
+`tests/hermes_core/test_ea4e58_retry_nonlive_consolidation.py`, which was not
+included in the EA-4E.60 committed checkpoint. Therefore commit `c29d379...`
+could reproduce only 187 of the reported predecessor tests from tracked files.
+
+EA-4E.61B Strategy A preserves that historical fact and adds the reviewed
+four-test file prospectively. Its exact historical bytes remain unproven because
+no prior hash or commit exists. Against the EA-4E.61B worktree candidate, pytest
+collected the checkpointed nine-file predecessor set as 191 tests and all 191
+passed. Committed reproducibility remains pending the separate EA-4E.61B
+checkpoint.
+
+```text
+EA4E60_EVIDENCE_RECONCILIATION_REQUIRED=YES
+EA4E60_EVIDENCE_HISTORICAL_FACTS_PRESERVED=YES
+EA4E60_ORIGINAL_PREDECESSOR_TEST_OBSERVATION=191
+EA4E60_COMMITTED_PREDECESSOR_TESTS_REPRODUCIBLE_AT_C29D379=187
+EA4E61B_RETRY_TEST_ADDITION=PROSPECTIVE
+EA4E58_RETRY_TEST_BYTE_FOR_BYTE_HISTORICAL_PROVENANCE_PROVEN=NO
+EA4E61B_CANDIDATE_PREDECESSOR_TESTS_COLLECTED=191
+EA4E61B_CANDIDATE_PREDECESSOR_TESTS_PASSED=191
+EA4E61B_CANDIDATE_PREDECESSOR_TESTS_FAILED=0
+EA4E61B_COMMITTED_REPRODUCIBILITY=NO_PENDING_CHECKPOINT
+```

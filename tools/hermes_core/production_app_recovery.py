@@ -14,7 +14,10 @@ import sqlite3
 from typing import Any
 
 
-RECOVERY_SCHEMA_VERSION = 1
+RECOVERY_SCHEMA_VERSION = 2
+ACTIVATION_AUTH_CONSUME_PERSISTENCE_UNCERTAIN = (
+    "ACTIVATION_AUTH_CONSUME_PERSISTENCE_UNCERTAIN"
+)
 SUPPORTED_RECEIVERS = frozenset({"kilo-cli-agent", "opencode-cli-agent"})
 RECOVERY_PHASES = frozenset(
     {
@@ -50,6 +53,8 @@ class ProductionRecoveryRecord:
     process_state: str
     lifecycle_phase: str
     cleanup_state: str
+    activation_authorization_id: str | None = None
+    failure_stage: str | None = None
 
 
 @dataclass(frozen=True)
@@ -78,10 +83,6 @@ class ProductionRecoveryStore:
                 "(singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL)"
             )
             connection.execute(
-                "INSERT OR IGNORE INTO recovery_schema_version(singleton, version) VALUES(1, ?)",
-                (RECOVERY_SCHEMA_VERSION,),
-            )
-            connection.execute(
                 """CREATE TABLE IF NOT EXISTS production_recovery_state (
                 request_id TEXT PRIMARY KEY,
                 receiver_id TEXT NOT NULL,
@@ -94,9 +95,41 @@ class ProductionRecoveryStore:
                 process_token TEXT,
                 process_state TEXT NOT NULL,
                 lifecycle_phase TEXT NOT NULL,
-                cleanup_state TEXT NOT NULL
+                cleanup_state TEXT NOT NULL,
+                activation_authorization_id TEXT,
+                failure_stage TEXT
                 )"""
             )
+            version = connection.execute(
+                "SELECT version FROM recovery_schema_version WHERE singleton=1"
+            ).fetchone()
+            if version is None:
+                connection.execute(
+                    "INSERT INTO recovery_schema_version(singleton, version) VALUES(1, ?)",
+                    (RECOVERY_SCHEMA_VERSION,),
+                )
+            elif version[0] == 1:
+                columns = {
+                    row[1]
+                    for row in connection.execute(
+                        "PRAGMA table_info(production_recovery_state)"
+                    ).fetchall()
+                }
+                if "activation_authorization_id" not in columns:
+                    connection.execute(
+                        "ALTER TABLE production_recovery_state "
+                        "ADD COLUMN activation_authorization_id TEXT"
+                    )
+                if "failure_stage" not in columns:
+                    connection.execute(
+                        "ALTER TABLE production_recovery_state ADD COLUMN failure_stage TEXT"
+                    )
+                connection.execute(
+                    "UPDATE recovery_schema_version SET version=? WHERE singleton=1",
+                    (RECOVERY_SCHEMA_VERSION,),
+                )
+            elif version[0] != RECOVERY_SCHEMA_VERSION:
+                raise ProductionRecoveryError("RECOVERY_SCHEMA_MISMATCH")
         return cls(target)
 
     def _connect(self) -> sqlite3.Connection:
@@ -113,6 +146,14 @@ class ProductionRecoveryStore:
             ).fetchone()
             if row is None or row["version"] != RECOVERY_SCHEMA_VERSION:
                 raise ProductionRecoveryError("RECOVERY_SCHEMA_MISMATCH")
+            columns = {
+                item["name"]
+                for item in connection.execute(
+                    "PRAGMA table_info(production_recovery_state)"
+                ).fetchall()
+            }
+            if not {"activation_authorization_id", "failure_stage"}.issubset(columns):
+                raise ProductionRecoveryError("RECOVERY_SCHEMA_MISMATCH")
 
     def begin(self, request_id: str, receiver_id: str, host_instance_id: str) -> None:
         if receiver_id not in SUPPORTED_RECEIVERS:
@@ -125,9 +166,13 @@ class ProductionRecoveryStore:
             if existing is not None:
                 raise ProductionRecoveryError("RECOVERY_RECORD_CONFLICT")
             connection.execute(
-                """INSERT INTO production_recovery_state VALUES
-                (?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, 'NOT_REGISTERED',
-                 'ADMISSION_ACQUIRED', 'PENDING')""",
+                """INSERT INTO production_recovery_state
+                (request_id, receiver_id, host_instance_id, admission_owner_id,
+                 binding_id, enablement_id, invocation_authorization_id,
+                 process_id, process_token, process_state, lifecycle_phase,
+                 cleanup_state, activation_authorization_id, failure_stage)
+                VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL,
+                 'NOT_REGISTERED', 'ADMISSION_ACQUIRED', 'PENDING', NULL, NULL)""",
                 (request_id, receiver_id, host_instance_id, request_id),
             )
 
@@ -142,6 +187,8 @@ class ProductionRecoveryStore:
             "process_token",
             "process_state",
             "cleanup_state",
+            "activation_authorization_id",
+            "failure_stage",
         }
         if not set(fields).issubset(allowed):
             raise ProductionRecoveryError("INVALID_RECOVERY_FIELD")
@@ -201,6 +248,8 @@ class ProductionAppRecoveryOwner:
         process_controller: Any,
         accounting_ledger: Any = None,
         accounting_clock: Any = None,
+        activation_authorization_store: Any = None,
+        activation_clock: Any = None,
     ) -> None:
         self._store = store
         self._admission = admission_controller
@@ -209,6 +258,8 @@ class ProductionAppRecoveryOwner:
         self._processes = process_controller
         self._accounting = accounting_ledger
         self._accounting_clock = accounting_clock
+        self._activation_authorizations = activation_authorization_store
+        self._activation_clock = activation_clock
 
     def reconcile(self, request_id: str) -> ProductionRecoveryResult:
         record = self._store.load(request_id)
@@ -228,6 +279,10 @@ class ProductionAppRecoveryOwner:
         admission_owner = self._admission.owner_request_id
         if admission_owner not in (None, record.admission_owner_id):
             return self._fail(record, "ADMISSION_OWNER_MISMATCH")
+
+        activation_result = self._recover_activation_authorization(record)
+        if activation_result == "FAILED":
+            return self._fail(record, "ACTIVATION_AUTH_RECOVERY_FAILED")
 
         terminated = 0
         torn_down = 0
@@ -263,6 +318,30 @@ class ProductionAppRecoveryOwner:
             binding_teardown_count=torn_down,
             process_termination_count=terminated,
         )
+
+    def _recover_activation_authorization(
+        self, record: ProductionRecoveryRecord
+    ) -> str:
+        if record.failure_stage is None:
+            return "NOT_REQUIRED"
+        if record.failure_stage != ACTIVATION_AUTH_CONSUME_PERSISTENCE_UNCERTAIN:
+            return "FAILED"
+        if (
+            not record.activation_authorization_id
+            or self._activation_authorizations is None
+            or self._activation_clock is None
+        ):
+            return "FAILED"
+        try:
+            state = self._activation_authorizations.abort(
+                record.activation_authorization_id,
+                self._activation_clock.now_iso(),
+                recovery_request_id=record.request_id,
+                recovery_receiver_id=record.receiver_id,
+            )
+        except Exception:
+            return "FAILED"
+        return state if state in {"ABORTED", "CONSUMED"} else "FAILED"
 
     def _record_process_accounting(
         self, record: ProductionRecoveryRecord, event_type: str

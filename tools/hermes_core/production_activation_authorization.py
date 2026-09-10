@@ -393,11 +393,13 @@ class ProductionAppActivationTransitionOwner:
         clock: ClockCollaborator,
         activation_validator: ProductionActivationValidator,
         recovery_marker: Callable[[str], None] | None = None,
+        consume_failure_recovery_marker: Callable[[str, str, str], None] | None = None,
     ) -> None:
         self._store = store
         self._clock = clock
         self._activation_validator = activation_validator
         self._recovery_marker = recovery_marker
+        self._consume_failure_recovery_marker = consume_failure_recovery_marker
         self._active: dict[str, ProductionActivationAuthorization] = {}
         self._lock = Lock()
 
@@ -442,7 +444,13 @@ class ProductionAppActivationTransitionOwner:
         except ProductionActivationAuthorizationStoreError:
             with self._lock:
                 self._active.pop(request_id, None)
-            self._mark_recovery(request_id)
+            marker_persisted = self._mark_consume_failure_recovery(
+                request_id, artifact.activation_authorization_id
+            )
+            if not marker_persisted:
+                return self._recovery(
+                    "CONSUME_PERSISTENCE_AND_RECOVERY_MARKER_FAILED"
+                )
             return self._recovery("CONSUME_PERSISTENCE_FAILED")
         retained_validation = self._activation_validator.validate(
             production_activation, receiver_id=receiver_id
@@ -477,6 +485,22 @@ class ProductionAppActivationTransitionOwner:
     def _mark_recovery(self, request_id: str) -> None:
         if self._recovery_marker is not None:
             self._recovery_marker(request_id)
+
+    def _mark_consume_failure_recovery(
+        self, request_id: str, activation_authorization_id: str
+    ) -> bool:
+        try:
+            if self._consume_failure_recovery_marker is not None:
+                self._consume_failure_recovery_marker(
+                    request_id,
+                    activation_authorization_id,
+                    "ACTIVATION_AUTH_CONSUME_PERSISTENCE_UNCERTAIN",
+                )
+            elif self._recovery_marker is not None:
+                self._recovery_marker(request_id)
+            return True
+        except Exception:
+            return False
 
     @staticmethod
     def _deny(reason: str) -> ProductionActivationTransitionResult:

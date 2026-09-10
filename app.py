@@ -43101,6 +43101,15 @@ def configure_governed_production_action(runtime_config):
         recovery_marker=lambda request_id: recovery_store.transition(
             request_id, "RECOVERY_REQUIRED", cleanup_state="PENDING"
         ),
+        consume_failure_recovery_marker=lambda request_id, authorization_id, stage: (
+            recovery_store.transition(
+                request_id,
+                "RECOVERY_REQUIRED",
+                cleanup_state="PENDING",
+                activation_authorization_id=authorization_id,
+                failure_stage=stage,
+            )
+        ),
     )
     activation_issuer = ProductionActivationAuthorizationIssuer(activation_policy)
     lifecycle = ProductionAppRequestLifecycleOwner(
@@ -43125,6 +43134,8 @@ def configure_governed_production_action(runtime_config):
         runtime_config.recovery_process_controller,
         accounting_ledger=components.composition.accounting_ledger,
         accounting_clock=components.composition.clock,
+        activation_authorization_store=activation_store,
+        activation_clock=components.composition.clock,
     )
 
     global _GOVERNED_PRODUCTION_COMPONENTS, _GOVERNED_PRODUCTION_HOST
