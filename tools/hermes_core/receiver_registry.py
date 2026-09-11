@@ -151,3 +151,25 @@ def build_receiver_registry(
     r = ReceiverRegistry(registry_version=registry_version, registry_hash="", receivers=list(receivers))
     h = sha256_payload(r.to_canonical_dict())
     return ReceiverRegistry(registry_version=r.registry_version, registry_hash=h, receivers=r.receivers)
+
+
+# Explicit static registration of the Kilo receiver adapter.
+# This replaces the previous import-side-effect registration from kilo_adapter.py.
+# Import is deferred to function scope to avoid circular imports at module load.
+def _register_kilo_adapter() -> None:
+    """Explicitly register the Kilo adapter in the static receiver registry.
+
+    Unlike the previous import-side-effect pattern in kilo_adapter.py,
+    this is called from a function so the KiloAdapter import happens
+    after receiver_registry itself is fully loaded, avoiding circular
+    import issues at module load time.
+
+    Registration is now explicit and discoverable, not an accidental
+    import side effect.
+    """
+    # Defer the import to function call time to avoid circular imports
+    from tools.hermes_core.kilo_adapter import KiloAdapter as _KiloAdapter
+    register_adapter("kilo-cli-agent", _KiloAdapter)
+
+
+_register_kilo_adapter()

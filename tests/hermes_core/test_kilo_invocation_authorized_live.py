@@ -54,6 +54,10 @@ from tools.hermes_core.production_invocation_authorization import (
     ProductionInvocationAuthorization,
     ProductionInvocationAuthorizationPolicy,
 )
+from tools.hermes_core.durable_invocation_authorization_store import (
+    DurableInvocationAuthorizationStore,
+)
+from tools.hermes_core.hashing import sha256_payload
 from tools.hermes_core.production_execution import (
     ProductionExecutionBoundary,
     ProductionExecutionRequest,
@@ -82,6 +86,22 @@ EXPECTED_EA4E14_EXECUTION_CONTRACT_ID = "ef709f6c2678027f694c3c9a55a498ec9739778
 EXPECTED_KILO_TRANSPORT_CONTRACT_ID = "52c828de66703a5ea587e51940dca0ec5c13a92af72b1836e6fc0225a83a5b63"
 EXPECTED_KILO_MODEL_BINDING_ID = "b327fad4d90292b3e451c7ec4aa06d123eca091ac84eb7b116400ec96ca45544"
 EXPECTED_CANONICAL_KILO_EXECUTOR_IDENTITY = "RealKiloProductionExecutor"
+
+
+def durable_store(tmp_path):
+    path = tmp_path / "invocation-authorizations.sqlite3"
+    return DurableInvocationAuthorizationStore.initialize(
+        path, anchor_path=tmp_path / "invocation-authorizations.anchor.json"
+    )
+
+
+def persist_authorization(store, authorization):
+    issue_request_id = f"issue-{authorization.invocation_authorization_id}"
+    store.persist_issued(
+        issue_request_id=issue_request_id,
+        issue_request_hash=sha256_payload({"issue_request_id": issue_request_id}),
+        authorization_payload=authorization.to_canonical_dict(),
+    )
 
 
 # ============================================================================
@@ -457,10 +477,11 @@ class TestNoRetryNoFallbackNoFailover:
 class TestNoSecondLiveExecution:
     """Verify no second live execution is performed."""
     
-    def test_second_claim_does_not_execute(self):
+    def test_second_claim_does_not_execute(self, tmp_path):
         """Second claim attempt must not trigger another live execution."""
         clock = BindingClock(now=QUALIFICATION_CLOCK)
-        policy = ProductionInvocationAuthorizationPolicy(clock=clock)
+        store = durable_store(tmp_path)
+        policy = ProductionInvocationAuthorizationPolicy(clock=clock, store=store)
         
         handle = MagicMock()
         handle.receiver_id = "kilo-cli-agent"
@@ -481,6 +502,7 @@ class TestNoSecondLiveExecution:
             delegation_class="governed",
             nonce="test-nonce",
         )
+        persist_authorization(store, auth)
         
         # First claim succeeds
         result1 = policy.claim_for_execution(auth, handle, {})
@@ -532,7 +554,7 @@ class TestContractImmutability:
 class TestNonLiveCompletePath:
     """Verify the complete path works without identity wrapper using fake executors."""
     
-    def test_complete_path_with_fake_executor(self):
+    def test_complete_path_with_fake_executor(self, tmp_path):
         """Complete governed path with fake executor (no real process)."""
         clock = ClockCollaborator(now=QUALIFICATION_CLOCK)
         binding_clock = BindingClock(now=QUALIFICATION_CLOCK)
@@ -591,7 +613,10 @@ class TestNonLiveCompletePath:
         assert resolution.resolution_decision == "RESOLVED"
         
         # EA-4E.23 invocation authorization
-        invocation_policy = ProductionInvocationAuthorizationPolicy(clock=binding_clock)
+        store = durable_store(tmp_path)
+        invocation_policy = ProductionInvocationAuthorizationPolicy(
+            clock=binding_clock, store=store
+        )
         authorization = ProductionInvocationAuthorization(
             invocation_authorization_id="test-auth",
             receiver_id="kilo-cli-agent",
@@ -605,6 +630,7 @@ class TestNonLiveCompletePath:
             delegation_class="governed",
             nonce="test-nonce",
         )
+        persist_authorization(store, authorization)
         
         claim_result = invocation_policy.claim_for_execution(authorization, handle, {})
         assert claim_result.binding_authorized is True
