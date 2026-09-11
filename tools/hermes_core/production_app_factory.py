@@ -25,6 +25,7 @@ from tools.hermes_core.production_entrypoint import (
     build_production_entrypoint,
 )
 from tools.hermes_core.production_executor_binding import ExecutorRegistry
+from tools.hermes_core.production_executor_binding import ProductionExecutorBindingController
 from tools.hermes_core.production_issuance import ClockCollaborator
 from tools.hermes_core.production_wiring import (
     ProductionComposition,
@@ -52,6 +53,7 @@ class ProductionAppFactoryConfig:
     register_real_executors: bool = False
     credential_preflight: object | None = None
     accounting_ledger: object | None = None
+    binding_controller: ProductionExecutorBindingController | None = None
 
 
 @dataclass(frozen=True)
@@ -115,6 +117,7 @@ class ProductionAppFactory:
                 register_real_executors=config.register_real_executors,
                 credential_preflight=config.credential_preflight,
                 accounting_ledger=config.accounting_ledger,
+                binding_controller=config.binding_controller,
             )
         except ProductionWiringError as exc:
             mapped = {

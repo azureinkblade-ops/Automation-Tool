@@ -643,6 +643,62 @@ class ProductionExecutorBindingController:
 
         return handle
 
+    def restore(
+        self,
+        enablement: ProductionExecutorBindingEnablement,
+        *,
+        binding_id: str,
+        bound_at: str,
+        registry: ExecutorRegistry,
+        executor_factory: Any = None,
+    ) -> ProductionExecutorBindingHandle:
+        """Restore one integrity-checked binding into a reconstructed runtime.
+
+        Restoration preserves an already-issued binding identity. It does not
+        extend expiry, issue authority, or execute the registered collaborator.
+        """
+        if not isinstance(binding_id, str) or not binding_id.startswith("binding-"):
+            raise BindingPolicyError("INVALID_BINDING_ID", "REJECT")
+        try:
+            bound_dt = parse_iso_timestamp(bound_at)
+            issued_dt = parse_iso_timestamp(enablement.issued_at)
+            expires_dt = parse_iso_timestamp(enablement.expires_at)
+        except ValueError as exc:
+            raise BindingPolicyError("INVALID_RESTORED_BINDING_TIME", "REJECT") from exc
+        if bound_dt < issued_dt or bound_dt >= expires_dt:
+            raise BindingPolicyError("INVALID_RESTORED_BINDING_TIME", "REJECT")
+
+        bound_meta = {k: (v[0], v[1]) for k, v in self._bound_enablements.items()}
+        result = self._policy.evaluate(
+            enablement, self.active_binding_count, bound_meta
+        )
+        if not result.binding_authorized:
+            raise BindingPolicyError(result.policy_reason, result.policy_decision)
+
+        if executor_factory is None:
+            executor_factory = self._resolve_executor_factory(result.executor_factory)
+        executor = executor_factory()
+        if getattr(executor, "executor_id", None) != enablement.executor_identity:
+            raise BindingPolicyError("EXECUTOR_IDENTITY_MISMATCH", "REJECT")
+        registry.register(enablement.receiver_id, executor)
+
+        handle = ProductionExecutorBindingHandle(
+            binding_id=binding_id,
+            enablement_id=enablement.enablement_id,
+            receiver_id=enablement.receiver_id,
+            executor_identity=enablement.executor_identity,
+            bound_at=bound_at,
+            expires_at=enablement.expires_at,
+            registry=registry,
+        )
+        canonical_hash = sha256_payload(enablement.to_canonical_dict())
+        self._bound_enablements[enablement.enablement_id] = (
+            enablement.receiver_id,
+            canonical_hash,
+            handle,
+        )
+        return handle
+
     def remove_expired_binding(
         self,
         receiver_id: str,

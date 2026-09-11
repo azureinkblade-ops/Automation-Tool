@@ -14,7 +14,10 @@ from pathlib import Path
 
 from tools.hermes_core.production_app_callsite import REAL_APP_CALLSITE_FEATURE_GATE_DEFAULT
 from tools.hermes_core.production_app_factory import ProductionAppFactoryConfig
-from tools.hermes_core.production_executor_binding import ExecutorRegistry
+from tools.hermes_core.production_executor_binding import (
+    ExecutorRegistry,
+    ProductionExecutorBindingController,
+)
 from tools.hermes_core.production_issuance import ClockCollaborator
 from tools.hermes_core.production_wiring import (
     FORBIDDEN_GROK_RECEIVERS,
@@ -54,6 +57,7 @@ class ProductionAppRuntimeConfig:
     activation_authorization_governing_commit: str | None = None
     activation_authorization_readiness_status: str = "HOLD"
     activation_authorization_operator_id: str = DEFAULT_LOCAL_OPERATOR_ID
+    binding_controller: ProductionExecutorBindingController | None = None
 
 
 def canonicalize_feature_gate(value: object) -> str:
@@ -82,4 +86,5 @@ def build_factory_config(
         register_real_executors=runtime_config.register_real_executors,
         credential_preflight=runtime_config.credential_preflight,
         accounting_ledger=runtime_config.accounting_ledger,
+        binding_controller=runtime_config.binding_controller,
     )

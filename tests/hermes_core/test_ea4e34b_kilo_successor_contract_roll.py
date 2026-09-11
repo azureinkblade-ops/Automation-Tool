@@ -23,6 +23,9 @@ from tools.hermes_core.kilo_successor_binding import (
     CURRENT_EA4E21_BINDING_CONTRACT_ID,
     CURRENT_EA4E22_INTEGRATION_CONTRACT_ID,
     HISTORICAL_EA4E_CONTRACT_IDS,
+    HISTORICAL_EA4E_7_5_15_CONTRACT_IDS,
+    HISTORICAL_KILO_7_5_15_EXECUTABLE_BINDING_ID,
+    HISTORICAL_KILO_7_5_15_TRANSPORT_CONTRACT_ID,
     HISTORICAL_KILO_7_5_9_TRANSPORT_CONTRACT_ID,
     KILO_EXECUTABLE_SUCCESSOR_BINDING_ID,
     KILO_MODEL_BINDING_ID,
@@ -64,19 +67,19 @@ from tools.hermes_core.receiver_router import (
 
 
 EXPECTED_IDS = {
-    "EA-4E.6": "292f7deeb479cd45c6f33f3466305e7f225c05d9f48f9eeb8dc13f944d7162a1",
-    "EA-4E.7": "6de9f8b959db33bd2c2885396507baed47a3eadf07423c0e545afe4cc3274661",
-    "EA-4E.8": "9785647334992c514ef56013c2e410be48c42a3c1813b377e601823387be67a2",
-    "EA-4E.11": "af7d731ff21614f3ab0e92beb8927d3063e06707af7a9a89bc3d3b7c91e7927a",
-    "EA-4E.14": "b057272ee70a4f5fceb9500ccf699097ed2de2edfc21e8f47fe3f9247e52f20b",
-    "EA-4E.17": "5082b1a227a53cfe711bcf3c5d2193cd47031d75d7ec7650d8ab4c2389194e93",
-    "EA-4E.18": "56471e6509ccc2e99a7b609354748c51a0ada18bda8b92648c21bec584c1ceb3",
-    "EA-4E.21": "a25a6ba03b6a44f35511bec4b89c332043cd252ea3d1e185bd1b0a5c966fee33",
-    "EA-4E.22": "0e9d206a0b5d78592bafad624421439774e6c7ffe34a7c9d4c41a66aeb0504bd",
-    "EA-4E.23": "7bc3d2e036beacaef5aaabd054730dfbd49c57a0c36bbaab6f56894798be4687",
-    "EA-4E.26": "52edc7ad0be1bf446034ad31189a9172a6a35c98c8619b113f4a836320b8887e",
-    "EA-4E.28": "90c96695f6294bed90eed1b630b1b44f7faca859b6b818ea2a744c1b753eb5b1",
-    "EA-4E.29": "2d2e42ebbaaa1eacabfbd9a09cf3a542f0424b26c96fb4e6b0a7984245039d87",
+    "EA-4E.6": "a80122e6363f67148f9737f096057f2874aa594f04ddb2d18ddab3598fa94c49",
+    "EA-4E.7": "05cad9f532b0bc37a5fa28104f72b14a08b53d050c37912f6e367edb22cadfe4",
+    "EA-4E.8": "57b48875a3d446e4c2a417975c235c7360d4be6c96b4f0e380965553a126402d",
+    "EA-4E.11": "578e0790c6317298d7c81ab5b0ed58e46a197aecdece050ed59c18d9ef29d2d0",
+    "EA-4E.14": "ef709f6c2678027f694c3c9a55a498ec973977868428116bfa8b9476118f7f52",
+    "EA-4E.17": "62ba7ba5689ff467b8609f924abdf6f1d478a037214dd99c4cbdcccbf6dfbd5b",
+    "EA-4E.18": "921ea6c7ce32e57880bd67116e18f943faa66d265f685a9b59d632123c371cb3",
+    "EA-4E.21": "eac6a628e11d3d7235e09a2bf745bc2efda9856baf47c432b7ad4813a36691de",
+    "EA-4E.22": "93b284477a6f760170058a6ed026592d2238f0a1da7b5905eab8f70c6316eefe",
+    "EA-4E.23": "b918118df4b7d72ab632737ce75ca700426e40932cd21a83ead15b3d20ee2319",
+    "EA-4E.26": "05880849e3972a5553c2ea7b9ed7e75df33bc8ca3f990df9bf65bc9b15da9891",
+    "EA-4E.28": "4b1953dbdf28753a940bb6fed41ea38efd7ed92d657e9d3cdca4b1b760105c88",
+    "EA-4E.29": "ac2c38e726a2469b80590f6976acad9a5141e0efb26c2726e342420118ef21f1",
 }
 
 
@@ -118,10 +121,10 @@ def _valid_enablement() -> ProductionExecutorBindingEnablement:
 
 
 def test_successor_file_identity_and_transport_are_exact():
-    assert PINNED_KILO_VERSION == "7.5.15"
-    assert PINNED_KILO_PATH.endswith(r"kilocode.kilo-code-7.5.15-win32-x64\bin\kilo.exe")
-    assert PINNED_KILO_SHA256 == "78414b3fc2b908ee5cfd52433697c8493c97de2930cbedb4508c9babcb681c25"
-    assert KILO_TRANSPORT_CONTRACT_ID == "d38653cdceb5fceed79e3f4d251a84bac0a5d5731e44977df3c34ca00141d5bd"
+    assert PINNED_KILO_VERSION == "7.5.16"
+    assert PINNED_KILO_PATH.endswith(r"kilocode.kilo-code-7.5.16-win32-x64\bin\kilo.exe")
+    assert PINNED_KILO_SHA256 == "8ddb47c7ae088c9f2118cec8824d618eea498b3d580970a5f094c7390633a851"
+    assert KILO_TRANSPORT_CONTRACT_ID == "52c828de66703a5ea587e51940dca0ec5c13a92af72b1836e6fc0225a83a5b63"
 
 
 def test_transport_and_binding_hashes_are_deterministic_and_order_invariant():
@@ -136,6 +139,10 @@ def test_old_transport_and_chain_ids_remain_historical_and_reproducible():
     assert compute_historical_kilo_7_5_9_transport_contract_id() == HISTORICAL_KILO_7_5_9_TRANSPORT_CONTRACT_ID
     assert set(HISTORICAL_EA4E_CONTRACT_IDS) == set(EXPECTED_IDS)
     assert all(HISTORICAL_EA4E_CONTRACT_IDS[key] != EXPECTED_IDS[key] for key in EXPECTED_IDS)
+    assert set(HISTORICAL_EA4E_7_5_15_CONTRACT_IDS) == set(EXPECTED_IDS)
+    assert all(HISTORICAL_EA4E_7_5_15_CONTRACT_IDS[key] != EXPECTED_IDS[key] for key in EXPECTED_IDS)
+    assert HISTORICAL_KILO_7_5_15_TRANSPORT_CONTRACT_ID != KILO_TRANSPORT_CONTRACT_ID
+    assert HISTORICAL_KILO_7_5_15_EXECUTABLE_BINDING_ID != KILO_EXECUTABLE_SUCCESSOR_BINDING_ID
 
 
 def test_rolled_chain_matches_exact_ids_and_is_repeatable():

@@ -43036,6 +43036,7 @@ _GOVERNED_PRODUCTION_COMPONENTS = None
 _GOVERNED_PRODUCTION_HOST = None
 _GOVERNED_PRODUCTION_RECOVERY = None
 _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER = None
+_GOVERNED_PRODUCTION_DEPLOYMENT_OWNER = None
 
 
 def configure_governed_production_action(runtime_config):
@@ -43166,6 +43167,16 @@ def configure_governed_production_action(runtime_config):
     _GOVERNED_PRODUCTION_HOST = lifecycle
     _GOVERNED_PRODUCTION_RECOVERY = recovery
     _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER = activation_issuer
+    return components
+
+
+def configure_nonlive_production_deployment(owner):
+    """Explicitly retain one qualified deployment owner; never issue or execute."""
+    if owner is None or not hasattr(owner, "configure"):
+        raise ValueError("INVALID_PRODUCTION_DEPLOYMENT_OWNER")
+    components = owner.configure(configure_governed_production_action)
+    global _GOVERNED_PRODUCTION_DEPLOYMENT_OWNER
+    _GOVERNED_PRODUCTION_DEPLOYMENT_OWNER = owner
     return components
 
 

@@ -654,10 +654,10 @@ def test_issuer_without_store_denies():
 
 
 def test_exact_ea4e31_contract_chain_is_bound():
-    assert compute_ea4e23_invocation_contract_id() == "7bc3d2e036beacaef5aaabd054730dfbd49c57a0c36bbaab6f56894798be4687"
-    assert compute_ea4e26_integration_contract_id() == "52edc7ad0be1bf446034ad31189a9172a6a35c98c8619b113f4a836320b8887e"
-    assert compute_ea4e28_issuer_contract_id() == "90c96695f6294bed90eed1b630b1b44f7faca859b6b818ea2a744c1b753eb5b1"
-    assert compute_ea4e29_caller_contract_id() == "2d2e42ebbaaa1eacabfbd9a09cf3a542f0424b26c96fb4e6b0a7984245039d87"
+    assert compute_ea4e23_invocation_contract_id() == "b918118df4b7d72ab632737ce75ca700426e40932cd21a83ead15b3d20ee2319"
+    assert compute_ea4e26_integration_contract_id() == "05880849e3972a5553c2ea7b9ed7e75df33bc8ca3f990df9bf65bc9b15da9891"
+    assert compute_ea4e28_issuer_contract_id() == "4b1953dbdf28753a940bb6fed41ea38efd7ed92d657e9d3cdca4b1b760105c88"
+    assert compute_ea4e29_caller_contract_id() == "ac2c38e726a2469b80590f6976acad9a5141e0efb26c2726e342420118ef21f1"
 
 
 def test_store_schema_identity_is_exact():

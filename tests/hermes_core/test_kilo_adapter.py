@@ -395,7 +395,7 @@ class TestKiloReceiverAdapter:
 class TestKiloFakeProcess:
     def test_execute_success(self, tmp_path: Path):
         controller = KiloProcessController({})
-        result = controller.execute(["echo", "hello"], timeout=5)
+        result = controller.execute(["cmd", "/d", "/c", "echo", "hello"], timeout=5)
         assert result.returncode == 0
         assert result.stdout.strip() == "hello"
         assert result.timed_out is False
@@ -408,7 +408,7 @@ class TestKiloFakeProcess:
 
     def test_execute_timeout_reported_via_fake_process(self, tmp_path: Path):
         controller = KiloProcessController({})
-        result = controller.execute(["echo", "hello"], timeout=5)
+        result = controller.execute(["cmd", "/d", "/c", "echo", "hello"], timeout=5)
         assert result.timed_out is False
 
 
@@ -444,7 +444,7 @@ class TestKiloReceiverContractTruth:
 class TestKiloStdinClosure:
     def test_stdin_is_closed_not_a_task_channel(self, tmp_path: Path):
         controller = KiloProcessController({})
-        result = controller.execute(["echo", "hello"], timeout=5)
+        result = controller.execute(["cmd", "/d", "/c", "echo", "hello"], timeout=5)
         assert result.returncode == 0
         assert "stdin" not in str(result)
 

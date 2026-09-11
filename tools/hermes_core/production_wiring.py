@@ -239,6 +239,7 @@ def assemble_production_composition(
     register_real_executors: bool = True,
     credential_preflight=None,
     accounting_ledger=None,
+    binding_controller: ProductionExecutorBindingController | None = None,
 ) -> ProductionComposition:
     """Compose production collaborators. Does not enable execution or bind."""
     if config.master_enable not in ("DISABLED", "ENABLED"):
@@ -257,7 +258,7 @@ def assemble_production_composition(
     if register_real_executors:
         register_qualified_real_executors(registry, config=config)
     binding_clock = BindingClock(now=clock.now_iso())
-    controller = ProductionExecutorBindingController(
+    controller = binding_controller or ProductionExecutorBindingController(
         policy=ProductionExecutorBindingPolicy(clock=binding_clock),
         clock=binding_clock,
     )
