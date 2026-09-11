@@ -47,6 +47,7 @@ from tools.hermes_core.production_executor_binding import (
     ProductionExecutorBindingEnablement,
     ProductionExecutorBindingPolicy,
     QUALIFIED_EXECUTOR_IMPLEMENTATIONS,
+    parse_iso_timestamp,
 )
 from tools.hermes_core.production_invocation_auth_store_bootstrap import (
     ProductionInvocationAuthStoreBootstrapRequest,
@@ -217,6 +218,53 @@ class ProductionDeploymentBindingStore:
                 (rendered, digest),
             )
 
+    def replace_expired(
+        self,
+        *,
+        expected_binding_id: str,
+        expected_expires_at: str,
+        now: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """Atomically replace one exact expired binding descriptor."""
+        rendered = canonical_json(payload)
+        digest = sha256_payload(payload)
+        with closing(self._connect()) as connection, connection:
+            row = connection.execute(
+                "SELECT payload_json, payload_hash FROM production_executor_binding_state WHERE singleton=1"
+            ).fetchone()
+            if row is None:
+                raise ProductionDeploymentCompositionError(
+                    "BINDING_STATE_PREDECESSOR_MISSING"
+                )
+            try:
+                existing = json.loads(row["payload_json"])
+                existing_expires_at = existing["enablement"]["expires_at"]
+            except (TypeError, json.JSONDecodeError, KeyError) as exc:
+                raise ProductionDeploymentCompositionError(
+                    "BINDING_STATE_PAYLOAD_INVALID"
+                ) from exc
+            if row["payload_hash"] != sha256_payload(existing):
+                raise ProductionDeploymentCompositionError(
+                    "BINDING_STATE_HASH_MISMATCH"
+                )
+            if existing.get("binding_id") != expected_binding_id:
+                raise ProductionDeploymentCompositionError(
+                    "BINDING_STATE_PREDECESSOR_MISMATCH"
+                )
+            if existing_expires_at != expected_expires_at:
+                raise ProductionDeploymentCompositionError(
+                    "BINDING_STATE_EXPIRY_MISMATCH"
+                )
+            if parse_iso_timestamp(existing_expires_at) > parse_iso_timestamp(now):
+                raise ProductionDeploymentCompositionError(
+                    "PERSISTED_KILO_BINDING_NOT_EXPIRED"
+                )
+            connection.execute(
+                "UPDATE production_executor_binding_state SET payload_json=?, payload_hash=? WHERE singleton=1",
+                (rendered, digest),
+            )
+
 
 @dataclass
 class ProductionDeploymentCompositionOwner:
@@ -242,6 +290,7 @@ class ProductionDeploymentCompositionOwner:
         credential_preflight: Any | None = None,
         executor_factory: Callable[[], Any] | None = None,
         successor_roll_explicit: bool = False,
+        expired_binding_renewal_explicit: bool = False,
     ) -> "ProductionDeploymentCompositionOwner":
         if provision_explicit is not True:
             raise ProductionDeploymentCompositionError("EXPLICIT_PROVISIONING_REQUIRED")
@@ -307,6 +356,7 @@ class ProductionDeploymentCompositionOwner:
         spec = QUALIFIED_RECEIVERS[KILO_RECEIVER_ID]
         impl = QUALIFIED_EXECUTOR_IMPLEMENTATIONS[KILO_RECEIVER_ID]
         predecessor_binding_id = None
+        expired_predecessor_expires_at = None
         if existing is not None:
             prior_enablement = existing.get("enablement", {})
             successor_matches = (
@@ -331,6 +381,32 @@ class ProductionDeploymentCompositionOwner:
                         "BINDING_STATE_PREDECESSOR_MISSING"
                     )
                 existing = None
+            else:
+                try:
+                    persisted_expires_at = str(prior_enablement["expires_at"])
+                    binding_expired = parse_iso_timestamp(
+                        persisted_expires_at
+                    ) <= parse_iso_timestamp(active_clock.now_iso())
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise ProductionDeploymentCompositionError(
+                        "BINDING_STATE_PAYLOAD_INVALID"
+                    ) from exc
+                if binding_expired:
+                    if expired_binding_renewal_explicit is not True:
+                        raise ProductionDeploymentCompositionError(
+                            "PERSISTED_KILO_BINDING_EXPIRED"
+                        )
+                    predecessor_binding_id = existing.get("binding_id")
+                    if not isinstance(predecessor_binding_id, str):
+                        raise ProductionDeploymentCompositionError(
+                            "BINDING_STATE_PREDECESSOR_MISSING"
+                        )
+                    expired_predecessor_expires_at = persisted_expires_at
+                    existing = None
+                elif expired_binding_renewal_explicit is True:
+                    raise ProductionDeploymentCompositionError(
+                        "PERSISTED_KILO_BINDING_NOT_EXPIRED"
+                    )
         if existing is None:
             issued_at = active_clock.now_iso()
             expires_at = active_clock.now_plus_seconds(3600)
@@ -387,6 +463,13 @@ class ProductionDeploymentCompositionOwner:
             }
             if predecessor_binding_id is None:
                 binding_store.save_once(payload)
+            elif expired_predecessor_expires_at is not None:
+                binding_store.replace_expired(
+                    expected_binding_id=predecessor_binding_id,
+                    expected_expires_at=expired_predecessor_expires_at,
+                    now=active_clock.now_iso(),
+                    payload=payload,
+                )
             else:
                 binding_store.replace_successor(
                     expected_binding_id=predecessor_binding_id,
