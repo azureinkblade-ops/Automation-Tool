@@ -43223,6 +43223,22 @@ def submit_governed_production_action(payload: dict[str, Any]) -> dict[str, Any]
     return host.submit(payload).to_public_dict()
 
 
+def activate_governed_production_request_scope(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Consume one activation authorization without dispatching a receiver."""
+    from tools.hermes_core.production_app_host import ProductionAppHostAction
+
+    host = _GOVERNED_PRODUCTION_HOST or ProductionAppHostAction(None)
+    activate_only = getattr(host, "activate_only", None)
+    if activate_only is None:
+        return {
+            "decision": "DENY",
+            "reason": "ACTIVATION_ONLY_CEREMONY_NOT_CONFIGURED",
+        }
+    return activate_only(payload).to_public_dict()
+
+
 def reconcile_governed_production_recovery(request_id: str) -> dict[str, Any]:
     """Explicitly reconcile one durable lifecycle record; never run at startup."""
     if _GOVERNED_PRODUCTION_RECOVERY is None:

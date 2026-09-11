@@ -135,10 +135,60 @@ class ProductionAppRequestLifecycleOwner:
         finally:
             self._admission_controller.release(request_id)
 
+    def activate_only(
+        self, payload: Mapping[str, Any] | None
+    ) -> ProductionAppHostResult:
+        """Complete request-scoped activation without dispatching the action."""
+        if not isinstance(payload, Mapping):
+            return self._deny("INVALID_ACTIVATION_CEREMONY_REQUEST")
+        return self._activate_only(payload)
+
+    def _activate_only(
+        self,
+        payload: Mapping[str, Any],
+    ) -> ProductionAppHostResult:
+        if self._governed_action is None or self._binding_controller is None:
+            return self._deny("MISSING_REQUEST_LIFECYCLE_DEPENDENCY")
+
+        receiver_id = payload.get("receiver_id")
+        if not isinstance(receiver_id, str) or not receiver_id.strip():
+            return self._deny("INVALID_ACTIVATION_CEREMONY_REQUEST")
+
+        request_id = payload.get("request_id")
+        if not isinstance(request_id, str) or not request_id.strip():
+            return self._deny("MISSING_REQUEST_ID")
+
+        if self._recovery_store is not None and self._recovery_store.has_unresolved():
+            return self._deny("PRODUCTION_RECOVERY_REQUIRED")
+
+        if not self._admission_controller.acquire(request_id):
+            return self._deny("PRODUCTION_REQUEST_CONCURRENCY_LIMIT")
+
+        try:
+            if receiver_id not in SUPPORTED_RECEIVERS:
+                return self._deny("UNSUPPORTED_RECEIVER")
+            if self._recovery_store is not None:
+                if not self._host_instance_id:
+                    return self._deny("MISSING_RECOVERY_HOST_IDENTITY")
+                self._recovery_store.begin(
+                    request_id,
+                    receiver_id,
+                    self._host_instance_id,
+                )
+            return self._submit_admitted(
+                payload,
+                receiver_id,
+                execute_governed_action=False,
+            )
+        finally:
+            self._admission_controller.release(request_id)
+
     def _submit_admitted(
         self,
         payload: Mapping[str, Any],
         receiver_id: str,
+        *,
+        execute_governed_action: bool = True,
     ) -> ProductionAppHostResult:
         if self._preflight is not None:
             preflight_result = self._preflight.check(
@@ -246,7 +296,13 @@ class ProductionAppRequestLifecycleOwner:
                                         f"PRODUCTION_ACTIVATION_DENIED:{transition.reason}"
                                     )
             if result is None:
-                result = self._governed_action.submit(payload)
+                if execute_governed_action:
+                    result = self._governed_action.submit(payload)
+                else:
+                    result = ProductionAppHostResult(
+                        decision="ALLOW",
+                        reason="PRODUCTION_ACTIVATION_CEREMONY_COMPLETED",
+                    )
         except Exception as exc:
             action_error = exc
         finally:
