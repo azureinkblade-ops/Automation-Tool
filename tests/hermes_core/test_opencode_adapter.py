@@ -119,6 +119,15 @@ def injected_metadata_config(tmp_path: Path):
     return config, fake_probe
 
 
+@pytest.fixture
+def fake_task_runtime(injected_metadata_config, monkeypatch):
+    """Scope metadata/config doubles to task-shaping tests, not OS tests."""
+    config, fake_probe = injected_metadata_config
+    monkeypatch.setattr("tools.hermes_core.opencode_adapter.default_opencode_config", lambda: config)
+    monkeypatch.setattr("tools.hermes_core.opencode_adapter._version_probe", fake_probe)
+    return config
+
+
 class TestOpenCodeTransportContract:
     def test_canonical_material_is_honest(self):
         material = opencode_transport_contract(
@@ -341,6 +350,7 @@ class TestOpenCodeContractMutation:
 
 
 
+@pytest.mark.usefixtures("fake_task_runtime")
 class TestOpenCodeTaskDelivery:
     """Regression tests for the task-delivery defect that caused EA-4E.4 HOLD."""
 
@@ -853,6 +863,7 @@ class TestOpenCodeLiveProcess:
         assert binary.size_bytes > 0
 
 
+@pytest.mark.usefixtures("fake_task_runtime")
 class TestOpenCodeReceiverContractTruth:
     def test_adapter_does_not_claim_codex_approval_never(self):
         adapter = OpenCodeReceiverAdapter()
