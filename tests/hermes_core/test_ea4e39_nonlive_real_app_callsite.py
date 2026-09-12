@@ -301,8 +301,9 @@ def test_second_request_without_activation(tmp_path):
 
 def test_receiver_mutation(tmp_path):
     composition = compose(tmp_path, master="ENABLED")
-    bind_fake(composition, "kilo-cli-agent")
     bind_fake(composition, "opencode-cli-agent")
+    assert composition.binding_controller.active_binding_count == 1
+    assert composition.binding_controller.get_binding_for_receiver("kilo-cli-agent") is None
     site = live_callsite(composition)
     mismatched = issue_request("opencode-cli-agent", "ea4e39-mut", composition)
     result = site.invoke(
@@ -382,7 +383,8 @@ def test_opencode_fake_real_callsite_path(tmp_path):
 def test_kilo_callsite_cannot_become_opencode(tmp_path):
     composition = compose(tmp_path, master="ENABLED")
     bind_fake(composition, "kilo-cli-agent")
-    bind_fake(composition, "opencode-cli-agent")
+    assert composition.binding_controller.active_binding_count == 1
+    assert composition.binding_controller.get_binding_for_receiver("opencode-cli-agent") is None
     site = live_callsite(composition)
     issue = issue_request("kilo-cli-agent", "cross-cs", composition)
     result = site.invoke(
@@ -399,8 +401,9 @@ def test_kilo_callsite_cannot_become_opencode(tmp_path):
 
 def test_opencode_callsite_cannot_become_kilo(tmp_path):
     composition = compose(tmp_path, master="ENABLED")
-    bind_fake(composition, "kilo-cli-agent")
     bind_fake(composition, "opencode-cli-agent")
+    assert composition.binding_controller.active_binding_count == 1
+    assert composition.binding_controller.get_binding_for_receiver("kilo-cli-agent") is None
     site = live_callsite(composition)
     issue = issue_request("opencode-cli-agent", "cross-cs-2", composition)
     result = site.invoke(
