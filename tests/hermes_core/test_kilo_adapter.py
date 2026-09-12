@@ -561,8 +561,11 @@ class TestKiloRegistry:
 class TestKiloSecurityFocused:
     """Security-focused tests for EA-4E.3 remediation blockers A-D."""
 
-    def test_agent_profile_exists(self, safe_cwd: Path):
-        """Blocker B: Verify the Hermes agent profile exists on disk."""
+    def test_agent_profile_exists(self, safe_cwd: Path, monkeypatch):
+        """Verify profile creation without touching the deployed runtime."""
+        from tools.hermes_core import kilo_agent_profile as profile
+        monkeypatch.setattr(profile, "AGENT_DIR", safe_cwd / profile.AGENT_ID)
+        monkeypatch.setattr(profile, "AGENT_FILE", profile.AGENT_DIR / profile.AGENT_FILENAME)
         from tools.hermes_core.kilo_agent_profile import (
             AGENT_DIR, AGENT_FILE, ensure_agent_profile, agent_profile_hash,
         )
@@ -570,14 +573,20 @@ class TestKiloSecurityFocused:
         assert d.exists()
         assert AGENT_FILE.exists()
         assert d == AGENT_DIR
+        assert AGENT_FILE.read_text(encoding="utf-8") == profile.AGENT_DEFINITION
         assert len(agent_profile_hash()) == 64
 
-    def test_agent_profile_hash_is_64_hex(self, safe_cwd: Path):
+    def test_agent_profile_hash_is_64_hex(self, safe_cwd: Path, monkeypatch):
         """Blocker B: Agent profile hash is 64 lowercase hex chars."""
+        from tools.hermes_core import kilo_agent_profile as profile
+        monkeypatch.setattr(profile, "AGENT_DIR", safe_cwd / profile.AGENT_ID)
+        monkeypatch.setattr(profile, "AGENT_FILE", profile.AGENT_DIR / profile.AGENT_FILENAME)
         from tools.hermes_core.kilo_agent_profile import agent_profile_hash
         h = agent_profile_hash()
         assert len(h) == 64
         assert all(c in "0123456789abcdef" for c in h)
+        profile.AGENT_FILE.write_text("changed temporary profile", encoding="utf-8")
+        assert agent_profile_hash() != h
 
     def test_agent_profile_path_is_hermes_owned(self, safe_cwd: Path):
         """Blocker B: Agent profile is under Hermes-owned runtime, not in repo."""

@@ -66,15 +66,13 @@ def repo_root() -> Path:
 
 
 @pytest.fixture
-def safe_cwd(repo_root: Path, tmp_path: Path) -> Path:
-    """An existing isolated directory under the repository root.
+def safe_cwd(tmp_path: Path) -> Path:
+    """An existing isolated directory under pytest's explicit temporary root.
 
     Used as a safe working directory for tests that execute the real binary
     for metadata probes. Never the installed ``bin/`` directory.
     """
-    cwd = repo_root / ".pytest_iso" / tmp_path.name
-    cwd.mkdir(parents=True, exist_ok=True)
-    return cwd
+    return tmp_path
 
 
 def _real_binary_env(safe_cwd: Path) -> tuple[tuple[str, str], ...]:
