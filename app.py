@@ -7870,6 +7870,11 @@ def create_local_stable_diffusion_image(
     input_image: Path | None = None,
     strength: float | None = None,
     quality_mode: str = "",
+    controlnet_model: str = "",
+    controlnet_image: Path | None = None,
+    controlnet_scale: float | None = None,
+    control_guidance_start: float | None = None,
+    control_guidance_end: float | None = None,
 ) -> dict[str, Any]:
     status = local_stable_diffusion_status()
     if not status.get("ready"):
@@ -7927,6 +7932,21 @@ def create_local_stable_diffusion_image(
         command.extend(["--lora-path", str(lora_path), "--lora-scale", os.environ.get("LOCAL_SD_LORA_SCALE", "0.75")])
     if input_image and input_image.exists():
         command.extend(["--input-image", str(input_image), "--strength", str(strength if strength is not None else os.environ.get("LOCAL_SD_IMG2IMG_STRENGTH", "0.52"))])
+    # ControlNet (pose conditioning): only when BOTH model + image are set.
+    # Matches local_image_generator CLI contract and tests/test_pose_resolver.py.
+    cn_model = (controlnet_model or os.environ.get("LOCAL_SD_CONTROLNET_MODEL", "") or "").strip()
+    cn_image = Path(controlnet_image) if controlnet_image else None
+    if cn_model and cn_image is not None and cn_image.exists():
+        cn_scale = controlnet_scale if controlnet_scale is not None else float(os.environ.get("LOCAL_SD_CONTROLNET_SCALE", "0.65"))
+        cg_start = control_guidance_start if control_guidance_start is not None else float(os.environ.get("LOCAL_SD_CONTROL_GUIDANCE_START", "0.0"))
+        cg_end = control_guidance_end if control_guidance_end is not None else float(os.environ.get("LOCAL_SD_CONTROL_GUIDANCE_END", "0.75"))
+        command.extend([
+            "--controlnet-model", cn_model,
+            "--controlnet-image", str(cn_image),
+            "--controlnet-scale", str(cn_scale),
+            "--control-guidance-start", str(cg_start),
+            "--control-guidance-end", str(cg_end),
+        ])
     with _LOCAL_SD_GPU_LOCK:
         timeout = int(status.get("timeoutSeconds") or 360)
         gen_env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
@@ -7947,6 +7967,41 @@ def create_local_stable_diffusion_image(
         metadata.setdefault("model", status.get("model", ""))
         metadata.setdefault("loraTrack", lora_track)
         metadata.setdefault("loraPath", str(lora_path) if lora_path else "")
+        # EA4F-1 thin wiring: optional hand repair after local SD succeeds.
+        # Fully inert unless HAND_REPAIR_ENABLED=1 and HAND_REPAIR_MASK_PATH exists.
+        try:
+            from app_config import HAND_REPAIR_ENABLED  # type: ignore
+        except Exception:
+            HAND_REPAIR_ENABLED = os.environ.get("HAND_REPAIR_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+        if HAND_REPAIR_ENABLED:
+            mask_env = (os.environ.get("HAND_REPAIR_MASK_PATH") or "").strip()
+            if mask_env:
+                mask_path = Path(mask_env)
+                if mask_path.exists():
+                    try:
+                        from hand_repair.integration import maybe_repair_hands
+                        work = target.parent / "hand-repair"
+                        repaired = maybe_repair_hands(
+                            source_path=target,
+                            work_dir=work,
+                            mask_path=mask_path,
+                            region=os.environ.get("HAND_REPAIR_REGION", "hands"),
+                        )
+                        if repaired and Path(repaired).exists() and Path(repaired) != target:
+                            # Promote repaired image into the target path so callers stay unchanged.
+                            import shutil as _shutil
+                            _shutil.copy2(repaired, target)
+                        metadata["handRepair"] = {
+                            "enabled": True,
+                            "mask": str(mask_path),
+                            "output": str(target),
+                        }
+                    except Exception as hand_exc:
+                        metadata["handRepair"] = {"enabled": True, "error": str(hand_exc)[:400]}
+                else:
+                    metadata["handRepair"] = {"enabled": True, "skipped": "mask path missing"}
+            else:
+                metadata["handRepair"] = {"enabled": True, "skipped": "HAND_REPAIR_MASK_PATH unset"}
         return metadata
 
 
@@ -31493,6 +31548,12 @@ def make_chapter_image_prompts(title: str, chapter: str, phrases: list[str], nov
                 out = pkg.get("image_prompts")
                 if isinstance(out, list) and len(out) >= 3 and all(isinstance(x, str) and x.strip() for x in out):
                     vd_prompts = [str(x).strip() for x in out[:3]]
+                    # EA4F-2: remember Director shots for optional pose ControlNet at generate time
+                    try:
+                        from pose_conditioning import remember_shots
+                        remember_shots(pkg.get("shots") or [], meta={"novel": novel_id, "source": "visual_director"})
+                    except Exception as _pose_exc:
+                        print(f"[pose-conditioning] remember_shots failed: {_pose_exc}")
                     for _w in (pkg.get("canon_warnings", []) or []):
                         print(f"[visual-director] canon_warning: {_w}")
                     print(f"[visual-director] enabled: returned {len(vd_prompts)} canon-locked prompts for {novel or title}")
@@ -32133,7 +32194,23 @@ def create_prompt_fallback_image(
         if provider == "local_stable_diffusion":
             try:
                 started = time.perf_counter()
-                info = create_local_stable_diffusion_image(prompt, target, orientation=orientation)
+                # EA4F-2: optional pose ControlNet from remembered Director shot / prompt heuristic
+                _pose_kwargs = {}
+                try:
+                    from pose_conditioning import kwargs_for_generator
+                    _pose_kwargs = kwargs_for_generator(index=index, prompt=prompt)
+                    if _pose_kwargs:
+                        print(f"[pose-conditioning] ControlNet kwargs for index={index}: model={_pose_kwargs.get('controlnet_model')} image={_pose_kwargs.get('controlnet_image')}")
+                except Exception as _pose_exc:
+                    print(f"[pose-conditioning] kwargs resolve failed: {_pose_exc}")
+                info = create_local_stable_diffusion_image(prompt, target, orientation=orientation, **_pose_kwargs)
+                if _pose_kwargs:
+                    info = dict(info or {})
+                    info["poseControlNet"] = {
+                        "model": str(_pose_kwargs.get("controlnet_model") or ""),
+                        "image": str(_pose_kwargs.get("controlnet_image") or ""),
+                        "scale": _pose_kwargs.get("controlnet_scale"),
+                    }
                 archive_generated_promo_image(target, abbr, prompt, f"local-sd-{index}")
                 source = f"local_stable_diffusion:{info.get('model', '')}"
                 note_provider("local_stable_diffusion", started, True, source, source)
@@ -42955,6 +43032,227 @@ def run_regression_dashboard(mode: str = "quick") -> dict[str, Any]:
     return report
 
 
+_GOVERNED_PRODUCTION_COMPONENTS = None
+_GOVERNED_PRODUCTION_HOST = None
+_GOVERNED_PRODUCTION_RECOVERY = None
+_GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER = None
+_GOVERNED_PRODUCTION_DEPLOYMENT_OWNER = None
+
+
+def configure_governed_production_action(runtime_config):
+    """Explicitly inject a prepared, default-disabled governed app composition."""
+    from tools.hermes_core.production_app_config import build_factory_config
+    from tools.hermes_core.production_app_factory import ProductionAppFactory
+    from tools.hermes_core.production_app_host import ProductionAppHostAction
+    from tools.hermes_core.production_app_lifecycle import (
+        ProductionAppRequestLifecycleOwner,
+        ProductionRequestAdmissionController,
+    )
+    from tools.hermes_core.production_app_recovery import (
+        ProductionAppRecoveryOwner,
+        ProductionRecoveryStore,
+    )
+    from tools.hermes_core.production_activation_authorization import (
+        ProductionActivationAuthorizationIssuer,
+        ProductionActivationAuthorizationPolicy,
+        ProductionActivationAuthorizationValidator,
+        ProductionAppActivationTransitionOwner,
+    )
+    from tools.hermes_core.production_activation_authorization_ceremony import (
+        ProductionActivationAuthorizationCeremonyCoordinator,
+        ProductionOperatorIdentity,
+        ProductionOperatorIdentityVerifier,
+    )
+    from tools.hermes_core.production_activation_authorization_store import (
+        ProductionActivationAuthorizationStore,
+    )
+    from uuid import uuid4
+
+    if runtime_config is None:
+        raise ValueError("MISSING_GOVERNED_PRODUCTION_RUNTIME_CONFIG")
+    if runtime_config.register_real_executors:
+        raise ValueError("APP_HOST_REAL_EXECUTOR_AUTO_REGISTRATION_FORBIDDEN")
+    activation_store = runtime_config.activation_authorization_store
+    if activation_store is None:
+        raise ValueError("MISSING_ESTABLISHED_ACTIVATION_AUTHORIZATION_STORE")
+    if not isinstance(activation_store, ProductionActivationAuthorizationStore):
+        raise ValueError("INVALID_ACTIVATION_AUTHORIZATION_STORE")
+    governing_commit = runtime_config.activation_authorization_governing_commit
+    if not isinstance(governing_commit, str) or not governing_commit:
+        raise ValueError("MISSING_ACTIVATION_AUTHORIZATION_GOVERNING_COMMIT")
+
+    components = ProductionAppFactory.build(build_factory_config(runtime_config))
+    host = ProductionAppHostAction(components.user_action)
+    admission = ProductionRequestAdmissionController()
+    recovery_path = runtime_config.recovery_store_path or Path(
+        runtime_config.wiring.auth_store_path
+    ).with_name("production-recovery.sqlite3")
+    recovery_store = ProductionRecoveryStore.initialize(recovery_path)
+    host_instance_id = runtime_config.recovery_host_instance_id or f"host-{uuid4()}"
+    operator_verifier = ProductionOperatorIdentityVerifier(
+        ProductionOperatorIdentity(
+            operator_id=runtime_config.activation_authorization_operator_id
+        )
+    )
+    activation_policy = ProductionActivationAuthorizationPolicy(
+        store=activation_store,
+        clock=components.composition.clock,
+        governing_commit=governing_commit,
+        readiness_status=runtime_config.activation_authorization_readiness_status,
+        recovery_blocked=recovery_store.has_unresolved,
+        operator_identity_verifier=operator_verifier,
+        binding_lookup=components.composition.binding_controller.get_binding_for_receiver,
+    )
+    activation_validator = ProductionActivationAuthorizationValidator(
+        store=activation_store,
+        clock=components.composition.clock,
+        operator_identity_verifier=operator_verifier,
+        binding_lookup=components.composition.binding_controller.get_binding_for_receiver,
+    )
+    activation_transition_owner = ProductionAppActivationTransitionOwner(
+        store=activation_store,
+        clock=components.composition.clock,
+        activation_validator=components.composition.activation_validator,
+        recovery_marker=lambda request_id: recovery_store.transition(
+            request_id, "RECOVERY_REQUIRED", cleanup_state="PENDING"
+        ),
+        consume_failure_recovery_marker=lambda request_id, authorization_id, stage: (
+            recovery_store.transition(
+                request_id,
+                "RECOVERY_REQUIRED",
+                cleanup_state="PENDING",
+                activation_authorization_id=authorization_id,
+                failure_stage=stage,
+            )
+        ),
+    )
+    raw_activation_issuer = ProductionActivationAuthorizationIssuer(activation_policy)
+    activation_issuer = ProductionActivationAuthorizationCeremonyCoordinator(
+        issuer=raw_activation_issuer,
+        binding_controller=components.composition.binding_controller,
+        operator_identity_verifier=operator_verifier,
+        clock=components.composition.clock,
+        credential_preflight=components.composition.credential_preflight,
+    )
+    lifecycle = ProductionAppRequestLifecycleOwner(
+        host,
+        components.composition.binding_controller,
+        admission,
+        recovery_store,
+        host_instance_id,
+        credential_preflight=components.composition.credential_preflight,
+        activation_authorization_policy=activation_policy,
+        activation_authorization_validator=activation_validator,
+        activation_transition_owner=activation_transition_owner,
+        authority_validator=components.composition.authority_validator,
+        router=components.composition.router,
+        activation_feature_gate_state=runtime_config.callsite_feature_gate,
+        activation_ceremony_coordinator=activation_issuer,
+    )
+    recovery = ProductionAppRecoveryOwner(
+        recovery_store,
+        admission,
+        components.composition.binding_controller,
+        runtime_config.recovery_liveness_inspector,
+        runtime_config.recovery_process_controller,
+        accounting_ledger=components.composition.accounting_ledger,
+        accounting_clock=components.composition.clock,
+        activation_authorization_store=activation_store,
+        activation_clock=components.composition.clock,
+    )
+
+    global _GOVERNED_PRODUCTION_COMPONENTS, _GOVERNED_PRODUCTION_HOST
+    global _GOVERNED_PRODUCTION_RECOVERY, _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER
+    _GOVERNED_PRODUCTION_COMPONENTS = components
+    _GOVERNED_PRODUCTION_HOST = lifecycle
+    _GOVERNED_PRODUCTION_RECOVERY = recovery
+    _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER = activation_issuer
+    return components
+
+
+def configure_nonlive_production_deployment(owner):
+    """Explicitly retain one qualified deployment owner; never issue or execute."""
+    if owner is None or not hasattr(owner, "configure"):
+        raise ValueError("INVALID_PRODUCTION_DEPLOYMENT_OWNER")
+    components = owner.configure(configure_governed_production_action)
+    global _GOVERNED_PRODUCTION_DEPLOYMENT_OWNER
+    _GOVERNED_PRODUCTION_DEPLOYMENT_OWNER = owner
+    return components
+
+
+def issue_production_activation_authorization(payload: dict[str, Any]) -> dict[str, Any]:
+    """Explicitly issue one request-bound authorization; never execute or bind."""
+    if _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER is None:
+        return {"decision": "DENIED", "reason": "ACTIVATION_AUTH_ISSUER_NOT_CONFIGURED", "authorization": None}
+    return _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER.issue(payload).to_public_dict()
+
+
+def cancel_production_activation_authorization(
+    authorization: dict[str, Any], operator_id: str, reason: str
+) -> dict[str, Any]:
+    if _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER is None:
+        return {"decision": "DENIED", "reason": "ACTIVATION_AUTH_ISSUER_NOT_CONFIGURED"}
+    try:
+        state = _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER.cancel(
+            authorization, operator_id, reason
+        )
+    except Exception as exc:
+        return {"decision": "DENIED", "reason": getattr(exc, "reason", type(exc).__name__)}
+    return {"decision": "AUTHORIZED", "reason": "ACTIVATION_AUTH_CANCELLED", "state": state}
+
+
+def revoke_production_activation_authorization(
+    authorization: dict[str, Any], operator_id: str, reason: str
+) -> dict[str, Any]:
+    if _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER is None:
+        return {"decision": "DENIED", "reason": "ACTIVATION_AUTH_ISSUER_NOT_CONFIGURED"}
+    try:
+        state = _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER.revoke(
+            authorization, operator_id, reason
+        )
+    except Exception as exc:
+        return {"decision": "DENIED", "reason": getattr(exc, "reason", type(exc).__name__)}
+    return {"decision": "AUTHORIZED", "reason": "ACTIVATION_AUTH_REVOKED", "state": state}
+
+
+def submit_governed_production_action(payload: dict[str, Any]) -> dict[str, Any]:
+    """Pass one explicit request envelope to the injected qualified action."""
+    from tools.hermes_core.production_app_host import ProductionAppHostAction
+
+    host = _GOVERNED_PRODUCTION_HOST or ProductionAppHostAction(None)
+    return host.submit(payload).to_public_dict()
+
+
+def activate_governed_production_request_scope(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Consume one activation authorization without dispatching a receiver."""
+    from tools.hermes_core.production_app_host import ProductionAppHostAction
+
+    host = _GOVERNED_PRODUCTION_HOST or ProductionAppHostAction(None)
+    activate_only = getattr(host, "activate_only", None)
+    if activate_only is None:
+        return {
+            "decision": "DENY",
+            "reason": "ACTIVATION_ONLY_CEREMONY_NOT_CONFIGURED",
+        }
+    return activate_only(payload).to_public_dict()
+
+
+def reconcile_governed_production_recovery(request_id: str) -> dict[str, Any]:
+    """Explicitly reconcile one durable lifecycle record; never run at startup."""
+    if _GOVERNED_PRODUCTION_RECOVERY is None:
+        return {"decision": "DENY", "reason": "RECOVERY_OWNER_NOT_CONFIGURED"}
+    result = _GOVERNED_PRODUCTION_RECOVERY.reconcile(request_id)
+    return {
+        "decision": result.decision,
+        "reason": result.reason,
+        "requestId": result.request_id,
+        "bindingTeardownCount": result.binding_teardown_count,
+        "processTerminationCount": result.process_termination_count,
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     def send_json(self, payload: dict[str, Any], status: int = 200) -> None:
         data = json.dumps(payload).encode("utf-8")
@@ -43547,11 +43845,19 @@ class Handler(BaseHTTPRequestHandler):
             "/api/settings",
             "/api/set-agent-posts",
             "/api/agent-posts-status",
+            "/api/governed-production-action",
         }:
             self.send_error(404)
             return
         try:
             body = read_json_body(self)
+            if self.path == "/api/governed-production-action":
+                result = submit_governed_production_action(body)
+                status = 200 if result.get("ok") else 403
+                if result.get("reason") == "MISSING_GOVERNED_ACTION_DEPENDENCY":
+                    status = 503
+                self.send_json(result, status)
+                return
             if self.path == "/api/r2-upload":
                 self.send_json(upload_folder_media_to_r2(str(body.get("folder") or "")))
                 return

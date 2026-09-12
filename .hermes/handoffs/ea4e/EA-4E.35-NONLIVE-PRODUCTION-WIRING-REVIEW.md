@@ -1,0 +1,271 @@
+# EA-4E.35 Non-Live Production Wiring Review
+
+## Governing Checkpoint
+
+```text
+GIT_STATE_REVERIFIED_AT_START=YES
+GOVERNING_LOCAL_HEAD=37bca415335d4ff58b29b4bad33a7a7d0a6ea97b
+GOVERNING_REMOTE_HEAD=37bca415335d4ff58b29b4bad33a7a7d0a6ea97b
+CURRENT_BRANCH=feature/ea4f-regional-hand-repair-pilot
+LOCAL_AHEAD=0
+LOCAL_BEHIND=0
+INITIAL_STAGED=0
+UNRELATED_WIP_PRESENT=YES
+UNRELATED_WIP_TOUCHED=NO
+```
+
+EA-4E.34 live qualification remains checkpointed. This phase did not repeat live execution.
+
+## Manual Seal / Prior Live History
+
+Not reopened. No Kilo/OpenCode/Grok receiver execution.
+
+## Sealed Receiver Identities
+
+```text
+KILO_SUCCESSOR_VERSION=7.5.15
+KILO_SUCCESSOR_SHA256=78414b3fc2b908ee5cfd52433697c8493c97de2930cbedb4508c9babcb681c25
+KILO_TRANSPORT_CONTRACT_ID=d38653cdceb5fceed79e3f4d251a84bac0a5d5731e44977df3c34ca00141d5bd
+KILO_EXECUTABLE_BINDING_ID=01274cc23910aebfbbd4666fffea5ce560d80720160a6909e2157576ad177982
+KILO_MODEL_BINDING_ID=b327fad4d90292b3e451c7ec4aa06d123eca091ac84eb7b116400ec96ca45544
+
+OPENCODE_TRANSPORT_ID=192b55d0aca65f261fa3e2701db63863f2761cacd20bb9422e73cde772e9ea5f
+OPENCODE_MODEL_BINDING_ID=cfcf7353842b923579db1676484bba6d0cba77927bdd592439898dde71773371
+
+SEALED_RECEIVER_IDENTITIES_MATCH=YES
+ROLLED_ARTIFACT_COUNT=13
+CURRENT_13_ARTIFACT_ROLL_MATCHES_EA4E34_CHECKPOINT=YES
+SEALED_CONTRACT_CHANGE_REQUIRED=NO
+```
+
+```text
+EA-4E.6=292f7deeb479cd45c6f33f3466305e7f225c05d9f48f9eeb8dc13f944d7162a1
+EA-4E.7=6de9f8b959db33bd2c2885396507baed47a3eadf07423c0e545afe4cc3274661
+EA-4E.8=9785647334992c514ef56013c2e410be48c42a3c1813b377e601823387be67a2
+EA-4E.11=af7d731ff21614f3ab0e92beb8927d3063e06707af7a9a89bc3d3b7c91e7927a
+EA-4E.14=b057272ee70a4f5fceb9500ccf699097ed2de2edfc21e8f47fe3f9247e52f20b
+EA-4E.17=5082b1a227a53cfe711bcf3c5d2193cd47031d75d7ec7650d8ab4c2389194e93
+EA-4E.18=56471e6509ccc2e99a7b609354748c51a0ada18bda8b92648c21bec584c1ceb3
+EA-4E.21=a25a6ba03b6a44f35511bec4b89c332043cd252ea3d1e185bd1b0a5c966fee33
+EA-4E.22=0e9d206a0b5d78592bafad624421439774e6c7ffe34a7c9d4c41a66aeb0504bd
+EA-4E.23=7bc3d2e036beacaef5aaabd054730dfbd49c57a0c36bbaab6f56894798be4687
+EA-4E.26=2e7a4b360c54541ff408e8430d3ac9a28cdee76e0feef5e1da03b87a889657ba
+EA-4E.28=90c96695f6294bed90eed1b630b1b44f7faca859b6b818ea2a744c1b753eb5b1
+EA-4E.29=00c6808dada4c9cf74a0310a31c9a51b10c1a8ee770f8f6c8a45d4d1f4962dd2
+```
+
+## Production Path Map
+
+`app.py` contains zero `tools.hermes_core` / `kilo-cli-agent` / `GovernedProduction` references. Scheduler/CRON directories are absent from this worktree.
+
+The real governed execution stack is already in `tools/hermes_core`. Before EA-4E.35 it was assembled only by tests and live-qualification harnesses.
+
+```text
+APPLICATION_ENTRYPOINT=tools.hermes_core.production_wiring.ProductionComposition.invoke
+EXECUTION_REQUEST_CONSTRUCTION_SITE=GovernedProductionCallerRequest / GovernedProductionRuntimeRequest
+RECEIVER_SELECTION_SITE=tools.hermes_core.production_wiring.classify_receiver + ReceiverRouter.route
+ROUTER_ENTRYPOINT=tools.hermes_core.receiver_router.ReceiverRouter.route
+EXECUTION_AUTHORITY_ISSUER_SITE=tools.hermes_core.production_issuance.ProductionIssuancePolicy.evaluate
+ACTIVATION_SITE=tools.hermes_core.production_activation.ProductionActivationValidator.validate
+EXECUTOR_BINDING_SITE=tools.hermes_core.production_executor_binding.ProductionExecutorBindingController.bind
+INVOCATION_AUTHORIZATION_ISSUER_SITE=tools.hermes_core.production_invocation_authorization_issuer.ProductionInvocationAuthorizationIssuer.issue
+GOVERNED_RUNTIME_ENTRYPOINT=tools.hermes_core.governed_production_runtime.GovernedProductionRuntime.execute
+EXECUTOR_RESOLUTION_SITE=tools.hermes_core.governed_bound_executor.GovernedBoundExecutorResolver.resolve_governed_executor
+REAL_RECEIVER_HANDOFF_SITE=ProductionExecutionBoundary -> RealKiloProductionExecutor / RealOpenCodeProductionExecutor
+PRODUCTION_COMPOSITION_ROOT=tools.hermes_core.production_wiring.assemble_production_composition
+PRODUCTION_EXECUTION_PATH_MAPPED=YES
+```
+
+`assemble_production_composition` does not bind executors, does not issue authority, and does not invoke receivers.
+
+## Wiring State By Boundary
+
+```text
+ROUTER_PRODUCTION_WIRING_STATE=WIRED_BUT_DISABLED
+EXECUTION_AUTHORITY_PRODUCTION_WIRING_STATE=WIRED_BUT_DISABLED
+ACTIVATION_PRODUCTION_WIRING_STATE=WIRED_BUT_DISABLED
+EXECUTOR_BINDING_PRODUCTION_WIRING_STATE=PARTIALLY_WIRED
+INVOCATION_AUTHORIZATION_PRODUCTION_WIRING_STATE=WIRED_BUT_DISABLED
+GOVERNED_RUNTIME_PRODUCTION_WIRING_STATE=WIRED_BUT_DISABLED
+REAL_EXECUTOR_PRODUCTION_WIRING_STATE=WIRED_BUT_DISABLED
+```
+
+No path is automatically enabled. `ProductionComposition.invoke` denies unless both `master_enable=ENABLED` and `production_activation_default=ENABLED`. Defaults are `DISABLED`.
+
+Note: `ProductionIssuancePolicy.evaluate` still emits request-scoped `activation_mode=ENABLED` after a successful issuance (qualified EA-4E.17 behavior). That is not a process-startup default. The composition root refuses to reach issuance unless the master/activation defaults are explicitly flipped. Sealed issuance was not changed (contract roll would be required).
+
+## Production Safety Defaults
+
+```text
+PRODUCTION_ACTIVATION_DEFAULT=DISABLED
+PRODUCTION_ACTIVATION_DEFAULT_VERIFIED=YES
+CONFIG_HAS_SINGLE_MASTER_ENABLE=YES
+CONFIG_MASTER_ENABLE_DEFAULT=DISABLED
+
+DEFAULT_RECEIVER=NONE
+AUTOMATIC_RECEIVER_SELECTION=NO
+TASK_TEXT_RECEIVER_HEURISTIC=NO
+ENVIRONMENT_RECEIVER_HEURISTIC=NO
+AVAILABILITY_RECEIVER_HEURISTIC=NO
+IMPLICIT_FIRST_RECEIVER_SELECTION=NO
+
+EXPLICIT_RECEIVER_ID_REQUIRED=YES
+UNSUPPORTED_RECEIVER_FAILS_CLOSED=YES
+MISSING_RECEIVER_FAILS_CLOSED=YES
+
+FALLBACK=NO
+FAILOVER=NO
+KILO_FAILURE_TRIGGERS_OPENCODE=NO
+OPENCODE_FAILURE_TRIGGERS_KILO=NO
+KILO_FAILURE_TRIGGERS_GROK=NO
+OPENCODE_FAILURE_TRIGGERS_GROK=NO
+AUTOMATIC_RETRY=NO
+AUTO_REISSUE_AFTER_FAILURE=NO
+```
+
+## Durable Store Wiring
+
+```text
+PRODUCTION_INVOCATION_AUTH_STORE_PATH=%LOCALAPPDATA%/Hermes/runtime/ea4e/production/invocation-authorization.sqlite3
+PRODUCTION_INVOCATION_AUTH_ANCHOR_PATH=%LOCALAPPDATA%/Hermes/runtime/ea4e/production/invocation-authorization.anchor.json
+PRODUCTION_AUTH_STORE_PATH_EXPLICIT=YES
+PRODUCTION_AUTH_ANCHOR_PATH_EXPLICIT=YES
+AUTOMATION_STATE_DB_USED_FOR_EA4E_AUTH=NO
+AUTH_STORE_PATH_FROM_TASK_TEXT=NO
+AUTH_ANCHOR_PATH_FROM_TASK_TEXT=NO
+
+FRESH_INSTALL_STORE_INITIALIZATION_EXPLICIT=tools.hermes_core.production_wiring.initialize_production_auth_store
+ESTABLISHED_STORE_REOPEN_MODE=rw
+MISSING_ESTABLISHED_STORE_FAILS_CLOSED=YES
+ANCHOR_VALIDATION_ON_STARTUP=YES
+STORE_REPLACEMENT_DETECTION_ON_STARTUP=YES
+ROLLBACK_DETECTION_ON_STARTUP=YES
+```
+
+`assemble_production_composition` calls `open_production_auth_store` (fail-closed). It does not call `initialize`.
+
+## Composition / Registry
+
+```text
+PRODUCTION_COMPOSITION_ROOT=tools.hermes_core.production_wiring.assemble_production_composition
+RUNTIME_SELF_ISSUES_INVOCATION_AUTH=NO
+ROUTER_CREATES_EXECUTION_AUTHORITY=NO
+ACTIVATION_STARTS_RECEIVER=NO
+BINDING_STARTS_RECEIVER=NO
+APP_STARTUP_ISSUES_EXECUTION_AUTHORITY=NO
+APP_STARTUP_ISSUES_INVOCATION_AUTHORIZATION=NO
+APP_STARTUP_BINDS_RECEIVER_EXECUTOR_AUTOMATICALLY=NO
+APP_STARTUP_STARTS_RECEIVER_PROCESS=NO
+
+KILO_REAL_EXECUTOR_REGISTERED=YES
+OPENCODE_REAL_EXECUTOR_REGISTERED=YES
+UNSUPPORTED_EXECUTOR_REGISTRATION_FAILS_CLOSED=YES
+
+KILO_EXECUTOR_USES_FROZEN_7_5_15_PATH=YES
+KILO_EXECUTOR_PATH_SUBSTITUTION_ALLOWED=NO
+OPENCODE_EXECUTOR_USES_QUALIFIED_PATH=YES
+```
+
+Real executors may be registered by `register_qualified_real_executors`. Registration is not execution. Binding remains an explicit EA-4E.21 call and is not performed at assemble.
+
+## Configuration
+
+```text
+EA4E_PRODUCTION_CONFIG_KEYS=master_enable,production_activation_default,default_receiver,receiver_id,auth_store_path,auth_anchor_path,kilo_executable_path,opencode_executable_path,authority_ttl_seconds,runtime_scope
+CONFIG_HAS_SINGLE_MASTER_ENABLE=YES
+CONFIG_MASTER_ENABLE_DEFAULT=DISABLED
+APP_PY_INSPECTED=YES
+APP_PY_PRODUCTION_EXECUTION_ENABLED=NO
+SCHEDULER_INTEGRATION=NO
+CRON_INTEGRATION=NO
+```
+
+No new magic environment variables. Paths are explicit dataclass fields with documented defaults under `%LOCALAPPDATA%/Hermes/runtime/ea4e/production/`.
+
+## Safe Non-Live Implementation
+
+```text
+SAFE_NONLIVE_WIRING_CHANGES_REQUIRED=YES
+SAFE_NONLIVE_WIRING_CHANGES_IMPLEMENTED=YES
+CHANGED_FILES=
+  tools/hermes_core/production_wiring.py
+  tests/hermes_core/test_ea4e35_nonlive_production_wiring.py
+  .hermes/handoffs/ea4e/EA-4E.35-NONLIVE-PRODUCTION-WIRING-REVIEW.md
+SEALED_CONTRACT_CHANGE_REQUIRED=NO
+```
+
+## Fail-Closed Matrix
+
+Covered by `tests/hermes_core/test_ea4e35_nonlive_production_wiring.py`:
+
+```text
+MISSING_RECEIVER=PASS
+UNSUPPORTED_RECEIVER=PASS
+PRODUCTION_ACTIVATION_DISABLED=PASS
+AUTH_STORE_MISSING=PASS
+ANCHOR_MISSING_OR_INVALID=PASS
+AUTHORITY_MISSING=PASS (EXECUTION_AUTHORITY_MISSING)
+AUTHORITY_DENIED=PASS (EXECUTION_AUTHORITY_DENIED)
+RECEIVER_BINDING_MISMATCH=PASS
+TRANSPORT_CONTRACT_MISMATCH=PASS
+MODEL_BINDING_MISMATCH=PASS
+EXECUTABLE_BINDING_MISMATCH=PASS (composition path freeze)
+INVOCATION_AUTH_MISSING=PASS (AUTHORIZATION_ISSUE_REQUEST_REQUIRED)
+INVOCATION_AUTH_DENIED=PASS (RECEIVER_ID_MISMATCH)
+CONSUMED_AUTH_REPLAY=PASS
+FAIL_CLOSED_MATRIX_COVERED=YES
+```
+
+## Tests
+
+```text
+SAFE_NONLIVE_TEST_TOTAL=21
+SAFE_NONLIVE_TEST_FAILURES=0
+BROAD_TEST_SUITE_RUN=NO
+REAL_EXECUTOR_TRIPWIRE_ENABLED=YES
+REAL_ADAPTER_TRIPWIRE_ENABLED=YES
+RECEIVER_PROCESS_TRIPWIRE_ENABLED=YES
+MODEL_INVOCATION_TRIPWIRE_ENABLED=YES
+REAL_EXECUTOR_TRIPWIRE_HITS=0
+REAL_ADAPTER_TRIPWIRE_HITS=0
+RECEIVER_PROCESS_TRIPWIRE_HITS=0
+MODEL_INVOCATION_TRIPWIRE_HITS=0
+```
+
+Fake executors only. One fake executor call occurs in consumed-replay coverage; real executor/adapter/process tripwires stayed at 0.
+
+## No Live Activity
+
+```text
+NEW_KILO_TASKS=0
+NEW_OPENCODE_TASKS=0
+NEW_KILO_RECEIVER_PROCESSES=0
+NEW_OPENCODE_RECEIVER_PROCESSES=0
+NEW_KILO_MODEL_INVOCATIONS=0
+NEW_OPENCODE_MODEL_INVOCATIONS=0
+NEW_LIVE_INVOCATION_AUTHS_ISSUED=0
+NEW_LIVE_INVOCATION_AUTHS_CLAIMED=0
+NEW_LIVE_INVOCATION_AUTHS_CONSUMED=0
+GROK_AUTHORIZED=NO
+GROK_TASKS=0
+GROK_AUTHORIZATIONS=0
+GROK_RECEIVER_PROCESSES=0
+GROK_MODEL_INVOCATIONS=0
+GROK_FALLBACK_ATTEMPTS=0
+GROK_PROVIDER_WIRING_CHANGED=NO
+GPU_GENERATIONS=0
+COMFYUI_CALLS=0
+```
+
+## Repository
+
+```text
+UNRELATED_WIP_TOUCHED=NO
+STAGED=0
+COMMIT=NO
+PUSH=NO
+```
+
+## Next Phase
+
+EA-4E.35 local commit review + remote checkpoint. Do not enable production execution. Do not wire scheduler/CRON/app.py in that checkpoint unless separately authorized.

@@ -2,6 +2,9 @@
 
 This is a model backend, not an app integration point. The CPU orchestration in
 object_refinement.py owns feature gating, acceptance, and provenance.
+
+Monolith boundary (EA4F-1): do not import app. Use gpu_runtime for path/DLL
+bootstrap so this CLI stays subsystem-safe.
 """
 from __future__ import annotations
 
@@ -44,9 +47,14 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _parser().parse_args()
 
-    # This repo's GPU venv needs app imported before torch/PIL/diffusers so its
-    # DLL and package paths are established consistently with normal generation.
-    import app  # noqa: F401
+    # EA4F-1: bootstrap GPU/DLL paths without importing the monolith.
+    try:
+        from gpu_runtime import ensure_gpu_runtime
+
+        ensure_gpu_runtime()
+    except Exception:
+        pass
+
     from PIL import Image
     import torch
     from diffusers import AutoPipelineForInpainting

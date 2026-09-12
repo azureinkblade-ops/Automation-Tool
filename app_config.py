@@ -197,3 +197,16 @@ COMMENT_ASSISTANT_INTERVAL_HOURS = max(1, int(os.environ.get("COMMENT_ASSISTANT_
 # No API credits configured, so local/fallback paths fire instantly instead of
 # burning quota on a network round-trip + 429. Set ENABLE_EXTERNAL_AI=1 to re-enable.
 EXTERNAL_AI_ENABLED = os.environ.get("ENABLE_EXTERNAL_AI", "0").strip() == "1"
+
+# --- Hand / regional repair (EA4F-1) ---
+# Off by default. Enable only after mask + backend path is verified.
+HAND_REPAIR_ENABLED = os.environ.get("HAND_REPAIR_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+HAND_REPAIR_AUTO_ACCEPT = os.environ.get("HAND_REPAIR_AUTO_ACCEPT", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+# --- Pose ControlNet (EA4F-2) ---
+# When on, create_prompt_fallback_image may attach ControlNet kwargs from the
+# remembered Visual Director shot plan (or prompt heuristic). Default off.
+POSE_CONTROLNET_ENABLED = os.environ.get("POSE_CONTROLNET_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+# --- Hand repair auto-mask stub (EA4F-1) ---
+HAND_REPAIR_AUTO_MASK = os.environ.get("HAND_REPAIR_AUTO_MASK", "0").strip().lower() in {"1", "true", "yes", "on"}

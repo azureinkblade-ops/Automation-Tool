@@ -50,6 +50,17 @@ class ExecutionAuthorizationConflictError(ExecutionAuthorizationStoreError):
     """Raised when an immutable artifact id collides with conflicting content."""
 
 
+class ExecutionAuthorizationLineageError(ExecutionAuthorizationStoreError):
+    """Raised when persisted cross-artifact lineage bindings disagree.
+
+    Used by storage-level consistency checks (Claim<->Attempt, Attempt<->
+    Route) that must fail closed on any mismatch of referenced artifact ids or
+    hashes. Distinct from ``ExecutionAuthorizationIntegrityError`` (artifact
+    hash / tamper-envelope failure) -- lineage errors are about inconsistent
+    *references between* artifacts, not corruption of a single artifact.
+    """
+
+
 class ExecutionAuthorityLedgerEntry:
     """One hash-linked authority-ledger event (mirrors ledger.LedgerEntry)."""
 

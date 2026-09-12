@@ -43,16 +43,24 @@ from .execution_authorization import (
     ExecutionAuthorizationDecision,
     ExecutionAuthorizationDecisionOutcome,
     ExecutionAuthorizationRequest,
+    ExecutionStateProjection,
+    ExecutionStateProjectionConflictError,
     build_execution_attempt,
     reconstruct_authorization,
     reconstruct_claim,
     reconstruct_decision,
     reconstruct_request,
     reconstruct_attempt,
+    reconstruct_state_projection,
+)
+from .worker_router import (
+    WorkerRouteDecision,
+    reconstruct_worker_route_decision,
 )
 from .execution_authorization_store import (
     ExecutionAuthorizationConflictError,
     ExecutionAuthorizationIntegrityError,
+    ExecutionAuthorizationLineageError,
     ExecutionAuthorizationSchemaError,
     ExecutionAuthorizationStore,
     ExecutionAuthorizationStoreError,
@@ -61,8 +69,9 @@ from .execution_authorization_store import (
 )
 from .hashing import canonical_json, sha256_payload, sha256_text
 
-SCHEMA_VERSION = 5
-SUPPORTED_SCHEMA_VERSIONS = frozenset({SCHEMA_VERSION})
+SCHEMA_VERSION = 6
+SCHEMA_VERSION_LATEST = 7
+SUPPORTED_SCHEMA_VERSIONS = frozenset({6, 7})
 
 
 def _hash_decision_linkage(decision_id: str, authorization_id: Optional[str]) -> str:
@@ -188,7 +197,83 @@ LEDGER_EVENTS = (
     "AUTHORIZATION_RECORDED",
     "CLAIM_RECORDED",
     "ATTEMPT_RECORDED",
+    "ROUTE_SELECTED",
 )
+
+
+def _hash_route_linkage(
+    artifact_id: str,
+    artifact_version: str,
+    artifact_hash: str,
+    attempt_id: str,
+    attempt_hash: str,
+    authorization_id: str,
+    authorization_hash: str,
+    claim_id: str,
+    claim_hash: str,
+    request_id: str,
+    request_hash: str,
+    decision_id: str,
+    decision_hash: str,
+    task_id: str,
+    worker_id: str,
+    worker_class: Optional[str],
+    worker_registry_version: str,
+    worker_registry_hash: str,
+    routing_policy_id: str,
+    routing_policy_version: str,
+    routing_policy_hash: str,
+    router_actor_id: str,
+    router_actor_type: str,
+    router_actor_context: Optional[str],
+    selected_at: str,
+    must_start_by: str,
+    operation: str,
+    input_hash: str,
+    status: str,
+) -> str:
+    """Hash-bound tamper-evident envelope for the route's full physical binding.
+
+    The canonical route payload excludes artifact_hash (set post-hash), but
+    ALL physical route columns (including artifact_hash, artifact_version,
+    selected_at, must_start_by, operation, input_hash) live OUTSIDE the
+    canonical hash preimage. They are bound here so tampering any physical
+    column after persistence breaks the envelope, detected on load and during
+    verify_integrity. Mirrors _hash_attempt_linkage (which binds every
+    attempt physical column).
+    """
+    payload = {
+        "artifact_id": artifact_id,
+        "artifact_version": artifact_version,
+        "artifact_hash": artifact_hash,
+        "attempt_id": attempt_id,
+        "attempt_hash": attempt_hash,
+        "authorization_id": authorization_id,
+        "authorization_hash": authorization_hash,
+        "claim_id": claim_id,
+        "claim_hash": claim_hash,
+        "request_id": request_id,
+        "request_hash": request_hash,
+        "decision_id": decision_id,
+        "decision_hash": decision_hash,
+        "task_id": task_id,
+        "worker_id": worker_id,
+        "worker_class": worker_class,
+        "worker_registry_version": worker_registry_version,
+        "worker_registry_hash": worker_registry_hash,
+        "routing_policy_id": routing_policy_id,
+        "routing_policy_version": routing_policy_version,
+        "routing_policy_hash": routing_policy_hash,
+        "router_actor_id": router_actor_id,
+        "router_actor_type": router_actor_type,
+        "router_actor_context": router_actor_context,
+        "selected_at": selected_at,
+        "must_start_by": must_start_by,
+        "operation": operation,
+        "input_hash": input_hash,
+        "status": status,
+    }
+    return sha256_text(canonical_json(payload))
 
 
 def _hash_event(
@@ -232,6 +317,11 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
         # exposed as public API.
         self._fail_after_decision = False
         self._fail_after_attempt_insert = False
+        self._fail_after_route_insert = False
+        # EA-4D.4B v7 migration rollback seams (proves in-transaction DDL
+        # rollback inside BEGIN IMMEDIATE).
+        self._fail_before_v7_create = False
+        self._fail_after_v7_create = False
         self._initialize()
 
     # -- schema -------------------------------------------------------------
@@ -240,11 +330,12 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
         cur.execute(
             "CREATE TABLE IF NOT EXISTS authority_schema_version (version INTEGER)"
         )
-        # Idempotent bootstrap: insert v1 only if no row exists.
+        # Idempotent bootstrap: a fresh DB is born directly at the latest schema
+        # version (v7); an existing DB already has its version row.
         cur.execute(
             "INSERT OR IGNORE INTO authority_schema_version (version) "
             "SELECT ? WHERE NOT EXISTS (SELECT 1 FROM authority_schema_version)",
-            (SCHEMA_VERSION,),
+            (SCHEMA_VERSION_LATEST,),
         )
         stored = cur.execute(
             "SELECT version FROM authority_schema_version LIMIT 1"
@@ -371,7 +462,179 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
             )
             """
         )
+        # EA-4C.2: route table. One durable route per Attempt (UNIQUE attempt_id).
+        # Physical binding columns live OUTSIDE the canonical artifact hash and
+        # are bound by a tamper-evident route_linkage_sha256 envelope (verified
+        # on load). Registry provenance is embedded in the route's canonical
+        # payload via worker_registry_version + worker_registry_hash, so no
+        # separate registry table is required.
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_routes (
+                artifact_id TEXT PRIMARY KEY,
+                attempt_id TEXT NOT NULL UNIQUE,
+                attempt_hash TEXT NOT NULL,
+                authorization_id TEXT NOT NULL,
+                authorization_hash TEXT NOT NULL,
+                claim_id TEXT NOT NULL,
+                claim_hash TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                request_hash TEXT NOT NULL,
+                decision_id TEXT NOT NULL,
+                decision_hash TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                worker_id TEXT NOT NULL,
+                worker_class TEXT,
+                worker_registry_version TEXT NOT NULL,
+                worker_registry_hash TEXT NOT NULL,
+                routing_policy_id TEXT NOT NULL,
+                routing_policy_version TEXT NOT NULL,
+                routing_policy_hash TEXT NOT NULL,
+                selected_at TEXT NOT NULL,
+                must_start_by TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                input_hash TEXT NOT NULL,
+                router_actor_id TEXT NOT NULL,
+                router_actor_type TEXT NOT NULL,
+                router_actor_context TEXT,
+                status TEXT NOT NULL,
+                artifact_type TEXT NOT NULL,
+                artifact_version TEXT NOT NULL,
+                artifact_hash TEXT NOT NULL,
+                route_linkage_sha256 TEXT NOT NULL,
+                canonical_payload TEXT NOT NULL
+            )
+            """
+        )
         self._conn.commit()
+
+        # Version roles (frozen EA-4D.4B):
+        #   SCHEMA_VERSION = 6         -> legacy/current input version
+        #   SCHEMA_VERSION_LATEST = 7  -> target/latest; a FRESH DB is born here
+        # A fresh database is created DIRECTLY at v7 with the complete schema
+        # (no migration round-trip). An existing v6 DB is migrated atomically to
+        # v7. An existing v7 DB is opened in place. The frozen predecessor test
+        # (SCHEMA_VERSION == 6) is preserved because SCHEMA_VERSION is unchanged.
+        if version == SCHEMA_VERSION_LATEST:  # 7: fresh or already-migrated
+            # Complete v7 schema: ensure the projection table is present
+            # (idempotent for a DB that already has it; a fresh DB gets it here
+            # without ever running migrate_to_v7).
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS execution_state_projections (
+                    projection_id TEXT PRIMARY KEY,
+                    artifact_hash TEXT NOT NULL,
+
+                    start_result_id TEXT NOT NULL,
+                    start_result_hash TEXT NOT NULL,
+
+                    launch_attempt_id TEXT NOT NULL,
+                    launch_attempt_hash TEXT NOT NULL,
+
+                    route_id TEXT NOT NULL,
+                    route_hash TEXT NOT NULL,
+
+                    authorization_id TEXT NOT NULL,
+                    authorization_hash TEXT NOT NULL,
+
+                    attempt_id TEXT NOT NULL,
+                    attempt_hash TEXT NOT NULL,
+
+                    task_id TEXT NOT NULL,
+                    worker_id TEXT NOT NULL,
+                    worker_version TEXT NOT NULL,
+
+                    runtime_run_id TEXT NOT NULL,
+
+                    target_state TEXT NOT NULL,
+
+                    projected_at TEXT NOT NULL,
+
+                    canonical_payload TEXT NOT NULL,
+                    payload_sha256 TEXT NOT NULL,
+
+                    UNIQUE(projection_id),
+                    UNIQUE(start_result_id, target_state)
+                )
+                """
+            )
+            self._conn.commit()
+        elif version == SCHEMA_VERSION:  # 6: existing legacy DB -> migrate
+            self.migrate_to_v7()
+        else:
+            raise ExecutionAuthorizationSchemaError(
+                f"unsupported authority schema version {version}; "
+                f"supported: {sorted(SUPPORTED_SCHEMA_VERSIONS)}")
+
+    # -- v6 -> v7 projection-schema migration (EA-4D.4B) ---------------------
+    def migrate_to_v7(self) -> None:
+        """Additively migrate the Authority DB from v6 to v7.
+
+        v7 adds the immutable ``execution_state_projections`` table only.
+        Additive: existing authority rows are NOT rejected (unlike 4A's
+        empty-only rule). The migration runs inside one BEGIN IMMEDIATE;
+        version advancement is LAST. A typed exception escapes _run_atomic,
+        which rolls back.
+        """
+        if self._fail_before_v7_create:
+            raise ExecutionAuthorizationSchemaError("injected v7 refusal")
+        self._run_atomic(self._migrate_v6_to_v7)
+
+    def _migrate_v6_to_v7(self) -> None:
+        """Migration body; runs inside _run_atomic (BEGIN IMMEDIATE)."""
+        cur = self._conn
+        version = int(cur.execute(
+            "SELECT version FROM authority_schema_version LIMIT 1").fetchone()[
+            "version"])
+        if version != 6:
+            raise ExecutionAuthorizationSchemaError(
+                f"v7 migration requires schema version 6; got {version}")
+        # Exact v6 table set verification (fail closed on unexpected shape).
+        expected_tables = {
+            "authority_schema_version", "execution_authorization_requests",
+            "execution_authorization_decisions", "execution_authorizations",
+            "execution_authorization_claims", "execution_attempts",
+            "authority_ledger", "worker_routes",
+        }
+        existing = {r["name"] for r in cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if not expected_tables.issubset(existing):
+            raise ExecutionAuthorizationSchemaError(
+                "authority DB is not in the known v6 shape; refusing migration")
+        cur.execute(
+            """
+            CREATE TABLE execution_state_projections (
+                projection_id TEXT PRIMARY KEY,
+                artifact_hash TEXT NOT NULL,
+                start_result_id TEXT NOT NULL,
+                start_result_hash TEXT NOT NULL,
+                launch_attempt_id TEXT NOT NULL,
+                launch_attempt_hash TEXT NOT NULL,
+                route_id TEXT NOT NULL,
+                route_hash TEXT NOT NULL,
+                authorization_id TEXT NOT NULL,
+                authorization_hash TEXT NOT NULL,
+                attempt_id TEXT NOT NULL,
+                attempt_hash TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                worker_id TEXT NOT NULL,
+                worker_version TEXT NOT NULL,
+                runtime_run_id TEXT NOT NULL,
+                target_state TEXT NOT NULL,
+                projected_at TEXT NOT NULL,
+                canonical_payload TEXT NOT NULL,
+                payload_sha256 TEXT NOT NULL,
+                UNIQUE(projection_id),
+                UNIQUE(start_result_id, target_state)
+            )
+            """
+        )
+        if self._fail_after_v7_create:
+            raise ExecutionAuthorizationSchemaError(
+                "injected post-create v7 failure")
+        # Version advancement LAST (within the same transaction).
+        cur.execute(
+            "UPDATE authority_schema_version SET version = 7")
 
     # -- helpers ------------------------------------------------------------
     @staticmethod
@@ -1381,6 +1644,419 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
             self._now_utc(),
         )
 
+    # -- execution-state projections (EA-4D.4B) ------------------------------
+    def record_projection(self, projection: ExecutionStateProjection) -> None:
+        """Persist an immutable EXECUTING projection + ledger event atomically.
+
+        Idempotency/conflict are governed by (start_result_id, target_state):
+        an identical committed projection is returned idempotently; a conflicting
+        projection (same start_result_id/target_state, different material
+        lineage) fails closed. Projection INSERT and ATTEMPT_EXECUTING ledger
+        append are ONE Authority-DB transaction (both commit or both rollback).
+        """
+        if not projection.verify_hash():
+            raise ExecutionStateProjectionIntegrityError(
+                f"projection {projection.projection_id} failed hash "
+                f"verification; refusing to persist")
+        canonical = canonical_json(projection.to_canonical_dict())
+        payload_sha256 = sha256_text(canonical)
+
+        def _work() -> str:
+            row = self._conn.execute(
+                "SELECT projection_id, artifact_hash, canonical_payload "
+                "FROM execution_state_projections "
+                "WHERE start_result_id = ? AND target_state = ?",
+                (projection.start_result_id, projection.target_state),
+            ).fetchone()
+            if row is not None:
+                if row["artifact_hash"] == projection.artifact_hash and \
+                        row["canonical_payload"] == canonical:
+                    return row["projection_id"]
+                raise ExecutionStateProjectionConflictError(
+                    f"conflicting projection for start_result_id="
+                    f"{projection.start_result_id}; refusing to overwrite")
+            self._conn.execute(
+                """
+                INSERT INTO execution_state_projections (
+                    projection_id, artifact_hash,
+                    start_result_id, start_result_hash,
+                    launch_attempt_id, launch_attempt_hash,
+                    route_id, route_hash,
+                    authorization_id, authorization_hash,
+                    attempt_id, attempt_hash,
+                    task_id, worker_id, worker_version,
+                    runtime_run_id, target_state, projected_at,
+                    canonical_payload, payload_sha256
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    projection.projection_id, projection.artifact_hash,
+                    projection.start_result_id, projection.start_result_hash,
+                    projection.launch_attempt_id, projection.launch_attempt_hash,
+                    projection.route_id, projection.route_hash,
+                    projection.authorization_id, projection.authorization_hash,
+                    projection.attempt_id, projection.attempt_hash,
+                    projection.task_id, projection.worker_id,
+                    projection.worker_version,
+                    projection.runtime_run_id, projection.target_state,
+                    projection.projected_at,
+                    canonical, payload_sha256,
+                ),
+            )
+            self._append_ledger(
+                "ATTEMPT_EXECUTING",
+                type(projection).__name__,
+                projection.projection_id,
+                projection.artifact_hash,
+                payload_sha256,
+                self._now_utc(),
+            )
+            return projection.projection_id
+
+        return self._run_atomic(_work)
+
+    def get_projection(
+        self, start_result_id: str, target_state: str = "EXECUTING"
+    ) -> Optional[dict]:
+        """Return the committed projection row for a start result, or None."""
+        row = self._conn.execute(
+            "SELECT * FROM execution_state_projections "
+            "WHERE start_result_id = ? AND target_state = ?",
+            (start_result_id, target_state),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    # -- routes (EA-4C.2) --------------------------------------------------
+    def record_route(self, route: WorkerRouteDecision) -> None:
+        """Persist a WorkerRouteDecision with exactly one ROUTE_SELECTED event.
+
+        EA-4C.2 persistence only. This method does NOT select a route and does
+        NOT evaluate any worker-eligibility or now <= must_start_by policy --
+        that belongs to EA-4C.3. It accepts an already-constructed, hash-bound
+        WorkerRouteDecision and proves: (a) the route's own artifact hash
+        integrity; (b) storage-level lineage -- the referenced ExecutionAttempt
+        exists and its stored hash matches the route's attempt_hash binding;
+        (c) one durable route per Attempt via UNIQUE(attempt_id). Route +
+        ROUTE_SELECTED ledger event are written atomically (BEGIN IMMEDIATE);
+        any failure rolls back with zero residue.
+
+        must_start_by here is persisted evidence of the Attempt's routing
+        window, not a runtime admission check.
+        """
+        if not isinstance(route, WorkerRouteDecision):
+            raise ExecutionAuthorizationStoreError(
+                f"record_route requires a WorkerRouteDecision, got {type(route)!r}"
+            )
+        if not route.verify_hash():
+            raise ExecutionAuthorizationIntegrityError(
+                f"route {route.route_id} failed hash verification; "
+                f"refusing to persist"
+            )
+
+        canonical = canonical_json(route.to_canonical_dict())
+        payload_sha256 = sha256_text(canonical)
+
+        def _work() -> None:
+            # Storage-level lineage: the referenced Attempt must exist, be
+            # hash-valid, and the route's upstream binding fields must EQUAL
+            # the durable Attempt's own fields. This proves the route is
+            # cryptographically bound to exactly the Attempt it claims -- no
+            # silent substitution of authorization/claim/request/decision/
+            # task/scope. EA-4C.2 enforcement only; NOT a worker-selection,
+            # eligibility, or now<=must_start_by policy decision.
+            attempt = self.get_attempt(route.attempt_id)
+            if attempt is None:
+                raise ExecutionAuthorizationStoreError(
+                    f"route requires a persisted attempt "
+                    f"{route.attempt_id}; no such attempt"
+                )
+            if not attempt.verify_hash():
+                raise ExecutionAuthorizationIntegrityError(
+                    f"attempt {route.attempt_id} failed hash verification; "
+                    f"route blocked"
+                )
+            # Exact durable-Attempt equality for every upstream lineage/scope
+            # field the route binds. A mismatch is a storage-level lineage
+            # violation (fail-closed), distinct from EA-4C.3 selection policy.
+            mismatches = []
+            if attempt.artifact_hash != route.attempt_hash:
+                mismatches.append("attempt_hash")
+            if attempt.authorization_id != route.authorization_id:
+                mismatches.append("authorization_id")
+            if attempt.authorization_hash != route.authorization_hash:
+                mismatches.append("authorization_hash")
+            if attempt.claim_id != route.claim_id:
+                mismatches.append("claim_id")
+            if attempt.claim_hash != route.claim_hash:
+                mismatches.append("claim_hash")
+            if attempt.request_id != route.request_id:
+                mismatches.append("request_id")
+            if attempt.request_hash != route.request_hash:
+                mismatches.append("request_hash")
+            if attempt.decision_id != route.decision_id:
+                mismatches.append("decision_id")
+            if attempt.decision_hash != route.decision_hash:
+                mismatches.append("decision_hash")
+            if attempt.task_id != route.task_id:
+                mismatches.append("task_id")
+            if attempt.operation != route.operation:
+                mismatches.append("operation")
+            if attempt.input_hash != route.input_hash:
+                mismatches.append("input_hash")
+            if attempt.worker_class != route.worker_class:
+                mismatches.append("worker_class")
+            if mismatches:
+                raise ExecutionAuthorizationLineageError(
+                    f"route lineage mismatch for attempt {route.attempt_id}: "
+                    f"{', '.join(sorted(mismatches))}"
+                )
+            self._insert_route_rows(route, canonical, payload_sha256)
+
+        try:
+            self._run_atomic(_work)
+        except sqlite3.IntegrityError as exc:
+            raise ExecutionAuthorizationConflictError(
+                f"route for attempt {route.attempt_id} conflicts with an "
+                f"existing route (one route per attempt): {exc}"
+            ) from exc
+
+    def _insert_route_rows(
+        self,
+        route: WorkerRouteDecision,
+        canonical: str,
+        payload_sha256: str,
+    ) -> None:
+        """Transaction-neutral INSERT of route + ledger rows.
+
+        Caller owns the transaction. No BEGIN/COMMIT here. Mirrors
+        _insert_attempt_rows.
+        """
+        linkage = _hash_route_linkage(
+            route.route_id,
+            route.artifact_version,
+            route.artifact_hash,
+            route.attempt_id,
+            route.attempt_hash,
+            route.authorization_id,
+            route.authorization_hash,
+            route.claim_id,
+            route.claim_hash,
+            route.request_id,
+            route.request_hash,
+            route.decision_id,
+            route.decision_hash,
+            route.task_id,
+            route.worker_id,
+            route.worker_class,
+            route.worker_registry_version,
+            route.worker_registry_hash,
+            route.routing_policy_id,
+            route.routing_policy_version,
+            route.routing_policy_hash,
+            route.router_actor_id,
+            route.router_actor_type,
+            route.router_actor_context,
+            route.selected_at,
+            route.must_start_by,
+            route.operation,
+            route.input_hash,
+            route.status.value,
+        )
+        self._conn.execute(
+            "INSERT INTO worker_routes "
+            "(artifact_id, attempt_id, attempt_hash, authorization_id, "
+            "authorization_hash, claim_id, claim_hash, request_id, "
+            "request_hash, decision_id, decision_hash, task_id, worker_id, "
+            "worker_class, worker_registry_version, worker_registry_hash, "
+            "routing_policy_id, routing_policy_version, routing_policy_hash, "
+            "selected_at, must_start_by, operation, input_hash, "
+            "router_actor_id, router_actor_type, router_actor_context, status, "
+            "artifact_type, artifact_version, artifact_hash, "
+            "route_linkage_sha256, canonical_payload) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                route.route_id,
+                route.attempt_id,
+                route.attempt_hash,
+                route.authorization_id,
+                route.authorization_hash,
+                route.claim_id,
+                route.claim_hash,
+                route.request_id,
+                route.request_hash,
+                route.decision_id,
+                route.decision_hash,
+                route.task_id,
+                route.worker_id,
+                route.worker_class,
+                route.worker_registry_version,
+                route.worker_registry_hash,
+                route.routing_policy_id,
+                route.routing_policy_version,
+                route.routing_policy_hash,
+                route.selected_at,
+                route.must_start_by,
+                route.operation,
+                route.input_hash,
+                route.router_actor_id,
+                route.router_actor_type,
+                route.router_actor_context,
+                route.status.value,
+                type(route).__name__,
+                route.artifact_version,
+                route.artifact_hash,
+                linkage,
+                canonical,
+            ),
+        )
+        # Test-only failure-injection point: simulates a crash after the route
+        # INSERT but before the ROUTE_SELECTED ledger event, proving that the
+        # transaction rolls back to zero residue (no partial write).
+        if self._fail_after_route_insert:
+            raise RuntimeError("injected failure after route INSERT")
+        self._append_ledger(
+            "ROUTE_SELECTED",
+            type(route).__name__,
+            route.route_id,
+            route.artifact_hash,
+            payload_sha256,
+            self._now_utc(),
+        )
+
+    def get_route(self, route_id: str) -> Optional[WorkerRouteDecision]:
+        """Load a single WorkerRouteDecision by id (integrity-verified)."""
+        payload = self._load_route(route_id)
+        return reconstruct_worker_route_decision(payload) if payload else None
+
+    def get_route_for_attempt(
+        self, attempt_id: str
+    ) -> Optional[WorkerRouteDecision]:
+        """Load the WorkerRouteDecision for an Attempt (if exactly one exists)."""
+        row = self._conn.execute(
+            "SELECT artifact_id FROM worker_routes WHERE attempt_id = ?",
+            (attempt_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        payload = self._load_route(row["artifact_id"])
+        return reconstruct_worker_route_decision(payload) if payload else None
+
+    def get_routes_for_worker(
+        self, worker_id: str
+    ) -> list[WorkerRouteDecision]:
+        """Load all WorkerRouteDecisions selecting the given worker."""
+        rows = self._conn.execute(
+            "SELECT artifact_id FROM worker_routes WHERE worker_id = ?",
+            (worker_id,),
+        ).fetchall()
+        routes = []
+        for r in rows:
+            payload = self._load_route(r["artifact_id"])
+            if payload is not None:
+                routes.append(reconstruct_worker_route_decision(payload))
+        return routes
+
+    def get_ledger_events(
+        self, event_type: Optional[str] = None
+    ) -> list[ExecutionAuthorityLedgerEntry]:
+        """Read-only ledger read. Returns hash-linked ledger entries in order."""
+        if event_type is None:
+            rows = self._conn.execute(
+                "SELECT event_id, event_type, artifact_type, artifact_id, "
+                "artifact_hash, payload_sha256, previous_entry_sha256, "
+                "entry_sha256, timestamp FROM authority_ledger "
+                "ORDER BY sequence_no ASC"
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT event_id, event_type, artifact_type, artifact_id, "
+                "artifact_hash, payload_sha256, previous_entry_sha256, "
+                "entry_sha256, timestamp FROM authority_ledger "
+                "WHERE event_type = ? ORDER BY sequence_no ASC",
+                (event_type,),
+            ).fetchall()
+        return [
+            ExecutionAuthorityLedgerEntry(
+                event_id=r["event_id"],
+                event_type=r["event_type"],
+                artifact_type=r["artifact_type"],
+                artifact_id=r["artifact_id"],
+                artifact_hash=r["artifact_hash"],
+                payload_sha256=r["payload_sha256"],
+                previous_entry_sha256=r["previous_entry_sha256"],
+                entry_sha256=r["entry_sha256"],
+                timestamp=r["timestamp"],
+            )
+            for r in rows
+        ]
+
+    def _load_route(self, route_id: str) -> Optional[dict[str, Any]]:
+        """Load + integrity-verify a route row, fail-closed on tamper."""
+        extra_cols = (
+            ", artifact_version, attempt_id, attempt_hash, authorization_id, "
+            "authorization_hash, claim_id, claim_hash, request_id, request_hash, "
+            "decision_id, decision_hash, task_id, worker_id, worker_class, "
+            "worker_registry_version, worker_registry_hash, routing_policy_id, "
+            "routing_policy_version, routing_policy_hash, router_actor_id, "
+            "router_actor_type, router_actor_context, selected_at, "
+            "must_start_by, operation, input_hash, status, "
+            "route_linkage_sha256"
+        )
+        row = self._conn.execute(
+            f"SELECT artifact_id, task_id, artifact_type, artifact_hash, "
+            f"canonical_payload{extra_cols} FROM worker_routes "
+            f"WHERE artifact_id = ?",
+            (route_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(row["canonical_payload"])
+        recomputed = sha256_payload(payload)
+        if recomputed != row["artifact_hash"]:
+            raise ExecutionAuthorizationIntegrityError(
+                f"route {route_id} canonical hash mismatch on load "
+                f"(stored {row['artifact_hash']}, recomputed {recomputed})"
+            )
+        payload["artifact_hash"] = row["artifact_hash"]
+        expected_linkage = _hash_route_linkage(
+            route_id,
+            row["artifact_version"],
+            row["artifact_hash"],
+            row["attempt_id"],
+            row["attempt_hash"],
+            row["authorization_id"],
+            row["authorization_hash"],
+            row["claim_id"],
+            row["claim_hash"],
+            row["request_id"],
+            row["request_hash"],
+            row["decision_id"],
+            row["decision_hash"],
+            row["task_id"],
+            row["worker_id"],
+            row["worker_class"],
+            row["worker_registry_version"],
+            row["worker_registry_hash"],
+            row["routing_policy_id"],
+            row["routing_policy_version"],
+            row["routing_policy_hash"],
+            row["router_actor_id"],
+            row["router_actor_type"],
+            row["router_actor_context"],
+            row["selected_at"],
+            row["must_start_by"],
+            row["operation"],
+            row["input_hash"],
+            row["status"],
+        )
+        if expected_linkage != row["route_linkage_sha256"]:
+            raise ExecutionAuthorizationIntegrityError(
+                f"route {route_id} route linkage tamper detected on load "
+                f"(envelope mismatch)"
+            )
+        return payload
+
     def consume_claim_transaction(
         self,
         *,
@@ -1779,6 +2455,7 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
         for r in self._conn.execute(
             "SELECT artifact_id, authorization_id, authorization_hash, request_id, "
             "request_hash, decision_id, decision_hash, claim_id, claim_hash, "
+            "task_id, "
             "attempt_number, attempt_actor_id, attempt_actor_type, "
             "attempt_actor_context, attempt_requested_at, attempt_recorded_at, "
             "claim_expires_at, must_start_by, input_hash, operation, "
@@ -1832,6 +2509,75 @@ class SQLiteExecutionAuthorizationStore(ExecutionAuthorizationStore):
                 failures.append(
                     f"execution_attempts {r['artifact_id']} "
                     f"invalid attempt_number {r['attempt_number']}"
+                )
+        # 1g) route artifacts (EA-4C.2): hash re-verification + linkage tamper
+        #     detection + one-route-per-attempt + orphan attempt detection.
+        for r in self._conn.execute(
+            "SELECT artifact_id, artifact_version, artifact_hash, attempt_id, "
+            "attempt_hash, authorization_id, authorization_hash, claim_id, "
+            "claim_hash, request_id, request_hash, decision_id, decision_hash, "
+            "task_id, worker_id, worker_class, worker_registry_version, "
+            "worker_registry_hash, routing_policy_id, routing_policy_version, "
+            "routing_policy_hash, router_actor_id, router_actor_type, "
+            "router_actor_context, selected_at, must_start_by, operation, "
+            "input_hash, status, route_linkage_sha256, canonical_payload "
+            "FROM worker_routes"
+        ):
+            try:
+                payload = json.loads(r["canonical_payload"])
+            except Exception as exc:  # noqa: BLE001
+                failures.append(
+                    f"worker_routes {r['artifact_id']} payload unparseable: {exc}"
+                )
+                continue
+            if sha256_payload(payload) != r["artifact_hash"]:
+                failures.append(
+                    f"worker_routes {r['artifact_id']} artifact hash mismatch"
+                )
+            expected_linkage = _hash_route_linkage(
+                r["artifact_id"],
+                r["artifact_version"],
+                r["artifact_hash"],
+                r["attempt_id"],
+                r["attempt_hash"],
+                r["authorization_id"],
+                r["authorization_hash"],
+                r["claim_id"],
+                r["claim_hash"],
+                r["request_id"],
+                r["request_hash"],
+                r["decision_id"],
+                r["decision_hash"],
+                r["task_id"],
+                r["worker_id"],
+                r["worker_class"],
+                r["worker_registry_version"],
+                r["worker_registry_hash"],
+                r["routing_policy_id"],
+                r["routing_policy_version"],
+                r["routing_policy_hash"],
+                r["router_actor_id"],
+                r["router_actor_type"],
+                r["router_actor_context"],
+                r["selected_at"],
+                r["must_start_by"],
+                r["operation"],
+                r["input_hash"],
+                r["status"],
+            )
+            if expected_linkage != r["route_linkage_sha256"]:
+                failures.append(
+                    f"worker_routes {r['artifact_id']} route linkage tamper detected"
+                )
+        # 1h) Multiple routes for one Attempt -> fail closed.
+        for r in self._conn.execute(
+            "SELECT attempt_id, COUNT(*) AS n FROM worker_routes "
+            "GROUP BY attempt_id"
+        ):
+            if int(r["n"]) > 1:
+                failures.append(
+                    f"attempt {r['attempt_id']} has {r['n']} routes "
+                    f"(at most one allowed)"
                 )
         # 2) ledger chain verification.
         rows = self._conn.execute(
