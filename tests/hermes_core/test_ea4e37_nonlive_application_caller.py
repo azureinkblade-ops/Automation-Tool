@@ -300,8 +300,9 @@ def test_second_request_without_activation(tmp_path):
 
 def test_receiver_mutation_after_caller_construction(tmp_path):
     composition = compose(tmp_path, master="ENABLED")
-    bind_fake(composition, "kilo-cli-agent")
     bind_fake(composition, "opencode-cli-agent")
+    assert composition.binding_controller.active_binding_count == 1
+    assert composition.binding_controller.get_binding_for_receiver("kilo-cli-agent") is None
     caller = ProductionApplicationCaller(build_production_entrypoint(composition))
     mismatched = issue_request("opencode-cli-agent", "ea4e37-mut", composition)
     result = caller.submit(
@@ -380,7 +381,8 @@ def test_opencode_fake_application_path(tmp_path):
 def test_application_kilo_cannot_become_opencode(tmp_path):
     composition = compose(tmp_path, master="ENABLED")
     bind_fake(composition, "kilo-cli-agent")
-    bind_fake(composition, "opencode-cli-agent")
+    assert composition.binding_controller.active_binding_count == 1
+    assert composition.binding_controller.get_binding_for_receiver("opencode-cli-agent") is None
     caller = ProductionApplicationCaller(build_production_entrypoint(composition))
     issue = issue_request("kilo-cli-agent", "cross-app", composition)
     result = caller.submit(
@@ -391,14 +393,16 @@ def test_application_kilo_cannot_become_opencode(tmp_path):
         )
     )
     assert result.application_reason == "CALLER_TO_ENTRYPOINT_RECEIVER_MUTATION"
+    assert result.entrypoint_called is False
     assert composition.executor_registry.resolve("kilo-cli-agent").call_count == 0
     assert composition.executor_registry.resolve("opencode-cli-agent").call_count == 0
 
 
 def test_application_opencode_cannot_become_kilo(tmp_path):
     composition = compose(tmp_path, master="ENABLED")
-    bind_fake(composition, "kilo-cli-agent")
     bind_fake(composition, "opencode-cli-agent")
+    assert composition.binding_controller.active_binding_count == 1
+    assert composition.binding_controller.get_binding_for_receiver("kilo-cli-agent") is None
     caller = ProductionApplicationCaller(build_production_entrypoint(composition))
     issue = issue_request("opencode-cli-agent", "cross-app-2", composition)
     result = caller.submit(
@@ -409,3 +413,6 @@ def test_application_opencode_cannot_become_kilo(tmp_path):
         )
     )
     assert result.application_reason == "CALLER_TO_ENTRYPOINT_RECEIVER_MUTATION"
+    assert result.entrypoint_called is False
+    assert composition.executor_registry.resolve("kilo-cli-agent").call_count == 0
+    assert composition.executor_registry.resolve("opencode-cli-agent").call_count == 0
