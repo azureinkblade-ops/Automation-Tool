@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-import os
-import shutil
+from dataclasses import asdict
 from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
+
+from tools.hermes_core.durable_invocation_authorization_store import (
+    DurableInvocationAuthorizationStore,
+)
+from tools.hermes_core.hashing import sha256_payload
 
 from tools.hermes_core.opencode_invocation_authorized_live import (
     EXPECTED_LIVE_OUTPUT,
@@ -49,20 +53,13 @@ from tools.hermes_core.receiver_router import (
 )
 
 
-# Spool directory used by OpenCode adapter - must be cleaned before live tests
-OPENCODE_SPOOL_DIR = r"C:\Users\David\AppData\Local\Hermes\runtime\ea4e\opencode\spool"
-
-
 @pytest.fixture(autouse=True)
-def clean_spool_directory():
-    """Clean the spool directory before each test to avoid file conflicts."""
-    if os.path.exists(OPENCODE_SPOOL_DIR):
-        shutil.rmtree(OPENCODE_SPOOL_DIR)
-    os.makedirs(OPENCODE_SPOOL_DIR, exist_ok=True)
-    yield
-    if os.path.exists(OPENCODE_SPOOL_DIR):
-        shutil.rmtree(OPENCODE_SPOOL_DIR)
-    os.makedirs(OPENCODE_SPOOL_DIR, exist_ok=True)
+def forbid_real_execution(monkeypatch):
+    """Identity/accounting tests need no spool or real receiver execution."""
+    def denied(*args, **kwargs):
+        raise AssertionError("EA4E25A_REAL_EXECUTION_FORBIDDEN")
+
+    monkeypatch.setattr(RealOpenCodeProductionExecutor, "execute", denied)
 
 
 class TestOpenCodeIdentityNonLive:
@@ -224,7 +221,7 @@ class TestOpenCodeClockNonLive:
 class TestOpenCodeCompletePathNonLive:
     """Non-live complete path proof using fakes/spies."""
 
-    def test_complete_path_without_identity_wrapper(self):
+    def test_complete_path_without_identity_wrapper(self, tmp_path):
         """Complete governance path must work without identity wrapper."""
         import uuid
         from datetime import datetime, timezone
@@ -261,7 +258,10 @@ class TestOpenCodeCompletePathNonLive:
         )
 
         # Create EA-4E.23 invocation policy
-        invocation_policy = ProductionInvocationAuthorizationPolicy(clock=binding_clock)
+        store = DurableInvocationAuthorizationStore.initialize(
+            tmp_path / "invocation.sqlite3", anchor_path=tmp_path / "invocation.anchor.json",
+        )
+        invocation_policy = ProductionInvocationAuthorizationPolicy(clock=binding_clock, store=store)
 
         # Create validators
         authority_validator = ExecutionAuthorityValidator(
@@ -323,7 +323,8 @@ class TestOpenCodeCompletePathNonLive:
             enabled=True,
             request_nonce=f"ea4e25a-nonce-{uuid.uuid4()}",
         )
-        handle = binding_controller.bind(enablement, registry)
+        with patch.object(binding_controller, "_resolve_executor_factory", return_value=lambda: mock_exec):
+            handle = binding_controller.bind(enablement, registry)
 
         # EA-4E.22 resolution
         ea4e22_result = resolver.resolve_governed_executor(receiver_id)
@@ -345,6 +346,12 @@ class TestOpenCodeCompletePathNonLive:
         )
 
         # Atomic claim
+        payload = asdict(invocation_auth)
+        store.persist_issued(
+            issue_request_id=f"test-issue-{invocation_auth.invocation_authorization_id}",
+            issue_request_hash=sha256_payload(payload),
+            authorization_payload=payload,
+        )
         bound_meta = {}
         claim_result = invocation_policy.claim_for_execution(
             invocation_auth, handle, bound_meta,
@@ -374,6 +381,7 @@ class TestOpenCodeCompletePathNonLive:
         assert exec_result.executor_called is True
         assert exec_result.executor_id == "RealOpenCodeProductionExecutor"
         assert exec_result.executor_output == "EA4E25_OPENCODE_INVOCATION_AUTHORIZED_LIVE_OK"
+        mock_exec.execute.assert_called_once_with(execution_request)
 
 
 class TestOpenCodeModelInvocationContract:
