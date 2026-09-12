@@ -77,6 +77,11 @@ class DurableInvocationAuthorizationStore:
     def __init__(self, path: str | Path, *, anchor_path: str | Path) -> None:
         self.path = Path(path).resolve()
         self.anchor_path = Path(anchor_path).resolve()
+        self._coordination_path = self.path.with_name(self.path.name + ".coordination.sqlite3")
+        if self.anchor_path == self._coordination_path:
+            raise DurableAuthorizationStoreUnavailable(
+                "authorization anchor and coordination paths must be distinct"
+            )
         if self.path == self.anchor_path:
             raise DurableAuthorizationStoreUnavailable(
                 "authorization store and anchor paths must be distinct"
@@ -99,6 +104,10 @@ class DurableInvocationAuthorizationStore:
         """Explicitly create an empty store, or verify an existing store."""
         target = Path(path).resolve()
         anchor = Path(anchor_path).resolve()
+        if anchor == target.with_name(target.name + ".coordination.sqlite3"):
+            raise DurableAuthorizationStoreUnavailable(
+                "authorization anchor and coordination paths must be distinct"
+            )
         if target == anchor:
             raise DurableAuthorizationStoreUnavailable(
                 "authorization store and anchor paths must be distinct"
@@ -189,11 +198,26 @@ class DurableInvocationAuthorizationStore:
 
     @contextmanager
     def _connection(self):
-        connection = self._connect()
+        coordination = None
+        connection = None
         try:
+            # Keep peers out of the database-commit/anchor-publication gap.
+            # This lock also coordinates independently opened store instances.
+            coordination = sqlite3.connect(
+                str(self._coordination_path),
+                isolation_level=None,
+                timeout=SQLITE_BUSY_TIMEOUT_MS / 1000,
+            )
+            coordination.execute("BEGIN IMMEDIATE")
+            connection = self._connect()
             yield connection
+        except sqlite3.Error as exc:
+            raise DurableAuthorizationStoreUnavailable(str(exc)) from exc
         finally:
-            connection.close()
+            if connection is not None:
+                connection.close()
+            if coordination is not None:
+                coordination.close()
 
     @staticmethod
     def _verify_schema(connection: sqlite3.Connection) -> None:
