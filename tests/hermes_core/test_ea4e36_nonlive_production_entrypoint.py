@@ -17,6 +17,7 @@ from tools.hermes_core.production_entrypoint import (
 )
 from tools.hermes_core.production_execution import ProductionExecutorResult
 from tools.hermes_core.production_executor_binding import (
+    BindingPolicyError,
     BindingClock,
     ExecutorRegistry,
     ProductionExecutorBindingEnablement,
@@ -421,11 +422,17 @@ def test_request_a_does_not_authorize_request_b(tmp_path):
 def test_kilo_activation_cannot_run_opencode(tmp_path):
     composition = compose(tmp_path, master="ENABLED")
     bind_fake(composition, "kilo-cli-agent")
-    bind_fake(composition, "opencode-cli-agent")
+    with pytest.raises(BindingPolicyError, match="BINDING_LIMIT_EXCEEDED"):
+        bind_fake(composition, "opencode-cli-agent")
+    assert composition.binding_controller.active_binding_count == 1
+    assert composition.binding_controller.get_binding_for_receiver("opencode-cli-agent") is None
     _, kilo_handle = (
         composition.executor_registry.resolve("kilo-cli-agent"),
         composition.binding_controller.get_binding_for_receiver("kilo-cli-agent"),
     )
+    assert composition.binding_controller.teardown(kilo_handle) is True
+    bind_fake(composition, "opencode-cli-agent")
+    assert composition.binding_controller.active_binding_count == 1
     ep = build_production_entrypoint(composition)
     result = ep.handle(
         entry_request(
@@ -441,9 +448,15 @@ def test_kilo_activation_cannot_run_opencode(tmp_path):
 
 def test_opencode_activation_cannot_run_kilo(tmp_path):
     composition = compose(tmp_path, master="ENABLED")
-    bind_fake(composition, "kilo-cli-agent")
     bind_fake(composition, "opencode-cli-agent")
+    with pytest.raises(BindingPolicyError, match="BINDING_LIMIT_EXCEEDED"):
+        bind_fake(composition, "kilo-cli-agent")
+    assert composition.binding_controller.active_binding_count == 1
+    assert composition.binding_controller.get_binding_for_receiver("kilo-cli-agent") is None
     oc_handle = composition.binding_controller.get_binding_for_receiver("opencode-cli-agent")
+    assert composition.binding_controller.teardown(oc_handle) is True
+    bind_fake(composition, "kilo-cli-agent")
+    assert composition.binding_controller.active_binding_count == 1
     ep = build_production_entrypoint(composition)
     result = ep.handle(
         entry_request(
@@ -453,6 +466,9 @@ def test_opencode_activation_cannot_run_kilo(tmp_path):
         )
     )
     assert result.entrypoint_reason == "POST_ACTIVATION_RECEIVER_MUTATION"
+
+    assert composition.executor_registry.resolve("kilo-cli-agent").call_count == 0
+    assert composition.executor_registry.resolve("opencode-cli-agent").call_count == 0
 
 
 def test_task_text_cannot_enable(tmp_path):
