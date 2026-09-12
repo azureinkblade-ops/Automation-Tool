@@ -221,16 +221,14 @@ class TestDirectCrossReceiverAuthIsolation:
         self, binding_controller, executor_registry, resolver, invocation_policy, binding_clock
     ):
         """Verify both cross-receiver tests reach EA-4E.23 (not binding layer)."""
-        # Bind both receivers
-        _bind_receiver(binding_controller, executor_registry, "kilo-cli-agent", binding_clock)
+        # Exercise each direction with one active binding at a time.
         _bind_receiver(binding_controller, executor_registry, "opencode-cli-agent", binding_clock)
 
         # Resolve both
-        kilo_resolution = resolver.resolve_governed_executor("kilo-cli-agent")
         opencode_resolution = resolver.resolve_governed_executor("opencode-cli-agent")
 
-        assert kilo_resolution.resolution_decision == "RESOLVED"
         assert opencode_resolution.resolution_decision == "RESOLVED"
+        assert binding_controller.active_binding_count == 1
 
         # Kilo auth -> OpenCode handle
         kilo_auth = _create_authorization(
@@ -242,6 +240,13 @@ class TestDirectCrossReceiverAuthIsolation:
         result1 = invocation_policy.claim_for_execution(kilo_auth, opencode_resolution.binding_handle, {})
         assert result1.policy_decision == "DENY"
         assert result1.policy_reason == "RECEIVER_BINDING_MISMATCH"
+
+        assert binding_controller.teardown(opencode_resolution.binding_handle) is True
+        assert binding_controller.active_binding_count == 0
+        _bind_receiver(binding_controller, executor_registry, "kilo-cli-agent", binding_clock)
+        kilo_resolution = resolver.resolve_governed_executor("kilo-cli-agent")
+        assert kilo_resolution.resolution_decision == "RESOLVED"
+        assert binding_controller.active_binding_count == 1
 
         # OpenCode auth -> Kilo handle
         opencode_auth = _create_authorization(

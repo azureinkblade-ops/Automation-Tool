@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from tests.hermes_core.ea4e26r_test_support import external_authority_and_activation
 
 from tools.hermes_core.durable_invocation_authorization_store import (
     DurableInvocationAuthorizationStore,
@@ -388,6 +389,7 @@ def test_explicit_enabled_fake_kilo_path(tmp_path):
     )
     assert TRIPWIRE_HITS["invocation"] == 0
     bind_fake(components.composition, "kilo-cli-agent")
+    authority, activation = external_authority_and_activation("kilo-cli-agent", "ea4e43-kilo")
     result = components.user_action.submit(
         ProductionAppUserActionRequest(
             request_id="ea4e43-kilo",
@@ -395,6 +397,8 @@ def test_explicit_enabled_fake_kilo_path(tmp_path):
             task_payload="EA4E43_FAKE_OK",
             production_activation_explicit=True,
             runtime_scope="production",
+            execution_authority=authority,
+            activation=activation,
             authorization_issue_request=issue_request(
                 "kilo-cli-agent", "ea4e43-kilo", components.composition
             ),
