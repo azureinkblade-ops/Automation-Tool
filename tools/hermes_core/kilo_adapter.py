@@ -564,8 +564,11 @@ class KiloProcessHandle:
         try:
             stdout, stderr = self.proc.communicate(timeout=self.timeout)
         except subprocess.TimeoutExpired as exc:
-            self._stdout = exc.stdout or b""
-            self._stderr = exc.stderr or b""
+            # A timed-out child is still running until killed and reaped.
+            self.proc.kill()
+            stdout, stderr = self.proc.communicate(timeout=1)
+            self._stdout = stdout or exc.stdout or b""
+            self._stderr = stderr or exc.stderr or b""
             self._finished = True
             return KiloProcessResult(
                 pid=self.pid,

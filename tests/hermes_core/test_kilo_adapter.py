@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import time
 from pathlib import Path
 
@@ -392,29 +393,75 @@ class TestKiloReceiverAdapter:
         assert adapter.classify_start_state(1, KiloProcessResult(1, -1, "", "", timed_out=True)) == "timeout"
 
 
+@pytest.fixture
+def fake_process(monkeypatch):
+    class Process:
+        pid = 12345
+        returncode = 0
+        timed_out = False
+        killed = False
+        communicates = 0
+
+        def communicate(self, timeout):
+            self.communicates += 1
+            self.timeout = timeout
+            if self.timed_out and not self.killed:
+                raise subprocess.TimeoutExpired("fake-kilo", timeout, output=b"partial", stderr=b"waiting")
+            if self.timed_out:
+                return b"partial", b"waiting"
+            return b"hello\n", b""
+
+        def kill(self):
+            self.killed = True
+            self.returncode = -9
+
+    process = Process()
+    calls = []
+
+    def popen(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    return process, calls
+
+
 class TestKiloFakeProcess:
-    def test_execute_success(self, tmp_path: Path):
+    def test_execute_success(self, fake_process):
         controller = KiloProcessController({})
         result = controller.execute(["cmd", "/d", "/c", "echo", "hello"], timeout=5)
         assert result.returncode == 0
         assert result.stdout.strip() == "hello"
         assert result.timed_out is False
+        assert fake_process[1][0][1]["shell"] is False
 
-    def test_execute_failure_exit_code(self, tmp_path: Path):
+    def test_execute_failure_exit_code(self, fake_process):
+        fake_process[0].returncode = 1
         controller = KiloProcessController({})
         result = controller.execute(["cmd", "/c", "exit", "1"], timeout=5)
         assert result.returncode != 0
         assert result.timed_out is False
 
-    def test_execute_timeout_reported_via_fake_process(self, tmp_path: Path):
+    def test_execute_timeout_reported_via_fake_process(self, fake_process):
+        fake_process[0].timed_out = True
         controller = KiloProcessController({})
         result = controller.execute(["cmd", "/d", "/c", "echo", "hello"], timeout=5)
-        assert result.timed_out is False
+        assert result.timed_out is True
+        assert result.stdout == "partial"
+        assert result.stderr == "waiting"
+        assert fake_process[0].killed is True
+        assert fake_process[0].communicates == 2
 
 
-class TestKiloLiveProcess:
-    def test_version_probe_from_safe_cwd(self, safe_cwd: Path):
-        import subprocess
+class TestKiloInjectedMetadataProbe:
+    def test_version_probe_from_safe_cwd(self, safe_cwd: Path, monkeypatch):
+        calls = []
+
+        def run(argv, **kwargs):
+            calls.append((argv, kwargs))
+            return subprocess.CompletedProcess(argv, 0, PINNED_KILO_VERSION + "\n", "")
+
+        monkeypatch.setattr(subprocess, "run", run)
         result = subprocess.run(
             [PINNED_KILO_PATH, "--version"],
             cwd=str(safe_cwd),
@@ -423,6 +470,9 @@ class TestKiloLiveProcess:
         )
         assert result.returncode == 0
         assert PINNED_KILO_VERSION in result.stdout
+        assert calls[0][0] == [PINNED_KILO_PATH, "--version"]
+        assert calls[0][1]["cwd"] == str(safe_cwd)
+        assert calls[0][1]["stdin"] == subprocess.DEVNULL
 
 
 class TestKiloReceiverContractTruth:
@@ -442,11 +492,12 @@ class TestKiloReceiverContractTruth:
 
 
 class TestKiloStdinClosure:
-    def test_stdin_is_closed_not_a_task_channel(self, tmp_path: Path):
+    def test_stdin_is_closed_not_a_task_channel(self, fake_process):
         controller = KiloProcessController({})
         result = controller.execute(["cmd", "/d", "/c", "echo", "hello"], timeout=5)
         assert result.returncode == 0
         assert "stdin" not in str(result)
+        assert fake_process[1][0][1]["stdin"] == subprocess.DEVNULL
 
     def test_positional_task_cannot_inject_options(self, tmp_path: Path):
         with pytest.raises(KiloAdapterError):
