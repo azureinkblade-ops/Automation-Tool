@@ -7,6 +7,7 @@ must never instantiate a real executor or reach an adapter or process boundary.
 from __future__ import annotations
 
 from types import SimpleNamespace
+from dataclasses import asdict
 
 import pytest
 
@@ -29,7 +30,7 @@ NONLIVE_REGRESSION_MODE = "FAKE_ONLY"
 
 
 @pytest.fixture(autouse=True)
-def fake_only_opencode_boundary(monkeypatch):
+def fake_only_opencode_boundary(monkeypatch, tmp_path):
     """Keep the regression governed while making its terminal boundary non-live."""
     calls = {
         "fake_executor_instantiations": 0,
@@ -38,6 +39,35 @@ def fake_only_opencode_boundary(monkeypatch):
         "real_adapter_tripwire": 0,
         "process_start_tripwire": 0,
     }
+
+    from tools.hermes_core.durable_invocation_authorization_store import (
+        DurableInvocationAuthorizationStore,
+    )
+    from tools.hermes_core.hashing import sha256_payload
+
+    store = DurableInvocationAuthorizationStore.initialize(
+        tmp_path / "invocation.sqlite3", anchor_path=tmp_path / "invocation.anchor.json",
+    )
+    authorization_type = qualification_module.ProductionInvocationAuthorization
+    policy_type = qualification_module.ProductionInvocationAuthorizationPolicy
+    issued_authorizations = []
+
+    def persisted_test_authorization(**kwargs):
+        authorization = authorization_type(**kwargs)
+        payload = asdict(authorization)
+        store.persist_issued(
+            issue_request_id=f"test-issue-{authorization.invocation_authorization_id}",
+            issue_request_hash=sha256_payload(payload),
+            authorization_payload=payload,
+        )
+        issued_authorizations.append(authorization)
+        return authorization
+
+    def durable_test_policy(**kwargs):
+        return policy_type(store=store, **kwargs)
+
+    monkeypatch.setattr(qualification_module, "ProductionInvocationAuthorization", persisted_test_authorization)
+    monkeypatch.setattr(qualification_module, "ProductionInvocationAuthorizationPolicy", durable_test_policy)
 
     def reject_real_executor(*args, **kwargs):
         calls["real_executor_tripwire"] += 1
@@ -82,6 +112,9 @@ def fake_only_opencode_boundary(monkeypatch):
     assert calls["real_executor_tripwire"] == 0
     assert calls["real_adapter_tripwire"] == 0
     assert calls["process_start_tripwire"] == 0
+    if calls["fake_executor_calls"]:
+        assert issued_authorizations
+        assert all(store.inspect(asdict(auth)).consumed for auth in issued_authorizations)
 
 
 class TestOpenCodeExecutorIdentity:
