@@ -2,7 +2,7 @@
 import pytest
 
 from tools.hermes_core.codex_adapter import (
-    PINNED_CODEX_SHA256, PINNED_CODEX_VERSION, PINNED_CLI_CONTRACT_ID,
+    R6E_QUALIFIED_CODEX_SHA256, R6E_QUALIFIED_CODEX_VERSION, R6E_QUALIFIED_CLI_CONTRACT_ID,
     codex_cli_contract, codex_cli_contract_id,
     qualify_codex_result_schema_material,
 )
@@ -19,16 +19,16 @@ LINEAGE = CodexResultSchemaLineage("a" * 64, "b" * 64)
 
 def qualification(candidate=True, **changes):
     values = dict(lineage=LINEAGE,
-                  binary_sha256=CANDIDATE_SHA if candidate else PINNED_CODEX_SHA256,
-                  binary_version=CANDIDATE_VERSION if candidate else PINNED_CODEX_VERSION,
-                  cli_contract_id=CANDIDATE_CONTRACT if candidate else PINNED_CLI_CONTRACT_ID)
+                  binary_sha256=CANDIDATE_SHA if candidate else R6E_QUALIFIED_CODEX_SHA256,
+                  binary_version=CANDIDATE_VERSION if candidate else R6E_QUALIFIED_CODEX_VERSION,
+                  cli_contract_id=CANDIDATE_CONTRACT if candidate else R6E_QUALIFIED_CLI_CONTRACT_ID)
     values.update(changes)
     return qualify_instance_bound_result_schema(build_instance_bound_result_schema(LINEAGE), **values)
 
 
 def test_candidate_contract_matches_production_computation():
     assert codex_cli_contract_id(codex_cli_contract(CANDIDATE_SHA, CANDIDATE_VERSION)) == CANDIDATE_CONTRACT
-    assert CANDIDATE_CONTRACT != PINNED_CLI_CONTRACT_ID
+    assert CANDIDATE_CONTRACT != R6E_QUALIFIED_CLI_CONTRACT_ID
 
 
 def test_candidate_schema_passes_existing_structural_validator():

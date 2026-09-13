@@ -157,7 +157,7 @@ class BinaryTests(AdapterFixture):
         self.assertEqual(identity.executable, str(Path(PINNED_CODEX_PATH).resolve()))
         self.assertEqual(identity.sha256, PINNED_CODEX_SHA256)
         self.assertEqual(identity.version, PINNED_CODEX_VERSION)
-        self.assertEqual(identity.size_bytes, 313790256)
+        self.assertEqual(identity.size_bytes, 297858352)
     def test_actual_bytes_are_hashed(self):
         identity = resolve_pinned_binary(self.config, version_probe=self.probe)
         self.assertEqual(identity.sha256, self.config.expected_sha256)
