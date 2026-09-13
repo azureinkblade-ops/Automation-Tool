@@ -168,7 +168,7 @@ class BinaryTests(AdapterFixture):
         self.assertEqual(self.probes, 0)
     def test_historical_binary_identity_is_not_the_successor_qualification(self):
         config = replace(
-            default_trusted_config(),
+            self.config,
             expected_sha256=PREVIOUS_QUALIFIED_CODEX_SHA256,
             expected_version=PREVIOUS_QUALIFIED_CODEX_VERSION,
         )
