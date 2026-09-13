@@ -24,7 +24,10 @@ Initial export failed 1 test (42 passed) because adding the LF attribute
 normalized helper bytes. The helper is now explicitly mechanically normalized
 to LF without semantic changes; its frozen SHA256 is
 622547fb220f7cb1069aea7580b71321b22132cc480e3b410e2a0910e418eff0.
-This fifth file is part of the checkpoint; the old observed hash is historical.
+Git confirmed the helper blob was already LF: normalization changes checkout
+bytes only, not the committed helper. Final commit has four files, no helper
+blob delta. The old observed hash is historical. Final staged and committed
+exports both passed 43 tests with zero process/filesystem events.
 Focused admission tests: 15 passed. Expanded admission and process/filesystem/
 reporting safety gate: 43 passed, zero guard events. Command uses python -m
 pytest -q -p no:cacheprovider -p tools.ea4e67_fake_only_guard
