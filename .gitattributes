@@ -1,2 +1,3 @@
 # Preserve exact helper bytes used by the frozen process qualification guard.
 tests/hermes_core/fixtures/durable_auth_process_helper.py text eol=lf
+tests/hermes_core/fixtures/local_worker_stub.py text eol=lf
