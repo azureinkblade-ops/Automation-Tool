@@ -248,9 +248,12 @@ def claim_execution_authorization(
     # 6) Atomic, concurrency-safe persistence. try_claim_* converts a lost
     #    UNIQUE race (another connection committed first) into the correct
     #    domain outcome: idempotent for a matching claim, CONFLICT otherwise.
-    won, winning = store.try_claim_authorization_atomically(
-        authorization_id, claim, clock=clock
-    )
+    try:
+        won, winning = store.try_claim_authorization_atomically(
+            authorization_id, claim, clock=clock
+        )
+    except ExecutionAuthorizationConflictError as exc:
+        raise ExecutionAuthorizationClaimConflictError(str(exc)) from exc
     if not won:
         return ExecutionClaimResult(
             authorization_id=authorization_id,

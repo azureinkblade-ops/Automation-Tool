@@ -559,7 +559,7 @@ class TestEA4AClaimConcurrency(_ClaimHarness):
         # raw error. No claimant transfer; the winner's claimant is preserved.
         outcomes = {results["a"][0], results["b"][0]}
         self.assertIn("ok", outcomes)
-        self.assertIn("conflict", outcomes)
+        self.assertIn("conflict", outcomes, results)
         self.assertNotIn("error", outcomes)
         claim = self.store.get_claim_for_authorization(auth.authorization_id)
         self.assertIsNotNone(claim)
@@ -569,6 +569,41 @@ class TestEA4AClaimConcurrency(_ClaimHarness):
                   if e.event_type == "CLAIM_RECORDED"]
         self.assertEqual(len(events), 1)
         self.assertTrue(self.store.verify_integrity().ok)
+
+    def test_different_claimant_after_stale_initial_read_is_domain_conflict(self):
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+
+        fixed = datetime(2026, 8, 12, 21, 27, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+        auth = self._issue_auth()
+        winner = C.claim_execution_authorization(
+            store=self.store, authorization_id=auth.authorization_id,
+            claimant=CLAIMANT_A, clock=lambda: fixed,
+        )
+        loser = SQLiteExecutionAuthorizationStore(self.ea_db)
+        actual_read = loser.get_claim_for_authorization
+        reads = 0
+
+        def stale_once(authorization_id):
+            nonlocal reads
+            reads += 1
+            return None if reads == 1 else actual_read(authorization_id)
+
+        try:
+            # Model the legal interleaving: initial lookup misses, winner commits,
+            # then the loser's atomic persistence sees the durable claim.
+            with patch.object(loser, "get_claim_for_authorization", side_effect=stale_once):
+                with self.assertRaises(ExecutionAuthorizationClaimConflictError):
+                    C.claim_execution_authorization(
+                        store=loser, authorization_id=auth.authorization_id,
+                        claimant=CLAIMANT_B, clock=lambda: fixed,
+                    )
+            self.assertEqual(actual_read(auth.authorization_id).claim_id, winner.claim_id)
+            self.assertEqual(len([e for e in loser.get_authority_events()
+                                  if e.event_type == "CLAIM_RECORDED"]), 1)
+            self.assertTrue(loser.verify_integrity().ok)
+        finally:
+            loser.close()
 
     def test_stress_same_claimant(self):
         """250-run stress test: same-claimant race must converge every time."""
@@ -610,6 +645,10 @@ class TestEA4AClaimConcurrency(_ClaimHarness):
             elif not (a_ok or b_ok):
                 failures.append({
                     "trial": i, "verdict": "neither-ok",
+                    "a": a, "b": b})
+            elif (b if a_ok else a)[0] != "conflict":
+                failures.append({
+                    "trial": i, "verdict": "loser-not-conflict",
                     "a": a, "b": b})
         if failures:
             self.fail(f"different-claimant stress failures ({len(failures)}/250): {failures[:5]}")
