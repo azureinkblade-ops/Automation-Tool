@@ -11,6 +11,7 @@ from tools.hermes_core.governed_production import compute_ea4e18_integration_con
 from tools.hermes_core.governed_production_caller import compute_ea4e29_caller_contract_id
 from tools.hermes_core.governed_production_runtime import compute_ea4e26_integration_contract_id
 from tools.hermes_core.hashing import sha256_payload
+from tests.hermes_core.test_ea4e67c_successor_candidate_contract_diff import EXPECTED_IDS as CURRENT_EXPECTED_IDS
 from tools.hermes_core.kilo_adapter import (
     KILO_TRANSPORT_CONTRACT_ID,
     PINNED_KILO_PATH,
@@ -121,10 +122,10 @@ def _valid_enablement() -> ProductionExecutorBindingEnablement:
 
 
 def test_successor_file_identity_and_transport_are_exact():
-    assert PINNED_KILO_VERSION == "7.5.16"
-    assert PINNED_KILO_PATH.endswith(r"kilocode.kilo-code-7.5.16-win32-x64\bin\kilo.exe")
-    assert PINNED_KILO_SHA256 == "8ddb47c7ae088c9f2118cec8824d618eea498b3d580970a5f094c7390633a851"
-    assert KILO_TRANSPORT_CONTRACT_ID == "52c828de66703a5ea587e51940dca0ec5c13a92af72b1836e6fc0225a83a5b63"
+    assert PINNED_KILO_VERSION == "7.6.2"
+    assert PINNED_KILO_PATH.endswith(r"kilocode.kilo-code-7.6.2-win32-x64\bin\kilo.exe")
+    assert PINNED_KILO_SHA256 == "5d54b522d8a59228951d141cd70438c29115963ecb38d7cdfcf313f59c0f865b"
+    assert KILO_TRANSPORT_CONTRACT_ID == "3c54405378c314e52afc95fbe055fd0a4249f0d78a515a108126b8e4fd73363e"
 
 
 def test_transport_and_binding_hashes_are_deterministic_and_order_invariant():
@@ -146,11 +147,11 @@ def test_old_transport_and_chain_ids_remain_historical_and_reproducible():
 
 
 def test_rolled_chain_matches_exact_ids_and_is_repeatable():
-    assert _current_ids() == EXPECTED_IDS
-    assert _current_ids() == EXPECTED_IDS
-    assert CURRENT_EA4E17_ISSUANCE_CONTRACT_ID == EXPECTED_IDS["EA-4E.17"]
-    assert CURRENT_EA4E21_BINDING_CONTRACT_ID == EXPECTED_IDS["EA-4E.21"]
-    assert CURRENT_EA4E22_INTEGRATION_CONTRACT_ID == EXPECTED_IDS["EA-4E.22"]
+    assert _current_ids() == CURRENT_EXPECTED_IDS
+    assert _current_ids() == CURRENT_EXPECTED_IDS
+    assert CURRENT_EA4E17_ISSUANCE_CONTRACT_ID == CURRENT_EXPECTED_IDS["EA-4E.17"]
+    assert CURRENT_EA4E21_BINDING_CONTRACT_ID == CURRENT_EXPECTED_IDS["EA-4E.21"]
+    assert CURRENT_EA4E22_INTEGRATION_CONTRACT_ID == CURRENT_EXPECTED_IDS["EA-4E.22"]
 
 
 def test_receiver_set_model_and_opencode_bindings_are_unchanged():

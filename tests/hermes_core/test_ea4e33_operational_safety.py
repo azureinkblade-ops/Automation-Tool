@@ -205,10 +205,10 @@ def test_sealed_contract_chain_recomputed():
     e29 = compute_ea4e29_caller_contract_id()
 
     expected = {
-        "e23": "b918118df4b7d72ab632737ce75ca700426e40932cd21a83ead15b3d20ee2319",
-        "e26": "05880849e3972a5553c2ea7b9ed7e75df33bc8ca3f990df9bf65bc9b15da9891",
-        "e28": "4b1953dbdf28753a940bb6fed41ea38efd7ed92d657e9d3cdca4b1b760105c88",
-        "e29": "ac2c38e726a2469b80590f6976acad9a5141e0efb26c2726e342420118ef21f1",
+        "e23": "6191b758a61848b27068bf8d18b44b91cb0b32eb3e391a58a5ccd3c1908ef9a9",
+        "e26": "9e3118549e6e26e574b93b81aefd816228722d5feb525cad8a10086ad62a86e0",
+        "e28": "c6859afb31ffb218cfb09e8f4e6a7f355165bb47fa386d603f0689506ae38d58",
+        "e29": "11a5230334804d82405994a8ccaa62c0a4a49c2cd01a34854ab75758ba090525",
     }
 
     assert e23 == expected["e23"]
@@ -1345,10 +1345,10 @@ def test_contract_sufficiency():
     e29 = compute_ea4e29_caller_contract_id()
 
     expected = {
-        "e23": "b918118df4b7d72ab632737ce75ca700426e40932cd21a83ead15b3d20ee2319",
-        "e26": "05880849e3972a5553c2ea7b9ed7e75df33bc8ca3f990df9bf65bc9b15da9891",
-        "e28": "4b1953dbdf28753a940bb6fed41ea38efd7ed92d657e9d3cdca4b1b760105c88",
-        "e29": "ac2c38e726a2469b80590f6976acad9a5141e0efb26c2726e342420118ef21f1",
+        "e23": "6191b758a61848b27068bf8d18b44b91cb0b32eb3e391a58a5ccd3c1908ef9a9",
+        "e26": "9e3118549e6e26e574b93b81aefd816228722d5feb525cad8a10086ad62a86e0",
+        "e28": "c6859afb31ffb218cfb09e8f4e6a7f355165bb47fa386d603f0689506ae38d58",
+        "e29": "11a5230334804d82405994a8ccaa62c0a4a49c2cd01a34854ab75758ba090525",
     }
 
     assert e23 == expected["e23"]

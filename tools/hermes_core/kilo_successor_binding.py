@@ -1,4 +1,4 @@
-"""Canonical Kilo 7.5.16 successor identity and historical EA-4E IDs.
+"""Canonical Kilo 7.6.2 successor identity and historical EA-4E IDs.
 
 This module is data and hashing only. It has no process-launch capability.
 """
@@ -18,6 +18,27 @@ from tools.hermes_core.kilo_adapter import (
 
 KILO_RECEIVER_ID = "kilo-cli-agent"
 KILO_MODEL_BINDING_ID = "b327fad4d90292b3e451c7ec4aa06d123eca091ac84eb7b116400ec96ca45544"
+
+HISTORICAL_KILO_7_5_16_PATH = r"C:\Users\David\.vscode\extensions\kilocode.kilo-code-7.5.16-win32-x64\bin\kilo.exe"
+HISTORICAL_KILO_7_5_16_SHA256 = "8ddb47c7ae088c9f2118cec8824d618eea498b3d580970a5f094c7390633a851"
+HISTORICAL_KILO_7_5_16_TRANSPORT_CONTRACT_ID = "52c828de66703a5ea587e51940dca0ec5c13a92af72b1836e6fc0225a83a5b63"
+HISTORICAL_KILO_7_5_16_EXECUTABLE_BINDING_ID = "f681bc8bbfaeca4b3a1199254583f34327ac0de5e12a3ccbc0ff33411eb96563"
+
+HISTORICAL_EA4E_7_5_16_CONTRACT_IDS = {
+    "EA-4E.6": "a80122e6363f67148f9737f096057f2874aa594f04ddb2d18ddab3598fa94c49",
+    "EA-4E.7": "05cad9f532b0bc37a5fa28104f72b14a08b53d050c37912f6e367edb22cadfe4",
+    "EA-4E.8": "57b48875a3d446e4c2a417975c235c7360d4be6c96b4f0e380965553a126402d",
+    "EA-4E.11": "578e0790c6317298d7c81ab5b0ed58e46a197aecdece050ed59c18d9ef29d2d0",
+    "EA-4E.14": "ef709f6c2678027f694c3c9a55a498ec973977868428116bfa8b9476118f7f52",
+    "EA-4E.17": "62ba7ba5689ff467b8609f924abdf6f1d478a037214dd99c4cbdcccbf6dfbd5b",
+    "EA-4E.18": "921ea6c7ce32e57880bd67116e18f943faa66d265f685a9b59d632123c371cb3",
+    "EA-4E.21": "eac6a628e11d3d7235e09a2bf745bc2efda9856baf47c432b7ad4813a36691de",
+    "EA-4E.22": "93b284477a6f760170058a6ed026592d2238f0a1da7b5905eab8f70c6316eefe",
+    "EA-4E.23": "b918118df4b7d72ab632737ce75ca700426e40932cd21a83ead15b3d20ee2319",
+    "EA-4E.26": "05880849e3972a5553c2ea7b9ed7e75df33bc8ca3f990df9bf65bc9b15da9891",
+    "EA-4E.28": "4b1953dbdf28753a940bb6fed41ea38efd7ed92d657e9d3cdca4b1b760105c88",
+    "EA-4E.29": "ac2c38e726a2469b80590f6976acad9a5141e0efb26c2726e342420118ef21f1",
+}
 
 HISTORICAL_KILO_7_5_15_PATH = (
     r"C:\Users\David\.vscode\extensions\kilocode.kilo-code-7.5.15-win32-x64\bin\kilo.exe"
@@ -78,13 +99,13 @@ HISTORICAL_EA4E_7_5_15_CONTRACT_IDS: dict[str, str] = {
 # modules without creating a circular import. These are recomputed and
 # regression-checked from the current source during the successor roll.
 CURRENT_EA4E17_ISSUANCE_CONTRACT_ID = (
-    "62ba7ba5689ff467b8609f924abdf6f1d478a037214dd99c4cbdcccbf6dfbd5b"
+    "30c35204bb118b8978e6171ebef11e54fa90c6497c27da786717836af17b62ba"
 )
 CURRENT_EA4E21_BINDING_CONTRACT_ID = (
-    "eac6a628e11d3d7235e09a2bf745bc2efda9856baf47c432b7ad4813a36691de"
+    "2dabd852fd943cb13f23986621aac4d59f4b0054a353808ec155e0ff1b24dc5a"
 )
 CURRENT_EA4E22_INTEGRATION_CONTRACT_ID = (
-    "93b284477a6f760170058a6ed026592d2238f0a1da7b5905eab8f70c6316eefe"
+    "8aa6bb3760258d14de1621912072c0374ada91d444f6f51d03648ff4a8e51a3c"
 )
 
 
@@ -99,8 +120,8 @@ def kilo_executable_successor_binding_material() -> dict[str, Any]:
         "executable_sha256": PINNED_KILO_SHA256,
         "transport_contract_id": KILO_TRANSPORT_CONTRACT_ID,
         "model_binding_id": KILO_MODEL_BINDING_ID,
-        "predecessor_executable_version": "7.5.15",
-        "predecessor_transport_contract_id": HISTORICAL_KILO_7_5_15_TRANSPORT_CONTRACT_ID,
+        "predecessor_executable_version": "7.5.16",
+        "predecessor_transport_contract_id": HISTORICAL_KILO_7_5_16_TRANSPORT_CONTRACT_ID,
         "automatic_substitution": False,
     }
 

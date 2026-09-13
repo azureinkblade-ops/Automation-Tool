@@ -23,10 +23,13 @@ def test_extension_version_is_manifest_metadata():
     assert manifest["publisher"] == "kilocode"
 
 
-def test_production_pin_has_not_been_substituted():
+def test_current_pin_is_exact_and_original_pin_is_retained_as_history():
     source = (ROOT / "tools/hermes_core/kilo_adapter.py").read_text(encoding="utf-8")
-    assert 'PINNED_KILO_VERSION = "7.5.16"' in source
-    assert EXPECTED_HASH not in source
+    assert 'PINNED_KILO_VERSION = "7.6.2"' in source
+    assert EXPECTED_HASH in source
+    history = (ROOT / "tools/hermes_core/kilo_successor_binding.py").read_text(encoding="utf-8")
+    assert "HISTORICAL_KILO_7_5_16_SHA256" in history
+    assert "8ddb47c7ae088c9f2118cec8824d618eea498b3d580970a5f094c7390633a851" in history
 
 
 def test_router_depends_on_transport_identity():
