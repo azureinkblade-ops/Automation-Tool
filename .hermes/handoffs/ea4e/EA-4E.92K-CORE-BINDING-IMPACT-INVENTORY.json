@@ -1,0 +1,412 @@
+{
+  "baseline": "502e284ca9acbf852bc20cbb6201afbe568d090e",
+  "entries": [
+    {
+      "cached_contract_names": [],
+      "derivation": "compute_ea4e6_router_contract_id",
+      "functions": [
+        {
+          "function": "get_canonical_material",
+          "line": 158
+        },
+        {
+          "function": "get_contract_id",
+          "line": 179
+        },
+        {
+          "function": "compute_ea4e6_router_contract_id",
+          "line": 209
+        }
+      ],
+      "hash_dependencies": [],
+      "path": "tools/hermes_core/receiver_router.py",
+      "phase": "EA-4E.6",
+      "receiver_material_direct": true,
+      "source_sha256": "461ec65fd96e7f5c32e1b2a7b637cf3be2c927eb653a2c96920e7176674d7e19",
+      "current_contract_id": "80dde2cc32d68231fbb018a7799ca32edc5a710f856b8d764758261dc7e0be63",
+      "current_id_evidence": "committed EXPECTED_IDS verified by test_current_contracts_match_frozen_candidate",
+      "proposed_contract_id": "UNRESOLVED_TARGET_BINDING_NOT_FROZEN",
+      "ownership": "current shared sealed-contract source",
+      "manual_trace": "_default_router -> ReceiverRouter._qualified -> QUALIFIED_RECEIVERS",
+      "static_trace_limit": "constructor/class attribute dataflow needs manual review"
+    },
+    {
+      "cached_contract_names": [],
+      "derivation": "compute_ea4e7_authority_contract_id",
+      "functions": [
+        {
+          "function": "get_authority_canonical_material",
+          "line": 377
+        },
+        {
+          "function": "compute_ea4e7_authority_contract_id",
+          "line": 411
+        }
+      ],
+      "hash_dependencies": [
+        "EA-4E.6"
+      ],
+      "path": "tools/hermes_core/receiver_dispatch.py",
+      "phase": "EA-4E.7",
+      "receiver_material_direct": true,
+      "source_sha256": "245a20141db967d581f1905f29d2869100ac37a0add561fd08dd6e9dd31cc5bf",
+      "current_contract_id": "fdc9d48aadeb6353f2fdfed2921904079ff31d045cd56a1c9975c8b91c1f3a61",
+      "current_id_evidence": "committed EXPECTED_IDS verified by test_current_contracts_match_frozen_candidate",
+      "proposed_contract_id": "UNRESOLVED_TARGET_BINDING_NOT_FROZEN",
+      "ownership": "current shared sealed-contract source"
+    },
+    {
+      "cached_contract_names": [],
+      "derivation": "compute_ea4e8_coordinator_contract_id",
+      "functions": [
+        {
+          "function": "get_coordinator_canonical_material",
+          "line": 188
+        },
+        {
+          "function": "compute_ea4e8_coordinator_contract_id",
+          "line": 221
+        }
+      ],
+      "hash_dependencies": [
+        "EA-4E.6",
+        "EA-4E.7"
+      ],
+      "path": "tools/hermes_core/production_dispatch.py",
+      "phase": "EA-4E.8",
+      "receiver_material_direct": true,
+      "source_sha256": "d1e0b280ef6f29040f01f1784b4190358c24a11ba2e1902309ce09345adb14ec",
+      "current_contract_id": "49d2a5ce10a506f7ea6ac7a1290df298b4058b680ea7b7e953464e94845d7313",
+      "current_id_evidence": "committed EXPECTED_IDS verified by test_current_contracts_match_frozen_candidate",
+      "proposed_contract_id": "UNRESOLVED_TARGET_BINDING_NOT_FROZEN",
+      "ownership": "current shared sealed-contract source"
+    },
+    {
+      "cached_contract_names": [],
+      "derivation": "compute_ea4e11_activation_contract_id",
+      "functions": [
+        {
+          "function": "get_activation_canonical_material",
+          "line": 476
+        },
+        {
+          "function": "compute_ea4e11_activation_contract_id",
+          "line": 513
+        }
+      ],
+      "hash_dependencies": [
+        "EA-4E.6",
+        "EA-4E.7"
+      ],
+      "path": "tools/hermes_core/production_activation.py",
+      "phase": "EA-4E.11",
+      "receiver_material_direct": true,
+      "source_sha256": "127f72e0e51f6d0bde4d2dcb187f29e80bf1d40d72218725a2e38d74e1c297f5",
+      "current_contract_id": "f3111551d9be06f8437be9919cc9d7dddca686dfdb360082c9525feb4cfb6123",
+      "current_id_evidence": "committed EXPECTED_IDS verified by test_current_contracts_match_frozen_candidate",
+      "proposed_contract_id": "UNRESOLVED_TARGET_BINDING_NOT_FROZEN",
+      "ownership": "current shared sealed-contract source"
+    },
+    {
+      "cached_contract_names": [],
+      "derivation": "compute_ea4e14_execution_contract_id",
+      "functions": [
+        {
+          "function": "get_execution_canonical_material",
+          "line": 379
+        },
+        {
+          "function": "compute_ea4e14_execution_contract_id",
+          "line": 410
+        }
+      ],
+      "hash_dependencies": [
+        "EA-4E.6",
+        "EA-4E.7",
+        "EA-4E.11"
+      ],
+      "path": "tools/hermes_core/production_execution.py",
+      "phase": "EA-4E.14",
+      "receiver_material_direct": true,
+      "source_sha256": "866007809628acd71b968d437194fadb42465a315f88ac7d9ea9f575e6300c55",
+      "current_contract_id": "eb58c9ae1e4ca1fcc6a6fb6ecf321450dbf477b3669a66cab6fa1fa1bafc3473",
+      "current_id_evidence": "committed EXPECTED_IDS verified by test_current_contracts_match_frozen_candidate",
+      "proposed_contract_id": "UNRESOLVED_TARGET_BINDING_NOT_FROZEN",
+      "ownership": "current shared sealed-contract source"
+    },
+    {
+      "cached_contract_names": [],
+      "derivation": "compute_ea4e17_issuance_contract_id",
+      "functions": [
+        {
+          "function": "compute_ea4e17_issuance_contract_id",
+          "line": 436
+        }
+      ],
+      "hash_dependencies": [
+        "EA-4E.6",
+        "EA-4E.7",
+        "EA-4E.11",
+        "EA-4E.14"
+      ],
+      "path": "tools/hermes_core/production_issuance.py",
+      "phase": "EA-4E.17",
+      "receiver_material_direct": true,
+      "source_sha256": "b56a4c8d5799bfdc3f0a8b28c8c4c3f4b4834424f002764120f6ca54193d4bdd",
+      "current_contract_id": "30c35204bb118b8978e6171ebef11e54fa90c6497c27da786717836af17b62ba",
+      "current_id_evidence": "committed EXPECTED_IDS verified by test_current_contracts_match_frozen_candidate",
+      "proposed_contract_id": "UNRESOLVED_TARGET_BINDING_NOT_FROZEN",
+      "ownership": "current shared sealed-contract source"
+    },
+    {
+      "cached_contract_names": [],
+      "derivation": "compute_ea4e18_integration_contract_id",
+      "functions": [
+        {
+          "function": "compute_ea4e18_integration_contract_id",
+          "line": 338
+        }
+      ],
+      "hash_dependencies": [
+        "EA-4E.6",
+        "EA-4E.7",
+        "EA-4E.11",
+        "EA-4E.14",
+        "EA-4E.17"
+      ],
+      "path": "tools/hermes_core/governed_production.py",
+      "phase": "EA-4E.18",
+      "receiver_material_direct": true,
+      "source_sha256": "1fc8ac752d584bb091b1e378b1a4a5e21144ee909f79dc2a2bb0e086bfd0945b",
+      "current_contract_id": "775424531671c999569353d47115b5699802acacaa13d0b2b0743b4a6ce41d35",
+      "current_id_evidence": "committed EXPECTED_IDS verified by test_current_contracts_match_frozen_candidate",
+      "proposed_contract_id": "UNRESOLVED_TARGET_BINDING_NOT_FROZEN",
+      "ownership": "current shared sealed-contract source"
+    },
+    {
+      "cached_contract_names": [],
+      "derivation": "compute_ea4e21_binding_contract_id",
+      "functions": [
+        {
+          "function": "compute_ea4e21_binding_contract_id",
+          "line": 789
+        }
+      ],
+      "hash_dependencies": [
+        "EA-4E.17",
+        "EA-4E.18"
+      ],
+      "path": "tools/hermes_core/production_executor_binding.py",
+      "phase": "EA-4E.21",
+      "receiver_material_direct": true,
+      "source_sha256": "a9d07db2c17f97893065519c499469d6c6ec071de86d24ba46e030a28eeb847a",
+      "current_contract_id": "2dabd852fd943cb13f23986621aac4d59f4b0054a353808ec155e0ff1b24dc5a",
+      "current_id_evidence": "committed EXPECTED_IDS verified by test_current_contracts_match_frozen_candidate",
+      "proposed_contract_id": "UNRESOLVED_TARGET_BINDING_NOT_FROZEN",
+      "ownership": "current shared sealed-contract source"
+    },
+    {
+      "cached_contract_names": [],
+      "derivation": "compute_ea4e22_integration_contract_id",
+      "functions": [
+        {
+          "function": "compute_ea4e22_integration_contract_id",
+          "line": 212
+        }
+      ],
+      "hash_dependencies": [
+        "EA-4E.14",
+        "EA-4E.17",
+        "EA-4E.18",
+        "EA-4E.21"
+      ],
+      "path": "tools/hermes_core/governed_bound_executor.py",
+      "phase": "EA-4E.22",
+      "receiver_material_direct": true,
+      "source_sha256": "a0a3b96775fb60e98caa1d21665e60368b6db7df4722c4b52384a6ceae75647c",
+      "current_contract_id": "8aa6bb3760258d14de1621912072c0374ada91d444f6f51d03648ff4a8e51a3c",
+      "current_id_evidence": "committed EXPECTED_IDS verified by test_current_contracts_match_frozen_candidate",
+      "proposed_contract_id": "UNRESOLVED_TARGET_BINDING_NOT_FROZEN",
+      "ownership": "current shared sealed-contract source"
+    },
+    {
+      "cached_contract_names": [
+        "CURRENT_EA4E17_ISSUANCE_CONTRACT_ID",
+        "CURRENT_EA4E21_BINDING_CONTRACT_ID",
+        "CURRENT_EA4E22_INTEGRATION_CONTRACT_ID"
+      ],
+      "derivation": "compute_ea4e23_invocation_contract_id",
+      "functions": [
+        {
+          "function": "ea4e23_invocation_contract_payload",
+          "line": 594
+        },
+        {
+          "function": "compute_ea4e23_invocation_contract_id",
+          "line": 646
+        }
+      ],
+      "hash_dependencies": [
+        "EA-4E.14",
+        "EA-4E.17",
+        "EA-4E.18",
+        "EA-4E.21",
+        "EA-4E.22"
+      ],
+      "path": "tools/hermes_core/production_invocation_authorization.py",
+      "phase": "EA-4E.23",
+      "receiver_material_direct": false,
+      "source_sha256": "c6fae76ad2f0a203234b374d97a02a1bd610be2a4922ed73cf098632163cf2f6",
+      "current_contract_id": "6191b758a61848b27068bf8d18b44b91cb0b32eb3e391a58a5ccd3c1908ef9a9",
+      "current_id_evidence": "committed EXPECTED_IDS verified by test_current_contracts_match_frozen_candidate",
+      "proposed_contract_id": "UNRESOLVED_TARGET_BINDING_NOT_FROZEN",
+      "ownership": "current shared sealed-contract source"
+    },
+    {
+      "cached_contract_names": [],
+      "derivation": "compute_ea4e26_integration_contract_id",
+      "functions": [
+        {
+          "function": "ea4e26_integration_contract_payload",
+          "line": 634
+        },
+        {
+          "function": "compute_ea4e26_integration_contract_id",
+          "line": 682
+        }
+      ],
+      "hash_dependencies": [
+        "EA-4E.14",
+        "EA-4E.18",
+        "EA-4E.21",
+        "EA-4E.22",
+        "EA-4E.23"
+      ],
+      "path": "tools/hermes_core/governed_production_runtime.py",
+      "phase": "EA-4E.26",
+      "receiver_material_direct": true,
+      "source_sha256": "ff8e2e88c75f46d8381920d944969cf6a538bd56ef1bddafd0673db7639fde42",
+      "current_contract_id": "9e3118549e6e26e574b93b81aefd816228722d5feb525cad8a10086ad62a86e0",
+      "current_id_evidence": "committed EXPECTED_IDS verified by test_current_contracts_match_frozen_candidate",
+      "proposed_contract_id": "UNRESOLVED_TARGET_BINDING_NOT_FROZEN",
+      "ownership": "current shared sealed-contract source"
+    },
+    {
+      "cached_contract_names": [],
+      "derivation": "compute_ea4e28_issuer_contract_id",
+      "functions": [
+        {
+          "function": "ea4e28_issuer_contract_payload",
+          "line": 222
+        },
+        {
+          "function": "compute_ea4e28_issuer_contract_id",
+          "line": 258
+        }
+      ],
+      "hash_dependencies": [
+        "EA-4E.21",
+        "EA-4E.22",
+        "EA-4E.23"
+      ],
+      "path": "tools/hermes_core/production_invocation_authorization_issuer.py",
+      "phase": "EA-4E.28",
+      "receiver_material_direct": false,
+      "source_sha256": "11f747de1cc74ff242e54856a137089aa1d509d47bc6165bd2000c8a412c7aaf",
+      "current_contract_id": "c6859afb31ffb218cfb09e8f4e6a7f355165bb47fa386d603f0689506ae38d58",
+      "current_id_evidence": "committed EXPECTED_IDS verified by test_current_contracts_match_frozen_candidate",
+      "proposed_contract_id": "UNRESOLVED_TARGET_BINDING_NOT_FROZEN",
+      "ownership": "current shared sealed-contract source"
+    },
+    {
+      "cached_contract_names": [],
+      "derivation": "compute_ea4e29_caller_contract_id",
+      "functions": [
+        {
+          "function": "ea4e29_caller_contract_payload",
+          "line": 122
+        },
+        {
+          "function": "compute_ea4e29_caller_contract_id",
+          "line": 154
+        }
+      ],
+      "hash_dependencies": [
+        "EA-4E.22",
+        "EA-4E.26",
+        "EA-4E.28"
+      ],
+      "path": "tools/hermes_core/governed_production_caller.py",
+      "phase": "EA-4E.29",
+      "receiver_material_direct": false,
+      "source_sha256": "44e4d2640b4351db345cf7df0e6a67540a465bb1fc056ca6665a614e1dd1f3b7",
+      "current_contract_id": "11a5230334804d82405994a8ccaa62c0a4a49c2cd01a34854ab75758ba090525",
+      "current_id_evidence": "committed EXPECTED_IDS verified by test_current_contracts_match_frozen_candidate",
+      "proposed_contract_id": "UNRESOLVED_TARGET_BINDING_NOT_FROZEN",
+      "ownership": "current shared sealed-contract source"
+    }
+  ],
+  "schema": "ea92k.static-core-hash-impact/v1",
+  "scope": "13 core derivations; NOT complete deployment closure",
+  "extra_reviewed_sources": [
+    {
+      "path": "tools/hermes_core/kilo_successor_binding.py",
+      "source_sha256": "846cacb930078d5d36627a74155b31093b7c1d01309a608305587190e8f429c7"
+    },
+    {
+      "path": "tools/hermes_core/production_credential_preflight.py",
+      "source_sha256": "592b89c0cee4b883ed40498b56e6efcd74c4f7da0252d6b7cf256b3ec297fdea"
+    },
+    {
+      "path": "tools/hermes_core/opencode_provider_binding.py",
+      "source_sha256": "6a76fc2e4a3c9a101f180053443b4e2fc198a08e312c23f7628b6a07630ec9a4"
+    },
+    {
+      "path": "tools/hermes_core/production_activation_authorization.py",
+      "source_sha256": "396d5669b2aee32a38ac3400aeecdfcdac6f164cce472d59cf695858dbfd4e52"
+    },
+    {
+      "path": "tools/hermes_core/production_activation_authorization_ceremony.py",
+      "source_sha256": "25892a77669818d2a7cb43ed25ecf399f02199b8e7989f0c62a7888b17d19559"
+    },
+    {
+      "path": "tools/hermes_core/production_app_binding.py",
+      "source_sha256": "b37290b6f4a047d617186674ff52c0b36fa4c9e4e48f7bc24a9a596b6f50753a"
+    },
+    {
+      "path": "tools/hermes_core/production_deployment_composition.py",
+      "source_sha256": "aa3bc72f8f7b1469df5573ca1aa51f6303d4847cccc21d72f53db0f4a2886114"
+    },
+    {
+      "path": "tests/hermes_core/test_ea4e67f_kilo762_successor.py",
+      "source_sha256": "9320dda4a8bdf635016c2fc70b17090f6880d9ce109aa54bbf4728b33e0f7496"
+    },
+    {
+      "path": "tests/hermes_core/test_ea4e67c_successor_candidate_contract_diff.py",
+      "source_sha256": "1e600f1f9fa338dce9b7b38c39d940764fc495d5f7a5772a9bd620f99a428a3d"
+    },
+    {
+      "path": "tests/hermes_core/test_ea4e34b_kilo_successor_contract_roll.py",
+      "source_sha256": "0870dcb1d9a5f442ca9dec5486c6b8c09096cf4e97672680c561d05b7f99bf47"
+    }
+  ],
+  "status": "CORE_DISCOVERY_COMPLETE; ROLL_CLOSURE_HOLD",
+  "prohibited_activity": "no live receiver/model/provider, registry or runtime mutation",
+  "safety": "no historical IDs migrated or replaced",
+  "current_identity_tests": "6 passed; zero process/filesystem events in committed export",
+  "topological_order": [
+    "EA-4E.6",
+    "EA-4E.7",
+    "EA-4E.8",
+    "EA-4E.11",
+    "EA-4E.14",
+    "EA-4E.17",
+    "EA-4E.18",
+    "EA-4E.21",
+    "EA-4E.22",
+    "EA-4E.23",
+    "EA-4E.26",
+    "EA-4E.28",
+    "EA-4E.29"
+  ]
+}
