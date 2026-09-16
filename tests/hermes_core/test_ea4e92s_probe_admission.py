@@ -20,8 +20,21 @@ def artifact(path, content):
         path, len(content), hashlib.sha256(content).hexdigest())
 
 
-def request_content(request_id="ea4e92s-request-0001", probe_id="NQ-02"):
+def probe_config(probe_id):
+    if probe_id == "NQ-04":
+        return (("host", "127.0.0.1"), ("port", 43192))
+    if probe_id == "NQ-05":
+        return (("host", "192.0.2.1"), ("port", 43193))
+    if probe_id in {"NQ-06", "NQ-07"}:
+        return (("path", rf"C:\EA4E92S\fixtures\{probe_id}.bin"),
+                ("sha256", "a" * 64))
+    return ()
+
+
+def request_content(request_id="ea4e92s-request-0001", probe_id="NQ-02",
+                    config=None):
     budgets = subject.ProbeBudgets()
+    config = probe_config(probe_id) if config is None else config
     return json.dumps({
         "schemaVersion": 1,
         "requestId": request_id,
@@ -35,6 +48,7 @@ def request_content(request_id="ea4e92s-request-0001", probe_id="NQ-02"):
             "activeProcesses": budgets.active_processes,
             "descendants": budgets.descendants,
         },
+        "probeConfig": dict(config),
     }, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode()
 
 
@@ -52,7 +66,8 @@ def policy(**changes):
     runtime = artifact(r"C:\Runtime\node.exe", RUNTIME)
     bootstrap = artifact(
         r"C:\EA4E92S\ea4e92s-request-0001\probe-bootstrap.js", BOOTSTRAP)
-    request_bytes = request_content(request_id, probe_id)
+    config = changes.pop("probe_config", probe_config(probe_id))
+    request_bytes = request_content(request_id, probe_id, config)
     request = artifact(
         r"C:\EA4E92S\ea4e92s-request-0001\probe-request.json", request_bytes)
     base = subject.ProbeAdmissionContract(
@@ -63,6 +78,7 @@ def policy(**changes):
         request_artifact=request,
         request_root=root,
         profile=profile,
+        probe_config=config,
         argv=(
             runtime.path, bootstrap.path,
             "--probe-id", probe_id,
@@ -101,6 +117,7 @@ def test_exact_candidate_returns_value_only_evidence():
     assert evidence.runtime_sha256 == hashlib.sha256(RUNTIME).hexdigest()
     assert evidence.bootstrap_sha256 == hashlib.sha256(BOOTSTRAP).hexdigest()
     assert evidence.request_sha256 == hashlib.sha256(REQUEST).hexdigest()
+    assert evidence.probe_config_sha256 == hashlib.sha256(b"{}").hexdigest()
     assert evidence.profile_name == "ea4e92s-profile"
     assert evidence.appcontainer_sid == SID
     assert evidence.active_process_limit == 1
@@ -119,6 +136,28 @@ def test_all_frozen_probe_ids_are_admissible_as_exact_contracts(probe_id):
             "--request", reviewed.request_artifact.path,
         ))
     assert admit(reviewed).probe_id == probe_id
+
+
+@pytest.mark.parametrize("probe_id", ["NQ-04", "NQ-05", "NQ-06", "NQ-07"])
+def test_probe_target_config_is_bound_to_evidence(probe_id):
+    reviewed = policy(probe_id=probe_id)
+    expected = json.dumps(
+        dict(reviewed.probe_config), separators=(",", ":"), sort_keys=True).encode()
+    assert admit(reviewed).probe_config_sha256 == hashlib.sha256(expected).hexdigest()
+
+
+@pytest.mark.parametrize("probe_id,config", [
+    ("NQ-02", (("host", "127.0.0.1"),)),
+    ("NQ-04", (("host", "192.0.2.1"), ("port", 43192))),
+    ("NQ-05", (("host", "127.0.0.1"), ("port", 43193))),
+    ("NQ-05", (("host", "example.com"), ("port", 43193))),
+    ("NQ-06", (("path", "relative.bin"), ("sha256", "a" * 64))),
+    ("NQ-07", (("path", r"C:\fixture.bin"), ("sha256", "bad"))),
+])
+def test_invalid_or_misclassified_probe_target_denied(probe_id, config):
+    reviewed = policy(probe_id=probe_id, probe_config=config)
+    with pytest.raises(subject.ProbeAdmissionDenied, match="probe|loopback|network|filesystem"):
+        admit(reviewed)
 
 
 @pytest.mark.parametrize("probe_id", [None, "", "NQ-00", "NQ-13", 2])

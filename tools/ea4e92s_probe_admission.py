@@ -1,6 +1,7 @@
 """Value-only admission for reviewed containment probes; no runtime capability."""
 
 import hashlib
+import ipaddress
 import json
 import re
 from dataclasses import dataclass
@@ -54,6 +55,7 @@ class ProbeAdmissionContract:
     request_artifact: ArtifactIdentity
     request_root: DirectoryIdentity
     profile: ProfileSnapshot
+    probe_config: tuple
     argv: tuple
     environment: tuple
     budgets: ProbeBudgets
@@ -66,6 +68,7 @@ class ProbeAdmissionEvidence:
     runtime_sha256: str
     bootstrap_sha256: str
     request_sha256: str
+    probe_config_sha256: str
     profile_name: str
     appcontainer_sid: bytes
     request_root_volume_serial: int
@@ -174,6 +177,48 @@ def _validate_budgets(value):
         _deny("exact probe budget required")
 
 
+def _probe_config_dict(probe_id, value):
+    if type(value) is not tuple:
+        _deny("probe config must be canonical tuple")
+    if any(type(item) is not tuple or len(item) != 2 for item in value):
+        _deny("probe config entry malformed")
+    names = [item[0] for item in value]
+    if any(type(name) is not str for name in names) or len(set(names)) != len(names):
+        _deny("probe config names malformed")
+    if value != tuple(sorted(value)):
+        _deny("probe config order is not canonical")
+    config = dict(value)
+    expected_names = (
+        {"host", "port"} if probe_id in {"NQ-04", "NQ-05"}
+        else {"path", "sha256"} if probe_id in {"NQ-06", "NQ-07"}
+        else set()
+    )
+    if set(config) != expected_names:
+        _deny("probe config keys differ from probe contract")
+    if probe_id in {"NQ-04", "NQ-05"}:
+        if type(config["host"]) is not str or type(config["port"]) is not int:
+            _deny("network probe config malformed")
+        if not 1 <= config["port"] <= 65535:
+            _deny("network probe port invalid")
+        try:
+            address = ipaddress.ip_address(config["host"])
+        except ValueError as error:
+            raise ProbeAdmissionDenied("network probe host must be literal IP") from error
+        if probe_id == "NQ-04" and not address.is_loopback:
+            _deny("loopback probe requires loopback target")
+        if probe_id == "NQ-05" and (
+                address.is_loopback or address.is_unspecified or address.is_multicast):
+            _deny("non-loopback probe target invalid")
+    if probe_id in {"NQ-06", "NQ-07"}:
+        if type(config["path"]) is not str:
+            _deny("filesystem probe path malformed")
+        _absolute_local_path(config["path"], "filesystem probe target")
+        if (type(config["sha256"]) is not str
+                or SHA256_PATTERN.fullmatch(config["sha256"]) is None):
+            _deny("filesystem probe sha256 malformed")
+    return config
+
+
 def _validate_contract(value):
     if type(value) is not ProbeAdmissionContract:
         _deny("exact probe admission contract required")
@@ -187,6 +232,7 @@ def _validate_contract(value):
     _artifact(value.request_artifact, "request artifact", 64 * 1024)
     _directory(value.request_root, "request root")
     _profile(value.profile)
+    _probe_config_dict(value.probe_id, value.probe_config)
 
     root = PureWindowsPath(value.request_root.path)
     if root.name != value.request_id:
@@ -234,6 +280,7 @@ def _validate_request_content(contract, content):
             "stdoutBytes": budgets.stdout_bytes,
             "wallClockMs": budgets.wall_clock_ms,
         },
+        "probeConfig": _probe_config_dict(contract.probe_id, contract.probe_config),
         "probeId": contract.probe_id,
         "requestId": contract.request_id,
         "schemaVersion": 1,
@@ -269,12 +316,16 @@ def validate_probe_admission(reviewed, candidate, *, runtime_bytes,
     _validate_request_content(reviewed, request_bytes)
 
     budgets = reviewed.budgets
+    config_bytes = json.dumps(
+        _probe_config_dict(reviewed.probe_id, reviewed.probe_config),
+        ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return ProbeAdmissionEvidence(
         reviewed.request_id,
         reviewed.probe_id,
         reviewed.runtime.sha256,
         reviewed.bootstrap.sha256,
         reviewed.request_artifact.sha256,
+        hashlib.sha256(config_bytes).hexdigest(),
         reviewed.profile.profile_name,
         reviewed.profile.sid,
         reviewed.request_root.volume_serial,
