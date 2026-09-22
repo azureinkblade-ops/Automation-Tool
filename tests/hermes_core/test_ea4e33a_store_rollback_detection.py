@@ -437,7 +437,7 @@ def test_clock_rollback_behavior_matches_current_clock_contract(tmp_path):
 
 
 def test_sealed_contract_chain_is_unchanged():
-    assert compute_ea4e23_invocation_contract_id() == "6191b758a61848b27068bf8d18b44b91cb0b32eb3e391a58a5ccd3c1908ef9a9"
-    assert compute_ea4e26_integration_contract_id() == "9e3118549e6e26e574b93b81aefd816228722d5feb525cad8a10086ad62a86e0"
-    assert compute_ea4e28_issuer_contract_id() == "c6859afb31ffb218cfb09e8f4e6a7f355165bb47fa386d603f0689506ae38d58"
-    assert compute_ea4e29_caller_contract_id() == "11a5230334804d82405994a8ccaa62c0a4a49c2cd01a34854ab75758ba090525"
+    assert compute_ea4e23_invocation_contract_id() == "31bc9f5587fa93a770dd32968174c114abc1cc064f513e9b1697772516008b2c"
+    assert compute_ea4e26_integration_contract_id() == "3c9cdd52383a7c28a25638cef5a9f72fa6c7f27fb2ac807d13e7d084f9288576"
+    assert compute_ea4e28_issuer_contract_id() == "eaeae2dfda8444596e98b7beb949975d4e05453001af1140c694751f246d351e"
+    assert compute_ea4e29_caller_contract_id() == "64770d93dd04eaaa8149cb4e4bea1f69adbb032b446069dc79850a4ecd2334e9"

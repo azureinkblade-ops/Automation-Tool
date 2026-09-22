@@ -52,8 +52,8 @@ from tools.hermes_core.receiver_router import compute_ea4e6_router_contract_id
 
 NOW = "2026-09-11T12:00:00+00:00"
 GOVERNING_COMMIT = "6096ee0a79299d7ffaa6e8a17860d930c87e3846"
-EXPECTED_TRANSPORT = "3c54405378c314e52afc95fbe055fd0a4249f0d78a515a108126b8e4fd73363e"
-EXPECTED_EXECUTABLE_BINDING = "b89f9f02f3e99cf70a98de8b4fb02b545e51855bb7340ed829ece749256b9be1"
+EXPECTED_TRANSPORT = "40f23258d1abf1a799747d4ea2899a6103fa5e1fb33384f1c17dd4104ea1c578"
+EXPECTED_EXECUTABLE_BINDING = "cee3f5c96ef344ead9954030b671ae4e387f3a08e6e9df86885aaeafb4106840"
 
 
 class FixedClock:
@@ -183,11 +183,11 @@ def activation_request(deployment: ProductionDeploymentCompositionOwner, **chang
 
 def test_installed_binary_identity_is_exact_and_recomputed():
     binary = Path(PINNED_KILO_PATH)
-    assert PINNED_KILO_VERSION == "7.6.2"
+    assert PINNED_KILO_VERSION == "7.7.2"
     assert binary.is_file()
-    assert binary.stat().st_size == 173595648
+    assert binary.stat().st_size == 174145024
     assert hashlib.sha256(binary.read_bytes()).hexdigest() == PINNED_KILO_SHA256
-    assert PINNED_KILO_SHA256 == "5d54b522d8a59228951d141cd70438c29115963ecb38d7cdfcf313f59c0f865b"
+    assert PINNED_KILO_SHA256 == "3dca5f2eb8cc2d875e8cdef756f77347d4899247c318bf2a018d39e0184455cd"
     identity = resolve_pinned_binary({})
     assert identity.executable == str(binary.resolve())
     assert identity.sha256 == PINNED_KILO_SHA256

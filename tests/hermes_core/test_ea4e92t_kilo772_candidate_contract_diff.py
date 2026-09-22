@@ -75,10 +75,27 @@ def test_candidate_contract_diff_is_isolated_and_deterministic(monkeypatch):
                 monkeypatch.setitem(
                     receivers["kilo-cli-agent"], "transport_contract_id", new)
 
-    old_transport = adapter.KILO_TRANSPORT_CONTRACT_ID
-    old_path = adapter.PINNED_KILO_PATH
-    old_hash = adapter.PINNED_KILO_SHA256
-    old_version = adapter.PINNED_KILO_VERSION
+    current_transport = adapter.KILO_TRANSPORT_CONTRACT_ID
+    current_path = adapter.PINNED_KILO_PATH
+    current_hash = adapter.PINNED_KILO_SHA256
+    current_version = adapter.PINNED_KILO_VERSION
+    current_binding = binding.KILO_EXECUTABLE_SUCCESSOR_BINDING_ID
+    old_transport = binding.HISTORICAL_KILO_7_6_2_TRANSPORT_CONTRACT_ID
+    old_path = binding.HISTORICAL_KILO_7_6_2_PATH
+    old_hash = binding.HISTORICAL_KILO_7_6_2_SHA256
+    old_version = "7.6.2"
+    caches = (
+        ("EA-4E.17", "CURRENT_EA4E17_ISSUANCE_CONTRACT_ID"),
+        ("EA-4E.21", "CURRENT_EA4E21_BINDING_CONTRACT_ID"),
+        ("EA-4E.22", "CURRENT_EA4E22_INTEGRATION_CONTRACT_ID"),
+    )
+    replace_transport(current_transport, old_transport)
+    replace_aliases(current_path, old_path)
+    replace_aliases(current_hash, old_hash)
+    replace_aliases(current_version, old_version)
+    replace_aliases(current_binding, PREDECESSOR_BINDING)
+    for key, attribute in caches:
+        replace_aliases(getattr(binding, attribute), PREDECESSOR_IDS[key])
     old_ids = current_ids()
     old_binding = binding.KILO_EXECUTABLE_SUCCESSOR_BINDING_ID
 
@@ -96,11 +113,6 @@ def test_candidate_contract_diff_is_isolated_and_deterministic(monkeypatch):
     replace_aliases(old_path, CANDIDATE_PATH)
     replace_aliases(old_hash, CANDIDATE_HASH)
     replace_aliases(old_version, CANDIDATE_VERSION)
-    caches = (
-        ("EA-4E.17", "CURRENT_EA4E17_ISSUANCE_CONTRACT_ID"),
-        ("EA-4E.21", "CURRENT_EA4E21_BINDING_CONTRACT_ID"),
-        ("EA-4E.22", "CURRENT_EA4E22_INTEGRATION_CONTRACT_ID"),
-    )
     invocation = sys.modules["tools.hermes_core.production_invocation_authorization"]
     for key, attribute in caches:
         replace_aliases(getattr(binding, attribute), current_ids()[key])

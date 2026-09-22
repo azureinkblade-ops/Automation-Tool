@@ -40,11 +40,11 @@ def test_old_contract_chain_is_preserved_as_historical_constants():
 
 
 def test_current_upstream_contracts_remain_sealed():
-    assert compute_ea4e14_execution_contract_id() == "eb58c9ae1e4ca1fcc6a6fb6ecf321450dbf477b3669a66cab6fa1fa1bafc3473"
-    assert compute_ea4e17_issuance_contract_id() == "30c35204bb118b8978e6171ebef11e54fa90c6497c27da786717836af17b62ba"
-    assert compute_ea4e18_integration_contract_id() == "775424531671c999569353d47115b5699802acacaa13d0b2b0743b4a6ce41d35"
-    assert compute_ea4e21_binding_contract_id() == "2dabd852fd943cb13f23986621aac4d59f4b0054a353808ec155e0ff1b24dc5a"
-    assert compute_ea4e22_integration_contract_id() == "8aa6bb3760258d14de1621912072c0374ada91d444f6f51d03648ff4a8e51a3c"
+    assert compute_ea4e14_execution_contract_id() == "fb75980ba6f8812f9cde51977120fb4283987b1badd9047605217b15802ca99e"
+    assert compute_ea4e17_issuance_contract_id() == "7e8e6e668791b38e085329dde5c364750b163897caa0cf7977de3985e289203c"
+    assert compute_ea4e18_integration_contract_id() == "1b2cd071de0d8a58d248c8b6c38f9699ffcc729c02909584f45870b901d8a12e"
+    assert compute_ea4e21_binding_contract_id() == "3f159719f0109a43fa3fff9b50f661694aad1e83e06b161f8b5026e4cc050d72"
+    assert compute_ea4e22_integration_contract_id() == "19747974b50bdb400471496c6eae91ae552a296a6b58695324ffd323709961c9"
 
 
 def test_ea4e23_contract_is_deterministic_and_new():

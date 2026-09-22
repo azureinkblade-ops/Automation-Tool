@@ -11,7 +11,7 @@ from tools.hermes_core.governed_production import compute_ea4e18_integration_con
 from tools.hermes_core.governed_production_caller import compute_ea4e29_caller_contract_id
 from tools.hermes_core.governed_production_runtime import compute_ea4e26_integration_contract_id
 from tools.hermes_core.hashing import sha256_payload
-from tests.hermes_core.test_ea4e67c_successor_candidate_contract_diff import EXPECTED_IDS as CURRENT_EXPECTED_IDS
+from tests.hermes_core.test_ea4e92t_kilo772_candidate_contract_diff import CANDIDATE_IDS as CURRENT_EXPECTED_IDS
 from tools.hermes_core.kilo_adapter import (
     KILO_TRANSPORT_CONTRACT_ID,
     PINNED_KILO_PATH,
@@ -25,8 +25,11 @@ from tools.hermes_core.kilo_successor_binding import (
     CURRENT_EA4E22_INTEGRATION_CONTRACT_ID,
     HISTORICAL_EA4E_CONTRACT_IDS,
     HISTORICAL_EA4E_7_5_15_CONTRACT_IDS,
+    HISTORICAL_EA4E_7_6_2_CONTRACT_IDS,
     HISTORICAL_KILO_7_5_15_EXECUTABLE_BINDING_ID,
     HISTORICAL_KILO_7_5_15_TRANSPORT_CONTRACT_ID,
+    HISTORICAL_KILO_7_6_2_EXECUTABLE_BINDING_ID,
+    HISTORICAL_KILO_7_6_2_TRANSPORT_CONTRACT_ID,
     HISTORICAL_KILO_7_5_9_TRANSPORT_CONTRACT_ID,
     KILO_EXECUTABLE_SUCCESSOR_BINDING_ID,
     KILO_MODEL_BINDING_ID,
@@ -122,10 +125,10 @@ def _valid_enablement() -> ProductionExecutorBindingEnablement:
 
 
 def test_successor_file_identity_and_transport_are_exact():
-    assert PINNED_KILO_VERSION == "7.6.2"
-    assert PINNED_KILO_PATH.endswith(r"kilocode.kilo-code-7.6.2-win32-x64\bin\kilo.exe")
-    assert PINNED_KILO_SHA256 == "5d54b522d8a59228951d141cd70438c29115963ecb38d7cdfcf313f59c0f865b"
-    assert KILO_TRANSPORT_CONTRACT_ID == "3c54405378c314e52afc95fbe055fd0a4249f0d78a515a108126b8e4fd73363e"
+    assert PINNED_KILO_VERSION == "7.7.2"
+    assert PINNED_KILO_PATH.endswith(r"kilocode.kilo-code-7.7.2-win32-x64\bin\kilo.exe")
+    assert PINNED_KILO_SHA256 == "3dca5f2eb8cc2d875e8cdef756f77347d4899247c318bf2a018d39e0184455cd"
+    assert KILO_TRANSPORT_CONTRACT_ID == "40f23258d1abf1a799747d4ea2899a6103fa5e1fb33384f1c17dd4104ea1c578"
 
 
 def test_transport_and_binding_hashes_are_deterministic_and_order_invariant():
@@ -142,8 +145,12 @@ def test_old_transport_and_chain_ids_remain_historical_and_reproducible():
     assert all(HISTORICAL_EA4E_CONTRACT_IDS[key] != EXPECTED_IDS[key] for key in EXPECTED_IDS)
     assert set(HISTORICAL_EA4E_7_5_15_CONTRACT_IDS) == set(EXPECTED_IDS)
     assert all(HISTORICAL_EA4E_7_5_15_CONTRACT_IDS[key] != EXPECTED_IDS[key] for key in EXPECTED_IDS)
+    assert set(HISTORICAL_EA4E_7_6_2_CONTRACT_IDS) == set(CURRENT_EXPECTED_IDS)
+    assert all(HISTORICAL_EA4E_7_6_2_CONTRACT_IDS[key] != CURRENT_EXPECTED_IDS[key] for key in CURRENT_EXPECTED_IDS)
     assert HISTORICAL_KILO_7_5_15_TRANSPORT_CONTRACT_ID != KILO_TRANSPORT_CONTRACT_ID
     assert HISTORICAL_KILO_7_5_15_EXECUTABLE_BINDING_ID != KILO_EXECUTABLE_SUCCESSOR_BINDING_ID
+    assert HISTORICAL_KILO_7_6_2_TRANSPORT_CONTRACT_ID != KILO_TRANSPORT_CONTRACT_ID
+    assert HISTORICAL_KILO_7_6_2_EXECUTABLE_BINDING_ID != KILO_EXECUTABLE_SUCCESSOR_BINDING_ID
 
 
 def test_rolled_chain_matches_exact_ids_and_is_repeatable():
