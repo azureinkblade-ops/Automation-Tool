@@ -15,9 +15,17 @@ from contextlib import closing
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from tools.ea4e92s_observer_identity import (
+    ObserverIdentityDenied,
+    ObserverResourceBinding,
+    validate_observer_resource_binding,
+)
 
-SCHEMA_ID = "hermes.ea4e92s-probe-evidence-store/v1"
-SCHEMA_VERSION = 1
+
+LEGACY_SCHEMA_ID = "hermes.ea4e92s-probe-evidence-store/v1"
+LEGACY_SCHEMA_VERSION = 1
+SCHEMA_ID = "hermes.ea4e92s-probe-evidence-store/v2"
+SCHEMA_VERSION = 2
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 PROBE_IDS = tuple(f"NQ-{number:02d}" for number in range(1, 13))
 TERMINAL_STATES = frozenset({"PASSED", "FAILED", "RECONCILED_CLEAN"})
@@ -91,6 +99,7 @@ class ProbeRecord:
     contract: ProbeContract
     state: str
     start: ProbeStart | None
+    observer_binding: ObserverResourceBinding | None
     completion: ProbeCompletion | None
     reconciliation_count: int
 
@@ -112,6 +121,8 @@ CREATE TABLE probe_runs (
   contract_sha256 TEXT NOT NULL,
   start_json TEXT,
   start_sha256 TEXT,
+  observer_binding_json TEXT,
+  observer_binding_sha256 TEXT,
   completion_json TEXT,
   completion_sha256 TEXT,
   reconciliation_count INTEGER NOT NULL DEFAULT 0,
@@ -227,7 +238,7 @@ class ProbeEvidenceStore:
         if not self.path.is_file():
             raise ProbeEvidenceStoreError("probe evidence store does not exist")
         with closing(self._connect()) as connection:
-            self._verify_schema(connection)
+            self._ensure_schema(connection)
 
     @classmethod
     def initialize(cls, path: str | Path):
@@ -269,6 +280,43 @@ class ProbeEvidenceStore:
         except sqlite3.Error as error:
             raise ProbeEvidenceStoreError(str(error)) from error
 
+    @classmethod
+    def _ensure_schema(cls, connection):
+        try:
+            row = connection.execute(
+                "SELECT schema_id,schema_version FROM probe_evidence_metadata "
+                "WHERE singleton=1").fetchone()
+        except sqlite3.Error as error:
+            raise ProbeEvidenceIntegrityError("probe evidence schema is missing") from error
+        if row is not None and tuple(row) == (LEGACY_SCHEMA_ID, LEGACY_SCHEMA_VERSION):
+            cls._migrate_v1(connection)
+        cls._verify_schema(connection)
+
+    @staticmethod
+    def _migrate_v1(connection):
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = connection.execute(
+                "SELECT schema_id,schema_version FROM probe_evidence_metadata "
+                "WHERE singleton=1").fetchone()
+            if row is None or tuple(row) != (LEGACY_SCHEMA_ID, LEGACY_SCHEMA_VERSION):
+                raise ProbeEvidenceIntegrityError(
+                    "legacy probe evidence schema changed during migration")
+            connection.execute(
+                "ALTER TABLE probe_runs ADD COLUMN observer_binding_json TEXT")
+            connection.execute(
+                "ALTER TABLE probe_runs ADD COLUMN observer_binding_sha256 TEXT")
+            connection.execute(
+                "UPDATE probe_evidence_metadata SET schema_id=?,schema_version=? "
+                "WHERE singleton=1",
+                (SCHEMA_ID, SCHEMA_VERSION),
+            )
+            connection.commit()
+        except Exception:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+
     @staticmethod
     def _verify_schema(connection):
         try:
@@ -282,6 +330,12 @@ class ProbeEvidenceStore:
         _require_text(row["store_instance_id"], "store_instance_id")
         if row["store_epoch"] != 1:
             raise ProbeEvidenceIntegrityError("unsupported probe evidence store epoch")
+
+        columns = {
+            item["name"] for item in connection.execute("PRAGMA table_info(probe_runs)")
+        }
+        if not {"observer_binding_json", "observer_binding_sha256"} <= columns:
+            raise ProbeEvidenceIntegrityError("probe evidence schema is incomplete")
 
     @staticmethod
     def _decode(text, checksum, kind):
@@ -300,11 +354,43 @@ class ProbeEvidenceStore:
             row["contract_json"], row["contract_sha256"], "probe contract"))
         _validate_contract(contract)
         start = None
+        if (row["start_json"] is None) != (row["start_sha256"] is None):
+            raise ProbeEvidenceIntegrityError("probe start linkage is malformed")
         if row["start_json"] is not None:
             start = ProbeStart(**self._decode(
                 row["start_json"], row["start_sha256"], "probe start"))
             _validate_start(start)
+        observer_binding = None
+        if ((row["observer_binding_json"] is None)
+                != (row["observer_binding_sha256"] is None)):
+            raise ProbeEvidenceIntegrityError(
+                "observer binding linkage is malformed")
+        if row["observer_binding_json"] is not None:
+            if start is None:
+                raise ProbeEvidenceIntegrityError(
+                    "observer binding exists without probe start")
+            try:
+                data = self._decode(
+                    row["observer_binding_json"], row["observer_binding_sha256"],
+                    "observer resource binding")
+                observer_binding = ObserverResourceBinding(**data)
+                validate_observer_resource_binding(
+                    observer_binding,
+                    observer_instance_id=observer_binding.observer_instance_id,
+                    process_id=start.process_id,
+                    thread_id=start.thread_id,
+                )
+            except (ObserverIdentityDenied, TypeError) as error:
+                raise ProbeEvidenceIntegrityError(
+                    "observer resource binding is malformed") from error
+            if not (start.monotonic_start_ns <= observer_binding.binding_monotonic_ns
+                    <= start.monotonic_deadline_ns):
+                raise ProbeEvidenceIntegrityError(
+                    "observer binding time is outside the probe window")
         completion = None
+        if ((row["completion_json"] is None)
+                != (row["completion_sha256"] is None)):
+            raise ProbeEvidenceIntegrityError("probe completion linkage is malformed")
         if row["completion_json"] is not None:
             data = self._decode(
                 row["completion_json"], row["completion_sha256"], "probe completion")
@@ -363,7 +449,7 @@ class ProbeEvidenceStore:
                     raise ProbeEvidenceIntegrityError("terminal reconciliation has later events")
         if row["state"] != projected_state:
             raise ProbeEvidenceIntegrityError("probe state projection mismatch")
-        return ProbeRecord(contract, row["state"], start, completion,
+        return ProbeRecord(contract, row["state"], start, observer_binding, completion,
                            row["reconciliation_count"])
 
     def get(self, request_id: str):
@@ -442,6 +528,75 @@ class ProbeEvidenceStore:
                     connection.rollback()
                 raise
         return self.get(request_id)
+
+    def bind_observer(self, request_id: str, binding: ObserverResourceBinding, *,
+                      observer_instance_id: str):
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = connection.execute(
+                    "SELECT * FROM probe_runs WHERE request_id=?", (request_id,)).fetchone()
+                if row is None:
+                    raise ProbeEvidenceTransitionDenied("probe request is not prepared")
+                existing = self._record(row, connection)
+                if existing.contract.probe_id != "NQ-12":
+                    raise ProbeEvidenceTransitionDenied(
+                        "observer binding is reserved for NQ-12")
+                if existing.start is None:
+                    raise ProbeEvidenceTransitionDenied("probe has not started")
+                try:
+                    validate_observer_resource_binding(
+                        binding,
+                        observer_instance_id=observer_instance_id,
+                        process_id=existing.start.process_id,
+                        thread_id=existing.start.thread_id,
+                    )
+                except ObserverIdentityDenied as error:
+                    raise ProbeEvidenceIntegrityError(str(error)) from error
+                if not (existing.start.monotonic_start_ns
+                        <= binding.binding_monotonic_ns
+                        <= existing.start.monotonic_deadline_ns):
+                    raise ProbeEvidenceIntegrityError(
+                        "observer binding time is outside the probe window")
+                if existing.observer_binding is not None:
+                    if existing.observer_binding != binding:
+                        raise ProbeEvidenceConflict("observer binding replay conflicts")
+                    connection.rollback()
+                    return existing
+                if existing.state != "STARTED":
+                    raise ProbeEvidenceTransitionDenied(
+                        "observer binding requires a started probe")
+                text, checksum = _payload(binding)
+                connection.execute(
+                    "UPDATE probe_runs SET observer_binding_json=?,"
+                    "observer_binding_sha256=? WHERE request_id=?",
+                    (text, checksum, request_id),
+                )
+                connection.commit()
+            except Exception:
+                if connection.in_transaction:
+                    connection.rollback()
+                raise
+        return self.get(request_id)
+
+    def require_native_observer_binding(self, request_id: str, *,
+                                        observer_instance_id: str):
+        record = self.get(request_id)
+        if record.contract.probe_id != "NQ-12":
+            raise ProbeEvidenceTransitionDenied(
+                "native observer binding is reserved for NQ-12")
+        if record.start is None or record.observer_binding is None:
+            raise ProbeEvidenceTransitionDenied(
+                "durable observer binding is required")
+        try:
+            return validate_observer_resource_binding(
+                record.observer_binding,
+                observer_instance_id=observer_instance_id,
+                process_id=record.start.process_id,
+                thread_id=record.start.thread_id,
+            )
+        except ObserverIdentityDenied as error:
+            raise ProbeEvidenceIntegrityError(str(error)) from error
 
     def complete(self, request_id: str, completion: ProbeCompletion):
         with closing(self._connect()) as connection:
