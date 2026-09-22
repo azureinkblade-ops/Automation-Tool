@@ -128,22 +128,32 @@ class RetainedHandleRegistry:
     def resolve(self, binding, *, process_id, thread_id):
         binding = self._validate(
             binding, process_id=process_id, thread_id=thread_id)
-        key = binding.job_token_sha256
         with self._lock:
-            entry = self._entries.get(key)
-            if entry is None or any(
-                    self._token_owners.get(token) != key
-                    for token in _tokens(binding)):
-                raise RetainedHandleRegistryDenied("retained resource is unavailable")
-            if entry.binding != binding:
-                raise RetainedHandleRegistryDenied("retained resource binding conflicts")
-            if entry.tombstone is not None:
-                raise RetainedHandleRegistryDenied("retained handles are cleaned")
-            handles = (
-                entry.job_handle, entry.process_handle, entry.thread_handle)
-            if any(not _valid_handle(value) for value in handles):
-                raise RetainedHandleRegistryDenied("retained handle state is unknown")
-            return RetainedHandleResolution(binding, *handles)
+            return self._resolve_locked(binding)
+
+    def _resolve_locked(self, binding):
+        key = binding.job_token_sha256
+        entry = self._entries.get(key)
+        if entry is None or any(
+                self._token_owners.get(token) != key
+                for token in _tokens(binding)):
+            raise RetainedHandleRegistryDenied("retained resource is unavailable")
+        if entry.binding != binding:
+            raise RetainedHandleRegistryDenied("retained resource binding conflicts")
+        if entry.tombstone is not None:
+            raise RetainedHandleRegistryDenied("retained handles are cleaned")
+        handles = (entry.job_handle, entry.process_handle, entry.thread_handle)
+        if any(not _valid_handle(value) for value in handles):
+            raise RetainedHandleRegistryDenied("retained handle state is unknown")
+        return RetainedHandleResolution(binding, *handles)
+
+    def with_retained(self, binding, *, process_id, thread_id, observe):
+        binding = self._validate(
+            binding, process_id=process_id, thread_id=thread_id)
+        if not callable(observe):
+            raise RetainedHandleRegistryDenied("retained observation unavailable")
+        with self._lock:
+            return observe(self._resolve_locked(binding))
 
     def seal_cleanup(self, binding, tombstone, *, process_id, thread_id):
         binding = self._validate(
