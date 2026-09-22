@@ -4,6 +4,11 @@ import ctypes
 from dataclasses import dataclass
 from typing import Protocol
 
+from tools.ea4e92s_observer_identity import (
+    ObserverIdentityDenied,
+    ObserverResourceBinding,
+    validate_observer_resource_binding,
+)
 from tools.ea4e92s_probe_evidence_store import BrokerDeathObservation
 
 
@@ -30,7 +35,8 @@ class OwnedResourceSnapshot:
 
 class OwnedResourceSnapshotProvider(Protocol):
     def observe_owned_resources(
-            self, *, job_id: int, process_id: int,
+            self, *, observer_binding: ObserverResourceBinding,
+            job_id: int, process_id: int,
             thread_id: int) -> OwnedResourceSnapshot: ...
 
 
@@ -46,10 +52,12 @@ class ExactOwnedResourceObserver:
     terminates or closes a resource itself.
     """
 
-    def __init__(self, provider):
+    def __init__(self, provider, *, observer_instance_id):
         self.provider = provider
+        self.observer_instance_id = observer_instance_id
 
-    def observe_exact(self, *, job_id, process_id, thread_id):
+    def observe_exact(
+            self, *, observer_binding, job_id, process_id, thread_id):
         pointer_max = (1 << (ctypes.sizeof(ctypes.c_void_p) * 8)) - 1
         if not _valid_identity(job_id, pointer_max):
             raise OwnedResourceObservationUnknown("job identity malformed")
@@ -57,12 +65,23 @@ class ExactOwnedResourceObserver:
             raise OwnedResourceObservationUnknown("process identity malformed")
         if not _valid_identity(thread_id, 0xFFFFFFFF):
             raise OwnedResourceObservationUnknown("thread identity malformed")
+        try:
+            validated_binding = validate_observer_resource_binding(
+                observer_binding,
+                observer_instance_id=self.observer_instance_id,
+                process_id=process_id,
+                thread_id=thread_id,
+            )
+        except ObserverIdentityDenied as error:
+            raise OwnedResourceObservationUnknown(
+                "observer resource binding malformed") from error
 
         operation = getattr(self.provider, "observe_owned_resources", None)
         if not callable(operation):
             raise OwnedResourceObservationUnknown("snapshot provider unavailable")
         try:
             snapshot = operation(
+                observer_binding=validated_binding,
                 job_id=job_id, process_id=process_id, thread_id=thread_id)
         except BaseException as error:
             raise OwnedResourceObservationUnknown(

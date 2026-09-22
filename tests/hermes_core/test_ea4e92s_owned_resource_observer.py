@@ -5,12 +5,21 @@ from dataclasses import replace
 import pytest
 
 from tools import ea4e92s_owned_resource_observer as subject
+from tools.ea4e92s_observer_identity import ObserverResourceBinding
 from tools.ea4e92s_probe_evidence_store import BrokerDeathObservation
 
 
 JOB = 101
 PROCESS = 202
 THREAD = 303
+OBSERVER = "12345678-1234-4234-8234-123456789abc"
+
+
+def binding(**changes):
+    value = ObserverResourceBinding(
+        OBSERVER, "1" * 64, "2" * 64, "3" * 64,
+        PROCESS, THREAD, 10_000, 10_001, 900)
+    return replace(value, **changes)
 
 
 def snapshot(**changes):
@@ -34,8 +43,10 @@ class Provider:
 
 
 def observe(provider):
-    return subject.ExactOwnedResourceObserver(provider).observe_exact(
-        job_id=JOB, process_id=PROCESS, thread_id=THREAD)
+    return subject.ExactOwnedResourceObserver(
+        provider, observer_instance_id=OBSERVER).observe_exact(
+            observer_binding=binding(), job_id=JOB,
+            process_id=PROCESS, thread_id=THREAD)
 
 
 def test_clean_snapshot_projects_exact_canonical_evidence():
@@ -45,7 +56,8 @@ def test_clean_snapshot_projects_exact_canonical_evidence():
     assert result == BrokerDeathObservation(
         JOB, PROCESS, THREAD, 1_000, subject.CLEANUP_ORDER, True, 0)
     assert provider.calls == [{
-        "job_id": JOB, "process_id": PROCESS, "thread_id": THREAD}]
+        "observer_binding": binding(), "job_id": JOB,
+        "process_id": PROCESS, "thread_id": THREAD}]
 
 
 @pytest.mark.parametrize("changes,survivors", [
@@ -93,9 +105,28 @@ def test_malformed_snapshot_is_rejected(changes):
 ])
 def test_malformed_requested_identity_is_rejected_before_provider_call(identities):
     provider = Provider()
-    observer = subject.ExactOwnedResourceObserver(provider)
+    observer = subject.ExactOwnedResourceObserver(
+        provider, observer_instance_id=OBSERVER)
     with pytest.raises(subject.OwnedResourceObservationUnknown):
-        observer.observe_exact(**identities)
+        observer.observe_exact(observer_binding=binding(), **identities)
+    assert provider.calls == []
+
+
+@pytest.mark.parametrize("value", [
+    None,
+    binding(observer_instance_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+    binding(process_id=PROCESS + 1),
+    binding(thread_id=THREAD + 1),
+])
+def test_durable_binding_is_required_before_provider_call(value):
+    provider = Provider()
+    observer = subject.ExactOwnedResourceObserver(
+        provider, observer_instance_id=OBSERVER)
+    with pytest.raises(
+            subject.OwnedResourceObservationUnknown, match="binding"):
+        observer.observe_exact(
+            observer_binding=value, job_id=JOB,
+            process_id=PROCESS, thread_id=THREAD)
     assert provider.calls == []
 
 

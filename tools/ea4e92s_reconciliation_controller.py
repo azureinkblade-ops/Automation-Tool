@@ -3,8 +3,10 @@
 from dataclasses import dataclass
 from typing import Protocol
 
+from tools.ea4e92s_observer_identity import ObserverResourceBinding
 from tools.ea4e92s_probe_evidence_store import (
     BrokerDeathObservation,
+    ProbeEvidenceStoreError,
     ProbeEvidenceStore,
 )
 
@@ -18,7 +20,8 @@ class ReconciliationObservationUnknown(RuntimeError):
 
 
 class OwnedResourceObserver(Protocol):
-    def observe_exact(self, *, job_id: int, process_id: int,
+    def observe_exact(self, *, observer_binding: ObserverResourceBinding,
+                      job_id: int, process_id: int,
                       thread_id: int) -> BrokerDeathObservation: ...
 
 
@@ -31,7 +34,8 @@ class ReconciliationControllerResult:
     replayed: bool
 
 
-def reconcile_broker_death(store, request_id, observer):
+def reconcile_broker_death(
+        store, request_id, observer, *, observer_instance_id):
     """Request one exact observation and durably project it.
 
     The injected observer owns any future native inspection. This controller
@@ -53,9 +57,16 @@ def reconcile_broker_death(store, request_id, observer):
             "durable unknown owned-resource evidence required")
     if not callable(getattr(observer, "observe_exact", None)):
         raise ReconciliationObservationUnknown("exact observer boundary unavailable")
+    try:
+        observer_binding = store.require_native_observer_binding(
+            request_id, observer_instance_id=observer_instance_id)
+    except ProbeEvidenceStoreError as error:
+        raise ReconciliationControllerDenied(
+            "durable observer binding is unavailable") from error
 
     try:
         observation = observer.observe_exact(
+            observer_binding=observer_binding,
             job_id=record.start.job_id,
             process_id=record.start.process_id,
             thread_id=record.start.thread_id,
