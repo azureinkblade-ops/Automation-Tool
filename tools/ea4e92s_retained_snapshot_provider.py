@@ -60,7 +60,20 @@ class RetainedSnapshotProvider:
                 tombstone.active_process_count, tombstone.process_present,
                 tombstone.thread_present, tombstone.owned_handles_closed)
 
-        def query(handles):
+        try:
+            return self.registry.with_retained(
+                observer_binding, process_id=process_id, thread_id=thread_id,
+                observe=lambda handles: self.query_retained(
+                    handles, observer_binding=observer_binding, job_id=job_id,
+                    process_id=process_id, thread_id=thread_id))
+        except OwnedResourceObservationUnknown:
+            raise
+        except BaseException as error:
+            raise OwnedResourceObservationUnknown(
+                "retained resource query failed") from error
+
+    def query_retained(
+            self, handles, *, observer_binding, job_id, process_id, thread_id):
             job = self.query_job(handles.job_handle)
             if (type(job) is not JobQuery
                     or type(job.active_process_count) is not int
@@ -95,13 +108,3 @@ class RetainedSnapshotProvider:
                 job_id, process_id, thread_id, observed_ns, CLEANUP_ORDER,
                 job.active_process_count, process.present, thread.present,
                 False)
-
-        try:
-            return self.registry.with_retained(
-                observer_binding, process_id=process_id, thread_id=thread_id,
-                observe=query)
-        except OwnedResourceObservationUnknown:
-            raise
-        except BaseException as error:
-            raise OwnedResourceObservationUnknown(
-                "retained resource query failed") from error

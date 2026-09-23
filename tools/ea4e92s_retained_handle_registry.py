@@ -46,6 +46,7 @@ class _RegistryEntry:
     process_handle: int | None
     thread_handle: int | None
     tombstone: CleanupTombstone | None = None
+    cleanup_attempted: bool = False
 
 
 def _canonical_uuid(value):
@@ -111,6 +112,9 @@ class RetainedHandleRegistry:
                 if existing.tombstone is not None:
                     raise RetainedHandleRegistryDenied(
                         "cleaned resource registration cannot replay")
+                if existing.cleanup_attempted:
+                    raise RetainedHandleRegistryDenied(
+                        "cleanup outcome is unknown")
                 if (existing.binding != binding or (
                         existing.job_handle, existing.process_handle,
                         existing.thread_handle) != handles):
@@ -142,6 +146,8 @@ class RetainedHandleRegistry:
             raise RetainedHandleRegistryDenied("retained resource binding conflicts")
         if entry.tombstone is not None:
             raise RetainedHandleRegistryDenied("retained handles are cleaned")
+        if entry.cleanup_attempted:
+            raise RetainedHandleRegistryDenied("cleanup outcome is unknown")
         handles = (entry.job_handle, entry.process_handle, entry.thread_handle)
         if any(not _valid_handle(value) for value in handles):
             raise RetainedHandleRegistryDenied("retained handle state is unknown")
@@ -158,6 +164,12 @@ class RetainedHandleRegistry:
     def seal_cleanup(self, binding, tombstone, *, process_id, thread_id):
         binding = self._validate(
             binding, process_id=process_id, thread_id=thread_id)
+        self._validate_tombstone(binding, tombstone)
+        with self._lock:
+            return self._seal_cleanup_locked(binding, tombstone)
+
+    @staticmethod
+    def _validate_tombstone(binding, tombstone):
         if type(tombstone) is not CleanupTombstone:
             raise RetainedHandleRegistryDenied("exact cleanup tombstone required")
         if tombstone.binding != binding:
@@ -180,20 +192,39 @@ class RetainedHandleRegistry:
             raise RetainedHandleRegistryDenied("cleanup predicate malformed")
         if predicates != (False, False, True):
             raise RetainedHandleRegistryDenied("cleanup is not confirmed")
+
+    def _seal_cleanup_locked(self, binding, tombstone, *, from_attempt=False):
         key = binding.job_token_sha256
+        entry = self._entries.get(key)
+        if entry is None or entry.binding != binding:
+            raise RetainedHandleRegistryDenied("retained resource is unavailable")
+        if entry.tombstone is not None:
+            if entry.tombstone == tombstone:
+                return entry.tombstone
+            raise RetainedHandleRegistryDenied("cleanup replay conflicts")
+        if entry.cleanup_attempted and not from_attempt:
+            raise RetainedHandleRegistryDenied("cleanup outcome is unknown")
+        entry.job_handle = None
+        entry.process_handle = None
+        entry.thread_handle = None
+        entry.tombstone = tombstone
+        return tombstone
+
+    def run_cleanup(self, binding, *, process_id, thread_id, execute):
+        binding = self._validate(
+            binding, process_id=process_id, thread_id=thread_id)
+        if not callable(execute):
+            raise RetainedHandleRegistryDenied("cleanup operation unavailable")
         with self._lock:
-            entry = self._entries.get(key)
-            if entry is None or entry.binding != binding:
-                raise RetainedHandleRegistryDenied("retained resource is unavailable")
-            if entry.tombstone is not None:
-                if entry.tombstone == tombstone:
-                    return entry.tombstone
-                raise RetainedHandleRegistryDenied("cleanup replay conflicts")
-            entry.job_handle = None
-            entry.process_handle = None
-            entry.thread_handle = None
-            entry.tombstone = tombstone
-            return tombstone
+            entry = self._entries.get(binding.job_token_sha256)
+            if entry is not None and entry.binding == binding and entry.tombstone:
+                return entry.tombstone
+            handles = self._resolve_locked(binding)
+            entry.cleanup_attempted = True
+            tombstone = execute(handles)
+            self._validate_tombstone(binding, tombstone)
+            return self._seal_cleanup_locked(
+                binding, tombstone, from_attempt=True)
 
     def read_tombstone(self, binding, *, process_id, thread_id):
         binding = self._validate(
