@@ -13,6 +13,10 @@ verifier and does not prove that a native `CreateProcessW` call happened.
   creation flags must agree with the canonical creation result.
 - Required flags are exactly `CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT`;
   missing, extra or malformed flags deny.
+
+EA-4E.92AO subsequently rolls this historical two-flag requirement to
+include `CREATE_UNICODE_ENVIRONMENT` for the planned explicit Unicode
+environment. See `EA-4E.92AO-UNICODE-ENVIRONMENT-FLAG-CONTRACT-ROLL-DESIGN.md`.
 - Closed ownership, creation attribute drift, cross-request replay and
   conflicting resource identities deny.
 - The receipt is an untrusted value until a separately reviewed native

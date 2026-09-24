@@ -9,7 +9,8 @@ import pytest
 
 from tools import ea4e92s_provenance_observation as subject
 from tools.ea4e92s_creation_provenance import (
-    CREATE_SUSPENDED, EXTENDED_STARTUPINFO_PRESENT, SuspendedCreationReceipt,
+    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT,
+    EXTENDED_STARTUPINFO_PRESENT, SuspendedCreationReceipt,
 )
 from tools.ea4e92s_profile_preflight import ProfileSnapshot
 from tools.ea4e92s_profile_security_binding import BoundProfileSecurity
@@ -22,7 +23,8 @@ SID = b"\x01\x01\0\0\0\0\0\x0f\x02\0\0\0"
 REQUEST, ADAPTER = "request-0001", "a" * 64
 JOB, PROCESS, THREAD = 41, 101, 102
 PID, TID = 201, 202
-FLAGS = CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT
+FLAGS = (CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT
+         | EXTENDED_STARTUPINFO_PRESENT)
 
 
 def setup():
@@ -97,6 +99,7 @@ def test_exact_three_queries_yield_explicitly_untrusted_observation():
 
 @pytest.mark.parametrize("field,value", [
     ("creation_flags", CREATE_SUSPENDED),
+    ("creation_flags", FLAGS & ~CREATE_UNICODE_ENVIRONMENT),
     ("creation_flags", FLAGS | 0x10),
     ("process_handle", THREAD),
     ("job_handle", 99),

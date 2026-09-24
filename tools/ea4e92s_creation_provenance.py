@@ -11,6 +11,7 @@ from tools.ea4e92s_suspended_process import (
 
 
 CREATE_SUSPENDED = 0x00000004
+CREATE_UNICODE_ENVIRONMENT = 0x00000400
 EXTENDED_STARTUPINFO_PRESENT = 0x00080000
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -54,7 +55,8 @@ def validate_creation_receipt(
             or receipt.adapter_sha256 != adapter_sha256):
         raise CreationProvenanceDenied("adapter identity conflicts")
     flags = receipt.creation_flags
-    required = CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT
+    required = (CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT
+                | EXTENDED_STARTUPINFO_PRESENT)
     if type(flags) is not int or flags != required:
         raise CreationProvenanceDenied("suspended creation flags unavailable")
 

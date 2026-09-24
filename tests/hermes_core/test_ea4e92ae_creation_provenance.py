@@ -17,7 +17,8 @@ REQUEST = "request-0001"
 ADAPTER = "a" * 64
 JOB, PROCESS, THREAD = 11, 22, 33
 PID, TID = 201, 202
-FLAGS = subject.CREATE_SUSPENDED | subject.EXTENDED_STARTUPINFO_PRESENT
+FLAGS = (subject.CREATE_SUSPENDED | subject.CREATE_UNICODE_ENVIRONMENT
+         | subject.EXTENDED_STARTUPINFO_PRESENT)
 
 
 def setup():
@@ -47,9 +48,12 @@ def test_exact_receipt_returns_same_in_memory_value_without_calls():
 
 
 @pytest.mark.parametrize("flags", [
-    0, subject.CREATE_SUSPENDED,
-    subject.EXTENDED_STARTUPINFO_PRESENT, -1, True, "0x80004",
-    0x1_0008_0004, FLAGS | 0x10,
+    0, subject.CREATE_SUSPENDED, subject.CREATE_UNICODE_ENVIRONMENT,
+    subject.EXTENDED_STARTUPINFO_PRESENT,
+    FLAGS & ~subject.CREATE_SUSPENDED,
+    FLAGS & ~subject.CREATE_UNICODE_ENVIRONMENT,
+    FLAGS & ~subject.EXTENDED_STARTUPINFO_PRESENT,
+    -1, True, "0x80404", 0x1_0008_0404, FLAGS | 0x10,
 ])
 def test_missing_or_malformed_creation_flags_denied(flags):
     receipt, owned = setup()
