@@ -11,7 +11,6 @@ from tools.hermes_core.governed_production import compute_ea4e18_integration_con
 from tools.hermes_core.governed_production_caller import compute_ea4e29_caller_contract_id
 from tools.hermes_core.governed_production_runtime import compute_ea4e26_integration_contract_id
 from tools.hermes_core.hashing import sha256_payload
-from tests.hermes_core.test_ea4e92t_kilo772_candidate_contract_diff import CANDIDATE_IDS as CURRENT_EXPECTED_IDS
 from tools.hermes_core.kilo_adapter import (
     KILO_TRANSPORT_CONTRACT_ID,
     PINNED_KILO_PATH,
@@ -26,10 +25,13 @@ from tools.hermes_core.kilo_successor_binding import (
     HISTORICAL_EA4E_CONTRACT_IDS,
     HISTORICAL_EA4E_7_5_15_CONTRACT_IDS,
     HISTORICAL_EA4E_7_6_2_CONTRACT_IDS,
+    HISTORICAL_EA4E_7_7_2_CONTRACT_IDS,
     HISTORICAL_KILO_7_5_15_EXECUTABLE_BINDING_ID,
     HISTORICAL_KILO_7_5_15_TRANSPORT_CONTRACT_ID,
     HISTORICAL_KILO_7_6_2_EXECUTABLE_BINDING_ID,
     HISTORICAL_KILO_7_6_2_TRANSPORT_CONTRACT_ID,
+    HISTORICAL_KILO_7_7_2_EXECUTABLE_BINDING_ID,
+    HISTORICAL_KILO_7_7_2_TRANSPORT_CONTRACT_ID,
     HISTORICAL_KILO_7_5_9_TRANSPORT_CONTRACT_ID,
     KILO_EXECUTABLE_SUCCESSOR_BINDING_ID,
     KILO_MODEL_BINDING_ID,
@@ -86,6 +88,22 @@ EXPECTED_IDS = {
     "EA-4E.29": "ac2c38e726a2469b80590f6976acad9a5141e0efb26c2726e342420118ef21f1",
 }
 
+CURRENT_EXPECTED_IDS = {
+    "EA-4E.6": "d26c3f6dd24c1fa25a1bc963bcdce17c8e5b1255695e10c63abe35d367b24ff2",
+    "EA-4E.7": "4bef69cfef38df6a5549062aa60393773c268a734c4cb4e8ee8c929bb9dc91fb",
+    "EA-4E.8": "bf1d279545f787ddd347c367c06be3c53f3462f7a253bf26a323ae867cce2156",
+    "EA-4E.11": "ff9e72b21a4b905e898ef88b2352a152bc32ad3a63d4e93a25dbb5d8fed13c4d",
+    "EA-4E.14": "ccef2473acceccd2548d10791ffdeaabce62c4adcf9be365577e95b6ed31b805",
+    "EA-4E.17": "f593677f85599e1a3bcc4956e190c5cfd06cfc5156d9200dc16dad5b31315032",
+    "EA-4E.18": "061cb8b52485a035c850ce675aa7025a98fbe18de86739fbe421430afbc3e704",
+    "EA-4E.21": "a429da60f529461ad3972b79b68cb1c7e886878aa5fd19d985495df06a265a0f",
+    "EA-4E.22": "27c4e7eaa5b894f607a9ec7d1430d686ef38c634874fbfbc2bca87e1ddd8aaf7",
+    "EA-4E.23": "d5043df466a2ef61a3d5b9e05eb70fc54cc2dacfa003b0fee705accb241f5fd2",
+    "EA-4E.26": "b97251db3f56ab27ecf937eaabc3cd4388b2ad56aaaac47e730c7f924815f92c",
+    "EA-4E.28": "379e2edd3673169eb9a86a2e811555bdc437e4f94362a8017eed9163dc587f90",
+    "EA-4E.29": "14ce38bad7c0f477239eae3b0342859742f3d69966bde9987807636eb9ef7103",
+}
+
 
 def _current_ids() -> dict[str, str]:
     return {
@@ -125,10 +143,10 @@ def _valid_enablement() -> ProductionExecutorBindingEnablement:
 
 
 def test_successor_file_identity_and_transport_are_exact():
-    assert PINNED_KILO_VERSION == "7.7.2"
-    assert PINNED_KILO_PATH.endswith(r"kilocode.kilo-code-7.7.2-win32-x64\bin\kilo.exe")
-    assert PINNED_KILO_SHA256 == "3dca5f2eb8cc2d875e8cdef756f77347d4899247c318bf2a018d39e0184455cd"
-    assert KILO_TRANSPORT_CONTRACT_ID == "40f23258d1abf1a799747d4ea2899a6103fa5e1fb33384f1c17dd4104ea1c578"
+    assert PINNED_KILO_VERSION == "7.7.9"
+    assert PINNED_KILO_PATH.endswith(r"kilocode.kilo-code-7.7.9-win32-x64\bin\kilo.exe")
+    assert PINNED_KILO_SHA256 == "9ef2ca9633cece72293d269502bee16720d9179990c1b65abc0599c6d356bd07"
+    assert KILO_TRANSPORT_CONTRACT_ID == "b97e4902056689fd7655c75955dcecb906d372b1a7dce012d9d0a1891472be06"
 
 
 def test_transport_and_binding_hashes_are_deterministic_and_order_invariant():
@@ -147,10 +165,14 @@ def test_old_transport_and_chain_ids_remain_historical_and_reproducible():
     assert all(HISTORICAL_EA4E_7_5_15_CONTRACT_IDS[key] != EXPECTED_IDS[key] for key in EXPECTED_IDS)
     assert set(HISTORICAL_EA4E_7_6_2_CONTRACT_IDS) == set(CURRENT_EXPECTED_IDS)
     assert all(HISTORICAL_EA4E_7_6_2_CONTRACT_IDS[key] != CURRENT_EXPECTED_IDS[key] for key in CURRENT_EXPECTED_IDS)
+    assert set(HISTORICAL_EA4E_7_7_2_CONTRACT_IDS) == set(CURRENT_EXPECTED_IDS)
+    assert all(HISTORICAL_EA4E_7_7_2_CONTRACT_IDS[key] != CURRENT_EXPECTED_IDS[key] for key in CURRENT_EXPECTED_IDS)
     assert HISTORICAL_KILO_7_5_15_TRANSPORT_CONTRACT_ID != KILO_TRANSPORT_CONTRACT_ID
     assert HISTORICAL_KILO_7_5_15_EXECUTABLE_BINDING_ID != KILO_EXECUTABLE_SUCCESSOR_BINDING_ID
     assert HISTORICAL_KILO_7_6_2_TRANSPORT_CONTRACT_ID != KILO_TRANSPORT_CONTRACT_ID
     assert HISTORICAL_KILO_7_6_2_EXECUTABLE_BINDING_ID != KILO_EXECUTABLE_SUCCESSOR_BINDING_ID
+    assert HISTORICAL_KILO_7_7_2_TRANSPORT_CONTRACT_ID != KILO_TRANSPORT_CONTRACT_ID
+    assert HISTORICAL_KILO_7_7_2_EXECUTABLE_BINDING_ID != KILO_EXECUTABLE_SUCCESSOR_BINDING_ID
 
 
 def test_rolled_chain_matches_exact_ids_and_is_repeatable():
