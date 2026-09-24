@@ -3,6 +3,8 @@
 import ctypes
 from dataclasses import dataclass
 
+from tools.ea4e92s_windows_attributes import NativeAttributeList, WindowsAttributeApi
+
 
 class SuspendedProcessDenied(RuntimeError):
     """Creation was rejected after all returned handles were closed."""
@@ -82,6 +84,26 @@ def _owned_attribute_handle(creation_owner):
             or getattr(attributes, "state", None) != "owned"):
         raise ValueError("owned creation attributes required")
     handle = getattr(attributes, "handle", None)
+    if type(handle) is NativeAttributeList:
+        keepalive = getattr(attributes, "keepalive", None)
+        pointer_max = (1 << (ctypes.sizeof(ctypes.c_void_p) * 8)) - 1
+        if (type(attributes.api) is not WindowsAttributeApi
+                or handle.owner is not attributes.api
+                or handle.closed or handle.failed
+                or not isinstance(handle.buffer, ctypes.Array)
+                or handle.keys != ["JOB_LIST", "SECURITY_CAPABILITIES"]
+                or type(keepalive) is not tuple or len(keepalive) != 3
+                or len(handle.values) != 2
+                or handle.values[0] is not keepalive[0]
+                or handle.values[1] is not keepalive[1]
+                or keepalive[2] is not security
+                or not isinstance(keepalive[0], ctypes.Array)
+                or len(keepalive[0]) != 1
+                or not _valid_native_value(keepalive[0][0], pointer_max)
+                or not _valid_native_value(security.pointer, pointer_max)
+                or keepalive[1].AppContainerSid != security.pointer):
+            raise ValueError("reviewed native attribute list required")
+        return handle.buffer
     pointer_max = (1 << (ctypes.sizeof(ctypes.c_void_p) * 8)) - 1
     if not _valid_native_value(handle, pointer_max):
         raise ValueError("valid attribute handle required")
