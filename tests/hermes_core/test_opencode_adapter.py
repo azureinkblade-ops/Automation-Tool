@@ -874,6 +874,38 @@ class TestOpenCodeFakeProcess:
         assert result.stdout_truncated is False
         assert result.final_output.encode() == raw
 
+    @pytest.mark.parametrize("same_size", [True, False])
+    def test_spool_change_after_capture_fails_closed(self, tmp_path, same_size):
+        from io import BytesIO
+        from tools.hermes_core.opencode_adapter import (
+            OpenCodeArgv, OpenCodeLiveProcess, OpenCodeProcessError,
+        )
+
+        class FakeProcess:
+            pid = 12345
+            stdout = BytesIO(b'{"type":"text","text":"ok"}\n')
+            stderr = BytesIO(b"")
+
+            def poll(self):
+                return 0
+
+        process = OpenCodeLiveProcess(popen=lambda *args, **kwargs: FakeProcess())
+        argv = OpenCodeArgv(
+            executable="fake-opencode", args=("run",), cwd=str(tmp_path), env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"), transport_contract_id="test",
+        )
+        pid = process.start(argv, "")
+        owned = process._owned[pid]
+        owned.stdout_reader.join(timeout=5)
+        owned.stderr_reader.join(timeout=5)
+        assert not owned.stdout_reader.is_alive()
+        assert not owned.stderr_reader.is_alive()
+        replacement = b"x" * len(owned.stdout_path.read_bytes()) if same_size else b""
+        owned.stdout_path.write_bytes(replacement)
+        with pytest.raises(OpenCodeProcessError, match="stream capture integrity failed"):
+            process.poll(pid)
+
     def test_execute_failure_exit_code(self, tmp_path: Path):
         config = self.make_config(tmp_path)
         adapter = OpenCodeReceiverAdapter(config=config)

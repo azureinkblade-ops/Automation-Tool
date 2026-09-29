@@ -644,6 +644,7 @@ class _StreamMetadata:
     retained_bytes: int = 0
     truncated: bool = False
     error: Optional[str] = None
+    retained_sha256: str = ""
 
 
 @dataclass
@@ -746,6 +747,7 @@ class OpenCodeLiveProcess(OpenCodeProcessProtocol):
         """
         total_bytes = 0
         retained_bytes = 0
+        retained_hash = hashlib.sha256()
         try:
             with path.open("xb") as h:
                 while True:
@@ -756,12 +758,17 @@ class OpenCodeLiveProcess(OpenCodeProcessProtocol):
                     remaining = retention_limit - retained_bytes
                     if remaining > 0:
                         if len(chunk) > remaining:
-                            h.write(chunk[:remaining])
+                            kept = chunk[:remaining]
+                            h.write(kept)
+                            retained_hash.update(kept)
                             retained_bytes += remaining
                         else:
                             h.write(chunk)
+                            retained_hash.update(chunk)
                             retained_bytes += len(chunk)
                     # Continue reading to EOF, discarding excess bytes
+                h.flush()
+                os.fsync(h.fileno())
         except FileExistsError:
             meta.error = "file_exists"
         except Exception as e:
@@ -770,6 +777,7 @@ class OpenCodeLiveProcess(OpenCodeProcessProtocol):
             meta.total_bytes = total_bytes
             meta.retained_bytes = retained_bytes
             meta.truncated = total_bytes > retention_limit
+            meta.retained_sha256 = retained_hash.hexdigest()
 
     def poll(self, pid: int) -> Optional[OpenCodeProcessResult]:
         owned = self._owned.get(pid)
@@ -795,14 +803,14 @@ class OpenCodeLiveProcess(OpenCodeProcessProtocol):
             raise OpenCodeProcessError(f"stdout stream capture failed: {owned.stdout_meta.error}")
         if owned.stderr_meta.error is not None:
             raise OpenCodeProcessError(f"stderr stream capture failed: {owned.stderr_meta.error}")
-        # All stream finalization passed - mark collected and return result
+        stdout = self._read_verified(owned.stdout_path, owned.stdout_meta)
+        stderr = self._read_verified(owned.stderr_path, owned.stderr_meta)
         owned.collected = True
-        stdout = self._read_bounded(owned.stdout_path, self.STDOUT_RETENTION_LIMIT)
         return OpenCodeProcessResult(
             pid=pid,
             returncode=returncode,
             stdout=stdout,
-            stderr=self._read_bounded(owned.stderr_path, self.STDERR_RETENTION_LIMIT),
+            stderr=stderr,
             final_output=stdout,
             duration_seconds=max(0.0, self._monotonic() - owned.started_at),
             stdout_truncated=owned.stdout_meta.truncated,
@@ -829,11 +837,11 @@ class OpenCodeLiveProcess(OpenCodeProcessProtocol):
     def owned(self) -> bool:
         return bool(self._owned)
 
-    def _read_bounded(self, path: Path, limit: int) -> str:
-        if not path.exists():
-            return ""
+    def _read_verified(self, path: Path, meta: _StreamMetadata) -> str:
         with path.open("rb") as h:
-            data = h.read(limit + 1)
+            data = h.read(meta.retained_bytes + 1)
+        if len(data) != meta.retained_bytes or hashlib.sha256(data).hexdigest() != meta.retained_sha256:
+            raise OpenCodeProcessError(f"stream capture integrity failed: {path}")
         return data.decode("utf-8", errors="replace")
 
     def _upid(self, argv: OpenCodeArgv) -> str:
