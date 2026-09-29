@@ -797,16 +797,13 @@ class OpenCodeLiveProcess(OpenCodeProcessProtocol):
             raise OpenCodeProcessError(f"stderr stream capture failed: {owned.stderr_meta.error}")
         # All stream finalization passed - mark collected and return result
         owned.collected = True
+        stdout = self._read_bounded(owned.stdout_path, self.STDOUT_RETENTION_LIMIT)
         return OpenCodeProcessResult(
             pid=pid,
             returncode=returncode,
-            stdout=self._read_bounded(owned.stdout_path, self.STDOUT_RETENTION_LIMIT),
+            stdout=stdout,
             stderr=self._read_bounded(owned.stderr_path, self.STDERR_RETENTION_LIMIT),
-            final_output=(
-                self._read_bounded(owned.stdout_path, 256 * 1024)
-                if (owned.stdout_path).exists()
-                else ""
-            ),
+            final_output=stdout,
             duration_seconds=max(0.0, self._monotonic() - owned.started_at),
             stdout_truncated=owned.stdout_meta.truncated,
             stdout_total_bytes=owned.stdout_meta.total_bytes,
@@ -1081,6 +1078,10 @@ class OpenCodeReceiverAdapter:
             timed_out=timed_out or result.timed_out,
             cancelled=result.cancelled,
             duration_seconds=result.duration_seconds,
+            stdout_truncated=result.stdout_truncated,
+            stdout_total_bytes=result.stdout_total_bytes,
+            stderr_truncated=result.stderr_truncated,
+            stderr_total_bytes=result.stderr_total_bytes,
         )
         terminal_state = self.classify_start_state(pid, result)
         record = InvocationRecord(
@@ -1096,7 +1097,9 @@ class OpenCodeReceiverAdapter:
             try:
                 payload = self.parse_output(result.final_output)
                 verified = VerifiedResult(
-                    valid=not result.timed_out and not result.cancelled and payload["type"] == "text",
+                    valid=(not result.timed_out and not result.cancelled
+                           and not result.stdout_truncated and not result.stderr_truncated
+                           and payload["type"] == "text"),
                     payload=payload,
                 )
             except OpenCodeParseError as exc:

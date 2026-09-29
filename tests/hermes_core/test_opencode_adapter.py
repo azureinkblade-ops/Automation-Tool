@@ -830,6 +830,50 @@ class TestOpenCodeFakeProcess:
         )
         assert outcome.verified_result is None or not outcome.verified_result.valid
 
+    @pytest.mark.parametrize("truncated_field", ["stdout_truncated", "stderr_truncated"])
+    def test_execute_does_not_verify_truncated_capture(self, tmp_path, truncated_field):
+        config = self.make_config(tmp_path)
+        adapter = OpenCodeReceiverAdapter(config=config)
+        adapter._process_impl = OpenCodeFakeProcess(sequence=[OpenCodeProcessResult(
+            pid=12345, returncode=0, stdout="", stderr="",
+            final_output='{"type":"text","text":"looks done"}\n',
+            **{truncated_field: True},
+        )])
+        adapter._runtime_binding = _fake_runtime_binding(config)
+        outcome = adapter.execute(
+            idempotency_key="fixture", launch_attempt_id="launch",
+            delegation_id="delegation", stdin_data="{}",
+        )
+        assert outcome.verified_result is None or not outcome.verified_result.valid
+
+    def test_full_bounded_stdout_reaches_final_output_without_process(self, tmp_path):
+        from io import BytesIO
+        from tools.hermes_core.opencode_adapter import OpenCodeLiveProcess, OpenCodeArgv
+
+        raw = (b'{"type":"text","text":"ok"}\n' * 11000)
+
+        class FakeProcess:
+            pid = 12345
+            stdout = BytesIO(raw)
+            stderr = BytesIO(b"")
+
+            def poll(self):
+                return 0
+
+        process = OpenCodeLiveProcess(popen=lambda *args, **kwargs: FakeProcess())
+        argv = OpenCodeArgv(
+            executable="fake-opencode", args=("run",), cwd=str(tmp_path), env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"), transport_contract_id="test",
+        )
+        pid = process.start(argv, "")
+        result = process.poll(pid)
+        assert result is not None
+        assert len(raw) > 256 * 1024
+        assert result.stdout_total_bytes == len(raw)
+        assert result.stdout_truncated is False
+        assert result.final_output.encode() == raw
+
     def test_execute_failure_exit_code(self, tmp_path: Path):
         config = self.make_config(tmp_path)
         adapter = OpenCodeReceiverAdapter(config=config)
