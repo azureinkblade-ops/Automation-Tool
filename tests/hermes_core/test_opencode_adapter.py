@@ -16,6 +16,7 @@ Rules:
 """
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import json
 import os
@@ -360,6 +361,7 @@ class TestOpenCodeTaskDelivery:
         binding = _resolve_binding(config)
         task = "EA4E_TASK_DELIVERY_SENTINEL"
         argv = build_opencode_argv(config, binding, runtime_run_id="test-run-001", task_message=task)
+        assert argv.runtime_run_id == "test-run-001"
         argv_list = argv.to_list()
         # Task must appear exactly once
         assert argv_list.count(task) == 1, f"Task should appear once, got {argv_list.count(task)}"
@@ -808,6 +810,28 @@ class TestOpenCodeFakeProcess:
         assert outcome.verified_result is not None
         assert outcome.verified_result.valid
 
+    def test_execute_passes_runtime_run_id_to_process(self, tmp_path):
+        config = self.make_config(tmp_path)
+
+        class CapturingFake(OpenCodeFakeProcess):
+            argv = None
+
+            def start(self, argv, stdin_data):
+                self.argv = argv
+                return super().start(argv, stdin_data)
+
+        fake = CapturingFake(sequence=[OpenCodeProcessResult(
+            pid=12345, returncode=1, stdout="", stderr="fake failure",
+        )])
+        adapter = OpenCodeReceiverAdapter(config=config, process_impl=fake)
+        adapter._runtime_binding = _fake_runtime_binding(config)
+        outcome = adapter.execute(
+            idempotency_key="run-id-propagation", launch_attempt_id="launch",
+            delegation_id="delegation", stdin_data="{}",
+        )
+        assert fake.argv.runtime_run_id == outcome.record.runtime_run_id
+        assert fake.argv.runtime_run_id.startswith("opencode-run-")
+
     @pytest.mark.parametrize(
         ("final_output", "timed_out"),
         [
@@ -905,6 +929,70 @@ class TestOpenCodeFakeProcess:
         owned.stdout_path.write_bytes(replacement)
         with pytest.raises(OpenCodeProcessError, match="stream capture integrity failed"):
             process.poll(pid)
+
+    def test_runtime_run_ids_separate_spool_and_replay_is_denied(self, tmp_path):
+        from io import BytesIO
+        from tools.hermes_core.opencode_adapter import (
+            OpenCodeArgv, OpenCodeLiveProcess, OpenCodeProcessError,
+        )
+
+        started = []
+
+        class FakeProcess:
+            def __init__(self, pid):
+                self.pid = pid
+                self.stdout = BytesIO(b'{"type":"text","text":"ok"}\n')
+                self.stderr = BytesIO(b"")
+
+            def poll(self):
+                return 0
+
+        def fake_popen(*args, **kwargs):
+            started.append(len(started) + 100)
+            return FakeProcess(started[-1])
+
+        process = OpenCodeLiveProcess(popen=fake_popen)
+        argv = OpenCodeArgv(
+            executable="fake-opencode", args=("run",), cwd=str(tmp_path), env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"), transport_contract_id="test",
+            runtime_run_id="run-one",
+        )
+        first = process.start(argv, "")
+        assert process.poll(first) is not None
+        with pytest.raises(OpenCodeProcessError, match="already exists"):
+            process.start(argv, "")
+        assert len(started) == 1
+        second_argv = replace(argv, runtime_run_id="run-two")
+        second = process.start(second_argv, "")
+        assert process.poll(second) is not None
+        assert len(started) == 2
+        assert (tmp_path / "spool" / "run-one.claim").exists()
+        assert (tmp_path / "spool" / "run-two.claim").exists()
+
+    def test_failed_spawn_keeps_run_claim_and_denies_retry(self, tmp_path):
+        from tools.hermes_core.opencode_adapter import (
+            OpenCodeArgv, OpenCodeLiveProcess, OpenCodeProcessError,
+        )
+
+        attempts = []
+
+        def failed_popen(*args, **kwargs):
+            attempts.append(1)
+            raise OSError("fake spawn failure")
+
+        process = OpenCodeLiveProcess(popen=failed_popen)
+        argv = OpenCodeArgv(
+            executable="fake-opencode", args=("run",), cwd=str(tmp_path), env=(),
+            input_schema_file=str(tmp_path / "schema.json"),
+            spool_directory=str(tmp_path / "spool"), transport_contract_id="test",
+            runtime_run_id="run-failed",
+        )
+        with pytest.raises(OSError, match="fake spawn failure"):
+            process.start(argv, "")
+        with pytest.raises(OpenCodeProcessError, match="already exists"):
+            process.start(argv, "")
+        assert len(attempts) == 1
 
     def test_execute_failure_exit_code(self, tmp_path: Path):
         config = self.make_config(tmp_path)

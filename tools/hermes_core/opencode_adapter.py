@@ -543,6 +543,7 @@ class OpenCodeArgv:
     spool_directory: str
     transport_contract_id: str = ""
     shell: bool = False
+    runtime_run_id: str = ""
 
     def to_list(self) -> list[str]:
         return [self.executable, *self.args]
@@ -582,7 +583,7 @@ def build_opencode_argv(
         )
     if binding.transport_contract_id != config.expected_transport_contract_id:
         raise OpenCodeTransportQualificationError("unknown transport contract ID")
-    if not runtime_run_id or any(
+    if not runtime_run_id or len(runtime_run_id) > 96 or any(
         c not in "abcdefghijklmnopqrstuvwxyz0123456789-" for c in runtime_run_id
     ):
         raise OpenCodeTransportQualificationError("unsafe runtime_run_id")
@@ -599,6 +600,7 @@ def build_opencode_argv(
         input_schema_file=config.output_schema_file,
         spool_directory=str(spool),
         transport_contract_id=binding.transport_contract_id,
+        runtime_run_id=runtime_run_id,
     )
     result.validate(config)
     return result
@@ -688,11 +690,18 @@ class OpenCodeLiveProcess(OpenCodeProcessProtocol):
         spool = Path(argv.spool_directory)
         spool.mkdir(parents=True, exist_ok=True)
         output_path = spool / f"{run_id}.json"
+        claim_path = spool / f"{run_id}.claim"
         stdout_path = spool / f"{run_id}.stdout.jsonl"
         stderr_path = spool / f"{run_id}.stderr.txt"
-        for path in (output_path, stdout_path, stderr_path):
+        for path in (output_path, claim_path, stdout_path, stderr_path):
             if path.exists():
                 raise OpenCodeProcessError(f"adapter output already exists: {path}")
+        try:
+            with claim_path.open("xb") as claim:
+                claim.flush()
+                os.fsync(claim.fileno())
+        except FileExistsError as exc:
+            raise OpenCodeProcessError("adapter run already claimed") from exc
         creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         try:
             process = self._popen(
@@ -845,6 +854,12 @@ class OpenCodeLiveProcess(OpenCodeProcessProtocol):
         return data.decode("utf-8", errors="replace")
 
     def _upid(self, argv: OpenCodeArgv) -> str:
+        if argv.runtime_run_id:
+            if len(argv.runtime_run_id) > 96 or any(
+                c not in "abcdefghijklmnopqrstuvwxyz0123456789-" for c in argv.runtime_run_id
+            ):
+                raise OpenCodeProcessError("unsafe runtime_run_id")
+            return argv.runtime_run_id
         payload = (argv.executable, json.dumps(argv.args, sort_keys=True))
         return "run-" + hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:8]
 
@@ -1059,6 +1074,7 @@ class OpenCodeReceiverAdapter:
             input_schema_file=self._config.output_schema_file,
             spool_directory=self._config.spool_directory,
             transport_contract_id=self._config.expected_transport_contract_id,
+            runtime_run_id=record.runtime_run_id,
         )
         pid = self._process_impl.start(argv, stdin_data)
         result = None
