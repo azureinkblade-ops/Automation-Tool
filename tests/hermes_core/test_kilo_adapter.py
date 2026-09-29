@@ -256,6 +256,30 @@ class TestKiloArgv:
 
 
 class TestKiloReceiverAdapter:
+    @pytest.mark.parametrize(
+        ("stdout", "returncode", "timed_out"),
+        [
+            ('{"type":"error","error":{"message":"failed"}}\n', 0, False),
+            ('{"type":"text","text":"ok"}\n{"type":"error","error":{"message":"failed"}}\n', 0, False),
+            ('{"type":"text","text":"ok"}\n', 1, False),
+            ('{"type":"text","text":"ok"}\n', -9, True),
+        ],
+    )
+    def test_execute_does_not_verify_failed_output(self, stdout, returncode, timed_out):
+        adapter = KiloAdapter({"task_message": "fixture task"})
+
+        class FakeController:
+            def execute(self, argv):
+                return KiloProcessResult(123, returncode, stdout, "", timed_out=timed_out)
+
+        adapter._process_controller = FakeController()
+        outcome = adapter.execute(
+            idempotency_key="fixture", launch_attempt_id="launch",
+            delegation_id="delegation", stdin_data="",
+        )
+        assert outcome.verified_result is None or not outcome.verified_result.valid
+        assert outcome.record.terminal_state == "error"
+
     def test_adapter_version(self, repo_root: Path):
         adapter = KiloAdapter()
         assert adapter.adapter_version == "ea4e.3"
@@ -303,6 +327,14 @@ class TestKiloReceiverAdapter:
     def test_parse_output_error_event(self):
         parser = KiloOutputParser()
         result = parser.parse_output('{"type":"error","error":{"message":"boom"}}\n')
+        assert result["type"] == "error"
+
+    def test_parse_output_error_after_text_takes_precedence(self):
+        parser = KiloOutputParser()
+        result = parser.parse_output(
+            '{"type":"text","text":"looks done"}\n'
+            '{"type":"error","error":{"message":"failed"}}\n'
+        )
         assert result["type"] == "error"
 
     def test_parse_output_empty_raises(self):

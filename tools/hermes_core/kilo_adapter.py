@@ -396,6 +396,10 @@ class KiloOutputParser:
             except json.JSONDecodeError as exc:
                 raise KiloParseError(f"invalid JSONL line: {exc}") from exc
 
+        error_events = [e for e in events if e.get("type") == "error"]
+        if error_events:
+            return {"type": "error", "error": error_events[-1].get("error", {}), "events": events}
+
         # Extract text from Kilo 7.5.6 JSONL events.
         # Kilo nests the assistant text under event["part"]["text"].
         # Historical top-level event["text"] is preserved for backward compatibility.
@@ -414,9 +418,6 @@ class KiloOutputParser:
         if text_events:
             return {"type": "text", "text": _extract_text(text_events[-1]), "events": events}
 
-        error_events = [e for e in events if e.get("type") == "error"]
-        if error_events:
-            return {"type": "error", "error": error_events[-1].get("error", {}), "events": events}
         raise KiloParseError("no text or error event in JSONL output")
 
 
@@ -705,21 +706,25 @@ class KiloAdapter:
         argv = self.build_argv("")
         result = self._process_controller.execute(argv)
         start_state = self.classify_start_state(result.pid, result)
-        record = InvocationRecord(
-            idempotency_key=idempotency_key,
-            runtime_run_id=launch_attempt_id,
-            start_state=start_state,
-            terminal_state="completed" if result.returncode == 0 else "error",
-            pid=result.pid,
-            argv_hash=sha256_payload(list(argv)),
-        )
         verified_result = None
         if result.stdout.strip():
             try:
                 parsed = self.parse_output(result.stdout)
-                verified_result = VerifiedResult(valid=True, payload=parsed)
+                verified_result = VerifiedResult(
+                    valid=result.returncode == 0 and not result.timed_out and parsed["type"] == "text",
+                    payload=parsed,
+                )
             except KiloParseError:
                 verified_result = VerifiedResult(valid=False, payload={})
+        record = InvocationRecord(
+            idempotency_key=idempotency_key,
+            runtime_run_id=launch_attempt_id,
+            start_state=start_state,
+            terminal_state="completed" if result.returncode == 0 and not result.timed_out
+            and verified_result is not None and verified_result.valid else "error",
+            pid=result.pid,
+            argv_hash=sha256_payload(list(argv)),
+        )
         # process_started=True means the process was launched (pid > 0),
         # NOT that it completed successfully. Terminal state is in the record.
         process_started = result.pid > 0

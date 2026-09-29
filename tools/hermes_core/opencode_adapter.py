@@ -954,6 +954,9 @@ class OpenCodeReceiverAdapter:
                 events.append(json.loads(line))
             except json.JSONDecodeError as exc:
                 raise OpenCodeParseError(f"invalid JSONL line: {exc}") from exc
+        error_events = [e for e in events if e.get("type") == "error"]
+        if error_events:
+            return {"type": "error", "error": error_events[-1].get("error", {}), "events": events}
         # Extract text events - support flat and nested formats
         text_events = []
         for e in events:
@@ -973,9 +976,6 @@ class OpenCodeReceiverAdapter:
                             text_events.append(e)
         if text_events:
             return {"type": "text", "text": text_events[-1]["text"].strip(), "events": events}
-        error_events = [e for e in events if e.get("type") == "error"]
-        if error_events:
-            return {"type": "error", "error": error_events[-1].get("error", {}), "events": events}
         raise OpenCodeParseError("no text or error event in JSONL output")
 
     def classify_start_state(
@@ -1078,7 +1078,7 @@ class OpenCodeReceiverAdapter:
             stdout=result.stdout,
             stderr=result.stderr,
             final_output=result.final_output,
-            timed_out=timed_out,
+            timed_out=timed_out or result.timed_out,
             cancelled=result.cancelled,
             duration_seconds=result.duration_seconds,
         )
@@ -1095,7 +1095,10 @@ class OpenCodeReceiverAdapter:
         if terminal_state == "TERMINAL" and result.returncode == 0 and result.final_output:
             try:
                 payload = self.parse_output(result.final_output)
-                verified = VerifiedResult(valid=True, payload=payload)
+                verified = VerifiedResult(
+                    valid=not result.timed_out and not result.cancelled and payload["type"] == "text",
+                    payload=payload,
+                )
             except OpenCodeParseError as exc:
                 verified = VerifiedResult(valid=False, payload={}, parse_error=str(exc))
         return ExecutionOutcome(

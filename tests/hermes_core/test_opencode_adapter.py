@@ -731,6 +731,14 @@ class TestOpenCodeReceiverAdapter:
         )
         assert result["type"] == "error"
 
+    def test_parse_output_error_after_text_takes_precedence(self):
+        adapter = OpenCodeReceiverAdapter()
+        result = adapter.parse_output(
+            '{"type":"text","text":"looks done"}\n'
+            '{"type":"error","error":{"message":"failed"}}\n'
+        )
+        assert result["type"] == "error"
+
     def test_parse_output_empty_raises(self):
         adapter = OpenCodeReceiverAdapter()
         with pytest.raises(Exception, match="empty JSONL"):
@@ -800,6 +808,28 @@ class TestOpenCodeFakeProcess:
         assert outcome.verified_result is not None
         assert outcome.verified_result.valid
 
+    @pytest.mark.parametrize(
+        ("final_output", "timed_out"),
+        [
+            ('{"type":"error","error":{"message":"failed"}}\n', False),
+            ('{"type":"text","text":"ok"}\n{"type":"error","error":{"message":"failed"}}\n', False),
+            ('{"type":"text","text":"ok"}\n', True),
+        ],
+    )
+    def test_execute_does_not_verify_failed_output(self, tmp_path, final_output, timed_out):
+        config = self.make_config(tmp_path)
+        adapter = OpenCodeReceiverAdapter(config=config)
+        adapter._process_impl = OpenCodeFakeProcess(sequence=[OpenCodeProcessResult(
+            pid=12345, returncode=0, stdout="", stderr="",
+            final_output=final_output, timed_out=timed_out,
+        )])
+        adapter._runtime_binding = _fake_runtime_binding(config)
+        outcome = adapter.execute(
+            idempotency_key="fixture", launch_attempt_id="launch",
+            delegation_id="delegation", stdin_data="{}",
+        )
+        assert outcome.verified_result is None or not outcome.verified_result.valid
+
     def test_execute_failure_exit_code(self, tmp_path: Path):
         config = self.make_config(tmp_path)
         adapter = OpenCodeReceiverAdapter(config=config)
@@ -849,7 +879,7 @@ class TestOpenCodeFakeProcess:
         )
         assert outcome.process_started
         assert outcome.verified_result is not None
-        assert outcome.verified_result.valid
+        assert not outcome.verified_result.valid
 
 
 class TestOpenCodeLiveProcess:
