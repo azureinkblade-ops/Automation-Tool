@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { createRequire } = require("node:module");
@@ -51,8 +52,9 @@ async function main() {
   const requests = [];
   let responseMode = "stream";
   const transport = async (url, options) => {
-    const body = JSON.parse(options.body);
-    requests.push({ url: String(url), method: options.method, body });
+    const rawBody = String(options.body);
+    const body = JSON.parse(rawBody);
+    requests.push({ url: String(url), method: options.method, body, rawBody });
     assert.equal(String(url), "http://127.0.0.1:1/v1/chat/completions");
     assert.equal(options.method, "POST");
     if (responseMode === "failure") {
@@ -83,6 +85,15 @@ async function main() {
   assert.equal(await streamed.text, "ok");
   assert.equal(requests.length, 1, "one simple stream must make one request");
   assert.equal(requests[0].body.stream, true, "streamText must request streaming");
+  const streamedRawBody = requests[0].rawBody;
+  const expectedRawBody = fs.readFileSync(
+    path.join(__dirname, "fixtures", "ea4e92by_sdk_request.json"), "utf8",
+  ).trimEnd();
+  assert.equal(streamedRawBody, expectedRawBody, "pinned SDK request bytes changed");
+  const streamedRequestSha256 = crypto.createHash("sha256")
+    .update(streamedRawBody, "utf8").digest("hex");
+  assert.equal(streamedRequestSha256,
+    "ebfb27264f02c96ab3f6655a32ad85e4c7d4c29bf3901ca583557e877a51ed9a");
 
   responseMode = "failure";
   requests.length = 0;
@@ -107,6 +118,7 @@ async function main() {
   process.stdout.write(JSON.stringify({
     sdkOnly: true, realReceiverStarted: false, realNetworkCalls: 0,
     streamText: { requests: 1, stream: true },
+    streamedRequest: { sha256: streamedRequestSha256 },
     streamFailure503: { requests: 1, retried: false },
     streamFailure503WithTwoRetries: { requests: 3, retried: true },
     generateText: { requests: 1, stream: false },

@@ -87,6 +87,35 @@ def test_pinned_sdk_success_fixture_passes_fake_one_call_gate(tmp_path):
     assert handle(handler).status == 403
 
 
+def test_pinned_sdk_request_bytes_pass_fake_one_call_gate(tmp_path):
+    raw_body = (Path(__file__).with_name("fixtures") / "ea4e92by_sdk_request.json")
+    raw_body = raw_body.read_bytes().rstrip(b"\r\n")
+    assert hashlib.sha256(raw_body).hexdigest() == (
+        "ebfb27264f02c96ab3f6655a32ad85e4c7d4c29bf3901ca583557e877a51ed9a"
+    )
+    raw_response = (Path(__file__).with_name("fixtures") / "ea4e92bx_success.sse")
+    raw_response = raw_response.read_bytes() + b"\n"
+    scope = QualificationScope(
+        "sdk-request-run", "a" * 40, "b" * 64, "c" * 64, "d" * 64,
+        "http://127.0.0.1:1/fixture", "fake-model",
+        hashlib.sha256(raw_body).hexdigest(),
+        "2026-09-14T00:00:00Z", "2026-09-14T00:05:00Z",
+    )
+    store = DurableInvocationAuthorizationStore.initialize(
+        tmp_path / "budget.sqlite3", anchor_path=tmp_path / "anchor.json",
+    )
+    provision_budget(store, scope)
+    ledger = ProductionAccountingLedger.initialize(tmp_path / "accounting.sqlite3")
+    handler = OfflineStreamingQualificationHandler(
+        store, scope, respond=lambda body: FakeSseResponse(
+            200, "text/event-stream", None, ((raw_response, 0),),
+        ), ledger=ledger, capture_path=tmp_path / "response.bin", clock=lambda: NOW,
+    )
+    assert handle(handler, body=raw_body).body == raw_response
+    assert handler.gate.verify_capture() == raw_response
+    assert handle(handler, body=raw_body).status == 403
+
+
 @pytest.mark.parametrize("changes,status", [
     ({"path": "/other"}, 404), ({"path": "/v1/chat/completions?x=1"}, 404),
     ({"method": "GET"}, 405), ({"content_type": "text/plain"}, 415),
