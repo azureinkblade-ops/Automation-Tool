@@ -16,10 +16,13 @@ import unittest
 from pathlib import Path
 
 from tools.hermes_core import (
+    close_governance_store,
     GovernanceIntegrityError,
     GovernanceTransitionError,
     SQLiteGovernanceStore,
     load_schema_catalog,
+    reset_governance_store_cache,
+    set_governance_db_path_override,
 )
 from tools.hermes_core.acceptance_artifact import AcceptanceArtifact
 from tools.hermes_core.consensus_disposition import (
@@ -72,6 +75,7 @@ class Phase6AcceptedPathProofTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
+        set_governance_db_path_override(self.tmp / "review-runner-governance.db")
         self.db = temp_db_path(self.tmp, "accepted")
         self.store = SQLiteGovernanceStore(self.db, self.catalog)
 
@@ -80,6 +84,9 @@ class Phase6AcceptedPathProofTests(unittest.TestCase):
             self.store.close()
         except Exception:
             pass
+        close_governance_store()
+        set_governance_db_path_override(None)
+        reset_governance_store_cache()
 
     def test_positive_accepted_path_end_to_end(self) -> None:
         arts = build_accepted_artifacts(self.tmp, accepted_reviews())
@@ -148,6 +155,7 @@ class Phase6NegativeDispositionProofTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
+        set_governance_db_path_override(self.tmp / "review-runner-governance.db")
         self.db = temp_db_path(self.tmp, "negative")
         self.store = SQLiteGovernanceStore(self.db, self.catalog)
 
@@ -156,6 +164,9 @@ class Phase6NegativeDispositionProofTests(unittest.TestCase):
             self.store.close()
         except Exception:
             pass
+        close_governance_store()
+        set_governance_db_path_override(None)
+        reset_governance_store_cache()
 
     def _material_disagreement_reviews(self) -> list[dict]:
         ev_path, ids = freeze_evidence_ids(self.tmp)
@@ -276,6 +287,7 @@ class Phase6TamperProofTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
+        set_governance_db_path_override(self.tmp / "review-runner-governance.db")
         self.db = temp_db_path(self.tmp, "tamper")
         self.store = SQLiteGovernanceStore(self.db, self.catalog)
         self.arts = build_accepted_artifacts(self.tmp, accepted_reviews())
@@ -287,6 +299,9 @@ class Phase6TamperProofTests(unittest.TestCase):
             self.store.close()
         except Exception:
             pass
+        close_governance_store()
+        set_governance_db_path_override(None)
+        reset_governance_store_cache()
 
     def _reopen(self) -> SQLiteGovernanceStore:
         return SQLiteGovernanceStore(self.db, self.catalog)
@@ -385,6 +400,15 @@ class Phase6DeterminismProofTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.catalog = load_schema_catalog(Path(__file__).resolve().parents[2])
 
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        set_governance_db_path_override(self.tmp / "review-runner-governance.db")
+
+    def tearDown(self) -> None:
+        close_governance_store()
+        set_governance_db_path_override(None)
+        reset_governance_store_cache()
+
     def test_determinism_two_independent_runs_match(self) -> None:
         with tempfile.TemporaryDirectory() as d1, tempfile.TemporaryDirectory() as d2:
             a1 = build_accepted_artifacts(Path(d1), accepted_reviews())
@@ -405,6 +429,7 @@ class Phase6PersistenceProofTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
+        set_governance_db_path_override(self.tmp / "review-runner-governance.db")
         self.db = temp_db_path(self.tmp, "persist")
         self.store = SQLiteGovernanceStore(self.db, self.catalog)
 
@@ -413,6 +438,9 @@ class Phase6PersistenceProofTests(unittest.TestCase):
             self.store.close()
         except Exception:
             pass
+        close_governance_store()
+        set_governance_db_path_override(None)
+        reset_governance_store_cache()
 
     def test_idempotent_repersist_is_noop(self) -> None:
         arts = build_accepted_artifacts(self.tmp, accepted_reviews())

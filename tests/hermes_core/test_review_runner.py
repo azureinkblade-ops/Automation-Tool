@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from tools.hermes_core import (
+    close_governance_store,
     EvidencePackageBuilder,
     ReviewAssignmentBuilder,
     ReviewRunnerStub,
@@ -13,6 +14,8 @@ from tools.hermes_core import (
     ReviewSessionError,
     ReviewerRegistry,
     load_schema_catalog,
+    reset_governance_store_cache,
+    set_governance_db_path_override,
 )
 
 
@@ -23,6 +26,16 @@ class HermesReviewRunnerStubTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.catalog = load_schema_catalog(Path(__file__).resolve().parents[2])
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        set_governance_db_path_override(Path(self.tmp.name) / "review-runner-governance.db")
+
+    def tearDown(self) -> None:
+        close_governance_store()
+        set_governance_db_path_override(None)
+        reset_governance_store_cache()
+        self.tmp.cleanup()
 
     def reviewer(self, agent_id: str) -> dict:
         return {

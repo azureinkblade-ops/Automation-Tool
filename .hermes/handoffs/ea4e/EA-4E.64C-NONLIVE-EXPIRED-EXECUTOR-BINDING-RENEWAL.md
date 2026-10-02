@@ -1,0 +1,62 @@
+# EA-4E.64C Non-Live Expired Executor-Binding Renewal
+
+```ini
+EA4E64C_RESULT=PASS_QUALIFIED_NONLIVE_NOT_COMMITTED
+GOVERNING_BASELINE=ae79785530421420b9e94c5605e520fbce5eaedb
+BLOCKER_CLOSED=EXPLICIT_EXPIRED_EXECUTOR_BINDING_RENEWAL_PATH_MISSING
+
+PRODUCTION_FILE=tools/hermes_core/production_deployment_composition.py
+DEDICATED_TEST_FILE=tests/hermes_core/test_ea4e64c_nonlive_expired_binding_renewal.py
+
+RENEWAL_REQUIRES_EXPLICIT_FLAG=YES
+EXPIRED_BINDING_RECONSTRUCTION_FAILS_CLOSED=YES
+UNEXPIRED_BINDING_ROTATION_FORBIDDEN=YES
+EXACT_PREDECESSOR_BINDING_ID_REQUIRED=YES
+EXACT_PREDECESSOR_EXPIRY_REQUIRED=YES
+EXPIRY_REVALIDATED_INSIDE_ATOMIC_REPLACEMENT=YES
+
+RENEWAL_ROTATES_BINDING_ID=YES
+RENEWAL_ROTATES_ENABLEMENT_ID=YES
+RENEWAL_EXTENDS_EXISTING_BINDING=NO
+RENEWAL_REUSES_EXPIRED_BINDING_ID=NO
+
+ACTIVATION_STORE_ID_PRESERVED=YES
+ACTIVATION_STORE_EPOCH_PRESERVED=YES
+RECEIVER_ID_PRESERVED=YES
+TRANSPORT_CONTRACT_ID_PRESERVED=YES
+MODEL_BINDING_ID_PRESERVED=YES
+EXECUTABLE_BINDING_ID_PRESERVED=YES
+BINARY_PATH_VERSION_HASH_PRESERVED=YES
+
+AUTHORIZATION_ISSUED=0
+ACTIVATION_AUTH_CLAIMED=0
+PRODUCTION_ACTIVATED=NO
+RECEIVER_EXECUTED=NO
+MODEL_INVOKED=NO
+
+EA4E64A_TO_64C_FOCUSED=37/37
+BINDING_AND_ACTIVATION_REGRESSION=171/171
+FIRST_FULL_HERMES_CORE=3201_PASSED_39_FAILED_104_SUBTESTS
+TRANSIENT_CONCURRENCY_FAILURE_ISOLATED=1/1_PASS
+FINAL_FULL_HERMES_CORE=3202_PASSED_38_INHERITED_FAILED_104_SUBTESTS
+FINAL_FULL_HERMES_CORE_NEW_FAILURES=0
+
+PRODUCTION_BINDING_STORE_MUTATED=NO
+SOURCE_CHECKPOINT_COMMITTED=NO
+PUSH=NO
+NEXT_REQUIRED_ACTION=EA4E64C_LOCAL_COMMIT_REVIEW_AND_REMOTE_CHECKPOINT
+```
+
+The explicit renewal path replaces only an exact expired binding descriptor.
+It generates a new enablement and runtime binding identity with a fresh bounded
+TTL while retaining the qualified Kilo receiver, transport, model, executable,
+and binary identities. The activation-authority store lineage is unchanged.
+
+The first complete regression run exposed one unrelated concurrent duplicate
+claim assertion. It passed immediately in isolation without modification. The
+mandatory unchanged complete rerun then returned the established 38 inherited
+failure identities and no new failures.
+
+No production-class durable state was renewed during this phase. Renewal must
+wait until this implementation is reviewed, committed, and synchronized so a
+future binding identity is tied to durable source.

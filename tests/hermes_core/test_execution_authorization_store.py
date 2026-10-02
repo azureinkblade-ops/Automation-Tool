@@ -497,8 +497,10 @@ class TestSchemaVersion(unittest.TestCase):
         # CLAIM_RECORDED ledger event, advancing the schema to v4.
         # EA-4B adds the execution_attempts table and the ATTEMPT_RECORDED
         # ledger event, advancing the schema to v5.
+        # EA-4C.2 adds the worker_routes table and the ROUTE_SELECTED ledger
+        # event, advancing the schema to v6.
         store = SQLiteExecutionAuthorizationStore(self.db)
-        self.assertEqual(SCHEMA_VERSION, 5)
+        self.assertEqual(SCHEMA_VERSION, 6)
         self.assertTrue(store.verify_integrity().ok)
         store.close()
 

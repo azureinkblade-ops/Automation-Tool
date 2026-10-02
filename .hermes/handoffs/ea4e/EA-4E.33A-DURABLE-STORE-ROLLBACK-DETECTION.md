@@ -1,0 +1,251 @@
+# EA-4E.33A Durable Store Identity / Rollback-Detection Result
+
+## Disposition
+
+The implementation and fake-only safety surface are green, but this phase is held rather than qualified. During the first broad-suite classification run, eight OpenCode `--version` probes were reached by environment-bound adapter tests. They did not submit a task, invoke a model, call an adapter execution method, or cross the production execution boundary. They did start the receiver executable, which violates EA-4E.33A's stricter no-receiver-process rule. The subsequent 2,039-test safe set excluded those environment-bound files and passed with zero failures.
+
+## Governing State
+
+```text
+GIT_STATE_REVERIFIED_AT_START=YES
+GOVERNING_LOCAL_HEAD=fe3f4c0eb9cfe38ac1d7b62ee789be5e2de8eb14
+GOVERNING_REMOTE_HEAD=fe3f4c0eb9cfe38ac1d7b62ee789be5e2de8eb14
+CURRENT_BRANCH=feature/ea4f-regional-hand-repair-pilot
+LOCAL_AHEAD=0
+LOCAL_BEHIND=0
+STAGED_BEFORE=0
+WORKTREE_STATUS_BEFORE=DIRTY_WITH_EXPECTED_EA4E30_33_AND_UNRELATED_WIP
+UNRELATED_WIP_PRESENT=YES
+UNRELATED_WIP_TOUCHED=NO
+```
+
+## Historical EA-4E.33 Findings
+
+```text
+EA4E33_STALE_BACKUP_RESURRECTION_FOUND=YES
+EA4E33_VALID_DB_REPLACEMENT_UNDETECTED=YES
+EA4E33_CLOCK_ROLLBACK_REVALIDATION_FOUND=YES
+```
+
+These remain historical findings. EA-4E.33A adds the technical rollback and replacement controls; it does not rewrite the earlier evidence.
+
+## Store Identity
+
+```text
+STORE_INSTANCE_ID_PRESENT=YES
+STORE_INSTANCE_ID_PERSISTENT=YES
+STORE_INSTANCE_ID_IMMUTABLE=YES
+STORE_INSTANCE_ID_DERIVED_FROM_PATH=NO
+STORE_INSTANCE_ID_DERIVED_FROM_TASK_TEXT=NO
+EXPECTED_STORE_IDENTITY_SOURCE=EXPLICIT_VERSIONED_EXTERNAL_ANCHOR_FILE
+EXPECTED_STORE_IDENTITY_STORED_OUTSIDE_PRIMARY_DB=YES
+```
+
+The UUID store identity is generated only by explicit first initialization. Normal construction and repeated initialization of an established path require the existing database and anchor and never regenerate either identity.
+
+## Generation / Rollback
+
+```text
+STORE_GENERATION_PRESENT=YES
+STORE_GENERATION_MONOTONIC=YES
+EXPECTED_GENERATION_SOURCE=EXPLICIT_VERSIONED_EXTERNAL_ANCHOR_FILE
+EXPECTED_GENERATION_STORED_OUTSIDE_PRIMARY_DB=YES
+STORE_GENERATION_ROLLBACK_DETECTED=YES
+DB_ANCHOR_UPDATE_ORDER=SQLITE_MUTATION_AND_GENERATION_COMMIT_THEN_ATOMIC_ANCHOR_REPLACE
+CRASH_BETWEEN_DB_AND_ANCHOR_UPDATE_FAILS_CLOSED=YES
+AMBIGUOUS_DB_ANCHOR_STATE_FAILS_CLOSED=YES
+```
+
+New issuance and successful consumption advance the generation in the same SQLite transaction as the replay-sensitive state. The anchor is then written to a flushed temporary file and atomically replaced. A crash after the DB commit but before anchor replacement leaves unequal generations; all later reads, issuance, and claims deny/error. Availability may require operator recovery, but ambiguity cannot return an allow.
+
+## Anchor
+
+```text
+IDENTITY_ANCHOR_EXPLICIT=YES
+AUTH_STORE_ANCHOR_SCHEMA_ID=hermes.production-invocation-authorization-anchor/v1
+AUTH_STORE_ANCHOR_SCHEMA_VERSION=1
+MISSING_ESTABLISHED_IDENTITY_ANCHOR=DENY_OR_ERROR
+ANCHOR_CORRUPTION_CASES=5
+ANCHOR_CORRUPTION_FAILS_CLOSED=YES
+ANCHOR_PERMISSION_FAILURE_ALLOWS_AUTH=NO
+UNKNOWN_ANCHOR_SCHEMA_VERSION=DENY
+FIRST_INITIALIZATION_EXPLICIT=YES
+ESTABLISHED_REOPEN_AUTO_INITIALIZES_MISSING_IDENTITY=NO
+ESTABLISHED_REOPEN_AUTO_INITIALIZES_MISSING_GENERATION=NO
+STORE_PATH_EXPLICIT=YES
+IDENTITY_ANCHOR_PATH_EXPLICIT=YES
+STORE_PATH_FROM_TASK_TEXT=NO
+IDENTITY_ANCHOR_PATH_FROM_TASK_TEXT=NO
+```
+
+Database and anchor paths must be separately supplied and must resolve to distinct files.
+
+## Stale Backup
+
+```text
+STALE_BACKUP_REPLAY_ATTEMPT=DENY_OR_ERROR
+STALE_BACKUP_EXECUTOR_CALLS=0
+STALE_BACKUP_ROLLBACK_DETECTED=YES
+RAW_DB_ONLY_BACKUP_SUPPORTED_FOR_PRODUCTION_RESTORE=NO
+```
+
+## Replacement
+
+```text
+UNEXPECTED_VALID_DB_REPLACEMENT_DETECTED=YES
+VALID_DB_REPLACEMENT_OPEN_RESULT=DENY_OR_ERROR
+AUTHORIZATION_STATE_FROM_REPLACEMENT_ACCEPTED=NO
+STORE_REPLACEMENT_CASES=4
+UNSAFE_REPLACEMENT_ACCEPTED=0
+DELETED_ESTABLISHED_DB_REOPEN=DENY_OR_ERROR
+NEW_EMPTY_DB_AUTO_CREATED=NO
+```
+
+## DB / Anchor Mismatch
+
+```text
+STALE_DB_WITH_NEWER_ANCHOR=DENY_OR_ERROR
+NEWER_DB_WITH_STALE_ANCHOR=DENY_OR_ERROR
+AMBIGUOUS_DB_ANCHOR_STATE_FAILS_CLOSED=YES
+ROLLBACK_RESTORE_CASES=8
+ROLLBACK_RESTORE_UNSAFE_ALLOWS=0_WITHIN_EXTERNAL_ANCHOR_TRUST_BOUNDARY
+```
+
+## Full Rollback Trust Boundary
+
+```text
+FULL_STATE_ROLLBACK_RISK_ANALYZED=YES
+FULL_STATE_ROLLBACK_DETECTABLE=NO
+FULL_STATE_ROLLBACK_TRUST_ASSUMPTION=THE_OPERATOR_CONTROLLED_EXTERNAL_ANCHOR_OR_A_HIGHER_IMMUTABLE_BACKUP_CATALOG_MUST_NOT_BE_ROLLED_BACK_WITH_THE_DATABASE
+```
+
+A coordinated restore of both the SQLite database and its external anchor to the same older snapshot cannot be detected by those two components alone. Detecting total-system rollback requires a third immutable or independently administered trust root. The sealed EA-4E.23 contract requires restart durability and current-clock expiry re-evaluation, but does not define protection against rollback of every durable trust component.
+
+## Backup / Restore Policy
+
+```text
+BACKUP_REQUIRED_COMPONENTS=SQLITE_DATABASE_PLUS_MATCHING_EXTERNAL_ANCHOR_PLUS_OPERATOR_TRUST_THAT_THE_PAIR_IS_CURRENT
+RESTORE_VALIDATION_REQUIRED=YES
+RESTORE_STORE_ID_MUST_MATCH=YES
+RESTORE_GENERATION_MUST_NOT_ROLL_BACK=YES_WITHIN_THE_EXTERNAL_ANCHOR_TRUST_BOUNDARY
+RAW_DB_ONLY_BACKUP_SUPPORTED_FOR_PRODUCTION_RESTORE=NO
+```
+
+Historical restore is not a normal runtime operation. It requires separate operator/governance handling and an independently trusted current-generation reference.
+
+## Clock
+
+```text
+EA4E23_EXPIRY_SEMANTIC_INTERPRETATION=A_CURRENT_TRUSTED_UTC_WALL_CLOCK
+CLOCK_ROLLBACK_REVALIDATION_REPRODUCED=YES
+OBSERVED_EXPIRED_STATE_PERSISTED=NO
+CLOCK_ROLLBACK_AFTER_EXPIRY=ALLOW_IF_CURRENT_TRUSTED_CLOCK_IS_AGAIN_BEFORE_EXPIRY_AND_AUTH_IS_UNCONSUMED
+CLOCK_TRUST_IS_EXTERNAL_ASSUMPTION=YES
+CLOCK_ROLLBACK_DOES_NOT_CONSTITUTE_CONTRACT_DEFECT=YES
+```
+
+The sealed contract explicitly states `expiry_rechecked_against_current_clock_after_restart=true`. A permanent-expiry tombstone would change that contract interpretation and was therefore not introduced.
+
+## Contract Sufficiency
+
+```text
+EA4E23=e638e8ff695172eceaf5c36baa1f5063633b32e344971a7d6fc54cf456faff91
+EA4E26=84aad8495a6ec034c763f8c62a98ec41e85ef48c2b453bd098bc3cf57f624a67
+EA4E28=395944480c5ea2cde374b07093f07b6e44633f404abb8e420136ee5516b910e1
+EA4E29=821941da6ea4b08105c359afeb86193e343a429b0a74a32826bd6370faaa5166
+SEALED_CONTRACT_CHAIN_MATCHES=YES
+EA4E23_CONTRACT_CHANGE_REQUIRED=NO
+EA4E26_CONTRACT_CHANGE_REQUIRED=NO
+EA4E28_CONTRACT_CHANGE_REQUIRED=NO
+EA4E29_CONTRACT_CHANGE_REQUIRED=NO
+SEALED_CONTRACT_DEFECT_FOUND=NO
+```
+
+The existing authorization-store schema identity remains exactly `hermes.production-invocation-authorization-store/v1`, version `1`. Lineage metadata is additive and does not roll the sealed contract.
+
+## Tests
+
+```text
+EA4E33A_DEDICATED_TESTS=33
+EA4E33A_DEDICATED_FAILURES=0
+
+EA4E33_DEDICATED_TESTS=91
+EA4E33_DEDICATED_FAILURES=0
+
+EA4E32_DEDICATED_TESTS=52
+EA4E32_DEDICATED_FAILURES=0
+
+AUTHORIZATION_RUNTIME_COMBINED_TESTS=381
+AUTHORIZATION_RUNTIME_COMBINED_FAILURES=0
+
+FINAL_SAFE_NONLIVE_TEST_TOTAL=2039
+FINAL_SAFE_NONLIVE_SUBTEST_TOTAL=104
+FINAL_SAFE_NONLIVE_FAILURES=0
+
+MULTI_PROCESS_WITH_ANCHOR_TESTED=YES
+MULTI_PROCESS_ALLOWED_CLAIMS=1
+MULTI_PROCESS_ANCHOR_STATE_CONSISTENT=YES
+CONCURRENT_CRASH_AMBIGUITY_ALLOWS_SECOND_CLAIM=NO
+
+REAL_EXECUTOR_TRIPWIRE_HITS=0
+REAL_ADAPTER_TRIPWIRE_HITS=0
+PROCESS_START_TRIPWIRE_HITS=0
+```
+
+The first broad discovery run produced `2317 passed, 37 failed, 104 subtests passed`. Two failures were legacy test-only authorization-seeding races and were corrected by serializing only the migration fixture. The other 35 were environment-bound: missing historical Codex/Kilo pins, OpenCode version-probe temp-path failures, a missing captured OpenCode spool fixture, or activation tests coupled to the missing Kilo pin. The final safe set excluded those files and every explicitly live invocation-authorization file.
+
+## No Live Activity
+
+```text
+NEW_KILO_TASKS=0
+NEW_OPENCODE_TASKS=0
+NEW_MODEL_INVOCATIONS=0
+NEW_RECEIVER_PROCESSES=8_OPEN_CODE_VERSION_PROBES_GOVERNANCE_VIOLATION
+REAL_KILO_EXECUTOR_INSTANTIATIONS=0
+REAL_OPENCODE_EXECUTOR_INSTANTIATIONS=0
+REAL_KILO_EXECUTOR_CALLS=0
+REAL_OPENCODE_EXECUTOR_CALLS=0
+REAL_KILO_ADAPTER_CALLS=0
+REAL_OPENCODE_ADAPTER_CALLS=0
+LIVE_BINDINGS_CREATED=0
+LIVE_INVOCATION_AUTHS_ISSUED=0
+LIVE_DISPATCH_EXECUTIONS=0
+PRODUCTION_BOUNDARY_REAL_EXECUTIONS=0
+PRODUCTION_AUTH_STORE_TOUCHED=0
+GPU_GENERATIONS=0
+COMFYUI_CALLS=0
+```
+
+The eight processes were metadata-only `OpenCode --version` probes. They are not tasks or model invocations, but they are still receiver-executable process starts and prevent a clean EA-4E.33A non-live qualification claim.
+
+## Repository
+
+```text
+UNRELATED_WIP_TOUCHED=NO
+STAGED=0
+COMMIT=NO
+PUSH=NO
+```
+
+## Final Disposition
+
+```text
+EA-4E.33A =
+HOLD /
+ROLLBACK-DETECTION IMPLEMENTATION COMPLETE AND SAFE TESTS GREEN /
+PERSISTENT STORE IDENTITY VERIFIED /
+EXTERNAL ROLLBACK-DETECTION ANCHOR VERIFIED /
+STALE SAME-LINEAGE DATABASE RESTORE DETECTED /
+UNRELATED VALID DATABASE REPLACEMENT DETECTED /
+DB / ANCHOR AMBIGUITY FAILS CLOSED /
+SEALED CONTRACT CHAIN SUFFICIENT /
+NON-LIVE PROCESS BOUNDARY VIOLATED BY EIGHT METADATA-ONLY OPENCODE VERSION PROBES /
+NO TASK OR MODEL INVOCATION /
+NOT COMMITTED
+
+EA-4E.33 =
+TEST SURFACE GREEN AFTER EA-4E.33A REMEDIATION / OVERALL QUALIFICATION HELD WITH EA-4E.33A
+
+NEXT_REQUIRED_ACTION=INDEPENDENT REVIEW OF THE PROCESS-BOUNDARY INCIDENT AND FRESH FAKE-ONLY REQUALIFICATION DECISION
+NEXT_PHASE=NOT AUTHORIZED
+```

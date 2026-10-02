@@ -33,7 +33,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
-from .hashing import canonical_json, sha256_payload
+from .hashing import canonical_json, sha256_payload, sha256_text
 
 __all__ = [
     "ExecutionAuthorizationError",
@@ -128,6 +128,36 @@ class ExecutionAttemptIntegrityError(ExecutionAttemptError):
 
 class ExecutionAttemptLineageError(ExecutionAttemptError):
     """Raised when attempt lineage does not match its Authorization/Claim."""
+
+
+class ExecutionStateProjectionConflictError(ExecutionAttemptError):
+    """Raised when a projection conflicts with an existing durable projection.
+
+    EA-4D.4B: a second projection for the same start_result_id/target_state
+    with differing material lineage is rejected, fail-closed. Never overwrites
+    an already-committed immutable projection.
+    """
+
+
+# --------------------------------------------------------------------------- #
+# EA-4D.4B ExecutionStateProjection domain (immutable EXECUTING projection)
+# --------------------------------------------------------------------------- #
+
+
+class ExecutionStateProjectionError(ExecutionAuthorizationError):
+    """Base error for the execution-state projection domain (EA-4D.4B)."""
+
+
+class ExecutionStateProjectionIntegrityError(ExecutionStateProjectionError):
+    """Raised on tampered or corrupt projection data (store layer use)."""
+
+
+class ExecutionStateProjectionIneligibleError(ExecutionStateProjectionError):
+    """Raised when the persisted result is not eligible for projection.
+
+    Covers FAILED outcome, missing result, malformed result hash, empty
+    runtime_run_id, and authority-lineage mismatch. Never projects EXECUTING.
+    """
 
 
 # --------------------------------------------------------------------------- #
@@ -1351,3 +1381,197 @@ def reconstruct_attempt(payload: Mapping[str, Any]) -> ExecutionAttempt:
     if isinstance(status, str):
         d["status"] = ExecutionAttemptStatus(status)
     return build_execution_attempt(**d)
+
+
+
+# --------------------------------------------------------------------------- #
+# EA-4D.4B ExecutionStateProjection: immutable EXECUTING projection
+# --------------------------------------------------------------------------- #
+
+
+PROJECTION_ARTIFACT_VERSION = "1"
+
+_PROJECTION_ID_PREFIX = "esproj"
+_PROJECTION_ID_RE = re.compile(r"^esproj_[0-9a-f]{64}$")
+
+
+def _derive_projection_id(preimage: dict) -> str:
+    return "esproj_" + sha256_payload(preimage)[-64:]
+
+
+def build_execution_state_projection(
+    *,
+    start_result_id: str,
+    start_result_hash: str,
+    launch_attempt_id: str,
+    launch_attempt_hash: str,
+    route_id: str,
+    route_hash: str,
+    authorization_id: str,
+    authorization_hash: str,
+    attempt_id: str,
+    attempt_hash: str,
+    task_id: str,
+    worker_id: str,
+    worker_version: str,
+    runtime_run_id: str,
+    target_state: str = "EXECUTING",
+    projected_at: Optional[str] = None,
+) -> "ExecutionStateProjection":
+    """Build an immutable EXECUTING projection bound to a STARTED result.
+
+    The projection_id is deterministic and timing-independent; projected_at is
+    provenance metadata only and is excluded from identity/integrity. The
+    artifact_hash binds all material lineage (projected_at excluded), using the
+    repository canonical_json + sha256_payload convention.
+    """
+    if target_state != "EXECUTING":
+        raise ExecutionStateProjectionError(
+            f"only EXECUTING projection is supported; got {target_state!r}")
+    if not start_result_id or not start_result_hash:
+        raise ExecutionStateProjectionError(
+            "start_result_id and start_result_hash are required")
+    if not runtime_run_id:
+        raise ExecutionStateProjectionError(
+            "runtime_run_id is required for an EXECUTING projection")
+
+    projection_id = _derive_projection_id({
+        "schema": "ea4d4b-executing-projection-id-v1",
+        "start_result_id": start_result_id,
+        "target_state": target_state,
+    })
+    canonical = {
+        "schema": "ea4d4b-executing-projection-v1",
+        "projection_id": projection_id,
+        "start_result_id": start_result_id,
+        "start_result_hash": start_result_hash,
+        "launch_attempt_id": launch_attempt_id,
+        "launch_attempt_hash": launch_attempt_hash,
+        "route_id": route_id,
+        "route_hash": route_hash,
+        "authorization_id": authorization_id,
+        "authorization_hash": authorization_hash,
+        "attempt_id": attempt_id,
+        "attempt_hash": attempt_hash,
+        "task_id": task_id,
+        "worker_id": worker_id,
+        "worker_version": worker_version,
+        "runtime_run_id": runtime_run_id,
+        "target_state": target_state,
+    }
+    artifact_hash = sha256_payload(canonical)
+    canonical_payload = canonical_json(canonical)
+    payload_sha256 = sha256_text(canonical_payload)
+    return ExecutionStateProjection(
+        projection_id=projection_id,
+        artifact_hash=artifact_hash,
+        start_result_id=start_result_id,
+        start_result_hash=start_result_hash,
+        launch_attempt_id=launch_attempt_id,
+        launch_attempt_hash=launch_attempt_hash,
+        route_id=route_id,
+        route_hash=route_hash,
+        authorization_id=authorization_id,
+        authorization_hash=authorization_hash,
+        attempt_id=attempt_id,
+        attempt_hash=attempt_hash,
+        task_id=task_id,
+        worker_id=worker_id,
+        worker_version=worker_version,
+        runtime_run_id=runtime_run_id,
+        target_state=target_state,
+        projected_at=projected_at or _now_iso_z(),
+        artifact_version=PROJECTION_ARTIFACT_VERSION,
+        canonical_payload=canonical_payload,
+        payload_sha256=payload_sha256,
+    )
+
+
+def _now_iso_z() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@dataclass(frozen=True)
+class ExecutionStateProjection:
+    """Immutable authority-side EXECUTING projection (EA-4D.4B).
+
+    EXECUTING is *derived* from the committed presence of this immutable
+    artifact; the ExecutionAttempt.status remains RECORDED forever. The
+    projection never mutates historical authority artifacts.
+    """
+
+    projection_id: str
+    artifact_hash: str
+    start_result_id: str
+    start_result_hash: str
+    launch_attempt_id: str
+    launch_attempt_hash: str
+    route_id: str
+    route_hash: str
+    authorization_id: str
+    authorization_hash: str
+    attempt_id: str
+    attempt_hash: str
+    task_id: str
+    worker_id: str
+    worker_version: str
+    runtime_run_id: str
+    target_state: str
+    projected_at: str
+    artifact_version: str
+    canonical_payload: str
+    payload_sha256: str
+
+    def to_canonical_dict(self) -> dict:
+        return {
+            "schema": "ea4d4b-executing-projection-v1",
+            "projection_id": self.projection_id,
+            "start_result_id": self.start_result_id,
+            "start_result_hash": self.start_result_hash,
+            "launch_attempt_id": self.launch_attempt_id,
+            "launch_attempt_hash": self.launch_attempt_hash,
+            "route_id": self.route_id,
+            "route_hash": self.route_hash,
+            "authorization_id": self.authorization_id,
+            "authorization_hash": self.authorization_hash,
+            "attempt_id": self.attempt_id,
+            "attempt_hash": self.attempt_hash,
+            "task_id": self.task_id,
+            "worker_id": self.worker_id,
+            "worker_version": self.worker_version,
+            "runtime_run_id": self.runtime_run_id,
+            "target_state": self.target_state,
+            # projected_at intentionally excluded from canonical material payload
+        }
+
+    def verify_hash(self) -> bool:
+        return sha256_payload(self.to_canonical_dict()) == self.artifact_hash             and self.payload_sha256 == sha256_text(self.canonical_payload)             and sha256_payload(self.to_canonical_dict()) == sha256_text(
+                self.canonical_payload)
+
+
+def reconstruct_state_projection(payload: Mapping[str, Any]) -> "ExecutionStateProjection":
+    """Rebuild an immutable ExecutionStateProjection from a stored mapping."""
+    return ExecutionStateProjection(
+        projection_id=payload["projection_id"],
+        artifact_hash=payload["artifact_hash"],
+        start_result_id=payload["start_result_id"],
+        start_result_hash=payload["start_result_hash"],
+        launch_attempt_id=payload["launch_attempt_id"],
+        launch_attempt_hash=payload["launch_attempt_hash"],
+        route_id=payload["route_id"],
+        route_hash=payload["route_hash"],
+        authorization_id=payload["authorization_id"],
+        authorization_hash=payload["authorization_hash"],
+        attempt_id=payload["attempt_id"],
+        attempt_hash=payload["attempt_hash"],
+        task_id=payload["task_id"],
+        worker_id=payload["worker_id"],
+        worker_version=payload["worker_version"],
+        runtime_run_id=payload["runtime_run_id"],
+        target_state=payload["target_state"],
+        projected_at=payload["projected_at"],
+        artifact_version=payload.get("artifact_version", PROJECTION_ARTIFACT_VERSION),
+        canonical_payload=payload["canonical_payload"],
+        payload_sha256=payload["payload_sha256"],
+    )

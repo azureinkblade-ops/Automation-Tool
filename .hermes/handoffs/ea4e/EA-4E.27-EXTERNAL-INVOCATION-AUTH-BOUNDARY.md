@@ -1,0 +1,75 @@
+# EA-4E.27 External Invocation-Authorization Boundary
+
+Date: 2026-09-06
+
+## History
+
+```text
+EA4E27_INITIAL_ABORTED_FOR_ACCIDENTAL_REAL_PATH=YES
+EA4E27A_CONTAINMENT_PASS=YES
+```
+
+The initial wider regression remains recorded as stopped. EA-4E.27A converted the EA-4E.25 regression to explicit fake-only execution with real executor, adapter, and process tripwires.
+
+## Qualified Boundary
+
+The runtime receives `invocation_authorization` on `GovernedProductionRuntimeRequest`. It does not construct `ProductionInvocationAuthorization`. Missing authorization is denied after successful EA-4E.22 resolution with `INVOCATION_AUTHORIZATION_REQUIRED`; valid external authorization reaches EA-4E.23 and is atomically claimed before the fake executor call.
+
+```text
+RUNTIME_MAY_CREATE_INVOCATION_AUTHORIZATION=NO
+RUNTIME_MAY_CONSUME_INVOCATION_AUTHORIZATION=YES
+MISSING_AUTH_REACHED_POST_RESOLUTION_BOUNDARY=YES
+MISSING_AUTH_DECISION=DENY
+MISSING_AUTH_REASON=INVOCATION_AUTHORIZATION_REQUIRED
+MISSING_AUTH_EXECUTOR_CALLS=0
+BINDING_ALONE_AUTHORIZES_EXECUTION=NO
+VALID_EXTERNAL_AUTH_ACCEPTED=YES
+VALID_EXTERNAL_AUTH_REACHED_EA4E23=YES
+VALID_EXTERNAL_AUTH_CLAIM=ALLOW
+VALID_EXTERNAL_AUTH_FAKE_EXECUTOR_CALLS=1
+CROSS_RECEIVER_AUTH_ISOLATION=PASS_BOTH_DIRECTIONS
+EXPIRED_AND_INVALID_AUTH=DENY
+FIRST_CLAIM=ALLOW
+SECOND_CLAIM=DENY
+AUTHORIZATION_CONSUMED_BEFORE_EXECUTOR_CALL=YES
+LOCK_HELD_DURING_EXECUTOR_CALL=NO
+NO_AUTO_AUTH=YES
+```
+
+## Contract Impact
+
+The existing EA-4E.26 canonical payload already encodes external invocation authorization as required, atomic claim, and default deny. Its computed contract remains:
+
+```text
+EA4E26_CONTRACT_CHANGE_REQUIRED=NO
+EA4E26_CONTRACT_ROLL_PERFORMED=NO
+EA4E26_CONTRACT_ID=c49556e63645fefc31a3f03df726d99447620b7ae6ae4a2c78b96ae0feeb8393
+EARLIER_FROZEN_CONTRACTS_UNCHANGED=YES
+```
+
+## Verification
+
+```text
+EA4E27_DEDICATED_TESTS=24 passed
+EA4E25_FAKE_ONLY_REGRESSION_TESTS=36 passed
+EA4E26_RELEVANT_SAFE_TESTS=82 passed (64 runtime + 18 boundary isolation)
+EA4E23_TESTS=38 passed
+EA4E22_TESTS=67 passed
+EA4E21_TESTS=110 passed
+EA4E18_TESTS=24 passed
+EA4E17_TESTS=24 passed
+EA4E14_TESTS=21 passed
+SAFE_NONLIVE_TOTAL=426 passed
+SAFE_NONLIVE_FAILURES=0
+REAL_EXECUTOR_TRIPWIRE_HITS=0
+REAL_ADAPTER_TRIPWIRE_HITS=0
+PROCESS_START_TRIPWIRE_HITS=0
+```
+
+## Disposition
+
+```text
+EA-4E.27=QUALIFIED NON-LIVE
+NO_LIVE_ACTIVITY=YES
+COMMIT=NO
+```
