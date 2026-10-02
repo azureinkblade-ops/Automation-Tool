@@ -1,6 +1,7 @@
 """Fake-only SSE inspection; no listener, receiver, or provider transport."""
 
 import hashlib
+from pathlib import Path
 
 import pytest
 
@@ -35,6 +36,11 @@ def test_utf8_split_across_chunks():
     raw = 'data: {"content":"caf\u00e9"}\n\ndata: [DONE]\n\n'.encode("utf-8")
     split = raw.index(b"\xc3") + 1
     assert inspect(chunks=[(raw[:split], 1), (raw[split:], 2)]).raw_bytes == raw
+
+
+def test_pinned_sdk_success_fixture_is_accepted():
+    raw = (Path(__file__).with_name("fixtures") / "ea4e92bx_success.sse").read_bytes() + b"\n"
+    assert inspect(chunks=[(raw[:23], 0), (raw[23:], 1)]).event_count == 3
 
 
 @pytest.mark.parametrize("changes", [

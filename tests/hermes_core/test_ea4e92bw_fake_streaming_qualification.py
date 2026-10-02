@@ -1,6 +1,7 @@
 """Networkless one-call streaming qualification with injected SSE bytes."""
 
 import hashlib
+from pathlib import Path
 
 import pytest
 
@@ -74,6 +75,16 @@ def test_one_claim_one_response_capture_and_replay_denial(tmp_path):
     assert counts(handler)["model_invocation_completed"] == 1
     assert handle(handler).status == 403
     assert calls == [BODY]
+
+
+def test_pinned_sdk_success_fixture_passes_fake_one_call_gate(tmp_path):
+    raw = (Path(__file__).with_name("fixtures") / "ea4e92bx_success.sse").read_bytes() + b"\n"
+    handler = fixture(tmp_path, lambda body: FakeSseResponse(
+        200, "text/event-stream", None, ((raw[:23], 0), (raw[23:], 1)),
+    ))
+    assert handle(handler).body == raw
+    assert handler.gate.verify_capture() == raw
+    assert handle(handler).status == 403
 
 
 @pytest.mark.parametrize("changes,status", [

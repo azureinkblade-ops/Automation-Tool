@@ -65,12 +65,9 @@ async function main() {
         usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
-    const chunk = (delta, finish_reason) => `data: ${JSON.stringify({
-      id: "fake-1", object: "chat.completion.chunk", created: 1, model: "fake-model",
-      choices: [{ index: 0, delta, finish_reason }],
-    })}\n\n`;
-    const sse = chunk({ role: "assistant", content: "ok" }, null)
-      + chunk({}, "stop") + "data: [DONE]\n\n";
+    const sse = fs.readFileSync(
+      path.join(__dirname, "fixtures", "ea4e92bx_success.sse"), "utf8",
+    ) + "\n";
     return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
   };
   const provider = createOpenAICompatible({
