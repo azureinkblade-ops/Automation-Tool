@@ -43,6 +43,7 @@ import hashlib
 import json
 import os
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -81,6 +82,8 @@ STRUCTURED_OUTPUT = "jsonl"
 MIN_TIMEOUT_SECONDS = 5
 DEFAULT_TIMEOUT_SECONDS = 60
 MAX_TIMEOUT_SECONDS = 300
+MAX_STDOUT_BYTES = 4 * 1024 * 1024
+MAX_STDERR_BYTES = 128 * 1024
 
 # Effective-home isolation policy: all Kilo config discovery roots
 # are redirected under a Hermes-owned runtime boundary OUTSIDE the
@@ -427,12 +430,14 @@ class KiloParseError(KiloAdapterError, ReceiverParseError):
 
 class KiloProcessResult:
     """Lightweight result container for Kilo subprocess execution."""
-    def __init__(self, pid: int, returncode: int, stdout: str, stderr: str, timed_out: bool = False):
+    def __init__(self, pid: int, returncode: int, stdout: str, stderr: str,
+                 timed_out: bool = False, output_overflowed: bool = False):
         self.pid = pid
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
         self.timed_out = timed_out
+        self.output_overflowed = output_overflowed
 
 
 class KiloProcessController:
@@ -535,6 +540,61 @@ class KiloProcessHandle:
     _stdout: bytes = b""
     _stderr: bytes = b""
     _finished: bool = False
+    _result: Optional[KiloProcessResult] = None
+
+    def __post_init__(self) -> None:
+        if self.proc.stdout is None or self.proc.stderr is None:
+            self.proc.kill()
+            self.proc.wait(timeout=1)
+            raise KiloProcessError("Kilo output pipes are required")
+        self._buffers = {"stdout": bytearray(), "stderr": bytearray()}
+        self._overflowed = threading.Event()
+        self._capture_errors: list[Exception] = []
+        self._readers = [
+            threading.Thread(target=self._read_stream, args=(self.proc.stdout, "stdout", MAX_STDOUT_BYTES), daemon=True),
+            threading.Thread(target=self._read_stream, args=(self.proc.stderr, "stderr", MAX_STDERR_BYTES), daemon=True),
+        ]
+        for reader in self._readers:
+            reader.start()
+
+    def _read_stream(self, stream: Any, name: str, limit: int) -> None:
+        buffer = self._buffers[name]
+        try:
+            while chunk := stream.read(65536):
+                remaining = limit - len(buffer)
+                buffer.extend(chunk[:remaining])
+                if len(chunk) > remaining:
+                    self._overflowed.set()
+                    try:
+                        self.proc.kill()
+                    except ProcessLookupError:
+                        pass
+                    break
+        except Exception as exc:
+            self._capture_errors.append(exc)
+            try:
+                self.proc.kill()
+            except ProcessLookupError:
+                pass
+
+    def _finish(self, *, timed_out: bool = False) -> KiloProcessResult:
+        for reader in self._readers:
+            reader.join(timeout=1)
+        self._finished = True
+        if any(reader.is_alive() for reader in self._readers) or self._capture_errors:
+            raise KiloProcessError("Kilo output capture did not complete")
+        self._stdout = bytes(self._buffers["stdout"])
+        self._stderr = bytes(self._buffers["stderr"])
+        overflowed = self._overflowed.is_set()
+        self._result = KiloProcessResult(
+            pid=self.pid,
+            returncode=-1 if timed_out or overflowed else self.proc.returncode,
+            stdout=self._stdout.decode("utf-8", errors="replace"),
+            stderr=self._stderr.decode("utf-8", errors="replace"),
+            timed_out=timed_out,
+            output_overflowed=overflowed,
+        )
+        return self._result
 
     @property
     def pid(self) -> int:
@@ -543,12 +603,11 @@ class KiloProcessHandle:
     def poll(self) -> Optional[int]:
         """Return the exit code if the process has terminated, else None."""
         if self._finished:
-            return self.proc.returncode
+            return self._result.returncode if self._result else -1
         code = self.proc.poll()
         if code is not None:
-            self._finished = True
-            self._collect_output()
-        return code
+            return self._finish().returncode
+        return None
 
     def terminate(self) -> None:
         """Request graceful termination (SIGTERM on Unix, TerminateProcess on Windows)."""
@@ -562,43 +621,15 @@ class KiloProcessHandle:
 
     def wait(self) -> "KiloProcessResult":
         """Blocking wait for the process to finish; returns KiloProcessResult."""
+        if self._result is not None:
+            return self._result
         try:
-            stdout, stderr = self.proc.communicate(timeout=self.timeout)
-        except subprocess.TimeoutExpired as exc:
-            # A timed-out child is still running until killed and reaped.
+            self.proc.wait(timeout=self.timeout)
+        except subprocess.TimeoutExpired:
             self.proc.kill()
-            stdout, stderr = self.proc.communicate(timeout=1)
-            self._stdout = stdout or exc.stdout or b""
-            self._stderr = stderr or exc.stderr or b""
-            self._finished = True
-            return KiloProcessResult(
-                pid=self.pid,
-                returncode=-1,
-                stdout=self._stdout.decode("utf-8", errors="replace"),
-                stderr=self._stderr.decode("utf-8", errors="replace"),
-                timed_out=True,
-            )
-        self._finished = True
-        self._stdout = stdout or b""
-        self._stderr = stderr or b""
-        return KiloProcessResult(
-            pid=self.pid,
-            returncode=self.proc.returncode,
-            stdout=self._stdout.decode("utf-8", errors="replace"),
-            stderr=self._stderr.decode("utf-8", errors="replace"),
-            timed_out=False,
-        )
-
-    def _collect_output(self) -> None:
-        """Best-effort collection of already-buffered output after early termination."""
-        try:
-            remaining_stdout, remaining_stderr = self.proc.communicate(timeout=1)
-            if remaining_stdout:
-                self._stdout += remaining_stdout
-            if remaining_stderr:
-                self._stderr += remaining_stderr
-        except (subprocess.TimeoutExpired, Exception):
-            pass
+            self.proc.wait(timeout=1)
+            return self._finish(timed_out=True)
+        return self._finish()
 
 
 @dataclass(frozen=True)

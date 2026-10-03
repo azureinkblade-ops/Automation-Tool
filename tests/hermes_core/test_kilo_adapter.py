@@ -14,6 +14,7 @@ Rules:
 from __future__ import annotations
 
 import json
+import io
 import os
 import subprocess
 import time
@@ -25,6 +26,8 @@ from tools.hermes_core.kilo_adapter import (
     DEFAULT_TIMEOUT_SECONDS,
     MIN_TIMEOUT_SECONDS,
     MAX_TIMEOUT_SECONDS,
+    MAX_STDOUT_BYTES,
+    MAX_STDERR_BYTES,
     KILO_TRANSPORT_CONTRACT_ID,
     PINNED_KILO_PATH,
     PINNED_KILO_SHA256,
@@ -432,16 +435,19 @@ def fake_process(monkeypatch):
         returncode = 0
         timed_out = False
         killed = False
-        communicates = 0
+        waits = 0
+        stdout_data = None
+        stderr_data = None
 
-        def communicate(self, timeout):
-            self.communicates += 1
+        def wait(self, timeout):
+            self.waits += 1
             self.timeout = timeout
             if self.timed_out and not self.killed:
-                raise subprocess.TimeoutExpired("fake-kilo", timeout, output=b"partial", stderr=b"waiting")
-            if self.timed_out:
-                return b"partial", b"waiting"
-            return b"hello\n", b""
+                raise subprocess.TimeoutExpired("fake-kilo", timeout)
+            return self.returncode
+
+        def poll(self):
+            return None if self.timed_out and not self.killed else self.returncode
 
         def kill(self):
             self.killed = True
@@ -452,6 +458,14 @@ def fake_process(monkeypatch):
 
     def popen(argv, **kwargs):
         calls.append((argv, kwargs))
+        stdout = process.stdout_data if process.stdout_data is not None else (
+            b"partial" if process.timed_out else b"hello\n"
+        )
+        stderr = process.stderr_data if process.stderr_data is not None else (
+            b"waiting" if process.timed_out else b""
+        )
+        process.stdout = io.BytesIO(stdout)
+        process.stderr = io.BytesIO(stderr)
         return process
 
     monkeypatch.setattr(subprocess, "Popen", popen)
@@ -482,7 +496,44 @@ class TestKiloFakeProcess:
         assert result.stdout == "partial"
         assert result.stderr == "waiting"
         assert fake_process[0].killed is True
-        assert fake_process[0].communicates == 2
+        assert fake_process[0].waits == 2
+
+    def test_stdout_overflow_kills_and_fails_closed(self, fake_process):
+        process, calls = fake_process
+        process.stdout_data = b"x" * (MAX_STDOUT_BYTES + 1)
+        result = KiloProcessController({}).execute(["fake-kilo"], timeout=5)
+        assert len(calls) == 1
+        assert process.killed is True
+        assert result.returncode == -1
+        assert result.output_overflowed is True
+        assert len(result.stdout) == MAX_STDOUT_BYTES
+
+    def test_stderr_overflow_kills_and_fails_closed(self, fake_process):
+        process, calls = fake_process
+        process.stderr_data = b"e" * (MAX_STDERR_BYTES + 1)
+        result = KiloProcessController({}).execute(["fake-kilo"], timeout=5)
+        assert len(calls) == 1
+        assert process.killed is True
+        assert result.returncode == -1
+        assert result.output_overflowed is True
+        assert len(result.stderr) == MAX_STDERR_BYTES
+
+    def test_output_at_limit_is_not_overflow(self, fake_process):
+        process, _ = fake_process
+        process.stderr_data = b"e" * MAX_STDERR_BYTES
+        result = KiloProcessController({}).execute(["fake-kilo"], timeout=5)
+        assert process.killed is False
+        assert result.returncode == 0
+        assert result.output_overflowed is False
+        assert len(result.stderr) == MAX_STDERR_BYTES
+
+    def test_terminal_poll_cannot_report_overflow_as_success(self, fake_process):
+        process, _ = fake_process
+        process.stderr_data = b"e" * (MAX_STDERR_BYTES + 1)
+        handle = KiloProcessController({}).start(["fake-kilo"], timeout=5)
+        assert handle.poll() == -1
+        assert handle.wait().output_overflowed is True
+        assert process.killed is True
 
 
 class TestKiloInjectedMetadataProbe:
