@@ -36,7 +36,8 @@ failure counts alone as a proxy:
 - All 56 candidate failures also failed in the baseline.
 - Candidate-only failure identities: **0**.
 - Baseline-only failure identities: **33**.
-- SHA-256 of the 56 shared failure IDs, sorted ordinally and joined by LF:
+- SHA-256 of the 56 shared failure IDs, sorted with PowerShell
+  `Sort-Object -CaseSensitive` and joined by LF:
   `b161933a7e5d6e8438a820dd8e943b79ed80ef4a28f90f813895db35bbd66348`.
 
 The baseline-only failures include old Kilo binary identity/path tests and
@@ -51,9 +52,11 @@ suite green, qualify real process execution, or establish production readiness.
 
 ## Boundary
 
-`FULL_HERMES_CORE_GREEN=NO`  
-`CANDIDATE_ONLY_FAILURE_IDENTITIES=0`  
-`PRODUCTION_ACTIVATED=NO`  
+`FULL_HERMES_CORE_GREEN=NO`
+
+`CANDIDATE_ONLY_FAILURE_IDENTITIES=0`
+
+`PRODUCTION_ACTIVATED=NO`
 `REAL_RECEIVER_OR_MODEL_ACTIVITY=0`
 
 The 92CD and 92CE commits remain local. The earlier 92CD push was denied;
