@@ -56,6 +56,11 @@ def test_candidate_file_and_manifest_identity_are_exact():
 
 def test_candidate_diff_changes_only_binary_identity_and_sealed_ids(monkeypatch):
     old_ids = _current_ids()
+    if adapter.PINNED_KILO_VERSION == "7.8.3":
+        assert binding.HISTORICAL_EA4E_7_7_9_CONTRACT_IDS == CANDIDATE_IDS
+        assert binding.HISTORICAL_KILO_7_7_9_TRANSPORT_CONTRACT_ID == CANDIDATE_TRANSPORT
+        assert binding.HISTORICAL_KILO_7_7_9_EXECUTABLE_BINDING_ID == CANDIDATE_BINDING
+        return
     if adapter.PINNED_KILO_VERSION == CANDIDATE_VERSION:
         assert old_ids == CANDIDATE_IDS
         assert binding.HISTORICAL_EA4E_7_7_2_CONTRACT_IDS == PINNED_IDS

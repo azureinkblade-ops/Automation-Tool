@@ -6,30 +6,30 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-EXTENSION = Path(r"C:\Users\David\.vscode\extensions\kilocode.kilo-code-7.7.9-win32-x64")
-EXPECTED_HASH = "9ef2ca9633cece72293d269502bee16720d9179990c1b65abc0599c6d356bd07"
+EXTENSION = Path(r"C:\Users\David\.vscode\extensions\kilocode.kilo-code-7.8.3-win32-x64")
+EXPECTED_HASH = "8b042a53c3d3e5e2043f37392c3d62e7d5c278dc7740d93aeb6fa91df7ccc63a"
 
 
 def test_successor_binary_identity():
     binary = EXTENSION / "bin" / "kilo.exe"
-    assert binary.stat().st_size == 175458816
+    assert binary.stat().st_size == 175349592
     with binary.open("rb") as stream:
         assert hashlib.file_digest(stream, "sha256").hexdigest() == EXPECTED_HASH
 
 
 def test_extension_version_is_manifest_metadata():
     manifest = json.loads((EXTENSION / "package.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == "7.7.9"
+    assert manifest["version"] == "7.8.3"
     assert manifest["publisher"] == "kilocode"
 
 
 def test_current_pin_is_exact_and_original_pin_is_retained_as_history():
     source = (ROOT / "tools/hermes_core/kilo_adapter.py").read_text(encoding="utf-8")
-    assert 'PINNED_KILO_VERSION = "7.7.9"' in source
+    assert 'PINNED_KILO_VERSION = "7.8.3"' in source
     assert EXPECTED_HASH in source
     history = (ROOT / "tools/hermes_core/kilo_successor_binding.py").read_text(encoding="utf-8")
-    assert "HISTORICAL_KILO_7_7_2_SHA256" in history
-    assert "3dca5f2eb8cc2d875e8cdef756f77347d4899247c318bf2a018d39e0184455cd" in history
+    assert "HISTORICAL_KILO_7_7_9_SHA256" in history
+    assert "9ef2ca9633cece72293d269502bee16720d9179990c1b65abc0599c6d356bd07" in history
 
 
 def test_router_depends_on_transport_identity():

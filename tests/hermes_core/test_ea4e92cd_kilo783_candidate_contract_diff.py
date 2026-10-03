@@ -112,6 +112,12 @@ def candidate_ids(monkeypatch):
 
 def test_candidate_rotates_only_sealed_chain(monkeypatch):
     old_ids = _current_ids()
+    if adapter.PINNED_KILO_VERSION == CANDIDATE_VERSION:
+        assert old_ids == CANDIDATE_IDS
+        assert binding.HISTORICAL_EA4E_7_7_9_CONTRACT_IDS != old_ids
+        assert adapter.KILO_TRANSPORT_CONTRACT_ID == CANDIDATE_TRANSPORT
+        assert binding.KILO_EXECUTABLE_SUCCESSOR_BINDING_ID == CANDIDATE_BINDING
+        return
     assert adapter.PINNED_KILO_VERSION == "7.7.9"
     current_model = binding.KILO_MODEL_BINDING_ID
     new_ids = candidate_ids(monkeypatch)

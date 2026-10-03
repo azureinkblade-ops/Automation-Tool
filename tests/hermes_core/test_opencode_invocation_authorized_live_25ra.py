@@ -174,17 +174,17 @@ class TestContractsUnchanged:
     def test_ea4e23_contract_unchanged(self):
         """EA-4E.23 contract must be unchanged."""
         from tools.hermes_core.production_invocation_authorization import compute_ea4e23_invocation_contract_id
-        assert compute_ea4e23_invocation_contract_id() == "d5043df466a2ef61a3d5b9e05eb70fc54cc2dacfa003b0fee705accb241f5fd2"
+        assert compute_ea4e23_invocation_contract_id() == "a64ec10512a1e714f06b40b7597efbcf63fb625e2702fe8b1f120c5cc6d19a49"
 
     def test_ea4e22_contract_unchanged(self):
         """EA-4E.22 contract must be unchanged."""
         from tools.hermes_core.governed_bound_executor import compute_ea4e22_integration_contract_id
-        assert compute_ea4e22_integration_contract_id() == "27c4e7eaa5b894f607a9ec7d1430d686ef38c634874fbfbc2bca87e1ddd8aaf7"
+        assert compute_ea4e22_integration_contract_id() == "09dc4dd1768a18fcf5cb1680ad2736272f0be5d79fd6f31bc64d47821d36402c"
 
     def test_ea4e21_contract_unchanged(self):
         """EA-4E.21 contract must be unchanged."""
         from tools.hermes_core.production_executor_binding import compute_ea4e21_binding_contract_id
-        assert compute_ea4e21_binding_contract_id() == "a429da60f529461ad3972b79b68cb1c7e886878aa5fd19d985495df06a265a0f"
+        assert compute_ea4e21_binding_contract_id() == "9589badd010b0433cf1aece4cad70626d7f5525673dedcc8c98f495cffc07d70"
 
     def test_opencode_transport_contract_unchanged(self):
         """OpenCode transport contract must be unchanged."""

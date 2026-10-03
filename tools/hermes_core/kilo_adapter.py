@@ -68,9 +68,9 @@ from tools.hermes_core.receiver_adapter import (
 # Note: register_adapter is imported inside register_kilo_adapter() to avoid
 # circular imports. The explicit registration is in receiver_registry.py.
 
-PINNED_KILO_PATH = r"C:\Users\David\.vscode\extensions\kilocode.kilo-code-7.7.9-win32-x64\bin\kilo.exe"
-PINNED_KILO_SHA256 = "9ef2ca9633cece72293d269502bee16720d9179990c1b65abc0599c6d356bd07"
-PINNED_KILO_VERSION = "7.7.9"
+PINNED_KILO_PATH = r"C:\Users\David\.vscode\extensions\kilocode.kilo-code-7.8.3-win32-x64\bin\kilo.exe"
+PINNED_KILO_SHA256 = "8b042a53c3d3e5e2043f37392c3d62e7d5c278dc7740d93aeb6fa91df7ccc63a"
+PINNED_KILO_VERSION = "7.8.3"
 PINNED_KILO_ADAPTER_VERSION = "ea4e.3"
 PINNED_KILO_TRANSPORT = "kilo-run"
 KILO_AGENT_ID = "hermes-ea4e-kilo-receiver"
