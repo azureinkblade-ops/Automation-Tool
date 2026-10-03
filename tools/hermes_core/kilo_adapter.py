@@ -2,7 +2,7 @@
 
 Selected transport: `kilo run --format json --pure --agent hermes-ea4e-kilo-receiver`
 
-This uses the installed Kilo 7.5.15 non-interactive structured-output mode.
+This uses the installed Kilo 7.8.3 non-interactive structured-output mode.
 It does NOT open a listener socket. It emits raw JSON events on stdout for a
 requested task/session.
 
