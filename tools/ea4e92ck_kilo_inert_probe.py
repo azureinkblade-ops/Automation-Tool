@@ -38,6 +38,38 @@ def _under(path: Path, parent: Path) -> bool:
     return path == parent or parent in path.parents
 
 
+def probe_config(port: int) -> dict:
+    return {
+        "model": MODEL,
+        "provider": {
+            "openai-compatible": {
+                "options": {"apiKey": DUMMY_KEY, "baseURL": f"http://127.0.0.1:{port}/v1"},
+                "models": {MODEL_ID: {"name": "EA-4E inert probe", "tool_call": False,
+                                      "limit": {"context": 8192, "output": 64}}},
+            }
+        },
+    }
+
+
+def probe_env(root: Path, binary: Path, config_text: str) -> dict[str, str]:
+    home = root / "home"
+    config_dir = root / "config"
+    return {
+        "HOME": str(home), "USERPROFILE": str(home),
+        "HOMEDRIVE": home.drive, "HOMEPATH": str(home)[len(home.drive):],
+        "APPDATA": str(root / "appdata"), "LOCALAPPDATA": str(root / "localappdata"),
+        "XDG_CONFIG_HOME": str(config_dir), "XDG_DATA_HOME": str(root / "data"),
+        "XDG_CACHE_HOME": str(root / "cache"), "KILO_HOME": str(home),
+        "KILO_CONFIG_DIR": str(config_dir), "KILO_CONFIG_CONTENT": config_text,
+        "KILO_PURE": "1", "OPENCODE_PURE": "1", "OPENCODE_TEST_HOME": str(home),
+        "OPENCODE_CONFIG_DIR": str(config_dir), "OPENCODE_DISABLE_PROJECT_CONFIG": "1",
+        "TEMP": str(home / "tmp"), "TMP": str(home / "tmp"),
+        "PATH": str(binary.parent),
+        "SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows"),
+        "PROCESSOR_ARCHITECTURE": os.environ.get("PROCESSOR_ARCHITECTURE", "AMD64"),
+    }
+
+
 def prepare(root: Path, port: int, *, binary: Path | None = None, expected_sha: str | None = None) -> Path:
     """Create only new, isolated probe files; never launch the receiver."""
     root = Path(root).resolve()
@@ -67,32 +99,10 @@ def prepare(root: Path, port: int, *, binary: Path | None = None, expected_sha: 
         "permission": {"*": "deny"},
     }
     (agent_dir / f"{agent_id}.jsonc").write_text(json.dumps(agent, indent=2) + "\n", encoding="ascii")
-    config = {
-        "model": MODEL,
-        "provider": {
-            "openai-compatible": {
-                "options": {"apiKey": DUMMY_KEY, "baseURL": f"http://127.0.0.1:{port}/v1"},
-                "models": {MODEL_ID: {"name": "EA-4E inert probe", "tool_call": False,
-                                      "limit": {"context": 8192, "output": 64}}},
-            }
-        },
-    }
+    config = probe_config(port)
     config_text = json.dumps(config, sort_keys=True)
     (config_dir / "kilo.jsonc").write_text(config_text + "\n", encoding="ascii")
-    env = {
-        "HOME": str(home), "USERPROFILE": str(home),
-        "HOMEDRIVE": home.drive, "HOMEPATH": str(home)[len(home.drive):],
-        "APPDATA": str(root / "appdata"), "LOCALAPPDATA": str(root / "localappdata"),
-        "XDG_CONFIG_HOME": str(config_dir), "XDG_DATA_HOME": str(root / "data"),
-        "XDG_CACHE_HOME": str(root / "cache"), "KILO_HOME": str(home),
-        "KILO_CONFIG_DIR": str(config_dir), "KILO_CONFIG_CONTENT": config_text,
-        "KILO_PURE": "1", "OPENCODE_PURE": "1", "OPENCODE_TEST_HOME": str(home),
-        "OPENCODE_CONFIG_DIR": str(config_dir), "OPENCODE_DISABLE_PROJECT_CONFIG": "1",
-        "TEMP": str(home / "tmp"), "TMP": str(home / "tmp"),
-        "PATH": str(binary.parent),
-        "SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows"),
-        "PROCESSOR_ARCHITECTURE": os.environ.get("PROCESSOR_ARCHITECTURE", "AMD64"),
-    }
+    env = probe_env(root, binary, config_text)
     plan = {
         "binary_sha256": digest,
         "argv": [str(binary), "run", "--format", "json", "--pure", "--agent", agent_id,
@@ -161,8 +171,11 @@ class InertProviderHandler(BaseHTTPRequestHandler):
                     payload = None
                 stream = payload.get("stream") if isinstance(payload, dict) else None
                 status, content_type, body = fake_response(method, path, payload)
-        print(json.dumps({"method": method, "path": path, "status": status,
-                          "stream": stream}), flush=True)
+        event = {"method": method, "path": path, "status": status, "stream": stream}
+        if hasattr(self.server, "events"):
+            with self.server.event_lock:
+                self.server.events.append(event)
+        print(json.dumps(event), flush=True)
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
