@@ -14,6 +14,11 @@ import os
 from pathlib import Path
 from urllib.parse import urlsplit
 
+if __package__:
+    from .ea4e92cp_kilo_request_shape import RequestShapeDenied, summarize_request_shape
+else:
+    from ea4e92cp_kilo_request_shape import RequestShapeDenied, summarize_request_shape
+
 
 MODEL = "openai-compatible/ea4e-inert"
 MODEL_ID = "ea4e-inert"
@@ -155,6 +160,7 @@ class InertProviderHandler(BaseHTTPRequestHandler):
     def _handle(self, method: str) -> None:
         # Never retain, print, or forward request content or authorization values.
         path = urlsplit(self.path).path
+        shape = None
         if self.headers.get("Authorization") != f"Bearer {DUMMY_KEY}":
             status, content_type, body = 401, "application/json", b'{"error":{"message":"unauthorized"}}'
             stream = None
@@ -169,9 +175,15 @@ class InertProviderHandler(BaseHTTPRequestHandler):
                     payload = json.loads(raw) if raw else None
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     payload = None
-                stream = payload.get("stream") if isinstance(payload, dict) else None
+                stream = payload.get("stream") is True if isinstance(payload, dict) else None
+                try:
+                    shape = summarize_request_shape(raw, expected_model=MODEL_ID)
+                except RequestShapeDenied:
+                    pass
                 status, content_type, body = fake_response(method, path, payload)
-        event = {"method": method, "path": path, "status": status, "stream": stream}
+        recorded_path = path if path in {"/v1/models", "/v1/chat/completions"} else "<other>"
+        event = {"method": method, "path": recorded_path, "status": status, "stream": stream,
+                 "request_shape": shape}
         if hasattr(self.server, "events"):
             with self.server.event_lock:
                 self.server.events.append(event)
