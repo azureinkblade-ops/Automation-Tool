@@ -25,6 +25,8 @@ from tools.ea4e92ck_kilo_inert_probe import (
 
 PROBE_ROOT = Path(r"C:\Users\David\AppData\Local\Hermes\runtime\ea4e\kilo-inert-probe-92ck-20261004")
 PROBE_PORT = 49321
+SHAPE_PROBE_ROOT = Path(r"C:\Users\David\AppData\Local\Hermes\runtime\ea4e\kilo-shape-probe-92cr-20261004")
+SHAPE_PROBE_PORT = 49322
 TIMEOUT_SECONDS = 30
 MAX_STDOUT_BYTES = 4 * 1024 * 1024
 MAX_STDERR_BYTES = 128 * 1024
@@ -46,7 +48,13 @@ def validate_plan(plan_path: Path) -> dict:
     """Fail closed if the plan or its credential-free home has drifted."""
     plan_path = Path(plan_path).resolve(strict=True)
     root = plan_path.parent
-    if root != PROBE_ROOT.resolve() or plan_path.name != "launch-plan.json":
+    if plan_path.name != "launch-plan.json":
+        raise ProbeRefused("unexpected probe root or plan")
+    if root == PROBE_ROOT.resolve():
+        port = PROBE_PORT
+    elif root == SHAPE_PROBE_ROOT.resolve():
+        port = SHAPE_PROBE_PORT
+    else:
         raise ProbeRefused("unexpected probe root or plan")
     if (root / "attempt.json").exists() or (root / "probe-result.json").exists():
         raise ProbeRefused("one-shot probe already claimed")
@@ -60,7 +68,7 @@ def validate_plan(plan_path: Path) -> dict:
                      f"Reply with exactly {MARKER}. Do not use tools."]
     if plan.get("argv") != expected_argv or plan.get("cwd") != str(root):
         raise ProbeRefused("inert command or cwd mismatch")
-    config_text = json.dumps(probe_config(PROBE_PORT), sort_keys=True)
+    config_text = json.dumps(probe_config(port), sort_keys=True)
     if (root / "config/kilo.jsonc").read_text(encoding="ascii").strip() != config_text:
         raise ProbeRefused("inert provider config mismatch")
     if plan.get("env") != probe_env(root, binary, config_text):
@@ -175,6 +183,8 @@ def _exact_text_marker(output: bytes) -> bool:
 def run_once(plan_path: Path) -> Path:
     plan = validate_plan(plan_path)
     root = Path(plan["cwd"])
+    if root != PROBE_ROOT.resolve():
+        raise ProbeRefused("fresh shape probe launch requires separate authorization")
     with RecordingServer(("127.0.0.1", PROBE_PORT)) as server:
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         server_thread.start()
