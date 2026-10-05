@@ -30,6 +30,8 @@ def test_prepared_plan_is_dummy_only():
 def test_fresh_shape_plan_validates_without_launch():
     if not SHAPE_PLAN.exists():
         pytest.skip("fresh shape probe has not been prepared")
+    if (SHAPE_PLAN.parent / "attempt.json").exists():
+        pytest.skip("fresh shape probe has already been consumed")
     plan = validate_plan(SHAPE_PLAN)
     assert plan["credential_class"] == "DUMMY_LOCAL_ONLY"
     assert plan["launch_authorized"] is False
@@ -37,15 +39,49 @@ def test_fresh_shape_plan_validates_without_launch():
     assert not (SHAPE_PLAN.parent / "attempt.json").exists()
 
 
-def test_fresh_shape_plan_cannot_launch(monkeypatch):
-    if not SHAPE_PLAN.exists():
-        pytest.skip("fresh shape probe has not been prepared")
-    def unexpected_server(_address):
-        raise AssertionError("server must not start")
-    monkeypatch.setattr("tools.ea4e92cm_kilo_inert_runner.RecordingServer", unexpected_server)
-    with pytest.raises(ProbeRefused, match="separate authorization"):
-        run_once(SHAPE_PLAN)
-    assert not (SHAPE_PLAN.parent / "attempt.json").exists()
+def test_fresh_shape_launch_claims_before_injected_child(monkeypatch, tmp_path):
+    import tools.ea4e92cm_kilo_inert_runner as runner
+
+    class FakeServer:
+        events = []
+
+        def __init__(self, address):
+            assert address == ("127.0.0.1", runner.SHAPE_PROBE_PORT)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def serve_forever(self):
+            pass
+
+        def shutdown(self):
+            pass
+
+    plan = tmp_path / "launch-plan.json"
+    plan.write_text("{}", encoding="ascii")
+    monkeypatch.setattr(runner, "SHAPE_PROBE_ROOT", tmp_path)
+    monkeypatch.setattr(runner, "validate_plan", lambda _path: {
+        "cwd": str(tmp_path), "argv": ["injected-only"], "env": {},
+    })
+    monkeypatch.setattr(runner, "RecordingServer", FakeServer)
+    calls = []
+
+    def fake_child(argv, *, cwd, env, timeout):
+        assert (tmp_path / "attempt.json").exists()
+        assert timeout == runner.TIMEOUT_SECONDS
+        calls.append((argv, cwd, env))
+        return {"pid": 1, "returncode": 0, "timed_out": False,
+                "output_overflowed": False, "capture_errors": [],
+                "elapsed_seconds": 0, "stdout": b"", "stderr": b""}
+
+    monkeypatch.setattr(runner, "bounded_child", fake_child)
+    result = run_once(plan)
+    assert result == tmp_path / "probe-result.json"
+    assert len(calls) == 1
+    assert json.loads(result.read_text(encoding="ascii"))["automatic_retry"] is False
 
 
 def test_plan_rejects_other_root(tmp_path):

@@ -27,6 +27,8 @@ PROBE_ROOT = Path(r"C:\Users\David\AppData\Local\Hermes\runtime\ea4e\kilo-inert-
 PROBE_PORT = 49321
 SHAPE_PROBE_ROOT = Path(r"C:\Users\David\AppData\Local\Hermes\runtime\ea4e\kilo-shape-probe-92cr-20261004")
 SHAPE_PROBE_PORT = 49322
+SHAPE_PLAN_SHA256 = "339e0a1b0a9fdc66bd368a62f89433ce5f0db92e8c9ae808b1826b41b52c0338"
+SHAPE_CONFIG_SHA256 = "21174acb8422b4459404244050133ed02d58eaafe4f47bfc2c632709759dba32"
 TIMEOUT_SECONDS = 30
 MAX_STDOUT_BYTES = 4 * 1024 * 1024
 MAX_STDERR_BYTES = 128 * 1024
@@ -54,6 +56,10 @@ def validate_plan(plan_path: Path) -> dict:
         port = PROBE_PORT
     elif root == SHAPE_PROBE_ROOT.resolve():
         port = SHAPE_PROBE_PORT
+        if _hash_file(plan_path) != SHAPE_PLAN_SHA256:
+            raise ProbeRefused("fresh shape plan identity mismatch")
+        if _hash_file(root / "config/kilo.jsonc") != SHAPE_CONFIG_SHA256:
+            raise ProbeRefused("fresh shape config identity mismatch")
     else:
         raise ProbeRefused("unexpected probe root or plan")
     if (root / "attempt.json").exists() or (root / "probe-result.json").exists():
@@ -183,9 +189,9 @@ def _exact_text_marker(output: bytes) -> bool:
 def run_once(plan_path: Path) -> Path:
     plan = validate_plan(plan_path)
     root = Path(plan["cwd"])
-    if root != PROBE_ROOT.resolve():
-        raise ProbeRefused("fresh shape probe launch requires separate authorization")
-    with RecordingServer(("127.0.0.1", PROBE_PORT)) as server:
+    if root != SHAPE_PROBE_ROOT.resolve():
+        raise ProbeRefused("only the authorized fresh shape probe may launch")
+    with RecordingServer(("127.0.0.1", SHAPE_PROBE_PORT)) as server:
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         server_thread.start()
         claim = root / "attempt.json"
