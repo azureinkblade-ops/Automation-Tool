@@ -91,6 +91,17 @@ def test_plan_rejects_other_root(tmp_path):
         validate_plan(plan)
 
 
+def test_consumed_shape_claim_precedes_config_identity_check(monkeypatch, tmp_path):
+    import tools.ea4e92cm_kilo_inert_runner as runner
+
+    monkeypatch.setattr(runner, "SHAPE_PROBE_ROOT", tmp_path)
+    plan = tmp_path / "launch-plan.json"
+    plan.write_text("{}", encoding="ascii")
+    (tmp_path / "attempt.json").write_text("{}", encoding="ascii")
+    with pytest.raises(ProbeRefused, match="one-shot probe already claimed"):
+        validate_plan(plan)
+
+
 def test_exact_marker_requires_json_text_part():
     valid = json.dumps({"type": "text", "part": {"text": MARKER}}).encode()
     assert _exact_text_marker(valid)

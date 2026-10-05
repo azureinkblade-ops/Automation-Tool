@@ -56,14 +56,15 @@ def validate_plan(plan_path: Path) -> dict:
         port = PROBE_PORT
     elif root == SHAPE_PROBE_ROOT.resolve():
         port = SHAPE_PROBE_PORT
-        if _hash_file(plan_path) != SHAPE_PLAN_SHA256:
-            raise ProbeRefused("fresh shape plan identity mismatch")
-        if _hash_file(root / "config/kilo.jsonc") != SHAPE_CONFIG_SHA256:
-            raise ProbeRefused("fresh shape config identity mismatch")
     else:
         raise ProbeRefused("unexpected probe root or plan")
     if (root / "attempt.json").exists() or (root / "probe-result.json").exists():
         raise ProbeRefused("one-shot probe already claimed")
+    if root == SHAPE_PROBE_ROOT.resolve():
+        if _hash_file(plan_path) != SHAPE_PLAN_SHA256:
+            raise ProbeRefused("fresh shape plan identity mismatch")
+        if _hash_file(root / "config/kilo.jsonc") != SHAPE_CONFIG_SHA256:
+            raise ProbeRefused("fresh shape config identity mismatch")
     plan = json.loads(plan_path.read_text(encoding="ascii"))
     binary, expected_sha = pinned_binary()
     binary = binary.resolve(strict=True)
