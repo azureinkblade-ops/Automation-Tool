@@ -19,6 +19,10 @@ PROBE_COMMAND = (
     f"test -r /tmp/kilo-home/.kilo/agents/{AGENT_ID}/{AGENT_ID}.jsonc; "
     "printf 'EA4E_MOUNT_OK\\n' > /tmp/kilo-home/ea4e-mount-marker"
 )
+PROBE_ENV = [
+    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "HOME=/tmp/kilo-home",
+]
 
 
 def inspect_inert_mount_probe(
@@ -41,8 +45,8 @@ def inspect_inert_mount_probe(
         return ImageAdmissionResult("DENY", "PROBE_COMMAND_MISMATCH")
     if config.get("User") != "65532:65532" or config.get("WorkingDir") != "/work":
         return ImageAdmissionResult("DENY", "PROBE_IDENTITY_MISMATCH")
-    if config.get("Env") not in (None, []):
-        return ImageAdmissionResult("DENY", "PROBE_ENV_NOT_EMPTY")
+    if config.get("Env") != PROBE_ENV:
+        return ImageAdmissionResult("DENY", "PROBE_ENV_MISMATCH")
     if config.get("ExposedPorts") or host.get("PortBindings") or host.get("PublishAllPorts"):
         return ImageAdmissionResult("DENY", "PROBE_PORTS_PRESENT")
 

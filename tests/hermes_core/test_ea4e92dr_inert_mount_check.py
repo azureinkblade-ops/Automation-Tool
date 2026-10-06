@@ -38,7 +38,7 @@ def metadata():
             "Cmd": ["-ec", subject.PROBE_COMMAND],
             "User": "65532:65532",
             "WorkingDir": "/work",
-            "Env": [],
+            "Env": subject.PROBE_ENV.copy(),
         },
         "HostConfig": {
             "NetworkMode": "none",
@@ -78,7 +78,8 @@ def test_exact_fake_metadata_matches_without_authorizing_execution():
     lambda c: c["Config"].update(Cmd=["-ec", "id"]),
     lambda c: c["Config"].update(Entrypoint=["/opt/kilo/kilo"]),
     lambda c: c["Config"].update(User="0:0"),
-    lambda c: c["Config"].update(Env=["TOKEN=secret"]),
+    lambda c: c["Config"].update(Env=[]),
+    lambda c: c["Config"]["Env"].append("TOKEN=secret"),
     lambda c: c["HostConfig"].update(NetworkMode="bridge"),
     lambda c: c["HostConfig"].update(ReadonlyRootfs=False),
     lambda c: c["HostConfig"].update(Privileged=True),

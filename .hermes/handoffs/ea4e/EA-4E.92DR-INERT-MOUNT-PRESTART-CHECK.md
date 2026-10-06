@@ -14,11 +14,11 @@ create or start a container and its result grants no execution authority.
 
 The caller-supplied host source strings are compared exactly. This is not
 host-path provenance or a proof that the Docker daemon's effective mounts
-have been observed. The fake fixture uses an empty container environment;
-if a real created container inherits image environment variables or Docker
-reports a different metadata shape, this check returns HOLD/DENY until the
-observed shape is separately reviewed. Do not loosen it during a one-shot
-probe or infer that a fake match authorizes start.
+have been observed. A subsequent read-only image inspection showed inherited
+`PATH` and `HOME` values, so the check requires those exact values. A real
+created container's full metadata shape is still unobserved; unexpected
+fields must return HOLD/DENY until separately reviewed. Do not loosen the
+check during a one-shot probe or infer that a fake match authorizes start.
 
 Verification: 67 passed, 0 failed across the 92DR, 92DP, 92DN, 92DH, and
 fake-provider-accounting focused suites. No Docker command, receiver,
