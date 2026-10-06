@@ -13,6 +13,11 @@ def metadata():
         "Id": subject.IMAGE_ID,
         "Os": "linux",
         "Architecture": "amd64",
+        "Descriptor": {
+            "digest": subject.IMAGE_ID,
+            "mediaType": subject.IMAGE_MEDIA_TYPE,
+            "platform": {"os": "linux", "architecture": "amd64"},
+        },
         "Config": {
             "User": "65532:65532",
             "Entrypoint": ["/opt/kilo/kilo"],
@@ -57,6 +62,22 @@ def test_wrong_image_configuration_denied(field, bad):
 @pytest.mark.parametrize("bad", [None, {}, {"Config": None}, {"Config": []}])
 def test_incomplete_metadata_denied(bad):
     assert subject.inspect_provisional_kilo_image(bad).decision == "DENY"
+
+
+@pytest.mark.parametrize("descriptor", [
+    None,
+    {},
+    {"digest": "sha256:" + "0" * 64, "mediaType": subject.IMAGE_MEDIA_TYPE,
+     "platform": {"os": "linux", "architecture": "amd64"}},
+    {"digest": subject.IMAGE_ID, "mediaType": "application/vnd.oci.image.index.v1+json",
+     "platform": {"os": "linux", "architecture": "amd64"}},
+    {"digest": subject.IMAGE_ID, "mediaType": subject.IMAGE_MEDIA_TYPE,
+     "platform": {"os": "linux", "architecture": "arm64"}},
+])
+def test_missing_or_wrong_manifest_descriptor_denied(descriptor):
+    observed = metadata()
+    observed["Descriptor"] = descriptor
+    assert subject.inspect_provisional_kilo_image(observed).decision == "DENY"
 
 
 def test_caller_mutation_cannot_change_expected_identity():

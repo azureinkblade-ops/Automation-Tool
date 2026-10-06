@@ -10,6 +10,7 @@ SCHEMA_ID = "hermes.local-kilo-image-admission/v1"
 IMAGE_ID = "sha256:2eaab2a5675726461630106859873c29f03641c142ae47c6b6060aebc611504d"
 IMAGE_OS = "linux"
 IMAGE_ARCH = "amd64"
+IMAGE_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json"
 IMAGE_USER = "65532:65532"
 IMAGE_ENTRYPOINT = ("/opt/kilo/kilo",)
 IMAGE_WORKDIR = "/work"
@@ -39,6 +40,14 @@ def inspect_provisional_kilo_image(metadata: Mapping[str, Any] | None) -> ImageA
     for field, value in expected.items():
         if metadata.get(field) != value:
             return ImageAdmissionResult("DENY", f"IMAGE_{field.upper()}_MISMATCH")
+
+    descriptor = metadata.get("Descriptor")
+    if not isinstance(descriptor, Mapping):
+        return ImageAdmissionResult("DENY", "MISSING_IMAGE_DESCRIPTOR")
+    if descriptor.get("digest") != IMAGE_ID or descriptor.get("mediaType") != IMAGE_MEDIA_TYPE:
+        return ImageAdmissionResult("DENY", "IMAGE_DESCRIPTOR_MISMATCH")
+    if descriptor.get("platform") != {"os": IMAGE_OS, "architecture": IMAGE_ARCH}:
+        return ImageAdmissionResult("DENY", "IMAGE_DESCRIPTOR_PLATFORM_MISMATCH")
 
     if config.get("User") != IMAGE_USER:
         return ImageAdmissionResult("DENY", "IMAGE_USER_MISMATCH")
