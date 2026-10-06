@@ -31,6 +31,7 @@ def test_matching_metadata_is_not_execution_or_provenance():
 
 @pytest.mark.parametrize("field,bad", [
     ("Id", "sha256:" + "0" * 64),
+    ("Id", "sha256:c170379623cd8d16feb2c15fcdd473c401275336dc046fe72a5a5075c3474303"),
     ("Id", "hermes/kilo:7.8.3-linux-amd64-provisional"),
     ("Os", "windows"),
     ("Architecture", "arm64"),

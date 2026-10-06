@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 
 SCHEMA_ID = "hermes.local-kilo-image-admission/v1"
-IMAGE_ID = "sha256:cf003ba6e84cfd0fa8c2951dfe44454e25f9cf5e42eb6bf3ba82349b26b99120"
+IMAGE_ID = "sha256:2eaab2a5675726461630106859873c29f03641c142ae47c6b6060aebc611504d"
 IMAGE_OS = "linux"
 IMAGE_ARCH = "amd64"
 IMAGE_USER = "65532:65532"
