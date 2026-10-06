@@ -91,3 +91,29 @@ def test_module_contains_no_runtime_capability():
     source = inspect.getsource(subject)
     for forbidden in ("subprocess", "docker", "requests", "socket", "popen", "exec("):
         assert forbidden not in source.lower()
+
+
+def test_created_container_image_index_binds_to_platform_manifest_only():
+    image = metadata()
+    image["RepoDigests"] = [f"hermes/kilo@{subject.IMAGE_INDEX_ID}"]
+    container = {"Image": subject.IMAGE_INDEX_ID, "State": {"Status": "created"}}
+    result = subject.inspect_prestart_image_binding(container, image)
+    assert result.decision == "MATCH"
+    assert result.receiver_executed is False
+    assert result.provenance_checked is False
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda container, image: container.update(Image=subject.IMAGE_ID),
+    lambda container, image: container.update(State={"Status": "running"}),
+    lambda container, image: image.update(RepoDigests=[]),
+    lambda container, image: image.update(RepoDigests=None),
+    lambda container, image: image.update(RepoDigests=f"hermes/kilo@{subject.IMAGE_INDEX_ID}"),
+    lambda container, image: image["Descriptor"].update(digest=subject.IMAGE_INDEX_ID),
+])
+def test_prestart_binding_denies_mismatch(mutate):
+    image = metadata()
+    image["RepoDigests"] = [f"hermes/kilo@{subject.IMAGE_INDEX_ID}"]
+    container = {"Image": subject.IMAGE_INDEX_ID, "State": {"Status": "created"}}
+    mutate(container, image)
+    assert subject.inspect_prestart_image_binding(container, image).decision == "DENY"
