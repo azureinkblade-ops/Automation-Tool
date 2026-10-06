@@ -8,6 +8,7 @@ from tools.hermes_core.local_kilo_image_admission import (
     ImageAdmissionResult,
     inspect_prestart_image_binding,
 )
+from tools.hermes_core.local_kilo_inert_inputs import verified_inert_mount_sources
 from tools.hermes_core.local_kilo_inert_plan import AGENT_ID
 
 
@@ -28,8 +29,7 @@ PROBE_ENV = [
 def inspect_inert_mount_probe(
     container: Mapping[str, Any] | None,
     image: Mapping[str, Any] | None,
-    input_source: str,
-    runtime_source: str,
+    prepared: Mapping[str, Any],
 ) -> ImageAdmissionResult:
     """Compare created-container metadata; never start or authorize it."""
     binding = inspect_prestart_image_binding(container, image)
@@ -67,8 +67,10 @@ def inspect_inert_mount_probe(
     if host.get("PidMode") not in (None, "") or host.get("IpcMode") not in (None, "", "private"):
         return ImageAdmissionResult("DENY", "PROBE_NAMESPACE_MISMATCH")
 
-    if not input_source or not runtime_source or input_source == runtime_source:
-        return ImageAdmissionResult("DENY", "PROBE_SOURCE_IDENTITY_INVALID")
+    try:
+        input_source, runtime_source = verified_inert_mount_sources(prepared)
+    except (OSError, TypeError, ValueError):
+        return ImageAdmissionResult("DENY", "PROBE_PREPARED_INPUT_MISMATCH")
     mounts = container.get("Mounts")
     expected = {
         (input_source, "/reviewed-input", False),

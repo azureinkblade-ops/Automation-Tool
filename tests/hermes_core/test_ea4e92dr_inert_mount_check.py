@@ -2,18 +2,18 @@
 
 from copy import deepcopy
 import inspect
+from pathlib import Path
 
 import pytest
 
 from tools.hermes_core import local_kilo_image_admission as image_subject
+from tools.hermes_core.local_kilo_inert_inputs import prepare_inert_inputs
 from tools.hermes_core import local_kilo_inert_mount_check as subject
 
 
-INPUT = r"C:\temp\ea4e-probe\input"
-RUNTIME = r"C:\temp\ea4e-probe\runtime"
-
-
-def metadata():
+def metadata(prepared):
+    input_source = str(Path(prepared["root"]) / "input")
+    runtime_source = str(Path(prepared["root"]) / "runtime")
     image = {
         "Id": image_subject.IMAGE_ID,
         "Os": "linux",
@@ -56,19 +56,20 @@ def metadata():
             "IpcMode": "private",
         },
         "Mounts": [
-            {"Type": "bind", "Source": INPUT, "Destination": "/reviewed-input", "RW": False},
-            {"Type": "bind", "Source": RUNTIME, "Destination": "/tmp/kilo-home", "RW": True},
+            {"Type": "bind", "Source": input_source, "Destination": "/reviewed-input", "RW": False},
+            {"Type": "bind", "Source": runtime_source, "Destination": "/tmp/kilo-home", "RW": True},
         ],
     }
     return container, image
 
 
-def check(container, image):
-    return subject.inspect_inert_mount_probe(container, image, INPUT, RUNTIME)
+def check(container, image, prepared):
+    return subject.inspect_inert_mount_probe(container, image, prepared)
 
 
-def test_exact_fake_metadata_matches_without_authorizing_execution():
-    result = check(*metadata())
+def test_exact_fake_metadata_matches_without_authorizing_execution(tmp_path):
+    prepared = prepare_inert_inputs(tmp_path / "handoff")
+    result = check(*metadata(prepared), prepared)
     assert result.decision == "MATCH"
     assert result.receiver_executed is False
     assert result.provenance_checked is False
@@ -90,25 +91,54 @@ def test_exact_fake_metadata_matches_without_authorizing_execution():
     lambda c: c["HostConfig"].update(PortBindings={"80/tcp": [{"HostPort": "80"}]}),
     lambda c: c["Mounts"].append({"Type": "bind", "Source": "C:/secret", "Destination": "/secret", "RW": True}),
     lambda c: c["Mounts"][0].update(RW=True),
-    lambda c: c["Mounts"][1].update(Source=INPUT),
+    lambda c: c["Mounts"][1].update(Source=c["Mounts"][0]["Source"]),
     lambda c: c["Mounts"][1].update(Type="volume"),
     lambda c: c["State"].update(Status="running"),
 ])
-def test_unexpected_prestart_metadata_denied(mutate):
-    container, image = deepcopy(metadata())
+def test_unexpected_prestart_metadata_denied(mutate, tmp_path):
+    prepared = prepare_inert_inputs(tmp_path / "handoff")
+    container, image = deepcopy(metadata(prepared))
     mutate(container)
-    assert check(container, image).decision == "DENY"
+    assert check(container, image, prepared).decision == "DENY"
 
 
-def test_image_mismatch_denied():
-    container, image = metadata()
+def test_image_mismatch_denied(tmp_path):
+    prepared = prepare_inert_inputs(tmp_path / "handoff")
+    container, image = metadata(prepared)
     image["Id"] = "sha256:" + "0" * 64
-    assert check(container, image).decision == "DENY"
+    assert check(container, image, prepared).decision == "DENY"
 
 
-def test_source_identity_required():
-    container, image = metadata()
-    assert subject.inspect_inert_mount_probe(container, image, INPUT, INPUT).decision == "DENY"
+def test_tampered_prepared_bytes_denied(tmp_path):
+    prepared = prepare_inert_inputs(tmp_path / "handoff")
+    container, image = metadata(prepared)
+    Path(prepared["files"][0]["input_path"]).write_bytes(b"changed\n")
+    assert check(container, image, prepared).decision == "DENY"
+
+
+def test_forged_prepared_path_denied(tmp_path):
+    prepared = prepare_inert_inputs(tmp_path / "handoff")
+    container, image = metadata(prepared)
+    prepared["files"][0]["input_path"] = str(tmp_path / "other")
+    assert check(container, image, prepared).decision == "DENY"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("schema_id", "different-schema"),
+    ("launch_authorized", True),
+])
+def test_untrusted_prepared_manifest_denied(tmp_path, field, value):
+    prepared = prepare_inert_inputs(tmp_path / "handoff")
+    container, image = metadata(prepared)
+    prepared[field] = value
+    assert check(container, image, prepared).decision == "DENY"
+
+
+def test_source_mount_mismatch_denied(tmp_path):
+    prepared = prepare_inert_inputs(tmp_path / "handoff")
+    container, image = metadata(prepared)
+    container["Mounts"][0]["Source"] = str(tmp_path / "other")
+    assert check(container, image, prepared).decision == "DENY"
 
 
 def test_no_runtime_capability_in_checker():
