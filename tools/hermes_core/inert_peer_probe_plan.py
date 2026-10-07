@@ -3,7 +3,7 @@
 import re
 
 
-IMAGE_ID = "sha256:de6495938a8fb3fb1745f1d955d0b56b0d3dd3283bd8f6e20c7ad020d31c72f9"
+IMAGE_ID = "sha256:5086932cce035664aee758f4e136262e4e787338b12a1070fc11a84b66e77682"
 
 
 def build_inert_peer_probe_plan(run_id: str) -> dict:
@@ -35,7 +35,7 @@ def build_inert_peer_probe_plan(run_id: str) -> dict:
                 IMAGE_ID, mode]
 
     return {
-        "schema_id": "hermes.ea4e-inert-peer-probe/v1",
+        "schema_id": "hermes.ea4e-inert-peer-probe/v2",
         "run_id": run_id,
         "image_id": IMAGE_ID,
         "network_name": network,
@@ -48,15 +48,20 @@ def build_inert_peer_probe_plan(run_id: str) -> dict:
         "client_create": container(client, "client"),
         "start_order": [gateway, client],
         "expected_request": {"method": "GET", "path": "/marker", "count": 1},
+        "release_signal": "SIGUSR2",
+        "release_target": "exact_created_gateway_id_after_pending_peer_match",
         "observations_required": [
             "image_and_platform", "network_internal_and_membership",
             "both_container_ids_and_states", "no_published_ports_or_mounts",
-            "gateway_socket_peer", "client_marker_and_exit", "post_exit_membership",
+            "gateway_socket_peer_while_request_pending",
+            "fresh_running_daemon_snapshot_before_release",
+            "signal_exact_gateway_id_only_after_match",
+            "client_marker_and_exit", "post_exit_membership",
         ],
         "cleanup": "exact_created_container_ids_then_exact_created_network_id_only",
         "max_containers": 2,
         "max_networks": 1,
-        "timeout_seconds": 30,
+        "timeout_seconds": 45,
         "max_log_bytes_per_container": 4096,
         "probe_authorized": False,
         "kilo_receiver_executed": False,

@@ -21,7 +21,12 @@ def test_fixed_inert_plan_has_no_execution_authority():
     assert plan["production_ready"] is False
     assert plan["max_containers"] == 2
     assert plan["max_networks"] == 1
-    assert plan["timeout_seconds"] == 30
+    assert plan["schema_id"] == "hermes.ea4e-inert-peer-probe/v2"
+    assert subject.IMAGE_ID == "sha256:5086932cce035664aee758f4e136262e4e787338b12a1070fc11a84b66e77682"
+    assert plan["timeout_seconds"] == 45
+    assert plan["release_signal"] == "SIGUSR2"
+    assert plan["release_target"] == "exact_created_gateway_id_after_pending_peer_match"
+    assert "fresh_running_daemon_snapshot_before_release" in plan["observations_required"]
 
 
 def test_network_and_container_commands_are_bounded():
