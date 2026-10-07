@@ -63,6 +63,14 @@ def test_created_metadata_match_is_not_start_authority():
     }
 
 
+def test_empty_prestart_network_ids_are_deferred_to_running_check():
+    values = records()
+    for role in ("gateway", "client"):
+        endpoint = values[role]["NetworkSettings"]["Networks"][values["plan"]["network_name"]]
+        endpoint["NetworkID"] = ""
+    assert subject.inspect_inert_peer_created(**values)["peer_qualified"] is False
+
+
 @pytest.mark.parametrize("change", [
     lambda v: v["network"].update(Internal=False),
     lambda v: v["network"].update(Driver="overlay"),
@@ -100,10 +108,10 @@ def test_created_metadata_denies_drift(change):
         {v["plan"]["network_name"]: None}),
      "gateway endpoint shape denied"),
     (lambda v: v["gateway"]["NetworkSettings"]["Networks"][
-        v["plan"]["network_name"]].update(NetworkID=""),
+        v["plan"]["network_name"]].update(NetworkID="foreign-network"),
      "gateway endpoint network ID denied"),
     (lambda v: v["client"]["NetworkSettings"]["Networks"][
-        v["plan"]["network_name"]].update(NetworkID=""),
+        v["plan"]["network_name"]].update(NetworkID=None),
      "client endpoint network ID denied"),
 ])
 def test_network_binding_denial_identifies_role_and_field(change, reason):

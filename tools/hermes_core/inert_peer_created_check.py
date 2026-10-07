@@ -81,7 +81,8 @@ def inspect_inert_peer_created(plan: dict, image: dict, network: dict,
         endpoint = networks[plan["network_name"]]
         if type(endpoint) is not dict:
             raise InertPeerCreatedDenied(f"{mode} endpoint shape denied")
-        if endpoint.get("NetworkID") != network["Id"]:
+        # Docker may leave NetworkID empty until start; the running check binds it.
+        if endpoint.get("NetworkID") not in ("", network["Id"]):
             raise InertPeerCreatedDenied(f"{mode} endpoint network ID denied")
         if mode == "gateway" and "ea4e-peer-gateway" not in (
                 endpoint.get("Aliases") or []):

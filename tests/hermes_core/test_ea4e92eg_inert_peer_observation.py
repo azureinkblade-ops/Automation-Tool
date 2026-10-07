@@ -60,6 +60,7 @@ def test_raw_observation_is_only_a_candidate_match():
     lambda v: v["client"]["State"].update(Running=False),
     lambda v: v["gateway"]["State"].update(Running=False),
     lambda v: v["client"]["NetworkSettings"]["Networks"].update(extra={}),
+    lambda v: v["gateway"]["NetworkSettings"]["Networks"][v["plan"]["network_name"]].update(NetworkID=""),
     lambda v: v["client"]["NetworkSettings"]["Networks"][v["plan"]["network_name"]].update(IPAddress="172.20.0.4"),
     lambda v: v["gateway"]["HostConfig"].update(PortBindings={"3080/tcp": [{}]}),
     lambda v: v["client"]["NetworkSettings"]["Ports"].update({"3080/tcp": [{"HostPort": "3080"}]}),
@@ -68,7 +69,7 @@ def test_raw_observation_is_only_a_candidate_match():
     lambda v: v["accepted"].update(forwarded="172.20.0.2"),
     lambda v: v["accepted"].update(event="MARKER_MATCH"),
 ], ids=["forged-plan", "external-network", "host-driver", "foreign-member",
-        "member-ip-drift", "stopped-client", "stopped-gateway", "multihomed",
+        "member-ip-drift", "stopped-client", "stopped-gateway", "multihomed", "running-empty-network-id",
         "endpoint-ip-drift", "port-binding", "published-port", "mount",
         "wrong-socket-peer", "forwarded-header", "wrong-event"])
 def test_raw_observation_denies_drift(change):
