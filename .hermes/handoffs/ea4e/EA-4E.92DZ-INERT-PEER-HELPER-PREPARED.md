@@ -22,11 +22,20 @@ local handler tests passed 2/2 without opening a socket.
 The provisional image was built with `--pull=false --network=none` from the
 cached base. Build output showed no layer download or `RUN` step, but these
 flags do not independently prove that the builder made zero metadata network
-requests. The resulting local image is
-`hermes/ea4e-peer-helper:92dz-provisional`, ID
-`sha256:db376403e4d5bb681eae77bc09d8f91faa980799e501c2b21a11612a035d99ac`.
-Read-only image inspection reported Linux/amd64, user `node`, and the fixed
-entrypoint. A read-only container listing found none using this image.
+requests. The first local image was `hermes/ea4e-peer-helper:92dz-provisional`,
+ID `sha256:db376403e4d5bb681eae77bc09d8f91faa980799e501c2b21a11612a035d99ac`.
+After the source-only commit, a build from the committed tree produced ID
+`sha256:de6495938a8fb3fb1745f1d955d0b56b0d3dd3283bd8f6e20c7ad020d31c72f9`.
+The source SHA-256 values below stayed identical; the reason the image ID
+changed was not established. The original ID is no longer inspectable in
+the local image store. Reproducible image identity is **not** qualified.
+The mutable tag is not a probe authority; the exact current image ID is a
+candidate for a separately reviewed probe. Read-only inspection
+of the current image reported Linux/amd64, user `node`, and the fixed
+entrypoint. It also inherited `3080/tcp` in image `ExposedPorts` from the
+base; that does not publish a port, but a future container must still
+have an empty daemon-reported published-port mapping. No helper container
+was started.
 
 Source SHA-256 values (working files at preparation time):
 - `marker.js`: `cda206fe636f57d509cc8251f896298b2917e79a01570290b2b66ec933243667`
@@ -34,8 +43,9 @@ Source SHA-256 values (working files at preparation time):
 
 ## Proposed one-shot Docker peer observation, not yet authorized
 
-After a committed-tree source and image recheck, a separate exact approval
-could cover one new per-attempt `--internal` bridge, exactly two containers
+Only after that exact immutable image ID is selected and rechecked, a
+separate approval could cover one new per-attempt `--internal` bridge and
+exactly two containers
 from the pinned helper image (one gateway and one client), no published ports,
 no bind mounts, no secrets, no host networking, non-root execution, read-only
 root filesystems, dropped capabilities, bounded CPU/memory/pids/output, and
@@ -54,6 +64,8 @@ receiver invocation, upstream send, or strict 92AT mapped-byte proof.
 
 `HELPER_SOURCE_TESTS=2_PASS`
 `PROVISIONAL_IMAGE_BUILT=YES`
+`REPRODUCIBLE_IMAGE_ID=NO`
+`FROZEN_PROBE_IMAGE=NO`
 `HELPER_CONTAINERS_STARTED=0`
 `PEER_PROBE_AUTHORIZED=NO`
 `KILO_RECEIVER_EXECUTED=NO`
