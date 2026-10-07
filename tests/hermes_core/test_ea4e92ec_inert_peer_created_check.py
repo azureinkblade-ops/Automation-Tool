@@ -93,6 +93,26 @@ def test_created_metadata_denies_drift(change):
         subject.inspect_inert_peer_created(**values)
 
 
+@pytest.mark.parametrize("change,reason", [
+    (lambda v: v["gateway"]["NetworkSettings"].update(Networks={}),
+     "gateway network attachment set denied"),
+    (lambda v: v["gateway"]["NetworkSettings"]["Networks"].update(
+        {v["plan"]["network_name"]: None}),
+     "gateway endpoint shape denied"),
+    (lambda v: v["gateway"]["NetworkSettings"]["Networks"][
+        v["plan"]["network_name"]].update(NetworkID=""),
+     "gateway endpoint network ID denied"),
+    (lambda v: v["client"]["NetworkSettings"]["Networks"][
+        v["plan"]["network_name"]].update(NetworkID=""),
+     "client endpoint network ID denied"),
+])
+def test_network_binding_denial_identifies_role_and_field(change, reason):
+    values = copy.deepcopy(records())
+    change(values)
+    with pytest.raises(subject.InertPeerCreatedDenied, match=f"^{reason}$"):
+        subject.inspect_inert_peer_created(**values)
+
+
 def test_created_check_has_no_runtime_capability():
     tree = ast.parse(inspect.getsource(subject))
     imports = set()

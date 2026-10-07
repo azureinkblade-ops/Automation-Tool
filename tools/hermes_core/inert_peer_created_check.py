@@ -76,13 +76,15 @@ def inspect_inert_peer_created(plan: dict, image: dict, network: dict,
                 or container.get("Mounts") != []):
             raise InertPeerCreatedDenied("container host policy denied")
         networks = settings.get("Networks")
-        if (type(networks) is not dict
-                or set(networks) != {plan["network_name"]}
-                or type(networks[plan["network_name"]]) is not dict
-                or networks[plan["network_name"]].get("NetworkID") != network["Id"]):
-            raise InertPeerCreatedDenied("container network binding denied")
+        if type(networks) is not dict or set(networks) != {plan["network_name"]}:
+            raise InertPeerCreatedDenied(f"{mode} network attachment set denied")
+        endpoint = networks[plan["network_name"]]
+        if type(endpoint) is not dict:
+            raise InertPeerCreatedDenied(f"{mode} endpoint shape denied")
+        if endpoint.get("NetworkID") != network["Id"]:
+            raise InertPeerCreatedDenied(f"{mode} endpoint network ID denied")
         if mode == "gateway" and "ea4e-peer-gateway" not in (
-                networks[plan["network_name"]].get("Aliases") or []):
+                endpoint.get("Aliases") or []):
             raise InertPeerCreatedDenied("gateway alias denied")
         ids.append(container_id)
     if ids[0] == ids[1] or not set(members).issubset(set(ids)):
