@@ -32,7 +32,7 @@ class FakeCreatedDockerDriver:
         return subprocess.run(argv, capture_output=True, text=True,
                               timeout=10, check=False)
 
-    def _call(self, args, *, allow_absent=False):
+    def _call(self, args, *, allow_absent=False, reject_stderr=False):
         digest = hashlib.sha256()
         try:
             with self.executable.open("rb") as source:
@@ -52,6 +52,8 @@ class FakeCreatedDockerDriver:
                                  or "not found" in result.stderr):
                 return None
             raise FakeCreatedDockerDenied("Docker command failed")
+        if reject_stderr and result.stderr:
+            raise FakeCreatedDockerDenied("Docker stderr denied")
         return result.stdout
 
     def _inspect(self, kind, identity, *, allow_absent=False):
