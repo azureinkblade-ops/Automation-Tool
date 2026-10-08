@@ -49,7 +49,9 @@ class Driver:
         if self.fail_at == "start-client" and identity == CLIENT_ID:
             raise RuntimeError("start denied")
 
-    def pending_line(self, identity):
+    def pending_line(self, identity, timeout):
+        assert identity == GATEWAY_ID
+        assert timeout == 10
         self.calls.append("pending-line")
         if self.fail_at == "pending-line":
             return b"bad\n"

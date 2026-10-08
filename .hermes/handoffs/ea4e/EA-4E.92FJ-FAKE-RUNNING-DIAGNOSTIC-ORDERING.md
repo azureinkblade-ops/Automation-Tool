@@ -27,6 +27,11 @@ and length checks, and no automatic retry. A separately approved one-shot
 Docker run would still be required to observe a real pending socket peer.
 Neither the 92FI created-state result nor fake-only 92FJ tests authorize it.
 
+Post-checkpoint correction: the coordinator now supplies a 10-second maximum
+to the injected pending-event reader. Its fake-driver test asserts that exact
+argument. The same affected ladder passed 110/110 after this correction;
+there was still no concrete driver or Docker run.
+
 `FAKE_ONLY_TESTS=110_PASSED_0_FAILED`
 `CONCRETE_RUNNING_DRIVER=NO`
 `DOCKER_OBJECTS_CREATED=0`

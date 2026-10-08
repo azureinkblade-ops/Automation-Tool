@@ -46,7 +46,7 @@ def run_fake_running_diagnostic(driver, run_id):
         inspect_fake_gateway_created(plan, gateway_image, client_image, *created)
         driver.start_container(gateway_id)
         driver.start_container(client_id)
-        event = parse_fake_pending_event(driver.pending_line(gateway_id))
+        event = parse_fake_pending_event(driver.pending_line(gateway_id, 10))
         for _ in range(2):
             running = _snapshot(driver, *identities)
             inspect_fake_gateway_running(plan, event, *running)
