@@ -1,6 +1,7 @@
 """One-send dynamic-body fixture tests; no listener, receiver, or provider."""
 
 from concurrent.futures import ThreadPoolExecutor
+import ast
 import hashlib
 import inspect
 import json
@@ -18,6 +19,12 @@ from tools.hermes_core.durable_invocation_authorization_store import (
     DurableAuthorizationStoreError,
     DurableInvocationAuthorizationStore,
 )
+from tools.hermes_core.kilo_fake_peer_binding import (
+    SyntheticAcceptedPeer,
+    SyntheticDockerSnapshot,
+    make_fake_peer_verifier,
+)
+from tools.hermes_core import kilo_fake_peer_binding
 from tools.hermes_core.opencode_sse_response import SseResponseDenied
 
 
@@ -70,6 +77,85 @@ def request(gate, **changes):
                   authorization=TOKEN, body=body(), now=NOW)
     values.update(changes)
     return gate.request(**values)
+
+
+def synthetic_snapshot(*, receiver_ip="172.20.0.2", extra_member=False):
+    members = {PEER[1]: receiver_ip, "a" * 64: "172.20.0.3"}
+    if extra_member:
+        members["b" * 64] = "172.20.0.4"
+    return SyntheticDockerSnapshot(
+        network={"id": PEER[0], "driver": "bridge", "internal": True,
+                 "members": members},
+        receiver={"id": PEER[1], "running": True,
+                  "network_ids": [PEER[0]], "published_ports": []},
+        gateway={"id": "a" * 64, "running": True,
+                 "network_ids": [PEER[0]], "published_ports": []},
+    )
+
+
+def test_synthetic_peer_snapshot_is_rechecked_inside_claim(tmp_path):
+    reads = []
+
+    def read_snapshot():
+        reads.append(1)
+        return synthetic_snapshot()
+
+    verifier = make_fake_peer_verifier(gateway_id="a" * 64,
+                                       read_snapshot=read_snapshot)
+    gate = fixture(tmp_path, verify_peer=verifier)
+    result = request(gate, connection_context=SyntheticAcceptedPeer("172.20.0.2"))
+    assert result.response_bytes == SSE
+    assert len(reads) == 2
+    assert gate.store.consumed_count() == 1
+
+
+def test_synthetic_peer_drift_before_claim_denies_without_consuming(tmp_path):
+    reads = []
+
+    def read_snapshot():
+        reads.append(1)
+        return synthetic_snapshot(extra_member=len(reads) == 2)
+
+    verifier = make_fake_peer_verifier(gateway_id="a" * 64,
+                                       read_snapshot=read_snapshot)
+    gate = fixture(tmp_path, verify_peer=verifier)
+    with pytest.raises(DurableAuthorizationStoreError, match="peer binding denied"):
+        request(gate, connection_context=SyntheticAcceptedPeer("172.20.0.2"))
+    assert len(reads) == 2
+    assert gate.store.consumed_count() == 0
+
+
+@pytest.mark.parametrize("context", [
+    SyntheticAcceptedPeer("172.20.0.3"),
+    (PEER[0], PEER[1]),
+])
+def test_synthetic_host_or_untyped_peer_denied(tmp_path, context):
+    verifier = make_fake_peer_verifier(gateway_id="a" * 64,
+                                       read_snapshot=synthetic_snapshot)
+    gate = fixture(tmp_path, verify_peer=verifier)
+    with pytest.raises(DynamicFakeDenied, match="peer binding denied"):
+        request(gate, connection_context=context)
+    assert gate.store.consumed_count() == 0
+
+
+def test_synthetic_snapshot_missing_denies_without_claim(tmp_path):
+    verifier = make_fake_peer_verifier(gateway_id="a" * 64,
+                                       read_snapshot=lambda: None)
+    gate = fixture(tmp_path, verify_peer=verifier)
+    with pytest.raises(DynamicFakeDenied, match="peer binding denied"):
+        request(gate, connection_context=SyntheticAcceptedPeer("172.20.0.2"))
+    assert gate.store.consumed_count() == 0
+
+
+def test_synthetic_peer_binding_has_no_runtime_imports():
+    tree = ast.parse(inspect.getsource(kilo_fake_peer_binding))
+    imports = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imports.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imports.add(node.module)
+    assert imports == {"dataclasses", "tools.hermes_core.docker_peer_candidate"}
 
 
 def test_dynamic_body_claims_once_and_replay_after_restart_is_denied(tmp_path):
