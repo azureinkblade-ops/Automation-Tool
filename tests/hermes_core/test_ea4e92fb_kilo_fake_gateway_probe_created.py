@@ -74,6 +74,19 @@ def test_exact_created_records_are_not_start_authority():
     }
 
 
+@pytest.mark.parametrize("field,value,reason", [
+    ("Id", "", "gateway returned ID denied"),
+    ("Name", "/wrong", "gateway name denied"),
+    ("Image", "sha256:" + "0" * 64, "gateway image ID denied"),
+    ("State", None, "gateway record shape denied"),
+])
+def test_gateway_identity_denial_is_field_specific(field, value, reason):
+    values = list(deepcopy(records()))
+    values[4][field] = value
+    with pytest.raises(FakeGatewayCreatedDenied, match=reason):
+        inspect_fake_gateway_created(*values)
+
+
 @pytest.mark.parametrize("index,path,value", [
     (4, ("Image",), "wrong"),
     (5, ("Config", "Cmd"), ["-e", "wrong"]),

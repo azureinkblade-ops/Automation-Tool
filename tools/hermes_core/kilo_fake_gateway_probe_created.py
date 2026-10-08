@@ -38,12 +38,22 @@ def inspect_fake_gateway_created(plan, gateway_image, client_image,
         host = container.get("HostConfig")
         state = container.get("State")
         settings = container.get("NetworkSettings")
-        if (type(identity) is not str or not identity
-                or container.get("Name") != "/" + plan[role + "_name"]
-                or container.get("Image") != image["Id"]
-                or not all(type(item) is dict for item in
-                           (config, host, state, settings))):
-            raise FakeGatewayCreatedDenied(role + " identity denied")
+        if type(identity) is not str or not identity:
+            raise FakeGatewayCreatedDenied(role + " returned ID denied")
+        if container.get("Name") != "/" + plan[role + "_name"]:
+            raise FakeGatewayCreatedDenied(role + " name denied")
+        if container.get("Image") != image["Id"]:
+            observed = container.get("Image")
+            suffix = (" (observed " + observed + ")"
+                      if type(observed) is str
+                      and observed.startswith("sha256:")
+                      and len(observed) == 71
+                      and all(char in "0123456789abcdef"
+                              for char in observed[7:]) else "")
+            raise FakeGatewayCreatedDenied(role + " image ID denied" + suffix)
+        if not all(type(item) is dict for item in
+                   (config, host, state, settings)):
+            raise FakeGatewayCreatedDenied(role + " record shape denied")
         expected_entry = (image["Config"]["Entrypoint"] if role == "gateway"
                           else ["node"])
         expected_cmd = (None if role == "gateway"
