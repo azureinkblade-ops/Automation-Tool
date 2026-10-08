@@ -8,6 +8,7 @@ GATEWAY_IMAGE = ("ea4e92ex-fake-gateway@sha256:"
                  "ba59552b483c3fb3a13880da33197f29cada670b80c38862eaa587bed84c3787")
 GATEWAY_PLATFORM_MANIFEST = "sha256:7d812fc364c8f4dd47e6b25f83d4074c212fa5ad348d4cda9251b8734557420b"
 CLIENT_IMAGE = "sha256:5086932cce035664aee758f4e136262e4e787338b12a1070fc11a84b66e77682"
+CLIENT_PLATFORM_CONFIG = "sha256:b67015bb794b472c6b1a106d9a1eef2546978d5dd9c4a5e2fb019fc1fc160449"
 BODY = b'{"model":"ea4e-inert"}'
 CLIENT_SCRIPT = (
     "const http=require('node:http');"
@@ -46,6 +47,7 @@ def build_fake_gateway_probe_plan(run_id: str) -> dict:
         "gateway_image": GATEWAY_IMAGE,
         "gateway_platform_manifest": GATEWAY_PLATFORM_MANIFEST,
         "client_image": CLIENT_IMAGE,
+        "client_platform_config": CLIENT_PLATFORM_CONFIG,
         "network_name": network,
         "gateway_name": gateway,
         "client_name": client,
