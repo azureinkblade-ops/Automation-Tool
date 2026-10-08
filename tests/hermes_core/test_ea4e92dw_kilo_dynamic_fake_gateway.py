@@ -25,6 +25,11 @@ from tools.hermes_core.kilo_fake_peer_binding import (
     make_fake_peer_verifier,
 )
 from tools.hermes_core import kilo_fake_peer_binding
+from tools.hermes_core.kilo_fake_raw_peer import (
+    FakeRawPeerBinding,
+    FakeRawPeerSnapshot,
+    make_fake_raw_peer_verifier,
+)
 from tools.hermes_core.opencode_sse_response import SseResponseDenied
 
 
@@ -156,6 +161,64 @@ def test_synthetic_peer_binding_has_no_runtime_imports():
         elif isinstance(node, ast.ImportFrom) and node.module:
             imports.add(node.module)
     assert imports == {"dataclasses", "tools.hermes_core.docker_peer_candidate"}
+
+
+def raw_snapshot(*, extra_member=False):
+    network_name = "ea4e-fake-attempt"
+    network = {"Id": PEER[0], "Name": network_name, "Driver": "bridge",
+               "Internal": True, "EnableIPv6": False,
+               "Containers": {
+                   PEER[1]: {"IPv4Address": "172.20.0.2/16"},
+                   "a" * 64: {"IPv4Address": "172.20.0.3/16"},
+               }}
+    if extra_member:
+        network["Containers"]["b" * 64] = {"IPv4Address": "172.20.0.4/16"}
+
+    def container(identity, ip):
+        return {"Id": identity, "State": {"Running": True},
+                "HostConfig": {"NetworkMode": network_name,
+                               "PublishAllPorts": False, "PortBindings": {}},
+                "NetworkSettings": {
+                    "Networks": {network_name: {"NetworkID": PEER[0],
+                                               "IPAddress": ip}},
+                    "Ports": {"3080/tcp": None},
+                }}
+
+    return FakeRawPeerSnapshot(network, container(PEER[1], "172.20.0.2"),
+                               container("a" * 64, "172.20.0.3"))
+
+
+def test_raw_peer_records_are_rechecked_at_fake_claim(tmp_path):
+    reads = []
+
+    def read_records():
+        reads.append(1)
+        return raw_snapshot()
+
+    verifier = make_fake_raw_peer_verifier(
+        binding=FakeRawPeerBinding("ea4e-fake-attempt", "a" * 64),
+        read_records=read_records)
+    gate = fixture(tmp_path, verify_peer=verifier)
+    assert request(gate, connection_context=SyntheticAcceptedPeer("172.20.0.2")).response_bytes == SSE
+    assert len(reads) == 2
+    assert gate.store.consumed_count() == 1
+
+
+def test_raw_peer_drift_before_claim_denies_without_consuming(tmp_path):
+    reads = []
+
+    def read_records():
+        reads.append(1)
+        return raw_snapshot(extra_member=len(reads) == 2)
+
+    verifier = make_fake_raw_peer_verifier(
+        binding=FakeRawPeerBinding("ea4e-fake-attempt", "a" * 64),
+        read_records=read_records)
+    gate = fixture(tmp_path, verify_peer=verifier)
+    with pytest.raises(DurableAuthorizationStoreError, match="peer binding denied"):
+        request(gate, connection_context=SyntheticAcceptedPeer("172.20.0.2"))
+    assert len(reads) == 2
+    assert gate.store.consumed_count() == 0
 
 
 def test_dynamic_body_claims_once_and_replay_after_restart_is_denied(tmp_path):

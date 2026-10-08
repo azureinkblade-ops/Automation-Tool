@@ -20,6 +20,13 @@ class FakeRawPeerBinding:
     gateway_id: str
 
 
+@dataclass(frozen=True)
+class FakeRawPeerSnapshot:
+    network: dict
+    receiver: dict
+    gateway: dict
+
+
 def inspect_fake_raw_peer(scope, binding, context, network, receiver, gateway):
     """Compare supplied records only; no Docker read or socket ownership proof."""
     network_id = getattr(scope, "network_id", None)
@@ -97,3 +104,22 @@ def inspect_fake_raw_peer(scope, binding, context, network, receiver, gateway):
     except PeerCandidateDenied as exc:
         raise FakeRawPeerDenied("socket peer comparison denied") from exc
     return {"decision": "FAKE_RAW_PEER_MATCH_ONLY", "peer_qualified": False}
+
+
+def make_fake_raw_peer_verifier(*, binding, read_records):
+    """Inject a synthetic record read on each fake gateway validation."""
+    if type(binding) is not FakeRawPeerBinding or not callable(read_records):
+        raise ValueError("fake raw peer reader denied")
+
+    def verify(scope, context):
+        snapshot = read_records()
+        if type(snapshot) is not FakeRawPeerSnapshot:
+            return False
+        try:
+            inspect_fake_raw_peer(scope, binding, context, snapshot.network,
+                                  snapshot.receiver, snapshot.gateway)
+        except FakeRawPeerDenied:
+            return False
+        return True
+
+    return verify
