@@ -42,7 +42,7 @@ def inspect_fake_gateway_created(plan, gateway_image, client_image,
             raise FakeGatewayCreatedDenied(role + " returned ID denied")
         if container.get("Name") != "/" + plan[role + "_name"]:
             raise FakeGatewayCreatedDenied(role + " name denied")
-        if container.get("Image") != image["Id"]:
+        if container.get("Image") != plan[role + "_index_id"]:
             observed = container.get("Image")
             suffix = (" (observed " + observed + ")"
                       if type(observed) is str

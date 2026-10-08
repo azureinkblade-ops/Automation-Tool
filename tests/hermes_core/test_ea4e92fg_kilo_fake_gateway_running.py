@@ -21,9 +21,9 @@ def records():
                    client_id: {"IPv4Address": "172.20.0.2/16"},
                    gateway_id: {"IPv4Address": "172.20.0.3/16"},
                }}
-    def container(role, identity, ip, image):
+    def container(role, identity, ip):
         return {"Id": identity, "Name": "/" + plan[role + "_name"],
-                "Image": image,
+                "Image": plan[role + "_index_id"],
                 "State": {"Running": True},
                 "Config": {"Image": plan[role + "_image"],
                            "Labels": {"hermes.ea4e.run": plan["run_id"]}},
@@ -41,10 +41,8 @@ def records():
                              plan["expected_event"]["body_bytes"],
                              plan["expected_event"]["body_sha256"])
     return [plan, event, network,
-            container("gateway", gateway_id, "172.20.0.3",
-                      plan["gateway_platform_manifest"]),
-            container("client", client_id, "172.20.0.2",
-                      plan["client_platform_config"])]
+            container("gateway", gateway_id, "172.20.0.3"),
+            container("client", client_id, "172.20.0.2")]
 
 
 def test_matching_running_records_remain_non_authoritative():
@@ -65,6 +63,7 @@ def test_matching_running_records_remain_non_authoritative():
     lambda v: v[2].update(Internal=False),
     lambda v: v[2]["Containers"].update({"other": {"IPv4Address": "172.20.0.4/16"}}),
     lambda v: v[3].update(Image="wrong"),
+    lambda v: v[3].update(Image=v[0]["gateway_platform_manifest"]),
     lambda v: v[3].update(Mounts=[{}]),
     lambda v: v[4]["State"].update(Running=False),
     lambda v: v[4]["Config"]["Labels"].update({"hermes.ea4e.run": "wrong"}),

@@ -15,8 +15,10 @@ RUN_ID = "a" * 32
 def test_exact_two_image_private_probe_plan_has_no_authority():
     plan = subject.build_fake_gateway_probe_plan(RUN_ID)
     assert plan["gateway_image"] == subject.GATEWAY_IMAGE
+    assert plan["gateway_index_id"] == subject.GATEWAY_INDEX_ID
     assert plan["gateway_platform_manifest"] == subject.GATEWAY_PLATFORM_MANIFEST
     assert plan["client_image"] == subject.CLIENT_IMAGE
+    assert plan["client_index_id"] == subject.CLIENT_IMAGE
     assert "--internal" in plan["network_create"]
     for command in (plan["gateway_create"], plan["client_create"]):
         assert command[:3] == ["docker", "container", "create"]

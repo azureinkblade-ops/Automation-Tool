@@ -36,7 +36,8 @@ def records():
     for role, image in zip(("gateway", "client"), images):
         containers.append({
             "Id": role + "-id", "Name": "/" + plan[role + "_name"],
-            "Image": image["Id"], "State": {"Status": "created", "Running": False},
+            "Image": plan[role + "_index_id"],
+            "State": {"Status": "created", "Running": False},
             "Config": {"Image": plan[role + "_image"], "User": "node",
                        "Entrypoint": image["Config"]["Entrypoint"]
                        if role == "gateway" else ["node"],
@@ -78,6 +79,7 @@ def test_exact_created_records_are_not_start_authority():
     ("Id", "", "gateway returned ID denied"),
     ("Name", "/wrong", "gateway name denied"),
     ("Image", "sha256:" + "0" * 64, "gateway image ID denied"),
+    ("Image", GATEWAY_PLATFORM_MANIFEST, "gateway image ID denied"),
     ("State", None, "gateway record shape denied"),
 ])
 def test_gateway_identity_denial_is_field_specific(field, value, reason):

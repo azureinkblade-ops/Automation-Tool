@@ -36,13 +36,11 @@ def inspect_fake_gateway_running(plan, event, network, gateway, client):
                (network_id, gateway_id, client_id)):
         raise FakeGatewayRunningDenied("running identity denied")
     label = plan["run_id"]
-    for role, container, expected_image in (
-            ("gateway", gateway, plan["gateway_platform_manifest"]),
-            ("client", client, plan["client_platform_config"])):
+    for role, container in (("gateway", gateway), ("client", client)):
         config = container.get("Config")
         host = container.get("HostConfig")
         if (container.get("Name") != "/" + plan[role + "_name"]
-                or container.get("Image") != expected_image
+                or container.get("Image") != plan[role + "_index_id"]
                 or type(config) is not dict or type(host) is not dict
                 or config.get("Image") != plan[role + "_image"]
                 or type(config.get("Labels")) is not dict
