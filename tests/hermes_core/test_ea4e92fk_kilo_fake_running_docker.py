@@ -7,6 +7,7 @@ import subprocess
 import pytest
 
 from tools.hermes_core.kilo_fake_gateway_probe_plan import build_fake_gateway_probe_plan
+from tools.hermes_core import kilo_fake_running_diagnostic as coordinator
 from tools.hermes_core.kilo_fake_running_docker import FakeRunningDockerDriver
 from tools.hermes_core.kilo_fake_created_docker import FakeCreatedDockerDenied
 
@@ -32,6 +33,12 @@ class FakeCLI:
         self.calls.append(args)
         def result(value="", code=0, error=""):
             return subprocess.CompletedProcess(argv, code, value, error)
+        if args[:4] == ["image", "inspect", "--platform", "linux/amd64"]:
+            return result(json.dumps([{"Id": args[4]}]))
+        if args == ["network", "ls", "--format", "{{.Name}}"]:
+            return result("")
+        if args == ["container", "ls", "--all", "--format", "{{.Names}}"]:
+            return result("")
         if args == self.plan["network_create"][1:]:
             self.network = {"Id": NETWORK_ID, "Name": self.plan["network_name"],
                             "Labels": {"hermes.ea4e.run": self.plan["run_id"]},
@@ -65,7 +72,8 @@ class FakeCLI:
             if args == ["container", "rm", "--force", identity]:
                 self.containers.pop(role, None)
                 return result(identity + "\n")
-        if args == ["network", "inspect", self.plan["network_name"]]:
+        if args in (["network", "inspect", self.plan["network_name"]],
+                    ["network", "inspect", NETWORK_ID]):
             return result(json.dumps([self.network]) if self.network else "",
                           0 if self.network else 1,
                           "" if self.network else "No such network")
@@ -184,3 +192,19 @@ def test_unowned_start_and_wrong_pending_scope_have_no_cli_call(make_driver):
     with pytest.raises(FakeCreatedDockerDenied, match="pending reader scope denied"):
         driver.pending_line(CLIENT_ID, 10)
     assert len(cli.calls) == count
+
+
+def test_coordinator_and_driver_compose_fake_only(make_driver, monkeypatch):
+    plan, driver, cli = make_driver()
+    monkeypatch.setattr(coordinator, "inspect_fake_gateway_preflight",
+                        lambda *args: None)
+    monkeypatch.setattr(coordinator, "inspect_fake_gateway_created",
+                        lambda *args: None)
+    monkeypatch.setattr(coordinator, "inspect_fake_gateway_running",
+                        lambda *args: None)
+    result = coordinator.run_fake_running_diagnostic(driver, plan["run_id"])
+    assert result["decision"] == "FAKE_RUNNING_DIAGNOSTIC_ONLY"
+    assert result["running_matches"] == 2
+    assert result["release_signals"] == 0
+    assert cli.containers == {} and cli.network is None
+    assert not any("signal" in " ".join(args) for args in cli.calls)

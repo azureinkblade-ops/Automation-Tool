@@ -34,3 +34,8 @@ evidence, not authenticated control or production readiness.
 `RELEASE_SIGNAL_CAPABILITY=NO`
 `RECEIVER_EXECUTED=NO`
 `PRODUCTION_READY=NO`
+
+Post-checkpoint fake integration: one additional test composes the 92FJ
+coordinator with the 92FK driver through the injected fake CLI, including
+created IDs, starts, pending log, two snapshot reads, and cleanup. It sends
+no signal. The affected ladder is now **120/120**; no Docker daemon call ran.
