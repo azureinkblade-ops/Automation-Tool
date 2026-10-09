@@ -192,6 +192,48 @@ class SQLiteDelegationResultStoreTests(unittest.TestCase):
             len(self.authority.list_mailbox(self.task.originator_agent_id)), 1
         )
 
+    def test_new_success_is_denied_after_delegation_cancellation(self):
+        self.authority.cancel_delegation(
+            self.task.delegation_id, reason="operator cancellation",
+            cancelled_at="2026-08-27T12:05:03Z",
+        )
+        with self.assertRaises(DelegationIntegrityError):
+            self.record()
+        with self.assertRaises(DelegationNotFoundError):
+            self.store.get_result(self.lease.attempt_id)
+        self.assertEqual(self.authority.list_mailbox(self.task.originator_agent_id), [])
+
+    def test_new_success_is_denied_after_lease_revocation(self):
+        self.authority.revoke_lease(
+            self.lease.lease_id, reason="operator revocation",
+            revoked_at="2026-08-27T12:05:03Z",
+        )
+        with self.assertRaises(DelegationIntegrityError):
+            self.record()
+        with self.assertRaises(DelegationNotFoundError):
+            self.store.get_result(self.lease.attempt_id)
+
+    def test_cancelled_result_can_report_after_revocation(self):
+        self.authority.revoke_lease(
+            self.lease.lease_id, reason="operator revocation",
+            revoked_at="2026-08-27T12:05:03Z",
+        )
+        cancelled = make_result(
+            self.task, self.lease, self.receipt, outcome="CANCELLED",
+            result_payload={"summary": "Stopped after revocation."},
+            output_manifest=[],
+        )
+        durable, _, _ = self.record(cancelled)
+        self.assertEqual(durable.outcome, "CANCELLED")
+
+    def test_prior_result_replays_after_cancellation(self):
+        first = self.record()
+        self.authority.cancel_delegation(
+            self.task.delegation_id, reason="operator cancellation",
+            cancelled_at="2026-08-27T12:05:06Z",
+        )
+        self.assertEqual(self.record(), first)
+
     def test_divergent_result_for_same_attempt_conflicts(self):
         self.record()
         divergent = make_result(

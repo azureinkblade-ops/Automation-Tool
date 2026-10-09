@@ -201,6 +201,10 @@ class SQLiteDelegationResultStore:
                 )
                 if receipt.outcome != "ACCEPTED" or any(a != b for a,b in checks):
                     raise DelegationIntegrityError("result lineage mismatch")
+                if result.outcome == "SUCCEEDED" and (
+                    delegation_row["status"] != "CREATED" or lease_row["status"] != "ACTIVE"
+                ):
+                    raise DelegationIntegrityError("inactive delegation or lease cannot produce a new success")
                 self._verify_result_contract(result, envelope, lease, validated_result_schema_id)
                 text, checksum = canonical_json(result.to_canonical_dict()), sha256_payload(result.to_canonical_dict())
                 conn.execute("INSERT INTO delegation_results VALUES(?,?,?,?,?,?,?,?, 'RESULT_VERIFIED',?,?)",
