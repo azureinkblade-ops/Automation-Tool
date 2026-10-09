@@ -5,6 +5,7 @@ import hashlib
 import pytest
 
 from tests.hermes_core.test_ea4e92fy_agent_start_binding import start_for
+from tools.hermes_core.agent_ping_result import AGENT_PING_SCHEMA_ID
 from tests.hermes_core.test_sqlite_delegation_delivery import make_receipt
 from tests.hermes_core.test_sqlite_delegation_store import make_envelope, make_lease
 from tools.hermes_core.agent_start_witness import load_bound_agent_start
@@ -18,8 +19,17 @@ from tools.hermes_core.sqlite_delegation_store import SQLiteDelegationStore
 from tools.hermes_core.sqlite_execution_start_store import SQLiteExecutionStartStore
 
 
-def stores_and_artifacts(tmp_path, agent, *, persist_start=True, start_changes=None):
-    task = make_envelope(requested_target_agent_id=agent)
+def stores_and_artifacts(tmp_path, agent, *, persist_start=True, start_changes=None,
+                         ping=False):
+    task_values = {"requested_target_agent_id": agent}
+    if ping:
+        task_values.update(
+            expected_result_schema_id=AGENT_PING_SCHEMA_ID,
+            expected_evidence=[{
+                "ordinal": 0, "evidence_type": "receiver_acceptance_sha256",
+            }],
+        )
+    task = make_envelope(**task_values)
     lease = make_lease(task)
     authority = SQLiteDelegationStore(tmp_path / "authority.sqlite3")
     authority.create_delegation(task)
