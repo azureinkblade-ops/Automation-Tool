@@ -64,9 +64,30 @@ pending header. It exposes a candidate hash only; it neither writes a store
 nor returns a release receipt. `tests/hermes_core/test_ea4e92fm_kilo_send_claim.py`
 covers canonical ordering, malformed identities/timestamps, and mismatched
 pending material. The affected pure-frame/fake-gateway ladder passed 58/58.
-The separately proposed durable send-claim store remains unimplemented.
+At this first slice, the separately proposed durable send-claim store was
+not yet implemented; the next isolated slice is recorded below.
 
-`REQUEST_BOUND_DURABLE_RECEIPT=NO`
+## Isolated temp-SQLite qualification
+
+`tools/hermes_core/durable_kilo_send_claim_store.py` now implements an
+explicitly bootstrapped, host-owned append-only store. It anchors instance ID,
+generation, and hash-chain head in a separate fsynced file, verifies every
+canonical row before each claim, coordinates competing processes through a
+dedicated SQLite lock, and returns the chain receipt only after the DB commit,
+anchor publication, and reread agree. Bootstrap, duplicate IDs, malformed
+rows, DB/anchor rollback, commit-to-anchor crash, and concurrent claims are
+covered in temp stores by
+`tests/hermes_core/test_ea4e92fm_durable_kilo_send_claim_store.py`.
+The focused store/frame/request-shape/fake-gateway gate passed 105/105.
+
+This is isolated persistence qualification. It is not connected to the
+invocation claim callback, control-frame release, Docker, real Kilo, or
+production activation. A caller must still prove the existing invocation
+claim was consumed for the exact request before using this store. Separate
+operational review is required for key custody, anchor durability on the
+target filesystem, backup/restore, and the two-store crash boundary.
+
+`REQUEST_BOUND_DURABLE_RECEIPT=QUALIFIED_IN_ISOLATION_ONLY`
 `INVOCATION_CLAIM_ALREADY_DURABLE=YES`
 `CONTROL_RELEASE_AUTHORIZED=NO`
 `RECEIVER_EXECUTED=NO`
