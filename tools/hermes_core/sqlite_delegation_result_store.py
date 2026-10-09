@@ -8,12 +8,14 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import closing
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .agent_ping_result import AGENT_PING_SCHEMA_ID
 from .delegated_task import (
     DelegationIntegrityError,
     DelegationNotFoundError,
+    _parse_timestamp,
     reconstruct_capability_lease,
 )
 from .delegation_delivery import build_mailbox_message, reconstruct_delegation_receipt
@@ -53,8 +55,9 @@ CREATE TABLE IF NOT EXISTS result_deliveries (
 
 
 class SQLiteDelegationResultStore:
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, *, clock=None):
         self.path = Path(path)
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._initialize()
     def _connect(self):
         conn = sqlite3.connect(self.path, timeout=5)
@@ -224,6 +227,15 @@ class SQLiteDelegationResultStore:
                     delegation_row["status"] != "CREATED" or lease_row["status"] != "ACTIVE"
                 ):
                     raise DelegationIntegrityError("inactive delegation or lease cannot produce a new success")
+                if result.outcome == "SUCCEEDED" and validated_result_schema_id == AGENT_PING_SCHEMA_ID:
+                    now = self._clock()
+                    if type(now) is not datetime or now.tzinfo is None or now.utcoffset() is None:
+                        raise DelegationIntegrityError("trusted ping clock must be timezone-aware")
+                    now = now.astimezone(timezone.utc).replace(microsecond=0)
+                    if (not _parse_timestamp(lease.not_before) <= now < _parse_timestamp(lease.expires_at)
+                            or _parse_timestamp(result.completed_at) > now
+                            or delivered_at != now.strftime("%Y-%m-%dT%H:%M:%SZ")):
+                        raise DelegationIntegrityError("ping result is outside trusted lease time")
                 self._verify_result_contract(result, envelope, lease, receipt, validated_result_schema_id)
                 text, checksum = canonical_json(result.to_canonical_dict()), sha256_payload(result.to_canonical_dict())
                 conn.execute("INSERT INTO delegation_results VALUES(?,?,?,?,?,?,?,?, 'RESULT_VERIFIED',?,?)",

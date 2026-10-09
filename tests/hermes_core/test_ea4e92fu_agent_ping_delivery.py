@@ -1,5 +1,7 @@
 """Fake-only instance-bound ping result and originator mailbox recovery."""
 
+from datetime import datetime, timezone
+
 import pytest
 
 from tests.hermes_core.test_ea4e92ft_agent_ping_result import materials
@@ -10,6 +12,11 @@ from tools.hermes_core.delegated_task import DelegationIntegrityError, Delegatio
 from tools.hermes_core.hashing import canonical_json
 from tools.hermes_core.sqlite_delegation_result_store import SQLiteDelegationResultStore
 from tools.hermes_core.sqlite_delegation_store import SQLiteDelegationStore
+
+
+def ping_store(path, at="2026-08-27T12:05:05Z"):
+    instant = datetime.strptime(at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    return SQLiteDelegationResultStore(path, clock=lambda: instant)
 
 
 def accepted_authority(tmp_path, agent):
@@ -41,7 +48,7 @@ def test_validated_synthetic_ping_returns_to_originator_once(tmp_path, agent):
         started_at="2026-08-27T12:05:03Z",
         completed_at="2026-08-27T12:05:04Z",
     )
-    store = SQLiteDelegationResultStore(authority.path)
+    store = ping_store(authority.path)
     durable, delivery, message_id = store.record_verified_result_and_delivery(
         result, validated_result_schema_id=task.expected_result_schema_id,
         delivered_at="2026-08-27T12:05:05Z",
@@ -71,7 +78,7 @@ def test_forged_ping_does_not_write_a_result(tmp_path):
     authority, task, lease, receipt, bound, body = accepted_authority(tmp_path, "kilo-cli-agent")
     body["result_payload"]["statement"] = "forged"
     candidate = AgentResultCandidate(bound, canonical_json(body))
-    store = SQLiteDelegationResultStore(authority.path)
+    store = ping_store(authority.path)
     with pytest.raises(DelegationIntegrityError):
         build_validated_agent_ping_result(
             task, lease, receipt, candidate,
@@ -110,7 +117,7 @@ def test_self_declared_ping_schema_cannot_store_forged_result(tmp_path, forgery)
         task, lease, receipt, result_payload=payload,
         output_manifest=outputs, evidence_manifest=evidence,
     )
-    store = SQLiteDelegationResultStore(authority.path)
+    store = ping_store(authority.path)
     with pytest.raises(DelegationIntegrityError):
         store.record_verified_result_and_delivery(
             result, validated_result_schema_id=task.expected_result_schema_id,
@@ -118,3 +125,85 @@ def test_self_declared_ping_schema_cannot_store_forged_result(tmp_path, forgery)
         )
     with pytest.raises(DelegationNotFoundError):
         store.get_result(lease.attempt_id)
+
+
+@pytest.mark.parametrize("at,allowed", [
+    ("2026-08-27T11:59:59Z", False),
+    ("2026-08-27T12:00:00Z", False),
+    ("2026-08-27T12:05:05Z", True),
+    ("2026-08-27T12:10:00Z", False),
+    ("2026-08-27T12:10:01Z", False),
+])
+def test_new_ping_success_uses_store_clock_at_lease_boundary(tmp_path, at, allowed):
+    authority, task, lease, receipt, bound, body = accepted_authority(
+        tmp_path, "codex-cli-agent",
+    )
+    candidate = AgentResultCandidate(bound, canonical_json(body))
+    result = build_validated_agent_ping_result(
+        task, lease, receipt, candidate,
+        started_at="2026-08-27T12:05:03Z",
+        completed_at="2026-08-27T12:05:04Z",
+    )
+    store = ping_store(authority.path, at=at)
+    if allowed:
+        store.record_verified_result_and_delivery(
+            result, validated_result_schema_id=task.expected_result_schema_id,
+            delivered_at="2026-08-27T12:05:05Z",
+        )
+    else:
+        with pytest.raises(DelegationIntegrityError):
+            store.record_verified_result_and_delivery(
+                result, validated_result_schema_id=task.expected_result_schema_id,
+                delivered_at="2026-08-27T12:05:05Z",
+            )
+        with pytest.raises(DelegationNotFoundError):
+            store.get_result(lease.attempt_id)
+        assert authority.list_mailbox(task.originator_agent_id) == []
+
+
+def test_exact_ping_replay_after_expiry_does_not_send_again(tmp_path):
+    authority, task, lease, receipt, bound, body = accepted_authority(
+        tmp_path, "kilo-cli-agent",
+    )
+    result = build_validated_agent_ping_result(
+        task, lease, receipt, AgentResultCandidate(bound, canonical_json(body)),
+        started_at="2026-08-27T12:05:03Z",
+        completed_at="2026-08-27T12:05:04Z",
+    )
+    first = ping_store(authority.path).record_verified_result_and_delivery(
+        result, validated_result_schema_id=task.expected_result_schema_id,
+        delivered_at="2026-08-27T12:05:05Z",
+    )
+    replay = ping_store(authority.path, at="2026-08-27T12:10:01Z")
+    assert replay.record_verified_result_and_delivery(
+        result, validated_result_schema_id=task.expected_result_schema_id,
+        delivered_at="2026-08-27T12:10:01Z",
+    ) == first
+    assert len(authority.list_mailbox(task.originator_agent_id)) == 1
+
+
+@pytest.mark.parametrize("clock,delivered_at", [
+    (lambda: datetime(2026, 8, 27, 12, 5, 5), "2026-08-27T12:05:05Z"),
+    (lambda: datetime(2026, 8, 27, 12, 5, 5, tzinfo=timezone.utc),
+     "2026-08-27T12:05:06Z"),
+])
+def test_ping_new_success_rejects_invalid_clock_or_claimed_delivery_time(
+    tmp_path, clock, delivered_at,
+):
+    authority, task, lease, receipt, bound, body = accepted_authority(
+        tmp_path, "opencode-cli-agent",
+    )
+    result = build_validated_agent_ping_result(
+        task, lease, receipt, AgentResultCandidate(bound, canonical_json(body)),
+        started_at="2026-08-27T12:05:03Z",
+        completed_at="2026-08-27T12:05:04Z",
+    )
+    store = SQLiteDelegationResultStore(authority.path, clock=clock)
+    with pytest.raises(DelegationIntegrityError):
+        store.record_verified_result_and_delivery(
+            result, validated_result_schema_id=task.expected_result_schema_id,
+            delivered_at=delivered_at,
+        )
+    with pytest.raises(DelegationNotFoundError):
+        store.get_result(lease.attempt_id)
+    assert authority.list_mailbox(task.originator_agent_id) == []
