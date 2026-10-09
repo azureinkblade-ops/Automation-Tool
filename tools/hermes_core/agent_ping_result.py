@@ -9,6 +9,7 @@ from tools.hermes_core.delegated_task import (
     DelegatedCapabilityLease, DelegatedTaskEnvelope, DelegationIntegrityError,
 )
 from tools.hermes_core.delegation_delivery import DelegationReceipt
+from tools.hermes_core.delegation_result import DelegationResult, build_delegation_result
 from tools.hermes_core.hashing import canonical_json, sha256_payload
 
 
@@ -94,4 +95,41 @@ def validate_agent_ping_candidate(
         schema_hash=AGENT_PING_SCHEMA_HASH,
         candidate_hash=sha256_payload(body),
         receipt_hash=receipt.artifact_hash,
+    )
+
+
+def build_validated_agent_ping_result(
+    envelope: DelegatedTaskEnvelope,
+    lease: DelegatedCapabilityLease,
+    receipt: DelegationReceipt,
+    candidate: AgentResultCandidate,
+    *,
+    started_at: str,
+    completed_at: str,
+) -> DelegationResult:
+    """Build one canonical ping result; durable authority is checked by the caller."""
+    validate_agent_ping_candidate(envelope, lease, receipt, candidate)
+    body = json.loads(candidate.candidate_json)
+    return build_delegation_result(
+        delegation_id=envelope.delegation_id,
+        delegated_task_hash=envelope.artifact_hash,
+        authorization_id=lease.authorization_id,
+        authorization_hash=lease.authorization_hash,
+        attempt_id=lease.attempt_id,
+        attempt_hash=lease.attempt_hash,
+        launch_attempt_id=receipt.launch_attempt_id,
+        launch_attempt_hash=receipt.launch_attempt_hash,
+        receipt_id=receipt.receipt_id,
+        receipt_hash=receipt.artifact_hash,
+        receiver_agent_id=receipt.receiver_agent_id,
+        receiver_descriptor_hash=receipt.receiver_descriptor_hash,
+        runtime_run_id=receipt.runtime_run_id,
+        outcome=body["outcome"],
+        result_payload=body["result_payload"],
+        output_manifest=body["output_manifest"],
+        evidence_manifest=body["evidence_manifest"],
+        started_at=started_at,
+        completed_at=completed_at,
+        error_code=body["error_code"],
+        error_summary=body["error_summary"],
     )

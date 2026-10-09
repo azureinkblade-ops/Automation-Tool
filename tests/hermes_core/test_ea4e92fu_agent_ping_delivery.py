@@ -3,8 +3,7 @@
 import pytest
 
 from tests.hermes_core.test_ea4e92ft_agent_ping_result import materials
-from tests.hermes_core.test_sqlite_delegation_result_store import make_result
-from tools.hermes_core.agent_ping_result import validate_agent_ping_candidate
+from tools.hermes_core.agent_ping_result import build_validated_agent_ping_result
 from tools.hermes_core.agent_result_candidate import AgentResultCandidate
 from tools.hermes_core.delegated_task import DelegationIntegrityError, DelegationNotFoundError
 from tools.hermes_core.hashing import canonical_json
@@ -36,15 +35,14 @@ def accepted_authority(tmp_path, agent):
 def test_validated_synthetic_ping_returns_to_originator_once(tmp_path, agent):
     authority, task, lease, receipt, bound, body = accepted_authority(tmp_path, agent)
     candidate = AgentResultCandidate(bound, canonical_json(body))
-    validated = validate_agent_ping_candidate(task, lease, receipt, candidate)
-    result = make_result(
-        task, lease, receipt,
-        result_payload=body["result_payload"], output_manifest=[],
-        evidence_manifest=body["evidence_manifest"],
+    result = build_validated_agent_ping_result(
+        task, lease, receipt, candidate,
+        started_at="2026-08-27T12:05:03Z",
+        completed_at="2026-08-27T12:05:04Z",
     )
     store = SQLiteDelegationResultStore(authority.path)
     durable, delivery, message_id = store.record_verified_result_and_delivery(
-        result, validated_result_schema_id=validated.schema_id,
+        result, validated_result_schema_id=task.expected_result_schema_id,
         delivered_at="2026-08-27T12:05:05Z",
     )
     assert durable == result
@@ -52,7 +50,7 @@ def test_validated_synthetic_ping_returns_to_originator_once(tmp_path, agent):
     assert restarted.get_message(message_id).recipient_agent_id == task.originator_agent_id
     assert restarted.message_body(message_id)["result"]["result_id"] == result.result_id
     replay = store.record_verified_result_and_delivery(
-        result, validated_result_schema_id=validated.schema_id,
+        result, validated_result_schema_id=task.expected_result_schema_id,
         delivered_at="2026-08-27T12:05:08Z",
     )
     assert replay == (durable, delivery, message_id)
@@ -74,6 +72,10 @@ def test_forged_ping_does_not_write_a_result(tmp_path):
     candidate = AgentResultCandidate(bound, canonical_json(body))
     store = SQLiteDelegationResultStore(authority.path)
     with pytest.raises(DelegationIntegrityError):
-        validate_agent_ping_candidate(task, lease, receipt, candidate)
+        build_validated_agent_ping_result(
+            task, lease, receipt, candidate,
+            started_at="2026-08-27T12:05:03Z",
+            completed_at="2026-08-27T12:05:04Z",
+        )
     with pytest.raises(DelegationNotFoundError):
         store.get_result(lease.attempt_id)
