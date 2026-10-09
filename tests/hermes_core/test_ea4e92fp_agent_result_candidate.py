@@ -18,9 +18,9 @@ def lineage(agent):
     return bind_receiver_lineage(task, lease, make_receipt(task, lease), receiver_agent_id=agent)
 
 
-def candidate(schema_id):
+def candidate():
     return {
-        "schema_id": schema_id, "outcome": "SUCCEEDED",
+        "schema_version": "1", "outcome": "SUCCEEDED",
         "result_payload": {"summary": "Synthetic result."},
         "output_manifest": [], "evidence_manifest": [],
         "error_code": None, "error_summary": None,
@@ -28,11 +28,11 @@ def candidate(schema_id):
 
 
 @pytest.mark.parametrize("agent", [
-    "codex-cli-agent", "kilo-cli-agent", "opencode-cli-agent",
+    "kilo-cli-agent", "opencode-cli-agent",
 ])
 def test_structured_candidate_is_bound_but_not_verified(agent):
     bound = lineage(agent)
-    payload = candidate(bound.expected_result_schema_id)
+    payload = candidate()
     result = decode_agent_result_candidate(
         bound, VerifiedResult(valid=True, payload={"type": "text", "text": json.dumps(payload)}),
     )
@@ -46,7 +46,7 @@ def test_structured_candidate_is_bound_but_not_verified(agent):
     "A successful response.",
     "{not-json}",
     "NaN",
-    '{"schema_id":"first","schema_id":"second"}',
+    '{"schema_version":"1","schema_version":"2"}',
     "[]",
 ])
 def test_unstructured_or_nonfinite_terminal_text_is_denied(text):
@@ -58,7 +58,7 @@ def test_unstructured_or_nonfinite_terminal_text_is_denied(text):
 
 
 @pytest.mark.parametrize("change", [
-    lambda data: data.update(schema_id="wrong-schema"),
+    lambda data: data.update(schema_version="2"),
     lambda data: data.pop("evidence_manifest"),
     lambda data: data.update(output_manifest=["not-an-object"]),
     lambda data: data.update(outcome="UNKNOWN"),
@@ -66,7 +66,7 @@ def test_unstructured_or_nonfinite_terminal_text_is_denied(text):
 ])
 def test_divergent_candidate_contract_is_denied(change):
     bound = lineage("kilo-cli-agent")
-    payload = candidate(bound.expected_result_schema_id)
+    payload = candidate()
     change(payload)
     with pytest.raises(DelegationIntegrityError):
         decode_agent_result_candidate(
@@ -79,4 +79,12 @@ def test_adapter_parse_success_alone_is_insufficient():
     with pytest.raises(DelegationIntegrityError):
         decode_agent_result_candidate(
             bound, VerifiedResult(valid=True, payload={"type": "text", "text": "done"}),
+        )
+
+
+def test_codex_result_uses_separate_contract():
+    with pytest.raises(DelegationIntegrityError):
+        decode_agent_result_candidate(
+            lineage("codex-cli-agent"),
+            VerifiedResult(valid=True, payload={"type": "text", "text": json.dumps(candidate())}),
         )

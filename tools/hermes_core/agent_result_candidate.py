@@ -10,9 +10,10 @@ from tools.hermes_core.receiver_adapter import VerifiedResult
 
 
 _RESULT_FIELDS = frozenset({
-    "schema_id", "outcome", "result_payload", "output_manifest",
+    "schema_version", "outcome", "result_payload", "output_manifest",
     "evidence_manifest", "error_code", "error_summary",
 })
+_TEXT_RECEIVERS = frozenset({"kilo-cli-agent", "opencode-cli-agent"})
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,8 @@ def decode_agent_result_candidate(
     """Require an exact structured candidate; evidence must be verified elsewhere."""
     if type(lineage) is not BoundReceiverLineage or type(adapter_result) is not VerifiedResult:
         raise DelegationIntegrityError("agent result candidate inputs denied")
+    if lineage.receiver_agent_id not in _TEXT_RECEIVERS:
+        raise DelegationIntegrityError("receiver uses a different result contract")
     payload = adapter_result.payload
     if (not adapter_result.valid or type(payload) is not dict
             or payload.get("type") != "text" or type(payload.get("text")) is not str):
@@ -52,7 +55,7 @@ def decode_agent_result_candidate(
     except (ValueError, TypeError) as exc:
         raise DelegationIntegrityError("agent result text is not strict JSON") from exc
     if (type(candidate) is not dict or set(candidate) != _RESULT_FIELDS
-            or candidate["schema_id"] != lineage.expected_result_schema_id
+            or candidate["schema_version"] != "1"
             or candidate["outcome"] not in ("SUCCEEDED", "FAILED", "CANCELLED")
             or type(candidate["result_payload"]) is not dict
             or type(candidate["output_manifest"]) is not list

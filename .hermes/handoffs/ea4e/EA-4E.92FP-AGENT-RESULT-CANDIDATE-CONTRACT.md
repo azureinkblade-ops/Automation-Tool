@@ -18,16 +18,22 @@ OpenCode output paths.
 
 ## This slice
 
-`agent_result_candidate.py` accepts only an already bound canonical lineage
-and a valid adapter terminal-text result. It decodes exact-key, strict JSON
-with the delegated schema ID, outcome, payload, manifests, and error fields.
-Malformed text, duplicate keys, non-finite values, wrong schema, and missing
-or extra fields are denied. The return type is intentionally named
+`agent_result_candidate.py` accepts only an already bound Kilo/OpenCode
+lineage and a valid adapter terminal-text result. Codex uses its separate
+structured-output adapter contract. This decoder requires exact-key, strict
+JSON with canonical schema version `1`, outcome, payload, manifests, and
+error fields. Malformed text, duplicate keys, non-finite values, wrong
+version, and missing or extra fields are denied. The schema ID is external
+to the text; this decoder does not validate it. The return type is intentionally named
 `AgentResultCandidate`, not `DelegationResult` or verified evidence. No store
-or production call site consumes it. Synthetic tests cover Codex, Kilo, and
-OpenCode shapes; they never invoke an agent.
+or production call site consumes it. Synthetic tests cover Kilo/OpenCode
+candidate shapes and deny a Codex text candidate; they never invoke an agent.
 The bounded fake-only candidate, lineage, delegation/result, governed
 receiver, and send-claim ladder passed 187 tests and 26 subtests.
+
+Corrective qualification against the separate Codex schema suites passed
+239 tests and 29 subtests. This correction is a follow-up commit, not an
+amendment of the already pushed initial 92FP checkpoint.
 
 ## Remaining gates before a durable result
 
