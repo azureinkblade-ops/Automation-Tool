@@ -87,6 +87,16 @@ claim was consumed for the exact request before using this store. Separate
 operational review is required for key custody, anchor durability on the
 target filesystem, backup/restore, and the two-store crash boundary.
 
+## Fake two-store sequence
+
+`tests/hermes_core/test_ea4e92fn_fake_two_store_sequence.py` composes both
+real temp-SQLite stores and the pure control frames without a listener. It
+proves the intended ordering and that a mismatched pending header consumes
+neither claim, while an interruption after invocation consumption or in the
+send-store commit/anchor gap produces no release or refund. Its payload is
+synthetic and this harness does not perform Kilo body-shape/peer validation;
+those remain independent gates. The test function is not production wiring.
+
 `REQUEST_BOUND_DURABLE_RECEIPT=QUALIFIED_IN_ISOLATION_ONLY`
 `INVOCATION_CLAIM_ALREADY_DURABLE=YES`
 `CONTROL_RELEASE_AUTHORIZED=NO`
