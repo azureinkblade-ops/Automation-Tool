@@ -3,10 +3,10 @@
 import json
 from dataclasses import dataclass
 
-from tools.hermes_core.agent_receiver_lineage import BoundReceiverLineage
+from tools.hermes_core.agent_receiver_lineage import BoundAgentInvocation, BoundReceiverLineage
 from tools.hermes_core.delegated_task import DelegationIntegrityError
 from tools.hermes_core.hashing import canonical_json
-from tools.hermes_core.receiver_adapter import VerifiedResult
+from tools.hermes_core.receiver_adapter import ExecutionOutcome, InvocationRecord, VerifiedResult
 
 
 _RESULT_FIELDS = frozenset({
@@ -69,3 +69,22 @@ def decode_agent_result_candidate(
     elif candidate["error_code"] is not None or candidate["error_summary"] is not None:
         raise DelegationIntegrityError("non-failed result carries error details")
     return AgentResultCandidate(lineage=lineage, candidate_json=canonical_json(candidate))
+
+
+def bind_terminal_agent_candidate(
+    invocation: BoundAgentInvocation, outcome: ExecutionOutcome,
+) -> AgentResultCandidate:
+    """Check adapter transport identity before decoding its untrusted text."""
+    if type(invocation) is not BoundAgentInvocation or type(outcome) is not ExecutionOutcome:
+        raise DelegationIntegrityError("terminal candidate inputs denied")
+    agent = invocation.lineage.receiver_agent_id
+    terminal = {"kilo-cli-agent": "completed", "opencode-cli-agent": "TERMINAL"}.get(agent)
+    record = outcome.record
+    if (terminal is None or type(record) is not InvocationRecord
+            or not outcome.process_started or outcome.replayed
+            or record.idempotency_key != invocation.idempotency_key
+            or record.runtime_run_id != invocation.runtime_run_id
+            or type(record.pid) is not int or record.pid <= 0
+            or record.terminal_state != terminal):
+        raise DelegationIntegrityError("terminal adapter identity or state mismatch")
+    return decode_agent_result_candidate(invocation.lineage, outcome.verified_result)
