@@ -60,7 +60,7 @@ existing 92CN exact-body-hash fixture or call a fake response merely because
 
 `tools/hermes_core/kilo_send_claim.py` validates exact versioned candidate
 material and compares its run/nonce/commit/container/peer/body fields with a
-pending header. It exposes a candidate hash only; it neither writes a store
+strictly shaped pending header. It exposes a candidate hash only; it neither writes a store
 nor returns a release receipt. `tests/hermes_core/test_ea4e92fm_kilo_send_claim.py`
 covers canonical ordering, malformed identities/timestamps, and mismatched
 pending material. The affected pure-frame/fake-gateway ladder passed 58/58.

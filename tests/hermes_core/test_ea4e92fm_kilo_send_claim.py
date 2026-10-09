@@ -8,6 +8,7 @@ from tools.hermes_core.kilo_send_claim import (
     candidate_send_claim_hash,
     canonical_send_claim_material,
 )
+from tools.hermes_core.kilo_control_frame import SCHEMA as CONTROL_SCHEMA
 
 
 def material():
@@ -63,8 +64,16 @@ def test_unknown_field_and_colliding_id_denied():
 
 def test_pending_must_match_exact_request():
     claim = material()
-    pending = {"kind": "pending", **claim}
+    header_fields = ("run_id", "request_nonce", "source_commit", "network_id",
+                     "gateway_id", "receiver_id", "peer_ip", "body_sha256",
+                     "body_bytes")
+    pending = {"schema": CONTROL_SCHEMA, "kind": "pending", "sequence": 1,
+               **{key: claim[key] for key in header_fields}}
     assert_pending_matches_claim(pending, claim)
     pending["body_sha256"] = "1" * 64
+    with pytest.raises(KiloSendClaimDenied):
+        assert_pending_matches_claim(pending, claim)
+    pending["body_sha256"] = claim["body_sha256"]
+    pending["extra"] = True
     with pytest.raises(KiloSendClaimDenied):
         assert_pending_matches_claim(pending, claim)

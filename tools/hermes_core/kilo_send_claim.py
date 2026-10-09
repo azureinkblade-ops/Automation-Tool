@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import re
 
 from tools.hermes_core.hashing import sha256_payload
+from tools.hermes_core.kilo_control_frame import SCHEMA as CONTROL_SCHEMA
 
 
 SCHEMA = "hermes.ea4e-kilo-send-claim/v1"
@@ -16,6 +17,11 @@ _FIELDS = {
     "invocation_authorization_id", "request_nonce", "source_commit",
     "network_id", "gateway_id", "receiver_id", "peer_ip",
     "body_sha256", "body_bytes", "claimed_at",
+}
+_PENDING_FIELDS = {
+    "schema", "kind", "run_id", "request_nonce", "source_commit",
+    "network_id", "gateway_id", "receiver_id", "peer_ip",
+    "body_sha256", "body_bytes", "sequence",
 }
 
 
@@ -76,6 +82,10 @@ def assert_pending_matches_claim(pending, values):
     fields = ("run_id", "request_nonce", "source_commit", "network_id",
               "gateway_id", "receiver_id", "peer_ip", "body_sha256",
               "body_bytes")
-    if type(pending) is not dict or pending.get("kind") != "pending" or any(
-            pending.get(name) != material[name] for name in fields):
+    if (type(pending) is not dict or set(pending) != _PENDING_FIELDS
+            or pending.get("schema") != CONTROL_SCHEMA
+            or pending.get("kind") != "pending"
+            or type(pending.get("sequence")) is not int
+            or pending["sequence"] != 1 or any(
+            pending.get(name) != material[name] for name in fields)):
         raise KiloSendClaimDenied("pending request and claim differ")
