@@ -161,7 +161,7 @@ class SQLiteDelegationResultStore:
         result: DelegationResult,
         *,
         validated_result_schema_id: str,
-        delivered_at: str,
+        delivered_at: str | None,
     ):
         result.verify_hash()
         with closing(self._connect()) as conn:
@@ -232,10 +232,14 @@ class SQLiteDelegationResultStore:
                     if type(now) is not datetime or now.tzinfo is None or now.utcoffset() is None:
                         raise DelegationIntegrityError("trusted ping clock must be timezone-aware")
                     now = now.astimezone(timezone.utc).replace(microsecond=0)
+                    trusted_delivery_time = now.strftime("%Y-%m-%dT%H:%M:%SZ")
                     if (not _parse_timestamp(lease.not_before) <= now < _parse_timestamp(lease.expires_at)
                             or _parse_timestamp(result.completed_at) > now
-                            or delivered_at != now.strftime("%Y-%m-%dT%H:%M:%SZ")):
+                            or delivered_at not in (None, trusted_delivery_time)):
                         raise DelegationIntegrityError("ping result is outside trusted lease time")
+                    delivered_at = trusted_delivery_time
+                elif delivered_at is None:
+                    raise DelegationIntegrityError("delivery time is required for other result schemas")
                 self._verify_result_contract(result, envelope, lease, receipt, validated_result_schema_id)
                 text, checksum = canonical_json(result.to_canonical_dict()), sha256_payload(result.to_canonical_dict())
                 conn.execute("INSERT INTO delegation_results VALUES(?,?,?,?,?,?,?,?, 'RESULT_VERIFIED',?,?)",

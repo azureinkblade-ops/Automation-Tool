@@ -182,6 +182,23 @@ def test_exact_ping_replay_after_expiry_does_not_send_again(tmp_path):
     assert len(authority.list_mailbox(task.originator_agent_id)) == 1
 
 
+def test_new_ping_delivery_uses_store_transaction_time_when_unsupplied(tmp_path):
+    authority, task, lease, receipt, bound, body = accepted_authority(
+        tmp_path, "kilo-cli-agent",
+    )
+    result = build_validated_agent_ping_result(
+        task, lease, receipt, AgentResultCandidate(bound, canonical_json(body)),
+        started_at="2026-08-27T12:05:03Z",
+        completed_at="2026-08-27T12:05:04Z",
+    )
+    _, delivery, message_id = ping_store(authority.path).record_verified_result_and_delivery(
+        result, validated_result_schema_id=task.expected_result_schema_id,
+        delivered_at=None,
+    )
+    assert delivery.created_at == "2026-08-27T12:05:05Z"
+    assert authority.get_message(message_id).created_at == delivery.created_at
+
+
 @pytest.mark.parametrize("clock,delivered_at", [
     (lambda: datetime(2026, 8, 27, 12, 5, 5), "2026-08-27T12:05:05Z"),
     (lambda: datetime(2026, 8, 27, 12, 5, 5, tzinfo=timezone.utc),
