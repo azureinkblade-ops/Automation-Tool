@@ -120,3 +120,25 @@ def test_absent_or_nonmatching_durable_start_is_denied(tmp_path, start_changes):
             load_bound_agent_start(authority, start_store, lease.attempt_id)
     finally:
         start_store.close()
+
+
+@pytest.mark.parametrize("action", ["cancel", "revoke"])
+def test_inactive_authority_is_denied_before_start_witness(tmp_path, action):
+    authority, start_store, task, lease, _, _ = stores_and_artifacts(
+        tmp_path, "opencode-cli-agent",
+    )
+    if action == "cancel":
+        authority.cancel_delegation(
+            task.delegation_id, reason="operator cancellation",
+            cancelled_at="2026-08-27T12:05:02Z",
+        )
+    else:
+        authority.revoke_lease(
+            lease.lease_id, reason="operator revocation",
+            revoked_at="2026-08-27T12:05:02Z",
+        )
+    try:
+        with pytest.raises(DelegationIntegrityError):
+            load_bound_agent_start(authority, start_store, lease.attempt_id)
+    finally:
+        start_store.close()

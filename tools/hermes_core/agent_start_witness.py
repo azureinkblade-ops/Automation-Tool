@@ -37,6 +37,9 @@ def load_bound_agent_start(
     receipt = authority_store.get_receipt(attempt_id)
     task = authority_store.get_delegation(receipt.delegation_id)
     lease = authority_store.get_lease(receipt.capability_lease_id)
+    if (authority_store.delegation_status(task.delegation_id) != "CREATED"
+            or authority_store.lease_status(lease.lease_id) != "ACTIVE"):
+        raise DelegationIntegrityError("agent delegation or lease is inactive")
     start_result = start_store.get_execution_start_result(receipt.launch_attempt_id)
     if start_result is None:
         raise DelegationIntegrityError("durable agent start result is absent")
