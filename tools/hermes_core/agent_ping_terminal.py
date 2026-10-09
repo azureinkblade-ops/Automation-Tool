@@ -40,6 +40,18 @@ def compose_codex_structured_ping(
     completed_at: str,
 ) -> DelegationResult:
     """Bind Codex's structured terminal artifact; no runtime authority is granted."""
+    candidate = bind_codex_structured_candidate(witness, outcome)
+    return build_validated_agent_ping_result(
+        witness.task, witness.lease, witness.receipt, candidate,
+        started_at=witness.start_result.recorded_at,
+        completed_at=completed_at,
+    )
+
+
+def bind_codex_structured_candidate(
+    witness: DurableAgentStart, outcome: CodexExecutionOutcome,
+) -> AgentResultCandidate:
+    """Check Codex transport identity before trusting its structured candidate."""
     if (type(witness) is not DurableAgentStart
             or witness.bound.invocation.lineage.receiver_agent_id != "codex-cli-agent"
             or type(outcome) is not CodexExecutionOutcome):
@@ -61,12 +73,7 @@ def compose_codex_structured_ping(
             or verified.outcome != "SUCCEEDED"
             or type(verified.payload) is not dict):
         raise DelegationIntegrityError("Codex terminal identity or state mismatch")
-    candidate = AgentResultCandidate(
+    return AgentResultCandidate(
         lineage=invocation.lineage,
         candidate_json=canonical_json(verified.payload),
-    )
-    return build_validated_agent_ping_result(
-        witness.task, witness.lease, witness.receipt, candidate,
-        started_at=witness.start_result.recorded_at,
-        completed_at=completed_at,
     )
