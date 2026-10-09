@@ -3,6 +3,7 @@
 import pytest
 
 from tests.hermes_core.test_ea4e92ft_agent_ping_result import materials
+from tests.hermes_core.test_sqlite_delegation_result_store import make_result
 from tools.hermes_core.agent_ping_result import build_validated_agent_ping_result
 from tools.hermes_core.agent_result_candidate import AgentResultCandidate
 from tools.hermes_core.delegated_task import DelegationIntegrityError, DelegationNotFoundError
@@ -76,6 +77,44 @@ def test_forged_ping_does_not_write_a_result(tmp_path):
             task, lease, receipt, candidate,
             started_at="2026-08-27T12:05:03Z",
             completed_at="2026-08-27T12:05:04Z",
+        )
+    with pytest.raises(DelegationNotFoundError):
+        store.get_result(lease.attempt_id)
+
+
+@pytest.mark.parametrize("forgery", [
+    "payload", "receipt", "extra_payload", "evidence", "output",
+])
+def test_self_declared_ping_schema_cannot_store_forged_result(tmp_path, forgery):
+    authority, task, lease, receipt, _, body = accepted_authority(
+        tmp_path, "kilo-cli-agent",
+    )
+    payload = dict(body["result_payload"])
+    evidence = [dict(body["evidence_manifest"][0])]
+    outputs = []
+    if forgery == "payload":
+        payload["statement"] = "forged"
+    elif forgery == "receipt":
+        payload["receiver_receipt_hash"] = "f" * 64
+    elif forgery == "extra_payload":
+        payload["unapproved"] = True
+    elif forgery == "evidence":
+        evidence[0]["sha256"] = "f" * 64
+    else:
+        outputs = [{
+            "ordinal": 0, "reference_type": "workspace_file",
+            "reference": "outputs/report.json", "sha256": "f" * 64,
+            "media_type": "application/json",
+        }]
+    result = make_result(
+        task, lease, receipt, result_payload=payload,
+        output_manifest=outputs, evidence_manifest=evidence,
+    )
+    store = SQLiteDelegationResultStore(authority.path)
+    with pytest.raises(DelegationIntegrityError):
+        store.record_verified_result_and_delivery(
+            result, validated_result_schema_id=task.expected_result_schema_id,
+            delivered_at="2026-08-27T12:05:05Z",
         )
     with pytest.raises(DelegationNotFoundError):
         store.get_result(lease.attempt_id)

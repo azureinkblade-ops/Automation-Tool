@@ -10,6 +10,7 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
+from .agent_ping_result import AGENT_PING_SCHEMA_ID
 from .delegated_task import (
     DelegationIntegrityError,
     DelegationNotFoundError,
@@ -108,11 +109,29 @@ class SQLiteDelegationResultStore:
             raise DelegationNotFoundError(f"result delivery not found: {result_delivery_id}")
         return self._load_delivery(row)
     @staticmethod
-    def _verify_result_contract(result, envelope, lease, validated_result_schema_id):
+    def _verify_result_contract(result, envelope, lease, receipt, validated_result_schema_id):
         if validated_result_schema_id != envelope["expected_result_schema_id"]:
             raise DelegationIntegrityError("result schema was not validated against the delegation contract")
         if validated_result_schema_id != lease.expected_result_schema_id:
             raise DelegationIntegrityError("result schema does not match the capability lease")
+        if validated_result_schema_id == AGENT_PING_SCHEMA_ID:
+            expected_evidence = ({
+                "ordinal": 0, "evidence_type": "receiver_acceptance_sha256",
+            },)
+            if (result.outcome != "SUCCEEDED" or result.output_manifest
+                    or tuple(envelope["expected_evidence"]) != expected_evidence
+                    or tuple(lease.expected_evidence) != expected_evidence
+                    or result.result_payload != {
+                        "task_input_hash": envelope["task_input_hash"],
+                        "receiver_receipt_hash": receipt.artifact_hash,
+                        "statement": f"{receipt.receiver_agent_id}:PING_OK",
+                    }
+                    or result.evidence_manifest != ({
+                        "ordinal": 0,
+                        "evidence_type": "receiver_acceptance_sha256",
+                        "sha256": receipt.artifact_hash,
+                    },)):
+                raise DelegationIntegrityError("agent ping result contract mismatch")
         allowed_outputs = set(lease.permitted_write_paths)
         for output in result.output_manifest:
             if output["reference_type"] == "workspace_file" and output["reference"] not in allowed_outputs:
@@ -205,7 +224,7 @@ class SQLiteDelegationResultStore:
                     delegation_row["status"] != "CREATED" or lease_row["status"] != "ACTIVE"
                 ):
                     raise DelegationIntegrityError("inactive delegation or lease cannot produce a new success")
-                self._verify_result_contract(result, envelope, lease, validated_result_schema_id)
+                self._verify_result_contract(result, envelope, lease, receipt, validated_result_schema_id)
                 text, checksum = canonical_json(result.to_canonical_dict()), sha256_payload(result.to_canonical_dict())
                 conn.execute("INSERT INTO delegation_results VALUES(?,?,?,?,?,?,?,?, 'RESULT_VERIFIED',?,?)",
                     (result.result_id,result.artifact_hash,result.delegation_id,result.attempt_id,result.receipt_id,result.runtime_run_id,result.outcome,validated_result_schema_id,text,checksum))
