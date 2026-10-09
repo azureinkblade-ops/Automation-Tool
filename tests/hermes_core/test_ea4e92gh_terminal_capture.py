@@ -2,6 +2,7 @@
 
 import sqlite3
 from dataclasses import replace
+from datetime import datetime, timezone
 
 import pytest
 
@@ -14,6 +15,11 @@ from tools.hermes_core.delegated_task import DelegationIntegrityError
 from tools.hermes_core.sqlite_execution_start_store import SQLiteExecutionStartStore
 
 
+def capture_store(authority, start, *, at="2026-08-27T12:05:04Z"):
+    instant = datetime.strptime(at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    return SQLiteAgentTerminalCaptureStore(authority, start, clock=lambda: instant)
+
+
 @pytest.mark.parametrize("agent", ["kilo-cli-agent", "opencode-cli-agent"])
 def test_capture_reopens_identical_candidate_without_new_send(tmp_path, agent):
     authority, start, task, lease, receipt, _ = stores_and_artifacts(
@@ -22,18 +28,20 @@ def test_capture_reopens_identical_candidate_without_new_send(tmp_path, agent):
     try:
         witness = load_bound_agent_start(authority, start, lease.attempt_id)
         outcome = terminal_outcome(witness)
-        store = SQLiteAgentTerminalCaptureStore(authority, start)
+        store = capture_store(authority, start)
         first = store.capture(lease.attempt_id, outcome)
+        assert first.captured_at == "2026-08-27T12:05:04Z"
         assert store.capture(lease.attempt_id, outcome) == first
         start.close()
         start = SQLiteExecutionStartStore(tmp_path / "start.sqlite3")
-        reopened = SQLiteAgentTerminalCaptureStore(authority, start)
+        reopened = capture_store(authority, start, at="2026-08-27T12:10:01Z")
         recovered = reopened.get(lease.attempt_id)
         assert recovered == first
+        assert reopened.capture(lease.attempt_id, outcome) == first
         result = build_validated_agent_ping_result(
             task, lease, receipt, recovered.candidate,
             started_at=witness.start_result.recorded_at,
-            completed_at="2026-08-27T12:05:04Z",
+            completed_at=recovered.captured_at,
         )
         assert result.outcome == "SUCCEEDED"
         assert result.output_manifest == ()
@@ -48,7 +56,7 @@ def test_missing_capture_after_restart_remains_unknown(tmp_path):
         tmp_path, "kilo-cli-agent", ping=True,
     )
     try:
-        assert SQLiteAgentTerminalCaptureStore(authority, start).get(lease.attempt_id) is None
+        assert capture_store(authority, start).get(lease.attempt_id) is None
     finally:
         start.close()
 
@@ -60,7 +68,7 @@ def test_divergent_or_invalid_capture_cannot_replace_original(tmp_path, forgery)
     )
     try:
         witness = load_bound_agent_start(authority, start, lease.attempt_id)
-        store = SQLiteAgentTerminalCaptureStore(authority, start)
+        store = capture_store(authority, start)
         original = store.capture(lease.attempt_id, terminal_outcome(witness))
         outcome = terminal_outcome(witness)
         if forgery == "send":
@@ -86,7 +94,7 @@ def test_corrupt_persisted_capture_denied_after_restart(tmp_path):
     )
     try:
         witness = load_bound_agent_start(authority, start, lease.attempt_id)
-        store = SQLiteAgentTerminalCaptureStore(authority, start)
+        store = capture_store(authority, start)
         store.capture(lease.attempt_id, terminal_outcome(witness))
         with sqlite3.connect(authority.path) as conn:
             conn.execute(
@@ -105,7 +113,7 @@ def test_cancelled_delegation_cannot_recover_terminal_capture(tmp_path):
     )
     try:
         witness = load_bound_agent_start(authority, start, lease.attempt_id)
-        store = SQLiteAgentTerminalCaptureStore(authority, start)
+        store = capture_store(authority, start)
         store.capture(lease.attempt_id, terminal_outcome(witness))
         authority.cancel_delegation(
             task.delegation_id, reason="operator cancellation",
@@ -113,5 +121,22 @@ def test_cancelled_delegation_cannot_recover_terminal_capture(tmp_path):
         )
         with pytest.raises(DelegationIntegrityError):
             store.get(lease.attempt_id)
+    finally:
+        start.close()
+
+
+@pytest.mark.parametrize("at", [
+    "2026-08-27T12:04:59Z", "2026-08-27T12:10:00Z",
+])
+def test_new_capture_requires_trusted_time_inside_start_and_lease(tmp_path, at):
+    authority, start, _, lease, _, _ = stores_and_artifacts(
+        tmp_path, "kilo-cli-agent", ping=True,
+    )
+    try:
+        witness = load_bound_agent_start(authority, start, lease.attempt_id)
+        store = capture_store(authority, start, at=at)
+        with pytest.raises(DelegationIntegrityError):
+            store.capture(lease.attempt_id, terminal_outcome(witness))
+        assert store.get(lease.attempt_id) is None
     finally:
         start.close()

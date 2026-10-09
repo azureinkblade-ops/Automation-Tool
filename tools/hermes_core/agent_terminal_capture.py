@@ -5,13 +5,14 @@ import re
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from tools.hermes_core.agent_result_candidate import (
     AgentResultCandidate, bind_terminal_agent_candidate,
     decode_agent_result_candidate,
 )
 from tools.hermes_core.agent_start_witness import load_bound_agent_start
-from tools.hermes_core.delegated_task import DelegationIntegrityError
+from tools.hermes_core.delegated_task import DelegationIntegrityError, _parse_timestamp
 from tools.hermes_core.hashing import canonical_json, sha256_payload
 from tools.hermes_core.receiver_adapter import ExecutionOutcome, VerifiedResult
 from tools.hermes_core.sqlite_delegation_store import SQLiteDelegationStore
@@ -33,14 +34,17 @@ _HASH = re.compile(r"[0-9a-f]{64}\Z")
 class CapturedTerminalCandidate:
     capture_hash: str
     candidate: AgentResultCandidate
+    captured_at: str
 
 
 class SQLiteAgentTerminalCaptureStore:
-    def __init__(self, authority: SQLiteDelegationStore, start: SQLiteExecutionStartStore):
+    def __init__(self, authority: SQLiteDelegationStore, start: SQLiteExecutionStartStore,
+                 *, clock=None):
         if type(authority) is not SQLiteDelegationStore or type(start) is not SQLiteExecutionStartStore:
             raise DelegationIntegrityError("terminal capture stores denied")
         self.authority = authority
         self.start = start
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
         with closing(self._connect()) as conn:
             conn.execute(_DDL)
             conn.commit()
@@ -75,6 +79,7 @@ class SQLiteAgentTerminalCaptureStore:
         }
         if (type(payload) is not dict or set(payload) != set(expected) | {
             "pid", "terminal_state", "argv_hash", "raw_text", "candidate_json",
+            "captured_at",
         } or any(payload.get(key) != value for key, value in expected.items())
                 or type(payload["pid"]) is not int or payload["pid"] <= 0
                 or payload["terminal_state"] != _TEXT_RECEIVERS.get(expected["receiver_agent_id"])
@@ -83,20 +88,27 @@ class SQLiteAgentTerminalCaptureStore:
                 or type(payload["raw_text"]) is not str
                 or len(payload["raw_text"].encode("utf-8")) > _MAX_TEXT_BYTES):
             raise DelegationIntegrityError("terminal capture lineage mismatch")
+        try:
+            captured_at = _parse_timestamp(payload["captured_at"])
+        except (TypeError, ValueError) as exc:
+            raise DelegationIntegrityError("terminal capture time invalid") from exc
+        if captured_at < _parse_timestamp(witness.start_result.recorded_at):
+            raise DelegationIntegrityError("terminal capture predates durable start")
         candidate = decode_agent_result_candidate(
             invocation.lineage,
             VerifiedResult(valid=True, payload={"type": "text", "text": payload["raw_text"]}),
         )
         if candidate.candidate_json != payload["candidate_json"]:
             raise DelegationIntegrityError("terminal capture candidate mismatch")
-        return CapturedTerminalCandidate(row[0], candidate)
+        return CapturedTerminalCandidate(row[0], candidate, payload["captured_at"]), payload
 
     def get(self, attempt_id: str) -> CapturedTerminalCandidate | None:
         witness = load_bound_agent_start(self.authority, self.start, attempt_id)
         if witness.receipt.receiver_agent_id not in _TEXT_RECEIVERS:
             raise DelegationIntegrityError("terminal text receiver denied")
         with closing(self._connect()) as conn:
-            return self._read(conn, witness)
+            row = self._read(conn, witness)
+            return row[0] if row else None
 
     def capture(self, attempt_id: str, outcome: ExecutionOutcome) -> CapturedTerminalCandidate:
         witness = load_bound_agent_start(self.authority, self.start, attempt_id)
@@ -120,16 +132,16 @@ class SQLiteAgentTerminalCaptureStore:
             "raw_text": raw_text,
             "candidate_json": candidate.candidate_json,
         }
-        digest = sha256_payload(payload)
         with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 existing = self._read(conn, witness)
                 if existing is not None:
-                    if existing.capture_hash != digest:
+                    captured, stored = existing
+                    if {key: value for key, value in stored.items() if key != "captured_at"} != payload:
                         raise DelegationIntegrityError("divergent terminal capture replay")
                     conn.rollback()
-                    return existing
+                    return captured
                 status = conn.execute(
                     "SELECT status FROM delegations WHERE delegation_id=?",
                     (witness.task.delegation_id,),
@@ -140,12 +152,20 @@ class SQLiteAgentTerminalCaptureStore:
                 ).fetchone()
                 if status != ("CREATED",) or lease_status != ("ACTIVE",):
                     raise DelegationIntegrityError("inactive terminal capture authority")
+                now = self._clock()
+                if type(now) is not datetime or now.tzinfo is None or now.utcoffset() is None:
+                    raise DelegationIntegrityError("trusted terminal clock must be timezone-aware")
+                now = now.astimezone(timezone.utc).replace(microsecond=0)
+                if not _parse_timestamp(witness.start_result.recorded_at) <= now < _parse_timestamp(witness.lease.expires_at):
+                    raise DelegationIntegrityError("terminal capture outside durable start or lease")
+                payload["captured_at"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+                digest = sha256_payload(payload)
                 conn.execute(
                     "INSERT INTO agent_terminal_captures VALUES(?,?,?,?)",
                     (attempt_id, digest, canonical_json(payload), digest),
                 )
                 conn.commit()
-                return CapturedTerminalCandidate(digest, candidate)
+                return CapturedTerminalCandidate(digest, candidate, payload["captured_at"])
             except Exception:
                 conn.rollback()
                 raise
