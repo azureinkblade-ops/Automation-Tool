@@ -1,5 +1,6 @@
 """Pure lineage binding for an already accepted delegated receiver task."""
 
+import hashlib
 from dataclasses import dataclass
 
 from tools.hermes_core.delegated_task import (
@@ -8,6 +9,7 @@ from tools.hermes_core.delegated_task import (
     DelegationIntegrityError,
 )
 from tools.hermes_core.delegation_delivery import DelegationReceipt
+from tools.hermes_core.execution_start import ExecutionLaunchAttempt, ExecutionLaunchAttemptStatus
 
 
 SUPPORTED_AGENT_IDS = frozenset({
@@ -27,6 +29,14 @@ class BoundReceiverLineage:
     runtime_run_id: str
     task_input_hash: str
     expected_result_schema_id: str
+
+
+@dataclass(frozen=True)
+class BoundAgentInvocation:
+    lineage: BoundReceiverLineage
+    launch_attempt_hash: str
+    idempotency_key: str
+    runtime_run_id: str
 
 
 def bind_receiver_lineage(
@@ -81,4 +91,50 @@ def bind_receiver_lineage(
         runtime_run_id=receipt.runtime_run_id,
         task_input_hash=envelope.task_input_hash,
         expected_result_schema_id=envelope.expected_result_schema_id,
+    )
+
+
+def bind_agent_invocation(
+    envelope: DelegatedTaskEnvelope,
+    lease: DelegatedCapabilityLease,
+    receipt: DelegationReceipt,
+    launch: ExecutionLaunchAttempt,
+    *,
+    receiver_agent_id: str,
+) -> BoundAgentInvocation:
+    """Project an existing admitted launch; this does not persist or execute it."""
+    lineage = bind_receiver_lineage(
+        envelope, lease, receipt, receiver_agent_id=receiver_agent_id,
+    )
+    if (type(launch) is not ExecutionLaunchAttempt or not launch.verify_hash()
+            or launch.status != ExecutionLaunchAttemptStatus.RECORDED
+            or type(launch.idempotency_key) is not str or not launch.idempotency_key):
+        raise DelegationIntegrityError("launch artifact denied")
+    checks = (
+        (launch.launch_attempt_id, receipt.launch_attempt_id),
+        (launch.artifact_hash, receipt.launch_attempt_hash),
+        (launch.route_id, lease.route_id),
+        (launch.route_hash, lease.route_hash),
+        (launch.attempt_id, lease.attempt_id),
+        (launch.attempt_hash, lease.attempt_hash),
+        (launch.authorization_id, lease.authorization_id),
+        (launch.authorization_hash, lease.authorization_hash),
+        (launch.task_id, envelope.task_id),
+        (launch.worker_id, receiver_agent_id),
+        (launch.operation, envelope.operation),
+        (launch.input_hash, envelope.artifact_hash),
+    )
+    if any(actual != expected for actual, expected in checks):
+        raise DelegationIntegrityError("launch and delegation lineage mismatch")
+    if receiver_agent_id == "kilo-cli-agent":
+        runtime_run_id = launch.launch_attempt_id
+    else:
+        digest = hashlib.sha256(launch.idempotency_key.encode("utf-8")).hexdigest()[:32]
+        prefix = "codex-run-" if receiver_agent_id == "codex-cli-agent" else "opencode-run-"
+        runtime_run_id = prefix + digest
+    if receipt.runtime_run_id != runtime_run_id:
+        raise DelegationIntegrityError("receiver runtime identity mismatch")
+    return BoundAgentInvocation(
+        lineage=lineage, launch_attempt_hash=launch.artifact_hash,
+        idempotency_key=launch.idempotency_key, runtime_run_id=runtime_run_id,
     )
