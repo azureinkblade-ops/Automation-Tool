@@ -9,7 +9,11 @@ from tools.hermes_core.delegated_task import (
     DelegationIntegrityError,
 )
 from tools.hermes_core.delegation_delivery import DelegationReceipt
-from tools.hermes_core.execution_start import ExecutionLaunchAttempt, ExecutionLaunchAttemptStatus
+from tools.hermes_core.execution_start import (
+    ExecutionLaunchAttempt, ExecutionLaunchAttemptStatus,
+    ExecutionStartOutcome, ExecutionStartResult,
+)
+from tools.hermes_core.hashing import sha256_payload
 
 
 SUPPORTED_AGENT_IDS = frozenset({
@@ -37,6 +41,14 @@ class BoundAgentInvocation:
     launch_attempt_hash: str
     idempotency_key: str
     runtime_run_id: str
+
+
+@dataclass(frozen=True)
+class BoundAgentStart:
+    invocation: BoundAgentInvocation
+    start_result_id: str
+    start_result_hash: str
+    runtime_evidence_hash: str
 
 
 def bind_receiver_lineage(
@@ -137,4 +149,55 @@ def bind_agent_invocation(
     return BoundAgentInvocation(
         lineage=lineage, launch_attempt_hash=launch.artifact_hash,
         idempotency_key=launch.idempotency_key, runtime_run_id=runtime_run_id,
+    )
+
+
+def bind_agent_start_result(
+    invocation: BoundAgentInvocation,
+    launch: ExecutionLaunchAttempt,
+    start_result: ExecutionStartResult | None,
+) -> BoundAgentStart:
+    """Bind a supplied STARTED artifact; its durable-store provenance is separate."""
+    if (type(invocation) is not BoundAgentInvocation
+            or type(launch) is not ExecutionLaunchAttempt
+            or type(start_result) is not ExecutionStartResult
+            or not launch.verify_hash() or not start_result.verify_hash()
+            or start_result.outcome != ExecutionStartOutcome.STARTED):
+        raise DelegationIntegrityError("agent start result is not verified STARTED")
+    expected_id = sha256_payload({
+        "schema": "ea4d4-start-result-id-v1",
+        "launch_attempt_id": launch.launch_attempt_id,
+    })
+    checks = (
+        (start_result.start_result_id, expected_id),
+        (start_result.start_result_version, "1"),
+        (start_result.launch_attempt_id, launch.launch_attempt_id),
+        (start_result.launch_attempt_hash, launch.artifact_hash),
+        (start_result.reservation_id, launch.reservation_id),
+        (start_result.reservation_hash, launch.reservation_hash),
+        (start_result.route_id, launch.route_id),
+        (start_result.route_hash, launch.route_hash),
+        (start_result.task_id, launch.task_id),
+        (start_result.worker_id, invocation.lineage.receiver_agent_id),
+        (start_result.worker_version, launch.worker_version),
+        (start_result.runtime_binding_id, launch.runtime_binding_id),
+        (start_result.runtime_binding_version, launch.runtime_binding_version),
+        (start_result.runtime_binding_hash, launch.runtime_binding_hash),
+        (start_result.idempotency_key, invocation.idempotency_key),
+        (start_result.runtime_run_id, invocation.runtime_run_id),
+        (invocation.lineage.launch_attempt_id, launch.launch_attempt_id),
+        (invocation.launch_attempt_hash, launch.artifact_hash),
+    )
+    if (any(actual != expected for actual, expected in checks)
+            or type(start_result.runtime_evidence_hash) is not str
+            or len(start_result.runtime_evidence_hash) != 64
+            or any(char not in "0123456789abcdef" for char in start_result.runtime_evidence_hash)
+            or start_result.error_code is not None
+            or start_result.error_summary is not None):
+        raise DelegationIntegrityError("agent start result lineage mismatch")
+    return BoundAgentStart(
+        invocation=invocation,
+        start_result_id=start_result.start_result_id,
+        start_result_hash=start_result.artifact_hash,
+        runtime_evidence_hash=start_result.runtime_evidence_hash,
     )
