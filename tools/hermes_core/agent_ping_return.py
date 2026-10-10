@@ -93,3 +93,29 @@ def return_codex_ping(
         result, validated_result_schema_id=AGENT_PING_SCHEMA_ID,
         delivered_at=None,
     )
+
+
+def return_bound_agent_ping(
+    authority: SQLiteDelegationStore,
+    start: SQLiteExecutionStartStore,
+    captures: SQLiteAgentTerminalCaptureStore,
+    registry: CodexInvocationRegistry,
+    results: SQLiteDelegationResultStore,
+    attempt_id: str,
+):
+    """Recover one accepted agent ping from stores; never launch a receiver."""
+    if (type(authority) is not SQLiteDelegationStore
+            or type(start) is not SQLiteExecutionStartStore
+            or type(captures) is not SQLiteAgentTerminalCaptureStore
+            or type(registry) is not CodexInvocationRegistry
+            or type(results) is not SQLiteDelegationResultStore
+            or captures.authority.path != authority.path
+            or captures.start is not start
+            or results.path != authority.path):
+        raise DelegationIntegrityError("agent ping recovery stores are not bound")
+    receiver = authority.get_receipt(attempt_id).receiver_agent_id
+    if receiver == "codex-cli-agent":
+        return return_codex_ping(authority, start, registry, results, attempt_id)
+    if receiver in {"kilo-cli-agent", "opencode-cli-agent"}:
+        return return_captured_text_ping(authority, captures, results, attempt_id)
+    raise DelegationIntegrityError("agent ping receiver is not supported")
