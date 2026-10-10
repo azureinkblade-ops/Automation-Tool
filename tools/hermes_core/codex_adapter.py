@@ -39,7 +39,7 @@ PINNED_CODEX_VERSION = "codex-cli 0.154.0-alpha.6.2"
 PINNED_ADAPTER_VERSION = "1.1"
 PINNED_CLI_CONTRACT_ID = "c2d4912a32c00c49c1186a9d49bc7021581dbb86b9a013eaaaffd0eebd8d5a5d"
 SCHEMA_QUALIFICATION_POLICY = "codex-structured-output-schema/v1"
-REGISTRY_SCHEMA_VERSION = 1
+REGISTRY_SCHEMA_VERSION = 2
 MIN_TIMEOUT_SECONDS, DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS = 5, 60, 300
 MAX_STDIN_BYTES, MAX_STDOUT_BYTES = 256 * 1024, 1024 * 1024
 MAX_STDERR_BYTES, MAX_FINAL_OUTPUT_BYTES, MAX_JSONL_EVENTS = 128 * 1024, 256 * 1024, 4096
@@ -600,6 +600,7 @@ class CodexInvocationRecord:
     launch_attempt_id: str; delegation_id: str; argv_hash: str
     start_state: str; terminal_state: Optional[str]; pid: Optional[int]
     result_json: Optional[str]; cancellation_reason: Optional[str]
+    terminal_observed_at: Optional[float] = None
 
 
 DDL = """CREATE TABLE IF NOT EXISTS codex_transport_metadata (
@@ -608,7 +609,8 @@ CREATE TABLE IF NOT EXISTS codex_transport_invocations (
 idempotency_key TEXT PRIMARY KEY, material_hash TEXT NOT NULL, runtime_run_id TEXT NOT NULL,
 launch_attempt_id TEXT NOT NULL, delegation_id TEXT NOT NULL, argv_hash TEXT NOT NULL,
 start_state TEXT NOT NULL, terminal_state TEXT, pid INTEGER, result_json TEXT,
-cancellation_reason TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL);"""
+cancellation_reason TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL,
+terminal_observed_at REAL);"""
 
 
 class CodexInvocationRegistry:
@@ -621,6 +623,9 @@ class CodexInvocationRegistry:
             row = conn.execute("SELECT schema_version FROM codex_transport_metadata").fetchone()
             if row is None:
                 conn.execute("INSERT INTO codex_transport_metadata VALUES (?)", (REGISTRY_SCHEMA_VERSION,))
+            elif row[0] == 1:
+                conn.execute("ALTER TABLE codex_transport_invocations ADD COLUMN terminal_observed_at REAL")
+                conn.execute("UPDATE codex_transport_metadata SET schema_version=?", (REGISTRY_SCHEMA_VERSION,))
             elif row[0] != REGISTRY_SCHEMA_VERSION:
                 raise CodexAdapterError("unsupported Codex transport registry schema")
             conn.commit()
@@ -630,31 +635,38 @@ class CodexInvocationRegistry:
     def get(self, key: str):
         conn = sqlite3.connect(self.path)
         try:
-            row = conn.execute("SELECT idempotency_key,material_hash,runtime_run_id,launch_attempt_id,delegation_id,argv_hash,start_state,terminal_state,pid,result_json,cancellation_reason FROM codex_transport_invocations WHERE idempotency_key=?", (key,)).fetchone()
+            row = conn.execute("SELECT idempotency_key,material_hash,runtime_run_id,launch_attempt_id,delegation_id,argv_hash,start_state,terminal_state,pid,result_json,cancellation_reason,terminal_observed_at FROM codex_transport_invocations WHERE idempotency_key=?", (key,)).fetchone()
         finally: conn.close()
         return self._record(row) if row else None
     def reserve(self, *, key, material_hash, run_id, launch_id, delegation_id, argv_hash):
         now = time.time(); conn = sqlite3.connect(self.path, isolation_level=None)
         try:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute("SELECT idempotency_key,material_hash,runtime_run_id,launch_attempt_id,delegation_id,argv_hash,start_state,terminal_state,pid,result_json,cancellation_reason FROM codex_transport_invocations WHERE idempotency_key=?", (key,)).fetchone()
+            row = conn.execute("SELECT idempotency_key,material_hash,runtime_run_id,launch_attempt_id,delegation_id,argv_hash,start_state,terminal_state,pid,result_json,cancellation_reason,terminal_observed_at FROM codex_transport_invocations WHERE idempotency_key=?", (key,)).fetchone()
             if row:
                 record = self._record(row)
                 if record.material_hash != material_hash:
                     conn.execute("ROLLBACK"); raise CodexReplayConflictError("divergent invocation replay")
                 conn.execute("COMMIT"); return record, True
-            conn.execute("INSERT INTO codex_transport_invocations VALUES (?,?,?,?,?,?,'PREPARED',NULL,NULL,NULL,NULL,?,?)",
+            conn.execute("INSERT INTO codex_transport_invocations (idempotency_key,material_hash,runtime_run_id,launch_attempt_id,delegation_id,argv_hash,start_state,terminal_state,pid,result_json,cancellation_reason,created_at,updated_at) VALUES (?,?,?,?,?,?,'PREPARED',NULL,NULL,NULL,NULL,?,?)",
                          (key, material_hash, run_id, launch_id, delegation_id, argv_hash, now, now))
             conn.execute("COMMIT")
         finally: conn.close()
         return self.get(key), False
     def transition(self, key, *, start_state, terminal_state=None, pid=None, result_json=None, reason=None):
-        conn = sqlite3.connect(self.path)
+        conn = sqlite3.connect(self.path, isolation_level=None)
         try:
-            changed = conn.execute("UPDATE codex_transport_invocations SET start_state=?,terminal_state=?,pid=COALESCE(?,pid),result_json=?,cancellation_reason=COALESCE(?,cancellation_reason),updated_at=? WHERE idempotency_key=?",
-                                   (start_state, terminal_state, pid, result_json, reason, time.time(), key)).rowcount
-            if changed != 1: raise CodexAdapterError("registry row missing")
-            conn.commit()
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT terminal_state FROM codex_transport_invocations WHERE idempotency_key=?", (key,)).fetchone()
+            if row is None: raise CodexAdapterError("registry row missing")
+            if row[0] is not None: raise CodexAdapterError("terminal registry row is immutable")
+            now = time.time()
+            conn.execute("UPDATE codex_transport_invocations SET start_state=?,terminal_state=?,pid=COALESCE(?,pid),result_json=?,cancellation_reason=COALESCE(?,cancellation_reason),updated_at=?,terminal_observed_at=? WHERE idempotency_key=?",
+                         (start_state, terminal_state, pid, result_json, reason, now, now if terminal_state is not None else None, key))
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
         finally: conn.close()
         return self.get(key)
 

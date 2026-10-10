@@ -1,6 +1,7 @@
 """Fake-only Codex registry recovery bound to the durable agent start."""
 
 import json
+import sqlite3
 from dataclasses import asdict
 
 import pytest
@@ -54,6 +55,23 @@ def test_codex_registry_reverifies_ping_after_restart(tmp_path):
         assert validate_agent_ping_candidate(
             witness.task, witness.lease, witness.receipt, candidate,
         ).receipt_hash == witness.receipt.artifact_hash
+    finally:
+        start.close()
+
+
+def test_codex_registry_without_terminal_time_denied(tmp_path):
+    authority, start, _, lease, _, _ = stores_and_artifacts(
+        tmp_path, "codex-cli-agent", ping=True,
+    )
+    try:
+        witness = load_bound_agent_start(authority, start, lease.attempt_id)
+        registry = durable_codex_record(tmp_path, witness)
+        with sqlite3.connect(registry.path) as conn:
+            conn.execute(
+                "UPDATE codex_transport_invocations SET terminal_observed_at=NULL"
+            )
+        with pytest.raises(DelegationIntegrityError, match="terminal result missing"):
+            load_codex_terminal_candidate(witness, registry)
     finally:
         start.close()
 

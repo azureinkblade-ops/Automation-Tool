@@ -1,12 +1,14 @@
 """Read-only recovery of a Codex terminal artifact from its durable registry."""
 
 import json
+import math
+import sqlite3
 
 from tools.hermes_core.agent_ping_result import validate_agent_ping_candidate
 from tools.hermes_core.agent_ping_terminal import bind_codex_structured_candidate
 from tools.hermes_core.agent_start_witness import DurableAgentStart
 from tools.hermes_core.codex_adapter import (
-    CodexExecutionOutcome, CodexInvocationRegistry, CodexProcessResult,
+    CodexAdapterError, CodexExecutionOutcome, CodexInvocationRegistry, CodexProcessResult,
     verify_process_result,
 )
 from tools.hermes_core.delegated_task import DelegationIntegrityError
@@ -20,8 +22,15 @@ def load_codex_terminal_candidate(
             or type(registry) is not CodexInvocationRegistry
             or witness.receipt.receiver_agent_id != "codex-cli-agent"):
         raise DelegationIntegrityError("Codex terminal witness inputs denied")
-    record = registry.get(witness.bound.invocation.idempotency_key)
-    if record is None or type(record.result_json) is not str:
+    try:
+        record = registry.get(witness.bound.invocation.idempotency_key)
+    except (sqlite3.Error, CodexAdapterError) as exc:
+        raise DelegationIntegrityError("Codex durable registry unavailable") from exc
+    if (record is None or record.terminal_state != "VERIFIED"
+            or type(record.result_json) is not str
+            or type(record.terminal_observed_at) is not float
+            or not math.isfinite(record.terminal_observed_at)
+            or record.terminal_observed_at <= 0):
         raise DelegationIntegrityError("Codex durable terminal result missing")
     try:
         process = CodexProcessResult(**json.loads(record.result_json))
