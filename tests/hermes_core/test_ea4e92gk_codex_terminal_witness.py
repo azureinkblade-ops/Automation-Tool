@@ -17,8 +17,8 @@ from tools.hermes_core.delegated_task import DelegationIntegrityError
 
 
 def durable_codex_record(tmp_path, witness, *, pid=1234, statement=None,
-                         returncode=0, launch_id=None):
-    registry = CodexInvocationRegistry(str(tmp_path / "codex-transport.sqlite3"))
+                         returncode=0, launch_id=None, clock=None):
+    registry = CodexInvocationRegistry(str(tmp_path / "codex-transport.sqlite3"), clock=clock)
     registry.initialize()
     invocation = witness.bound.invocation
     registry.reserve(

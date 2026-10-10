@@ -3,18 +3,27 @@
 import json
 import math
 import sqlite3
+from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from tools.hermes_core.agent_ping_result import validate_agent_ping_candidate
 from tools.hermes_core.agent_ping_terminal import bind_codex_structured_candidate
+from tools.hermes_core.agent_result_candidate import AgentResultCandidate
 from tools.hermes_core.agent_start_witness import DurableAgentStart
 from tools.hermes_core.codex_adapter import (
     CodexAdapterError, CodexExecutionOutcome, CodexInvocationRegistry, CodexProcessResult,
     verify_process_result,
 )
-from tools.hermes_core.delegated_task import DelegationIntegrityError
+from tools.hermes_core.delegated_task import DelegationIntegrityError, _parse_timestamp
 
 
-def load_codex_terminal_candidate(
+@dataclass(frozen=True)
+class CodexTerminalObservation:
+    candidate: AgentResultCandidate
+    completed_at: str
+
+
+def _load_codex_terminal_record(
     witness: DurableAgentStart, registry: CodexInvocationRegistry,
 ):
     """Reverify persisted process bytes; do not infer or synthesize terminal time."""
@@ -48,4 +57,26 @@ def load_codex_terminal_candidate(
         ),
     )
     validate_agent_ping_candidate(witness.task, witness.lease, witness.receipt, candidate)
-    return candidate
+    return candidate, record
+
+
+def load_codex_terminal_candidate(
+    witness: DurableAgentStart, registry: CodexInvocationRegistry,
+):
+    return _load_codex_terminal_record(witness, registry)[0]
+
+
+def load_codex_terminal_observation(
+    witness: DurableAgentStart, registry: CodexInvocationRegistry,
+) -> CodexTerminalObservation:
+    candidate, record = _load_codex_terminal_record(witness, registry)
+    try:
+        observed = datetime.fromtimestamp(record.terminal_observed_at, timezone.utc)
+    except (OverflowError, OSError, ValueError) as exc:
+        raise DelegationIntegrityError("Codex terminal time invalid") from exc
+    if not (_parse_timestamp(witness.start_result.recorded_at) <= observed
+            < _parse_timestamp(witness.lease.expires_at)):
+        raise DelegationIntegrityError("Codex terminal time outside start or lease")
+    return CodexTerminalObservation(
+        candidate, observed.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )

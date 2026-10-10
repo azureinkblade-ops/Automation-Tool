@@ -614,7 +614,9 @@ terminal_observed_at REAL);"""
 
 
 class CodexInvocationRegistry:
-    def __init__(self, path: str): self.path = path
+    def __init__(self, path: str, *, clock=None):
+        self.path = path
+        self._clock = clock or time.time
     def initialize(self):
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.path)
@@ -639,7 +641,7 @@ class CodexInvocationRegistry:
         finally: conn.close()
         return self._record(row) if row else None
     def reserve(self, *, key, material_hash, run_id, launch_id, delegation_id, argv_hash):
-        now = time.time(); conn = sqlite3.connect(self.path, isolation_level=None)
+        now = self._clock(); conn = sqlite3.connect(self.path, isolation_level=None)
         try:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT idempotency_key,material_hash,runtime_run_id,launch_attempt_id,delegation_id,argv_hash,start_state,terminal_state,pid,result_json,cancellation_reason,terminal_observed_at FROM codex_transport_invocations WHERE idempotency_key=?", (key,)).fetchone()
@@ -660,7 +662,7 @@ class CodexInvocationRegistry:
             row = conn.execute("SELECT terminal_state FROM codex_transport_invocations WHERE idempotency_key=?", (key,)).fetchone()
             if row is None: raise CodexAdapterError("registry row missing")
             if row[0] is not None: raise CodexAdapterError("terminal registry row is immutable")
-            now = time.time()
+            now = self._clock()
             conn.execute("UPDATE codex_transport_invocations SET start_state=?,terminal_state=?,pid=COALESCE(?,pid),result_json=?,cancellation_reason=COALESCE(?,cancellation_reason),updated_at=?,terminal_observed_at=? WHERE idempotency_key=?",
                          (start_state, terminal_state, pid, result_json, reason, now, now if terminal_state is not None else None, key))
             conn.execute("COMMIT")
