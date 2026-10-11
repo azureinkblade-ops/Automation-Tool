@@ -217,6 +217,15 @@ def test_caller_cannot_substitute_qwen_for_authorized_request_model(tmp_path):
     assert receiver.runs == 0 and not env.consumed() and list(env.root.iterdir()) == []
 
 
+def test_trial_model_denies_other_authorized_task_before_claim(tmp_path):
+    other = b"Real delegated source text"
+    env = Env(tmp_path, task_sha256=hashlib.sha256(other).hexdigest())
+    receiver = FakeReceiver()
+    with pytest.raises(CaptureEntryDenied, match="frozen synthetic task"):
+        env.run(receiver, task=other)
+    assert receiver.runs == 0 and not env.consumed() and list(env.root.iterdir()) == []
+
+
 @pytest.mark.parametrize("binding_bytes", [
     BINDING.canonical_bytes + b"\n",
     BINDING.canonical_bytes.replace(b"nemotron-3-ultra-free", b"qwen3:14b"),
@@ -415,6 +424,21 @@ def test_auxiliary_title_call_first_is_denied_and_never_forwarded(tmp_path):
     assert env.upstream.calls == [request_body()]
     assert "AUXILIARY_NON_TASK" in m["failure_reasons"]
     assert m["auxiliary_call_count"] == 1 and m["provider_calls"][0]["forwarded"] is False
+
+
+@pytest.mark.parametrize("body", [
+    json.dumps({"model": MODEL, "stream": True,
+                "messages": [{"role": "user", "content": TASK.decode()},
+                             {"role": "user", "content": "extra context"}]}).encode(),
+    request_body(temperature=0),
+    request_body(text=TASK.decode() + " private context"),
+])
+def test_trial_model_denies_any_additional_request_content(tmp_path, body):
+    env = Env(tmp_path)
+    m = failed(env, FakeReceiver(script=[("POST", "/v1/chat/completions", body)], swallow=True))
+    assert env.upstream.calls == []
+    assert "UNAPPROVED_TRIAL_CONTENT" in m["failure_reasons"]
+    assert m["provider_call_count_forwarded"] == 0
 
 
 @pytest.mark.parametrize("call,reason", [

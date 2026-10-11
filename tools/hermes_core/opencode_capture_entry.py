@@ -34,6 +34,8 @@ from tools.hermes_core.capture_qualification_store import (
 )
 
 FROZEN_ROUTE = "/v1/chat/completions"
+TRIAL_MODEL = "nemotron-3-ultra-free"
+TRIAL_TASK = b"Return exactly: EA4E92_OPENCODE_CURRENT_REPLAY_OK. Do not use tools or edit files."
 MAX_REQUEST_BYTES = 65536
 MAX_RESPONSE_BYTES = 1024 * 1024
 MAX_STREAM_BYTES = 1024 * 1024
@@ -178,6 +180,11 @@ class ProviderBoundary:
             return "INVALID_REQUEST"
         if not _task_in_messages(request, self._task_text):
             return "AUXILIARY_NON_TASK"
+        if self._model == TRIAL_MODEL and request != {
+            "model": TRIAL_MODEL, "stream": True,
+            "messages": [{"role": "user", "content": TRIAL_TASK.decode("ascii")}],
+        }:
+            return "UNAPPROVED_TRIAL_CONTENT"
         return "TASK_CALL"
 
     def call(self, *, method: str, path: str, body: bytes) -> bytes:
@@ -289,6 +296,8 @@ class OpenCodeCaptureEntry:
             task.decode("utf-8")
         except (AttributeError, UnicodeError) as exc:
             raise CaptureEntryDenied("task must be UTF-8 bytes") from exc
+        if binding.model_id == TRIAL_MODEL and task != TRIAL_TASK:
+            raise CaptureEntryDenied("trial model requires the frozen synthetic task")
         run_dir = self._root / ("run-" + hashlib.sha256(artifact.run_id.encode("ascii")).hexdigest()[:32])
         if not self._root.is_dir() or self._root.is_symlink() or run_dir.exists():
             raise CaptureEntryDenied("capture root unavailable or run already exists")
