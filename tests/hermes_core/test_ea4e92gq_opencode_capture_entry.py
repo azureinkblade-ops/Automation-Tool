@@ -226,6 +226,19 @@ def test_trial_model_denies_other_authorized_task_before_claim(tmp_path):
     assert receiver.runs == 0 and not env.consumed() and list(env.root.iterdir()) == []
 
 
+def test_trial_request_model_denies_other_task_even_if_config_model_differs(tmp_path):
+    other = b"Real delegated source text"
+    changed = json.loads(BINDING.canonical_bytes)
+    changed["model_id"] = "another-model"
+    bound = build_binding(changed)
+    env = Env(tmp_path, task_sha256=hashlib.sha256(other).hexdigest(),
+              model_binding_id=bound.binding_id)
+    receiver = FakeReceiver()
+    with pytest.raises(CaptureEntryDenied, match="frozen synthetic task"):
+        env.run(receiver, task=other, binding_bytes=bound.canonical_bytes)
+    assert receiver.runs == 0 and not env.consumed() and list(env.root.iterdir()) == []
+
+
 @pytest.mark.parametrize("binding_bytes", [
     BINDING.canonical_bytes + b"\n",
     BINDING.canonical_bytes.replace(b"nemotron-3-ultra-free", b"qwen3:14b"),

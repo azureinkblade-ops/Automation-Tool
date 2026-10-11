@@ -296,7 +296,7 @@ class OpenCodeCaptureEntry:
             task.decode("utf-8")
         except (AttributeError, UnicodeError) as exc:
             raise CaptureEntryDenied("task must be UTF-8 bytes") from exc
-        if binding.model_id == TRIAL_MODEL and task != TRIAL_TASK:
+        if binding.request_model_id == TRIAL_MODEL and task != TRIAL_TASK:
             raise CaptureEntryDenied("trial model requires the frozen synthetic task")
         run_dir = self._root / ("run-" + hashlib.sha256(artifact.run_id.encode("ascii")).hexdigest()[:32])
         if not self._root.is_dir() or self._root.is_symlink() or run_dir.exists():
