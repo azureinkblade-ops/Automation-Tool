@@ -22,6 +22,15 @@ class AgentPingRecoveryHost:
     ):
         if type(enabled) is not bool:
             raise DelegationIntegrityError("agent ping recovery gate invalid")
+        if (type(authority) is not SQLiteDelegationStore
+                or type(start) is not SQLiteExecutionStartStore
+                or type(captures) is not SQLiteAgentTerminalCaptureStore
+                or type(registry) is not CodexInvocationRegistry
+                or type(results) is not SQLiteDelegationResultStore
+                or captures.authority.path != authority.path
+                or captures.start is not start
+                or results.path != authority.path):
+            raise DelegationIntegrityError("agent ping recovery stores are not bound")
         self._stores = authority, start, captures, registry, results
         self._enabled = enabled
 

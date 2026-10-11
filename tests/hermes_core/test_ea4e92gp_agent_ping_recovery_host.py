@@ -103,3 +103,20 @@ def test_recovery_host_rejects_nonexplicit_enablement_and_bad_attempt(tmp_path):
             host.recover("")
     finally:
         start.close()
+
+
+def test_recovery_host_rejects_missing_or_mismatched_stores_at_configuration(tmp_path):
+    authority, start, _, _, captures, registry, results = stores(tmp_path)
+    other_start = SQLiteExecutionStartStore(tmp_path / "other-start.sqlite3")
+    try:
+        for dependencies in (
+            (None, start, captures, registry, results),
+            (authority, start, None, registry, results),
+            (authority, other_start, captures, registry, results),
+            (authority, start, captures, registry, None),
+        ):
+            with pytest.raises(DelegationIntegrityError, match="stores are not bound"):
+                AgentPingRecoveryHost(*dependencies, enabled=True)
+    finally:
+        other_start.close()
+        start.close()
