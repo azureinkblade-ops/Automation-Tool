@@ -43062,6 +43062,15 @@ def recover_governed_agent_ping(attempt_id):
     return _GOVERNED_AGENT_PING_RECOVERY_HOST.recover(attempt_id)
 
 
+def inspect_governed_agent_ping(attempt_id):
+    """Read durable delegated-ping progress without returning a result."""
+    from tools.hermes_core.delegated_task import DelegationIntegrityError
+
+    if _GOVERNED_AGENT_PING_RECOVERY_HOST is None:
+        raise DelegationIntegrityError("agent ping recovery host is not configured")
+    return _GOVERNED_AGENT_PING_RECOVERY_HOST.inspect(attempt_id)
+
+
 def configure_governed_production_action(runtime_config):
     """Explicitly inject a prepared, default-disabled governed app composition."""
     from tools.hermes_core.production_app_config import build_factory_config

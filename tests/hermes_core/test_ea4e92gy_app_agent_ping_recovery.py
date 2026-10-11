@@ -20,8 +20,11 @@ def test_app_result_host_has_no_implicit_startup_or_route(monkeypatch):
     monkeypatch.setattr(app, "_GOVERNED_AGENT_PING_RECOVERY_HOST", None)
     with pytest.raises(DelegationIntegrityError, match="not configured"):
         app.recover_governed_agent_ping("attempt-1")
+    with pytest.raises(DelegationIntegrityError, match="not configured"):
+        app.inspect_governed_agent_ping("attempt-1")
     assert "configure_governed_agent_ping_recovery" not in inspect.getsource(app.main)
     assert "recover_governed_agent_ping" not in inspect.getsource(app.main)
+    assert "inspect_governed_agent_ping" not in inspect.getsource(app.main)
 
 
 @pytest.mark.parametrize("agent", [
@@ -51,12 +54,16 @@ def test_app_result_host_requires_explicit_enablement_and_replays_once(
         )
         with pytest.raises(DelegationIntegrityError, match="disabled"):
             app.recover_governed_agent_ping(lease.attempt_id)
+        with pytest.raises(DelegationIntegrityError, match="disabled"):
+            app.inspect_governed_agent_ping(lease.attempt_id)
         assert authority.list_mailbox(task.originator_agent_id) == []
         app.configure_governed_agent_ping_recovery(
             authority, start, captures, registry, results, enabled=True,
         )
+        assert app.inspect_governed_agent_ping(lease.attempt_id) == "TERMINAL_EVIDENCE_AVAILABLE"
         first = app.recover_governed_agent_ping(lease.attempt_id)
         assert first[0].outcome == "SUCCEEDED"
+        assert app.inspect_governed_agent_ping(lease.attempt_id) == "MESSAGE_AVAILABLE"
         assert app.recover_governed_agent_ping(lease.attempt_id) == first
         assert len(authority.list_mailbox(task.originator_agent_id)) == 1
     finally:

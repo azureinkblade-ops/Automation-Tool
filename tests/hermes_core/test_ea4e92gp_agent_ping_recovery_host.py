@@ -31,6 +31,8 @@ def test_recovery_host_is_disabled_by_default_and_has_no_side_effect(tmp_path):
         host = AgentPingRecoveryHost(authority, start, captures, registry, results)
         with pytest.raises(DelegationIntegrityError, match="disabled"):
             host.recover(lease.attempt_id)
+        with pytest.raises(DelegationIntegrityError, match="disabled"):
+            host.inspect(lease.attempt_id)
         with pytest.raises(DelegationNotFoundError):
             results.get_result(lease.attempt_id)
         assert authority.list_mailbox(task.originator_agent_id) == []
@@ -101,6 +103,8 @@ def test_recovery_host_rejects_nonexplicit_enablement_and_bad_attempt(tmp_path):
         )
         with pytest.raises(DelegationIntegrityError, match="attempt identity missing"):
             host.recover("")
+        with pytest.raises(DelegationIntegrityError, match="attempt identity missing"):
+            host.inspect("")
     finally:
         start.close()
 
@@ -119,4 +123,40 @@ def test_recovery_host_rejects_missing_or_mismatched_stores_at_configuration(tmp
                 AgentPingRecoveryHost(*dependencies, enabled=True)
     finally:
         other_start.close()
+        start.close()
+
+
+@pytest.mark.parametrize("agent", [
+    "codex-cli-agent", "kilo-cli-agent", "opencode-cli-agent",
+])
+def test_inspect_is_read_only_across_terminal_and_delivery_states(tmp_path, agent):
+    authority, start, task, lease, _, _ = stores_and_artifacts(
+        tmp_path, agent, ping=True,
+    )
+    try:
+        witness = load_bound_agent_start(authority, start, lease.attempt_id)
+        captures = capture_store(authority, start)
+        registry = CodexInvocationRegistry(str(tmp_path / "codex.sqlite3"))
+        registry.initialize()
+        results = ping_store(authority.path)
+        host = AgentPingRecoveryHost(
+            authority, start, captures, registry, results, enabled=True,
+        )
+        assert host.inspect(lease.attempt_id) == "NO_TERMINAL_EVIDENCE"
+        assert authority.list_mailbox(task.originator_agent_id) == []
+        if agent == "codex-cli-agent":
+            registry = durable_codex_record(
+                tmp_path, witness, clock=clock("2026-08-27T12:05:04Z"),
+            )
+            host = AgentPingRecoveryHost(
+                authority, start, captures, registry, results, enabled=True,
+            )
+        else:
+            captures.capture(lease.attempt_id, terminal_outcome(witness))
+        assert host.inspect(lease.attempt_id) == "TERMINAL_EVIDENCE_AVAILABLE"
+        assert authority.list_mailbox(task.originator_agent_id) == []
+        host.recover(lease.attempt_id)
+        assert host.inspect(lease.attempt_id) == "MESSAGE_AVAILABLE"
+        assert len(authority.list_mailbox(task.originator_agent_id)) == 1
+    finally:
         start.close()
