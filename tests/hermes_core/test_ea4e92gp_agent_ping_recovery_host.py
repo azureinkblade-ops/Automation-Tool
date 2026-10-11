@@ -6,11 +6,13 @@ from tests.hermes_core.test_ea4e92fu_agent_ping_delivery import ping_store
 from tests.hermes_core.test_ea4e92fz_durable_agent_start import stores_and_artifacts
 from tests.hermes_core.test_ea4e92gk_codex_terminal_witness import durable_codex_record
 from tests.hermes_core.test_ea4e92gh_terminal_capture import capture_store
+from tests.hermes_core.test_ea4e92gc_terminal_text_ping import terminal_outcome
 from tests.hermes_core.test_ea4e92gm_codex_ping_return import clock
 from tools.hermes_core.agent_ping_recovery_host import AgentPingRecoveryHost
 from tools.hermes_core.agent_start_witness import load_bound_agent_start
 from tools.hermes_core.codex_adapter import CodexInvocationRegistry
 from tools.hermes_core.delegated_task import DelegationIntegrityError, DelegationNotFoundError
+from tools.hermes_core.sqlite_execution_start_store import SQLiteExecutionStartStore
 
 
 def stores(tmp_path):
@@ -48,6 +50,39 @@ def test_explicit_host_recovery_replays_one_codex_result(tmp_path):
         )
         first = host.recover(lease.attempt_id)
         assert first[0].outcome == "SUCCEEDED"
+        assert host.recover(lease.attempt_id) == first
+        assert len(authority.list_mailbox(task.originator_agent_id)) == 1
+    finally:
+        start.close()
+
+
+@pytest.mark.parametrize("agent", [
+    "codex-cli-agent", "kilo-cli-agent", "opencode-cli-agent",
+])
+def test_one_host_recovers_each_agent_after_store_reopen(tmp_path, agent):
+    authority, start, task, lease, _, _ = stores_and_artifacts(
+        tmp_path, agent, ping=True,
+    )
+    try:
+        witness = load_bound_agent_start(authority, start, lease.attempt_id)
+        captures = capture_store(authority, start)
+        registry = CodexInvocationRegistry(str(tmp_path / "codex.sqlite3"))
+        registry.initialize()
+        if agent == "codex-cli-agent":
+            registry = durable_codex_record(
+                tmp_path, witness, clock=clock("2026-08-27T12:05:04Z"),
+            )
+        else:
+            captures.capture(lease.attempt_id, terminal_outcome(witness))
+        start.close()
+        start = SQLiteExecutionStartStore(tmp_path / "start.sqlite3")
+        host = AgentPingRecoveryHost(
+            authority, start, capture_store(authority, start), registry,
+            ping_store(authority.path), enabled=True,
+        )
+        first = host.recover(lease.attempt_id)
+        assert first[0].outcome == "SUCCEEDED"
+        assert authority.get_message(first[2]).recipient_agent_id == task.originator_agent_id
         assert host.recover(lease.attempt_id) == first
         assert len(authority.list_mailbox(task.originator_agent_id)) == 1
     finally:
