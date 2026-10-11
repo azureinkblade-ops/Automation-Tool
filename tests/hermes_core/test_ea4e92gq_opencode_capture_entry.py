@@ -102,7 +102,8 @@ class FakeReceiver:
 
 
 class Env:
-    def __init__(self, tmp_path, *, enabled=True, verifier="ok", persist=True, **art):
+    def __init__(self, tmp_path, *, enabled=True, verifier="ok",
+                 binding_verifier="ok", persist=True, **art):
         self.tmp = tmp_path
         self.store = CaptureQualificationStore.initialize(
             tmp_path / "cap.sqlite3", anchor_path=tmp_path / "cap.anchor.json",
@@ -114,9 +115,13 @@ class Env:
         self.root.mkdir()
         self.upstream = Upstream()
         verify = (lambda a, h: ISSUER) if verifier == "ok" else verifier
+        verify_binding = ((lambda binding_id, model: MODEL
+                           if binding_id == self.artifact.model_binding_id and model == MODEL
+                           else None) if binding_verifier == "ok" else binding_verifier)
         self.entry = OpenCodeCaptureEntry(
             store=self.store, capture_root=self.root, trusted_issuer_id=ISSUER,
-            clock=lambda: NOW, issuer_verifier=verify, enabled=enabled)
+            clock=lambda: NOW, issuer_verifier=verify,
+            binding_verifier=verify_binding, enabled=enabled)
 
     def run(self, receiver=None, **changes):
         a = self.artifact
@@ -174,6 +179,26 @@ def test_wrong_or_failing_issuer_denied(tmp_path, verifier):
     with pytest.raises(CaptureEntryDenied):
         env.run()
     assert not env.consumed()
+
+
+@pytest.mark.parametrize("binding_verifier", [
+    None, lambda binding_id, model: "other-model",
+    lambda binding_id, model: (_ for _ in ()).throw(RuntimeError("bad binding")),
+])
+def test_missing_wrong_or_failing_binding_verifier_denied_before_claim(tmp_path, binding_verifier):
+    env = Env(tmp_path, binding_verifier=binding_verifier)
+    receiver = FakeReceiver()
+    with pytest.raises(CaptureEntryDenied):
+        env.run(receiver)
+    assert receiver.runs == 0 and not env.consumed() and list(env.root.iterdir()) == []
+
+
+def test_caller_cannot_substitute_nemotron_for_authorized_request_model(tmp_path):
+    env = Env(tmp_path)
+    receiver = FakeReceiver()
+    with pytest.raises(CaptureEntryDenied, match="authorized binding"):
+        env.run(receiver, expected_request_model="nemotron-3-ultra-free")
+    assert receiver.runs == 0 and not env.consumed() and list(env.root.iterdir()) == []
 
 
 def test_unissued_cancelled_revoked_and_foreign_authority_denied(tmp_path):

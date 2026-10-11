@@ -226,14 +226,16 @@ class OpenCodeCaptureEntry:
     """Default-disabled. `enabled` must be the boolean True."""
 
     def __init__(self, *, store: CaptureQualificationStore, capture_root: Path,
-                 trusted_issuer_id: str, clock: Callable[[], str],
-                 issuer_verifier: Optional[Callable[[CaptureQualificationArtifact, str], str]] = None,
-                 enabled: bool = False) -> None:
+                  trusted_issuer_id: str, clock: Callable[[], str],
+                  issuer_verifier: Optional[Callable[[CaptureQualificationArtifact, str], str]] = None,
+                  binding_verifier: Optional[Callable[[str, str], str]] = None,
+                  enabled: bool = False) -> None:
         self._store = store
         self._root = Path(capture_root)
         self._issuer = trusted_issuer_id
         self._clock = clock
         self._verifier = issuer_verifier
+        self._binding_verifier = binding_verifier
         self._enabled = enabled
 
     def run(self, *, artifact: CaptureQualificationArtifact, issue_request_hash: str,
@@ -254,12 +256,21 @@ class OpenCodeCaptureEntry:
             raise CaptureEntryDenied("injected receiver and upstream required")
         if type(expected_request_model) is not str or not expected_request_model:
             raise CaptureEntryDenied("bound request model required")
+        if not callable(self._binding_verifier):
+            raise CaptureEntryDenied("trusted model binding verifier unbound")
         try:
             verified = self._verifier(artifact, issue_request_hash)
         except Exception as exc:
             raise CaptureEntryDenied("issuer verification failed") from exc
         if verified != self._issuer:
             raise CaptureEntryDenied("issuer identity mismatch")
+        try:
+            bound_model = self._binding_verifier(
+                artifact.model_binding_id, expected_request_model)
+        except Exception as exc:
+            raise CaptureEntryDenied("model binding verification failed") from exc
+        if type(bound_model) is not str or bound_model != expected_request_model:
+            raise CaptureEntryDenied("request model differs from authorized binding")
         try:
             task.decode("utf-8")
         except (AttributeError, UnicodeError) as exc:
