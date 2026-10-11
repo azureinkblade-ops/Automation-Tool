@@ -23,6 +23,9 @@ import threading
 from typing import Callable, Optional, Protocol
 
 from tools.hermes_core import opencode_capture_schema_v2 as schema
+from tools.hermes_core.opencode_capture_model_binding import (
+    CaptureModelBindingError, parse_binding,
+)
 from tools.hermes_core.capture_qualification_authority import (
     CaptureArtifactInvalid, CaptureQualificationArtifact,
 )
@@ -239,7 +242,8 @@ class OpenCodeCaptureEntry:
         self._enabled = enabled
 
     def run(self, *, artifact: CaptureQualificationArtifact, issue_request_hash: str,
-            task: bytes, expected_request_model: str, receiver: ReceiverPort,
+            task: bytes, binding_bytes: bytes, expected_request_model: str,
+            receiver: ReceiverPort,
             upstream: Callable[[bytes], bytes], source_commit: str,
             executable_sha256: str, config_sha256: str, transport_id: str,
             model_binding_id: str, provider_budget_id: str,
@@ -264,6 +268,16 @@ class OpenCodeCaptureEntry:
             raise CaptureEntryDenied("issuer verification failed") from exc
         if verified != self._issuer:
             raise CaptureEntryDenied("issuer identity mismatch")
+        try:
+            binding = parse_binding(binding_bytes)
+        except CaptureModelBindingError as exc:
+            raise CaptureEntryDenied("canonical model binding required") from exc
+        if (binding.binding_id != artifact.model_binding_id
+                or binding.request_model_id != expected_request_model
+                or binding.runtime_sha256 != artifact.executable_sha256
+                or binding.config_sha256 != artifact.config_sha256
+                or binding.transport_id != artifact.transport_id):
+            raise CaptureEntryDenied("model binding differs from authorization")
         try:
             bound_model = self._binding_verifier(
                 artifact.model_binding_id, expected_request_model)
@@ -297,6 +311,7 @@ class OpenCodeCaptureEntry:
         # ---- credit is now durably consumed; nothing below can refund it
         run_dir.mkdir()
         _write_new(run_dir / "authorization.json", artifact.canonical_bytes())
+        _write_new(run_dir / "model-binding.json", binding.canonical_bytes)
         terminated = []
 
         def terminate_once() -> None:
@@ -420,4 +435,33 @@ def verify_capture_v2(directory: Path) -> dict:
             if call["response_sha256"] is not None and hashlib.sha256(
                     (directory / "response-1.bin").read_bytes()).hexdigest() != call["response_sha256"]:
                 raise schema.CaptureSchemaError("response bytes mismatch")
+    return manifest
+
+
+def verify_bound_capture_v2(directory: Path) -> dict:
+    """Require the supplementary canonical binding for a new fake v2 capture.
+
+    The frozen v2 manifest remains unchanged; older fake captures continue to
+    use verify_capture_v2. This is not live or acceptance qualification.
+    """
+    directory = Path(directory)
+    manifest = verify_capture_v2(directory)
+    try:
+        binding = parse_binding((directory / "model-binding.json").read_bytes())
+    except (OSError, CaptureModelBindingError) as exc:
+        raise schema.CaptureSchemaError("bound model material missing or invalid") from exc
+    if (binding.binding_id != manifest["model_binding_id"]
+            or binding.runtime_sha256 != manifest["executable_sha256"]
+            or binding.config_sha256 != manifest["config_sha256"]
+            or binding.transport_id != manifest["transport_id"]):
+        raise schema.CaptureSchemaError("binding differs from manifest")
+    for call in manifest["provider_calls"]:
+        if call["forwarded"]:
+            try:
+                request = json.loads((directory / "request-1.bin").read_bytes().decode("utf-8"),
+                                     object_pairs_hook=_unique)
+            except (OSError, ValueError, UnicodeError) as exc:
+                raise schema.CaptureSchemaError("bound request invalid") from exc
+            if type(request) is not dict or request.get("model") != binding.request_model_id:
+                raise schema.CaptureSchemaError("request model differs from binding")
     return manifest

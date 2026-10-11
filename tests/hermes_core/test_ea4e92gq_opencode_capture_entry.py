@@ -18,14 +18,27 @@ from tools.hermes_core.capture_qualification_authority import (
 from tools.hermes_core.capture_qualification_store import CaptureQualificationStore
 from tools.hermes_core.opencode_capture_entry import (
     CaptureEntryDenied, CaptureFailedClosed, OpenCodeCaptureEntry,
-    ProviderCallViolation, ReceiverResult, verify_capture_v2,
+    ProviderCallViolation, ReceiverResult, verify_bound_capture_v2,
+    verify_capture_v2,
 )
+from tools.hermes_core.opencode_capture_model_binding import build_binding
 
 REPO = Path(__file__).resolve().parents[2]
 TASK = b"Return exactly: EA4E92_OPENCODE_CURRENT_REPLAY_OK. Do not use tools or edit files."
 NOW = "2026-10-10T00:00:01Z"
 ISSUER = "capture-issuer:fake-nonlive"
-MODEL = "qwen3:14b"
+MODEL = "nemotron-3-ultra-free"
+BINDING = build_binding({
+    "schema_id": "hermes.opencode-capture-model-binding/v1",
+    "receiver_id": "opencode-cli-agent", "provider_id": "opencode",
+    "model_id": MODEL, "request_model_id": MODEL,
+    "provider_base_url": "https://example.invalid/v1",
+    "route": "/v1/chat/completions", "stream": True,
+    "runtime_sha256": "b" * 64, "config_sha256": "c" * 64,
+    "transport_id": "d" * 64, "credential_policy_sha256": "e" * 64,
+    "egress_policy_sha256": "f" * 64,
+    "qualification_status": "UNQUALIFIED_NONLIVE",
+})
 ISSUE_HASH = hashlib.sha256(b"fake externally reviewed issue request").hexdigest()
 SSE = b'data: {"choices":[{"delta":{"content":"EA4E92_OPENCODE_CURRENT_REPLAY_OK"}}]}\n\ndata: [DONE]\n\n'
 
@@ -43,7 +56,8 @@ def artifact(**changes):
         approval_id="cap-approval:one", operator_id="operator:one", run_id="cap-run:one",
         receiver_id="opencode-cli-agent", task_sha256=hashlib.sha256(TASK).hexdigest(),
         source_commit="a" * 40, executable_sha256="b" * 64, config_sha256="c" * 64,
-        transport_id="d" * 64, model_binding_id="e" * 64, provider_budget_id="cap-budget:one",
+        transport_id="d" * 64, model_binding_id=BINDING.binding_id,
+        provider_budget_id="cap-budget:one",
         issued_at="2026-10-10T00:00:00Z", expires_at="2026-10-10T00:05:00Z",
         process_start_limit=1, nonce="nonce:one",
     )
@@ -127,6 +141,7 @@ class Env:
         a = self.artifact
         args = dict(
             artifact=a, issue_request_hash=ISSUE_HASH, task=TASK,
+            binding_bytes=BINDING.canonical_bytes,
             expected_request_model=MODEL, receiver=receiver or FakeReceiver(),
             upstream=self.upstream, source_commit=a.source_commit,
             executable_sha256=a.executable_sha256, config_sha256=a.config_sha256,
@@ -147,9 +162,10 @@ def test_default_disabled_denies_without_consuming(tmp_path):
         clock=lambda: NOW, issuer_verifier=lambda a, h: ISSUER)
     receiver = FakeReceiver()
     args = dict(artifact=env.artifact, issue_request_hash=ISSUE_HASH, task=TASK,
+                binding_bytes=BINDING.canonical_bytes,
                 expected_request_model=MODEL, receiver=receiver, upstream=env.upstream,
                 source_commit="a" * 40, executable_sha256="b" * 64, config_sha256="c" * 64,
-                transport_id="d" * 64, model_binding_id="e" * 64,
+                transport_id="d" * 64, model_binding_id=BINDING.binding_id,
                 provider_budget_id="cap-budget:one")
     with pytest.raises(CaptureEntryDenied):
         default.run(**args)
@@ -193,12 +209,36 @@ def test_missing_wrong_or_failing_binding_verifier_denied_before_claim(tmp_path,
     assert receiver.runs == 0 and not env.consumed() and list(env.root.iterdir()) == []
 
 
-def test_caller_cannot_substitute_nemotron_for_authorized_request_model(tmp_path):
+def test_caller_cannot_substitute_qwen_for_authorized_request_model(tmp_path):
     env = Env(tmp_path)
     receiver = FakeReceiver()
-    with pytest.raises(CaptureEntryDenied, match="authorized binding"):
-        env.run(receiver, expected_request_model="nemotron-3-ultra-free")
+    with pytest.raises(CaptureEntryDenied, match="differs from authorization"):
+        env.run(receiver, expected_request_model="qwen3:14b")
     assert receiver.runs == 0 and not env.consumed() and list(env.root.iterdir()) == []
+
+
+@pytest.mark.parametrize("binding_bytes", [
+    BINDING.canonical_bytes + b"\n",
+    BINDING.canonical_bytes.replace(b"nemotron-3-ultra-free", b"qwen3:14b"),
+    BINDING.canonical_bytes.replace(b'"config_sha256":"' + b"c" * 64,
+                                    b'"config_sha256":"' + b"f" * 64),
+])
+def test_unbound_or_noncanonical_material_denied_before_claim(tmp_path, binding_bytes):
+    env = Env(tmp_path)
+    receiver = FakeReceiver()
+    with pytest.raises(CaptureEntryDenied):
+        env.run(receiver, binding_bytes=binding_bytes)
+    assert receiver.runs == 0 and not env.consumed() and list(env.root.iterdir()) == []
+
+
+def test_bound_capture_requires_retained_binding_material(tmp_path):
+    env = Env(tmp_path)
+    result = env.run()
+    path = result.directory / "model-binding.json"
+    original = path.read_bytes()
+    path.write_bytes(original + b"\n")
+    with pytest.raises(schema.CaptureSchemaError, match="bound model material"):
+        verify_bound_capture_v2(result.directory)
 
 
 def test_unissued_cancelled_revoked_and_foreign_authority_denied(tmp_path):
@@ -276,7 +316,9 @@ def test_single_call_capture_is_durable_labeled_and_verifiable(tmp_path):
     assert (d / "response-1.bin").read_bytes() == SSE
     assert (d / "stdout.bin").read_bytes() == good_result().stdout
     assert (d / "authorization.json").read_bytes() == env.artifact.canonical_bytes()
+    assert (d / "model-binding.json").read_bytes() == BINDING.canonical_bytes
     assert verify_capture_v2(d) == m
+    assert verify_bound_capture_v2(d) == m
     assert m["claimed_at"] <= m["started_at"] <= m["ended_at"]
 
 
