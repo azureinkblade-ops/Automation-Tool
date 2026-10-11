@@ -43037,6 +43037,29 @@ _GOVERNED_PRODUCTION_HOST = None
 _GOVERNED_PRODUCTION_RECOVERY = None
 _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER = None
 _GOVERNED_PRODUCTION_DEPLOYMENT_OWNER = None
+_GOVERNED_AGENT_PING_RECOVERY_HOST = None
+
+
+def configure_governed_agent_ping_recovery(authority, start, captures, registry,
+                                            results, *, enabled=False):
+    """Explicitly attach established delegated-result stores; never start an agent."""
+    from tools.hermes_core.agent_ping_recovery_host import AgentPingRecoveryHost
+
+    host = AgentPingRecoveryHost(
+        authority, start, captures, registry, results, enabled=enabled,
+    )
+    global _GOVERNED_AGENT_PING_RECOVERY_HOST
+    _GOVERNED_AGENT_PING_RECOVERY_HOST = host
+    return host
+
+
+def recover_governed_agent_ping(attempt_id):
+    """Recover one existing delegated ping through the explicit result host."""
+    from tools.hermes_core.delegated_task import DelegationIntegrityError
+
+    if _GOVERNED_AGENT_PING_RECOVERY_HOST is None:
+        raise DelegationIntegrityError("agent ping recovery host is not configured")
+    return _GOVERNED_AGENT_PING_RECOVERY_HOST.recover(attempt_id)
 
 
 def configure_governed_production_action(runtime_config):
