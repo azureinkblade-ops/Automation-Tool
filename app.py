@@ -43041,12 +43041,14 @@ _GOVERNED_AGENT_PING_RECOVERY_HOST = None
 
 
 def configure_governed_agent_ping_recovery(authority, start, captures, registry,
-                                            results, *, enabled=False):
+                                            results, *, enabled=False,
+                                            receiver_starts=None):
     """Explicitly attach established delegated-result stores; never start an agent."""
     from tools.hermes_core.agent_ping_recovery_host import AgentPingRecoveryHost
 
     host = AgentPingRecoveryHost(
         authority, start, captures, registry, results, enabled=enabled,
+        receiver_starts=receiver_starts,
     )
     global _GOVERNED_AGENT_PING_RECOVERY_HOST
     _GOVERNED_AGENT_PING_RECOVERY_HOST = host

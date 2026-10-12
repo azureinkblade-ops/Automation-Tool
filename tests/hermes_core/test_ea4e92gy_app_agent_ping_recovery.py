@@ -1,6 +1,7 @@
 """Fake-only app boundary for explicit three-agent delegated result recovery."""
 
 import inspect
+from datetime import datetime, timezone
 
 import pytest
 
@@ -12,6 +13,7 @@ from tests.hermes_core.test_ea4e92gh_terminal_capture import capture_store
 from tests.hermes_core.test_ea4e92gk_codex_terminal_witness import durable_codex_record
 from tests.hermes_core.test_ea4e92gm_codex_ping_return import clock
 from tools.hermes_core.agent_start_witness import load_bound_agent_start
+from tools.hermes_core.agent_receiver_start_fence import SQLiteAgentReceiverStartFenceStore
 from tools.hermes_core.codex_adapter import CodexInvocationRegistry
 from tools.hermes_core.delegated_task import DelegationIntegrityError
 
@@ -25,6 +27,30 @@ def test_app_result_host_has_no_implicit_startup_or_route(monkeypatch):
     assert "configure_governed_agent_ping_recovery" not in inspect.getsource(app.main)
     assert "recover_governed_agent_ping" not in inspect.getsource(app.main)
     assert "inspect_governed_agent_ping" not in inspect.getsource(app.main)
+
+
+@pytest.mark.parametrize("agent", ["kilo-cli-agent", "opencode-cli-agent"])
+def test_app_inspect_reports_claimed_receiver_as_unknown(tmp_path, monkeypatch, agent):
+    monkeypatch.setattr(app, "_GOVERNED_AGENT_PING_RECOVERY_HOST", None)
+    authority, start, _, lease, _, _ = stores_and_artifacts(
+        tmp_path, agent, ping=True,
+    )
+    try:
+        captures = capture_store(authority, start)
+        registry = CodexInvocationRegistry(str(tmp_path / "codex.sqlite3"))
+        registry.initialize()
+        starts = SQLiteAgentReceiverStartFenceStore(
+            authority, start,
+            clock=lambda: datetime(2026, 8, 27, 12, 5, 4, tzinfo=timezone.utc),
+        )
+        app.configure_governed_agent_ping_recovery(
+            authority, start, captures, registry, ping_store(authority.path),
+            enabled=True, receiver_starts=starts,
+        )
+        starts.claim(lease.attempt_id)
+        assert app.inspect_governed_agent_ping(lease.attempt_id) == "RECEIVER_START_UNKNOWN"
+    finally:
+        start.close()
 
 
 @pytest.mark.parametrize("agent", [

@@ -3,6 +3,7 @@
 from tools.hermes_core.agent_ping_return import return_bound_agent_ping
 from tools.hermes_core.agent_codex_terminal_witness import load_codex_terminal_observation
 from tools.hermes_core.agent_ping_result import AGENT_PING_SCHEMA_ID
+from tools.hermes_core.agent_receiver_start_fence import SQLiteAgentReceiverStartFenceStore
 from tools.hermes_core.agent_start_witness import load_bound_agent_start
 from tools.hermes_core.agent_terminal_capture import SQLiteAgentTerminalCaptureStore
 from tools.hermes_core.codex_adapter import CodexInvocationRegistry
@@ -23,6 +24,7 @@ class AgentPingRecoveryHost:
         results: SQLiteDelegationResultStore,
         *,
         enabled: bool = False,
+        receiver_starts: SQLiteAgentReceiverStartFenceStore | None = None,
     ):
         if type(enabled) is not bool:
             raise DelegationIntegrityError("agent ping recovery gate invalid")
@@ -35,7 +37,14 @@ class AgentPingRecoveryHost:
                 or captures.start is not start
                 or results.path != authority.path):
             raise DelegationIntegrityError("agent ping recovery stores are not bound")
+        if receiver_starts is not None and (
+            type(receiver_starts) is not SQLiteAgentReceiverStartFenceStore
+            or receiver_starts.authority.path != authority.path
+            or receiver_starts.start is not start
+        ):
+            raise DelegationIntegrityError("receiver start fence is not bound")
         self._stores = authority, start, captures, registry, results
+        self._receiver_starts = receiver_starts
         self._enabled = enabled
 
     def recover(self, attempt_id: str):
@@ -81,6 +90,12 @@ class AgentPingRecoveryHost:
                     }):
                 raise DelegationIntegrityError("agent ping delivery linkage mismatch")
             return "MESSAGE_AVAILABLE"
+        if (receipt.receiver_agent_id in {"kilo-cli-agent", "opencode-cli-agent"}
+                and self._receiver_starts is not None
+                and (authority.delegation_status(task.delegation_id) != "CREATED"
+                     or authority.lease_status(receipt.capability_lease_id) != "ACTIVE")
+                and self._receiver_starts.get(attempt_id) is not None):
+            return "RECEIVER_START_UNKNOWN"
         witness = load_bound_agent_start(authority, start, attempt_id)
         if receipt.receiver_agent_id == "codex-cli-agent":
             if registry.get(witness.bound.invocation.idempotency_key) is None:
@@ -88,6 +103,9 @@ class AgentPingRecoveryHost:
             load_codex_terminal_observation(witness, registry)
         elif receipt.receiver_agent_id in {"kilo-cli-agent", "opencode-cli-agent"}:
             if captures.get(attempt_id) is None:
+                if (self._receiver_starts is not None
+                        and self._receiver_starts.get(attempt_id) is not None):
+                    return "RECEIVER_START_UNKNOWN"
                 return "NO_TERMINAL_EVIDENCE"
         else:
             raise DelegationIntegrityError("agent ping receiver is not supported")
