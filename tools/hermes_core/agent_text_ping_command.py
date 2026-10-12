@@ -60,7 +60,21 @@ def build_agent_text_ping_command(
             or bridge.start_result_hash != witness.start_result.artifact_hash
             or not bridge.verify_hash()):
         raise DelegationIntegrityError("text ping task or bridge mismatch")
-    message = f"Reply PONG for Hermes task {task.task_input_hash}."
+    message = " ".join((
+        "Return only one JSON object with exactly these top-level keys:",
+        "schema_version, outcome, result_payload, output_manifest,",
+        "evidence_manifest, error_code, error_summary.",
+        "Set schema_version to the string 1 and outcome to the string SUCCEEDED.",
+        "Set result_payload to an object with exactly task_input_hash equal to",
+        f"{task.task_input_hash}, receiver_receipt_hash equal to",
+        f"{witness.receipt.artifact_hash}, and statement equal to {receiver}:PING_OK.",
+        "Set output_manifest to an empty array. Set evidence_manifest to one",
+        "object with ordinal as numeric 0, evidence_type as the string",
+        "receiver_acceptance_sha256, and sha256 equal to",
+        f"{witness.receipt.artifact_hash}.",
+        "Set error_code and error_summary to JSON null. Encode every other",
+        "value as a JSON string. Do not add markdown or prose.",
+    ))
     if receiver == "kilo-cli-agent":
         from tools.hermes_core.kilo_adapter import build_kilo_argv
 

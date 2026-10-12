@@ -5,8 +5,11 @@ from dataclasses import replace
 import pytest
 
 from tests.hermes_core.test_ea4e92fz_durable_agent_start import stores_and_artifacts
+from tests.hermes_core.test_ea4e92gc_terminal_text_ping import terminal_outcome
 from tests.hermes_core.test_ea4e92he_agent_invocation_bridge import NOW, fake_resolution
 from tools.hermes_core.agent_invocation_bridge_store import SQLiteAgentInvocationBridgeStore
+from tools.hermes_core.agent_result_candidate import bind_terminal_agent_candidate
+from tools.hermes_core.agent_ping_result import validate_agent_ping_candidate
 from tools.hermes_core.agent_start_witness import load_bound_agent_start
 from tools.hermes_core.agent_text_ping_command import build_agent_text_ping_command
 from tools.hermes_core.agent_text_process_intent import SQLiteAgentTextProcessIntentStore
@@ -52,7 +55,7 @@ def opencode_binding(tmp_path):
 
 @pytest.mark.parametrize("agent", ["kilo-cli-agent", "opencode-cli-agent"])
 def test_ping_command_uses_accepted_task_and_receiver_builder(tmp_path, agent):
-    authority, start, task, lease, _, _ = stores_and_artifacts(
+    authority, start, task, lease, receipt, _ = stores_and_artifacts(
         tmp_path, agent, ping=True, task_changes=PING_TASK, lease_changes=PING_LEASE,
     )
     try:
@@ -68,7 +71,17 @@ def test_ping_command_uses_accepted_task_and_receiver_builder(tmp_path, agent):
         assert plan.bridge_hash == bridge.artifact_hash
         assert plan.runtime_run_id == witness.bound.invocation.runtime_run_id
         assert plan.argv_hash == sha256_payload(list(plan.argv))
-        assert plan.argv[-1] == f"Reply PONG for Hermes task {task.task_input_hash}."
+        prompt = plan.argv[-1]
+        assert task.task_input_hash in prompt
+        assert receipt.artifact_hash in prompt
+        assert f"{agent}:PING_OK" in prompt
+        assert "schema_version, outcome, result_payload" in prompt
+        assert "evidence_manifest, error_code, error_summary" in prompt
+        assert '"' not in prompt and "\n" not in prompt
+        candidate = bind_terminal_agent_candidate(
+            witness.bound.invocation, terminal_outcome(witness),
+        )
+        validate_agent_ping_candidate(task, lease, receipt, candidate)
         assert plan.argv[1:5] == ("run", "--format", "json", "--pure")
         intents = SQLiteAgentTextProcessIntentStore(bridges, clock=lambda: NOW)
         assert intents.reserve(lease.attempt_id, plan.argv).argv_hash == plan.argv_hash
