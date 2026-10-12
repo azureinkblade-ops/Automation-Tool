@@ -210,8 +210,16 @@ class AgentDelegatedClaimOwner:
         except (DurableAuthorizationStoreError, sqlite3.Error):
             return DelegatedClaimState("UNKNOWN", "AUTHORIZATION_STATE_UNCERTAIN")
         except DelegationIntegrityError as exc:
+            try:
+                previously_claimed = (
+                    self._claim_intent_exists(attempt_id)
+                    or self.fence_store.get(attempt_id) is not None
+                )
+            except Exception:
+                return DelegatedClaimState("UNKNOWN", "CLAIM_STATE_UNCERTAIN")
             return DelegatedClaimState(
-                "UNKNOWN" if intent_recorded else "DENIED", str(exc),
+                "UNKNOWN" if intent_recorded or previously_claimed else "DENIED",
+                str(exc),
             )
         except Exception:
             if intent_recorded:

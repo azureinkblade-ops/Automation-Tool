@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
+from multiprocessing import get_context
 from threading import Barrier
 import sqlite3
 
@@ -19,6 +20,7 @@ from tools.hermes_core.durable_invocation_authorization_store import (
 )
 from tools.hermes_core.production_executor_binding import BindingClock
 from tools.hermes_core.sqlite_execution_start_store import SQLiteExecutionStartStore
+from tools.hermes_core.sqlite_delegation_store import SQLiteDelegationStore
 
 
 def owner(authority, start, auth_store):
@@ -27,6 +29,27 @@ def owner(authority, start, auth_store):
         fence(authority, start), auth_store,
         clock=BindingClock(now=NOW.isoformat()),
     )
+
+
+def claim_in_process(root, attempt_id, auth, agent, gate, results):
+    authority = SQLiteDelegationStore(root / "authority.sqlite3")
+    start = SQLiteExecutionStartStore(root / "start.sqlite3")
+    auth_store = DurableInvocationAuthorizationStore(
+        root / "invocation-authorizations.sqlite3",
+        anchor_path=root / "invocation-authorizations.sqlite3.anchor.json",
+    )
+    try:
+        if not gate.wait(timeout=15):
+            results.put("GATE_TIMEOUT")
+            return
+        result = owner(authority, start, auth_store).claim_and_fence(
+            attempt_id, fake_resolution(agent), auth,
+        )
+        results.put((result.status, result.reason))
+    except Exception as exc:
+        results.put(("ERROR", f"{type(exc).__name__}:{exc}"))
+    finally:
+        start.close()
 
 
 @pytest.mark.parametrize("agent", ["kilo-cli-agent", "opencode-cli-agent"])
@@ -258,6 +281,40 @@ def test_independent_concurrent_claimers_create_one_consumption_and_fence(tmp_pa
         with ThreadPoolExecutor(max_workers=2) as pool:
             first, second = list(pool.map(lambda _: claim_once(), range(2)))
         assert sorted([first.status, second.status]) == ["FENCED", "UNKNOWN"]
+        assert auth_store.consumed_count() == 1
+        assert initial.fence_store.get(lease.attempt_id) is not None
+    finally:
+        start.close()
+
+
+@pytest.mark.parametrize("repeat", range(5))
+def test_separate_process_claimers_create_one_consumption_and_fence(tmp_path, repeat):
+    agent = "opencode-cli-agent"
+    authority, start, _, lease, _, _ = stores_and_artifacts(tmp_path, agent, ping=True)
+    try:
+        auth_store = qualification_store(tmp_path)
+        initial = owner(authority, start, auth_store)
+        resolution = fake_resolution(agent)
+        initial.bridge_store.reserve(lease.attempt_id, resolution)
+        auth = initial.issue(lease.attempt_id, resolution).authorization
+        context = get_context("spawn")
+        gate = context.Event()
+        results = context.Queue()
+        workers = [
+            context.Process(
+                target=claim_in_process,
+                args=(tmp_path, lease.attempt_id, auth, agent, gate, results),
+            )
+            for _ in range(2)
+        ]
+        for worker in workers:
+            worker.start()
+        gate.set()
+        for worker in workers:
+            worker.join(timeout=20)
+            assert worker.exitcode == 0
+        outcomes = [results.get(timeout=5) for _ in workers]
+        assert sorted(status for status, _ in outcomes) == ["FENCED", "UNKNOWN"], outcomes
         assert auth_store.consumed_count() == 1
         assert initial.fence_store.get(lease.attempt_id) is not None
     finally:
