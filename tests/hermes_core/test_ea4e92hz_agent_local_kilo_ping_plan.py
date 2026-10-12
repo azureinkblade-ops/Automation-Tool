@@ -1,6 +1,7 @@
 """The accepted ping can be represented in Linux without launching it."""
 
 from dataclasses import replace
+from copy import deepcopy
 
 import pytest
 
@@ -8,7 +9,9 @@ from tests.hermes_core.test_ea4e92fz_durable_agent_start import stores_and_artif
 from tests.hermes_core.test_ea4e92he_agent_invocation_bridge import NOW, fake_resolution
 from tests.hermes_core.test_ea4e92hu_text_ping_command import PING_LEASE, PING_TASK
 from tools.hermes_core.agent_invocation_bridge_store import SQLiteAgentInvocationBridgeStore
-from tools.hermes_core.agent_local_kilo_ping_plan import build_agent_local_kilo_ping_plan
+from tools.hermes_core.agent_local_kilo_ping_plan import (
+    build_agent_local_kilo_ping_plan, verify_agent_local_kilo_ping_plan,
+)
 from tools.hermes_core.agent_start_witness import load_bound_agent_start
 from tools.hermes_core.agent_text_ping_command import build_agent_text_ping_command
 from tools.hermes_core.delegated_task import DelegationIntegrityError
@@ -35,6 +38,7 @@ def test_linux_plan_binds_same_accepted_ping_without_launch(tmp_path):
         assert plan["argv"][-1] == windows.argv[-1]
         assert plan["argv"][:-1] == inert["argv"][:-1]
         assert plan["argv_hash"] == sha256_payload(plan["argv"])
+        assert verify_agent_local_kilo_ping_plan(witness, bridge, plan) == plan["plan_hash"]
         assert plan["attempt_id"] == witness.lease.attempt_id
         assert plan["task_input_hash"] == witness.task.task_input_hash
         assert plan["receipt_hash"] == witness.receipt.artifact_hash
@@ -50,6 +54,35 @@ def test_linux_plan_binds_same_accepted_ping_without_launch(tmp_path):
         assert plan["receiver_executed"] is False
         assert plan["model_invoked"] is False
         assert inert["argv"][-1] != plan["argv"][-1]
+    finally:
+        start.close()
+
+
+@pytest.mark.parametrize("field,value", [
+    ("image_manifest", "sha256:" + "0" * 64),
+    ("network_binding", "unexpected-network"),
+    ("launch_authorized", True),
+    ("bridge_hash", "0" * 64),
+])
+def test_plan_mutation_is_denied(tmp_path, field, value):
+    start, witness, bridge = _accepted(tmp_path)
+    try:
+        plan = build_agent_local_kilo_ping_plan(witness, bridge)
+        changed = deepcopy(plan)
+        changed[field] = value
+        with pytest.raises(DelegationIntegrityError, match="plan mismatch"):
+            verify_agent_local_kilo_ping_plan(witness, bridge, changed)
+        changed = deepcopy(plan)
+        changed["agent_profile"]["permission"]["*"] = "allow"
+        with pytest.raises(DelegationIntegrityError, match="plan mismatch"):
+            verify_agent_local_kilo_ping_plan(witness, bridge, changed)
+        changed = deepcopy(plan)
+        changed["argv"][-1] = "different task"
+        changed["plan_hash"] = sha256_payload({
+            key: item for key, item in changed.items() if key != "plan_hash"
+        })
+        with pytest.raises(DelegationIntegrityError, match="plan mismatch"):
+            verify_agent_local_kilo_ping_plan(witness, bridge, changed)
     finally:
         start.close()
 

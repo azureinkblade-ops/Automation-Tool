@@ -34,4 +34,19 @@ def build_agent_local_kilo_ping_plan(
     plan["launch_authorized"] = False
     plan["receiver_executed"] = False
     plan["model_invoked"] = False
+    plan["plan_hash"] = sha256_payload(plan)
     return plan
+
+
+def verify_agent_local_kilo_ping_plan(
+    witness: DurableAgentStart, bridge: AgentInvocationBridge, plan: dict,
+) -> str:
+    """Rebuild and compare all planned bytes and identities before reservation."""
+    if type(plan) is not dict:
+        raise DelegationIntegrityError("Linux Kilo ping plan type denied")
+    expected = build_agent_local_kilo_ping_plan(witness, bridge)
+    if plan != expected or plan.get("plan_hash") != sha256_payload({
+        key: value for key, value in plan.items() if key != "plan_hash"
+    }):
+        raise DelegationIntegrityError("Linux Kilo ping plan mismatch")
+    return expected["plan_hash"]
