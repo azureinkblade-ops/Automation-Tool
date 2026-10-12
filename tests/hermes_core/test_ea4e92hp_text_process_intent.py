@@ -2,6 +2,7 @@
 
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from multiprocessing import get_context
 from threading import Barrier
 
 import pytest
@@ -14,6 +15,26 @@ from tools.hermes_core.agent_text_process_intent import SQLiteAgentTextProcessIn
 from tools.hermes_core.delegated_task import DelegationIntegrityError
 from tools.hermes_core.sqlite_delegation_store import SQLiteDelegationStore
 from tools.hermes_core.sqlite_execution_start_store import SQLiteExecutionStartStore
+
+
+def reserve_intent_in_process(root, attempt_id, gate, results):
+    authority = SQLiteDelegationStore(root / "authority.sqlite3")
+    start = SQLiteExecutionStartStore(root / "start.sqlite3")
+    try:
+        bridge = SQLiteAgentInvocationBridgeStore(authority, start, clock=lambda: NOW)
+        intents = SQLiteAgentTextProcessIntentStore(bridge, clock=lambda: NOW)
+        if not gate.wait(timeout=15):
+            results.put("GATE_TIMEOUT")
+            return
+        try:
+            intents.reserve(attempt_id, ["inert-receiver"])
+            results.put("RESERVED")
+        except DelegationIntegrityError as exc:
+            results.put("DENIED" if "already reserved" in str(exc) else str(exc))
+    except Exception as exc:
+        results.put(f"ERROR:{type(exc).__name__}:{exc}")
+    finally:
+        start.close()
 
 
 @pytest.mark.parametrize("agent", ["kilo-cli-agent", "opencode-cli-agent"])
@@ -129,5 +150,36 @@ def test_independent_intent_writers_reserve_only_once(tmp_path):
                 "SELECT COUNT(*) FROM agent_text_process_intents WHERE attempt_id=?",
                 (lease.attempt_id,),
             ).fetchone() == (1,)
+    finally:
+        start.close()
+
+
+@pytest.mark.parametrize("repeat", range(3))
+def test_separate_process_intent_writers_reserve_only_once(tmp_path, repeat):
+    agent = "kilo-cli-agent"
+    authority, start, _, lease, _, _ = stores_and_artifacts(tmp_path, agent, ping=True)
+    try:
+        bridge = SQLiteAgentInvocationBridgeStore(authority, start, clock=lambda: NOW)
+        bridge.reserve(lease.attempt_id, fake_resolution(agent))
+        context = get_context("spawn")
+        gate = context.Event()
+        results = context.Queue()
+        workers = [
+            context.Process(
+                target=reserve_intent_in_process,
+                args=(tmp_path, lease.attempt_id, gate, results),
+            )
+            for _ in range(2)
+        ]
+        for worker in workers:
+            worker.start()
+        gate.set()
+        for worker in workers:
+            worker.join(timeout=20)
+            assert worker.exitcode == 0
+        assert sorted(results.get(timeout=5) for _ in workers) == ["DENIED", "RESERVED"]
+        assert SQLiteAgentTextProcessIntentStore(bridge, clock=lambda: NOW).get(
+            lease.attempt_id,
+        ) is not None
     finally:
         start.close()
