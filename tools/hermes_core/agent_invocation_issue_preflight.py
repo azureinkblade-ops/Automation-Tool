@@ -8,9 +8,38 @@ from tools.hermes_core.agent_invocation_bridge import AgentInvocationBridge
 from tools.hermes_core.agent_invocation_bridge_store import SQLiteAgentInvocationBridgeStore
 from tools.hermes_core.delegated_task import DelegationIntegrityError
 from tools.hermes_core.governed_bound_executor import GovernedExecutorResolution
+from tools.hermes_core.hashing import sha256_payload
+from tools.hermes_core.production_invocation_authorization import (
+    MAX_INVOCATION_AUTHORIZATION_TTL_SECONDS,
+)
 from tools.hermes_core.production_invocation_authorization_issuer import (
     ProductionInvocationAuthorizationIssueRequest,
 )
+
+
+def build_agent_issue_request(
+    bridge: AgentInvocationBridge,
+    *,
+    requested_ttl_seconds: int,
+) -> ProductionInvocationAuthorizationIssueRequest:
+    """Derive one stable issuer identity for an accepted attempt."""
+    if (type(bridge) is not AgentInvocationBridge or not bridge.verify_hash()
+            or type(requested_ttl_seconds) is not int
+            or not 1 <= requested_ttl_seconds <= MAX_INVOCATION_AUTHORIZATION_TTL_SECONDS):
+        raise DelegationIntegrityError("agent issue request inputs denied")
+    digest = sha256_payload({
+        "schema_version": "ea4e92hh-agent-issue-identity-v1",
+        "bridge_hash": bridge.artifact_hash,
+    })
+    return ProductionInvocationAuthorizationIssueRequest(
+        issue_request_id="agent-issue-" + digest,
+        execution_request_id=bridge.execution_request_id,
+        receiver_id=bridge.receiver_agent_id,
+        binding_id=bridge.executor_binding_id,
+        enablement_id=bridge.executor_enablement_id,
+        nonce="agent-nonce-" + digest,
+        requested_ttl_seconds=requested_ttl_seconds,
+    )
 
 
 def preflight_agent_issue_request(
@@ -36,4 +65,9 @@ def preflight_agent_issue_request(
             or request.binding_id != current.executor_binding_id
             or request.enablement_id != current.executor_enablement_id):
         raise DelegationIntegrityError("agent issue request identity mismatch")
+    expected = build_agent_issue_request(
+        current, requested_ttl_seconds=request.requested_ttl_seconds,
+    )
+    if request != expected:
+        raise DelegationIntegrityError("agent issue request replay identity mismatch")
     return current
