@@ -1,6 +1,8 @@
 """Fake-only durable issue/claim/fence owner; no process or model calls."""
 
 from dataclasses import replace
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 
@@ -15,6 +17,7 @@ from tools.hermes_core.durable_invocation_authorization_store import (
     DurableInvocationAuthorizationStore,
 )
 from tools.hermes_core.production_executor_binding import BindingClock
+from tools.hermes_core.sqlite_execution_start_store import SQLiteExecutionStartStore
 
 
 def owner(authority, start, auth_store):
@@ -225,5 +228,71 @@ def test_owner_clock_denies_expired_lease_despite_stale_store_clocks(tmp_path):
             expired.issue(lease.attempt_id, resolution)
         assert auth_store.count() == 0
         assert expired.fence_store.get(lease.attempt_id) is None
+    finally:
+        start.close()
+
+
+def test_independent_concurrent_claimers_create_one_consumption_and_fence(tmp_path):
+    agent = "kilo-cli-agent"
+    authority, start, _, lease, _, _ = stores_and_artifacts(tmp_path, agent, ping=True)
+    try:
+        auth_store = qualification_store(tmp_path)
+        initial = owner(authority, start, auth_store)
+        resolution = fake_resolution(agent)
+        initial.bridge_store.reserve(lease.attempt_id, resolution)
+        auth = initial.issue(lease.attempt_id, resolution).authorization
+        barrier = Barrier(2)
+
+        def claim_once():
+            independent_start = SQLiteExecutionStartStore(tmp_path / "start.sqlite3")
+            try:
+                independent = owner(authority, independent_start, auth_store)
+                barrier.wait(timeout=5)
+                return independent.claim_and_fence(
+                    lease.attempt_id, resolution, auth,
+                )
+            finally:
+                independent_start.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first, second = list(pool.map(lambda _: claim_once(), range(2)))
+        assert sorted([first.status, second.status]) == ["FENCED", "UNKNOWN"]
+        assert auth_store.consumed_count() == 1
+        assert initial.fence_store.get(lease.attempt_id) is not None
+    finally:
+        start.close()
+
+
+def test_precommit_authorization_failure_is_sticky_unknown(tmp_path):
+    agent = "kilo-cli-agent"
+    authority, start, _, lease, _, _ = stores_and_artifacts(tmp_path, agent, ping=True)
+    try:
+        auth_store = qualification_store(tmp_path)
+        current = owner(authority, start, auth_store)
+        resolution = fake_resolution(agent)
+        current.bridge_store.reserve(lease.attempt_id, resolution)
+        auth = current.issue(lease.attempt_id, resolution).authorization
+
+        def fail_before_commit(_):
+            raise RuntimeError("injected pre-commit failure")
+
+        auth_store._before_claim_commit = fail_before_commit
+        first = current.claim_and_fence(lease.attempt_id, resolution, auth)
+        assert first.status == "UNKNOWN"
+        assert not auth_store.inspect(auth.to_canonical_dict()).consumed
+        assert current.fence_store.get(lease.attempt_id) is None
+        assert current._claim_intent_exists(lease.attempt_id)
+
+        del auth_store._before_claim_commit
+        reopened_store = DurableInvocationAuthorizationStore(
+            auth_store.path, anchor_path=auth_store.anchor_path,
+        )
+        reopened = owner(authority, start, reopened_store)
+        second = reopened.claim_and_fence(lease.attempt_id, resolution, auth)
+        assert second.status == "UNKNOWN"
+        assert not reopened_store.inspect(auth.to_canonical_dict()).consumed
+        assert reopened.fence_store.get(lease.attempt_id) is None
+        with pytest.raises(DelegationIntegrityError, match="claim intent"):
+            reopened.issue(lease.attempt_id, resolution)
     finally:
         start.close()

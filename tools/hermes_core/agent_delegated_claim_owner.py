@@ -67,6 +67,11 @@ class AgentDelegatedClaimOwner:
                 "CREATE TABLE IF NOT EXISTS agent_invocation_auth_store_bindings ("
                 "attempt_id TEXT PRIMARY KEY, store_instance_id TEXT NOT NULL)"
             )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS agent_invocation_claim_intents ("
+                "attempt_id TEXT PRIMARY KEY, authorization_id TEXT NOT NULL, "
+                "execution_request_id TEXT NOT NULL, store_instance_id TEXT NOT NULL)"
+            )
             conn.commit()
 
     def _connect_authority(self):
@@ -108,6 +113,37 @@ class AgentDelegatedClaimOwner:
         )
         return bridge, request
 
+    def _claim_intent_exists(self, attempt_id: str) -> bool:
+        with closing(self._connect_authority()) as conn:
+            return conn.execute(
+                "SELECT 1 FROM agent_invocation_claim_intents WHERE attempt_id=?",
+                (attempt_id,),
+            ).fetchone() is not None
+
+    def _record_claim_intent(self, attempt_id: str,
+                             authorization: ProductionInvocationAuthorization) -> bool:
+        store_id = self.authorization_store.store_instance_id
+        with closing(self._connect_authority()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = conn.execute(
+                    "SELECT 1 FROM agent_invocation_claim_intents WHERE attempt_id=?",
+                    (attempt_id,),
+                ).fetchone()
+                if existing is not None:
+                    conn.rollback()
+                    return False
+                conn.execute(
+                    "INSERT INTO agent_invocation_claim_intents VALUES(?,?,?,?)",
+                    (attempt_id, authorization.invocation_authorization_id,
+                     authorization.execution_request_id, store_id),
+                )
+                conn.commit()
+                return True
+            except Exception:
+                conn.rollback()
+                raise
+
     def _check_lease_window(self, attempt_id: str) -> None:
         witness = load_bound_agent_start(
             self.bridge_store.authority, self.bridge_store.start, attempt_id,
@@ -123,6 +159,8 @@ class AgentDelegatedClaimOwner:
 
     def issue(self, attempt_id: str, resolution: GovernedExecutorResolution):
         """Issue only the exact reserved request; this grants no process start."""
+        if self._claim_intent_exists(attempt_id):
+            raise DelegationIntegrityError("delegated claim intent already recorded")
         bridge, request = self._request(attempt_id, resolution)
         self._check_store_binding(attempt_id, insert=True)
         result = self.issuer.issue(request, resolution)
@@ -144,8 +182,11 @@ class AgentDelegatedClaimOwner:
         """Consume once, then fence once; never return an execution permit."""
         if type(authorization) is not ProductionInvocationAuthorization:
             return DelegatedClaimState("DENIED", "INVALID_AUTHORIZATION")
+        intent_recorded = False
         try:
             self._check_store_binding(attempt_id, insert=False)
+            if self._claim_intent_exists(attempt_id):
+                return DelegatedClaimState("UNKNOWN", "CLAIM_INTENT_ALREADY_RECORDED")
             if self.fence_store.get(attempt_id) is not None:
                 return DelegatedClaimState("UNKNOWN", "RECEIVER_START_ALREADY_CLAIMED")
             state = self.authorization_store.inspect(authorization.to_canonical_dict())
@@ -157,19 +198,25 @@ class AgentDelegatedClaimOwner:
             )
             if issued is None or issued.authorization_payload != authorization.to_canonical_dict():
                 return DelegatedClaimState("DENIED", "ISSUED_IDENTITY_MISMATCH")
+            intent_recorded = self._record_claim_intent(attempt_id, authorization)
+            if not intent_recorded:
+                return DelegatedClaimState("UNKNOWN", "CLAIM_INTENT_ALREADY_RECORDED")
             result = self.policy.claim_for_execution(
                 authorization, resolution.binding_handle, {},
                 expected_execution_request_id=bridge.execution_request_id,
             )
             if result.policy_decision != "ALLOW":
-                status = "UNKNOWN" if result.consumed or result.policy_reason == (
-                    "INVOCATION_AUTHORIZATION_STORE_ERROR"
-                ) else "DENIED"
-                return DelegatedClaimState(status, result.policy_reason)
+                return DelegatedClaimState("UNKNOWN", result.policy_reason)
         except (DurableAuthorizationStoreError, sqlite3.Error):
             return DelegatedClaimState("UNKNOWN", "AUTHORIZATION_STATE_UNCERTAIN")
         except DelegationIntegrityError as exc:
-            return DelegatedClaimState("DENIED", str(exc))
+            return DelegatedClaimState(
+                "UNKNOWN" if intent_recorded else "DENIED", str(exc),
+            )
+        except Exception:
+            if intent_recorded:
+                return DelegatedClaimState("UNKNOWN", "CLAIM_AFTER_INTENT_UNCERTAIN")
+            raise
         try:
             self._check_lease_window(attempt_id)
             fence = self.fence_store.claim(attempt_id)
