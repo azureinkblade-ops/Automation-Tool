@@ -20,7 +20,7 @@ from tools.hermes_core.sqlite_execution_start_store import SQLiteExecutionStartS
 
 
 def stores_and_artifacts(tmp_path, agent, *, persist_start=True, start_changes=None,
-                         ping=False):
+                         ping=False, task_changes=None, lease_changes=None):
     task_values = {"requested_target_agent_id": agent}
     if ping:
         task_values.update(
@@ -29,8 +29,9 @@ def stores_and_artifacts(tmp_path, agent, *, persist_start=True, start_changes=N
                 "ordinal": 0, "evidence_type": "receiver_acceptance_sha256",
             }],
         )
+    task_values.update(task_changes or {})
     task = make_envelope(**task_values)
-    lease = make_lease(task)
+    lease = make_lease(task, **(lease_changes or {}))
     authority = SQLiteDelegationStore(tmp_path / "authority.sqlite3")
     authority.create_delegation(task)
     authority.issue_lease(lease)
