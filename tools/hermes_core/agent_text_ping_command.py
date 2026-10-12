@@ -38,6 +38,42 @@ def build_agent_text_ping_command(
     opencode_binding: QualifiedRuntimeBinding | None = None,
 ) -> AgentTextPingCommand:
     """Shape a fixed ping; this neither verifies runtime authority nor starts it."""
+    receiver, message = build_agent_text_ping_message(witness, bridge)
+    invocation = witness.bound.invocation
+    if receiver == "kilo-cli-agent":
+        from tools.hermes_core.kilo_adapter import build_kilo_argv
+
+        if opencode_config is not None or opencode_binding is not None:
+            raise DelegationIntegrityError("Kilo ping received OpenCode binding")
+        argv = tuple(build_kilo_argv({"task_message": message}, {}, invocation.runtime_run_id))
+    else:
+        from tools.hermes_core.opencode_adapter import (
+            OpenCodeTrustedConfig, build_opencode_argv,
+        )
+
+        if (type(opencode_config) is not OpenCodeTrustedConfig
+                or type(opencode_binding) is not QualifiedRuntimeBinding):
+            raise DelegationIntegrityError("OpenCode ping binding missing")
+        argv = tuple(build_opencode_argv(
+            opencode_config, opencode_binding,
+            runtime_run_id=invocation.runtime_run_id,
+            task_message=message,
+        ).to_list())
+    return AgentTextPingCommand(
+        attempt_id=witness.lease.attempt_id,
+        receiver_agent_id=receiver,
+        task_input_hash=witness.task.task_input_hash,
+        bridge_hash=bridge.artifact_hash,
+        runtime_run_id=invocation.runtime_run_id,
+        argv=argv,
+        argv_hash=sha256_payload(list(argv)),
+    )
+
+
+def build_agent_text_ping_message(
+    witness: DurableAgentStart, bridge: AgentInvocationBridge,
+) -> tuple[str, str]:
+    """Validate an accepted ping and return its receiver-specific fixed prompt."""
     if type(witness) is not DurableAgentStart or type(bridge) is not AgentInvocationBridge:
         raise DelegationIntegrityError("text ping inputs denied")
     task = witness.task
@@ -75,31 +111,4 @@ def build_agent_text_ping_command(
         "Set error_code and error_summary to JSON null. Encode every other",
         "value as a JSON string. Do not add markdown or prose.",
     ))
-    if receiver == "kilo-cli-agent":
-        from tools.hermes_core.kilo_adapter import build_kilo_argv
-
-        if opencode_config is not None or opencode_binding is not None:
-            raise DelegationIntegrityError("Kilo ping received OpenCode binding")
-        argv = tuple(build_kilo_argv({"task_message": message}, {}, invocation.runtime_run_id))
-    else:
-        from tools.hermes_core.opencode_adapter import (
-            OpenCodeTrustedConfig, build_opencode_argv,
-        )
-
-        if (type(opencode_config) is not OpenCodeTrustedConfig
-                or type(opencode_binding) is not QualifiedRuntimeBinding):
-            raise DelegationIntegrityError("OpenCode ping binding missing")
-        argv = tuple(build_opencode_argv(
-            opencode_config, opencode_binding,
-            runtime_run_id=invocation.runtime_run_id,
-            task_message=message,
-        ).to_list())
-    return AgentTextPingCommand(
-        attempt_id=witness.lease.attempt_id,
-        receiver_agent_id=receiver,
-        task_input_hash=task.task_input_hash,
-        bridge_hash=bridge.artifact_hash,
-        runtime_run_id=invocation.runtime_run_id,
-        argv=argv,
-        argv_hash=sha256_payload(list(argv)),
-    )
+    return receiver, message
