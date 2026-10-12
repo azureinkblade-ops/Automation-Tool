@@ -92,6 +92,54 @@ class SQLiteAgentTextProcessIntentStore:
         with closing(self._connect()) as conn:
             return self._read(conn, attempt_id)
 
+    def verify_command(self, attempt_id: str, argv: Sequence[str]) -> AgentTextProcessIntent:
+        """Recheck a reserved command and lineage; this is not a start permit."""
+        if (type(argv) not in (tuple, list) or not argv
+                or any(type(part) is not str or not part or "\x00" in part for part in argv)
+                or sum(len(part.encode("utf-8")) for part in argv) > 65536):
+            raise DelegationIntegrityError("text process intent command denied")
+        witness = load_bound_agent_start(
+            self.bridge_store.authority, self.bridge_store.start, attempt_id,
+        )
+        bridge = self.bridge_store.get(attempt_id)
+        with closing(self._connect()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            intent = self._read(conn, attempt_id)
+            if (intent is None or bridge is None or not bridge.verify_hash()
+                    or intent.receiver_agent_id != witness.receipt.receiver_agent_id
+                    or intent.bridge_hash != bridge.artifact_hash
+                    or intent.argv_hash != sha256_payload(list(argv))):
+                raise DelegationIntegrityError("text process intent command or bridge mismatch")
+            row = conn.execute(
+                "SELECT canonical_payload FROM agent_text_process_intents WHERE attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+            payload = json.loads(row[0])
+            if (payload["receipt_hash"] != witness.receipt.artifact_hash
+                    or payload["launch_attempt_hash"] != witness.launch.artifact_hash
+                    or payload["start_result_hash"] != witness.start_result.artifact_hash
+                    or payload["task_input_hash"] != witness.task.task_input_hash
+                    or payload["idempotency_key"] != witness.bound.invocation.idempotency_key
+                    or payload["runtime_run_id"] != witness.bound.invocation.runtime_run_id):
+                raise DelegationIntegrityError("text process intent lineage mismatch")
+            delegation = conn.execute(
+                "SELECT status,artifact_hash FROM delegations WHERE delegation_id=?",
+                (witness.task.delegation_id,),
+            ).fetchone()
+            lease = conn.execute(
+                "SELECT status,artifact_hash FROM capability_leases WHERE lease_id=?",
+                (witness.lease.lease_id,),
+            ).fetchone()
+            stored_bridge = conn.execute(
+                "SELECT artifact_hash FROM agent_invocation_bridges WHERE attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+            if (delegation != ("CREATED", witness.task.artifact_hash)
+                    or lease != ("ACTIVE", witness.lease.artifact_hash)
+                    or stored_bridge != (bridge.artifact_hash,)):
+                raise DelegationIntegrityError("text process intent authority changed")
+            return intent
+
     def reserve(self, attempt_id: str, argv: Sequence[str]) -> AgentTextProcessIntent:
         """Bind one command digest; this cannot start or authorize a process."""
         if (type(attempt_id) is not str or not attempt_id

@@ -79,6 +79,27 @@ def test_intent_denies_cancelled_authority(tmp_path):
         start.close()
 
 
+@pytest.mark.parametrize("agent", ["kilo-cli-agent", "opencode-cli-agent"])
+def test_reserved_command_rechecks_exact_argv_and_active_lineage(tmp_path, agent):
+    authority, start, task, lease, _, _ = stores_and_artifacts(tmp_path, agent, ping=True)
+    try:
+        bridge_store = SQLiteAgentInvocationBridgeStore(authority, start, clock=lambda: NOW)
+        bridge_store.reserve(lease.attempt_id, fake_resolution(agent))
+        intents = SQLiteAgentTextProcessIntentStore(bridge_store, clock=lambda: NOW)
+        argv = ["inert-receiver", "--task", "ping"]
+        reserved = intents.reserve(lease.attempt_id, argv)
+        assert intents.verify_command(lease.attempt_id, tuple(argv)) == reserved
+        with pytest.raises(DelegationIntegrityError, match="command or bridge mismatch"):
+            intents.verify_command(lease.attempt_id, ["inert-receiver", "--task", "other"])
+        authority.cancel_delegation(
+            task.delegation_id, reason="operator", cancelled_at="2026-08-27T12:05:03Z",
+        )
+        with pytest.raises(DelegationIntegrityError):
+            intents.verify_command(lease.attempt_id, argv)
+    finally:
+        start.close()
+
+
 def test_intent_denies_already_claimed_receiver_start(tmp_path):
     agent = "kilo-cli-agent"
     authority, start, _, lease, _, _ = stores_and_artifacts(tmp_path, agent, ping=True)
