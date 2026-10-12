@@ -66,6 +66,12 @@ class SQLiteAgentReceiverStartFenceStore:
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
+    def _before_claim_commit(self, conn: sqlite3.Connection) -> None:
+        pass
+
+    def _after_claim_commit(self) -> None:
+        pass
+
     @staticmethod
     def _read(conn, attempt_id: str) -> AgentReceiverStartFence | None:
         row = conn.execute(
@@ -179,7 +185,9 @@ class SQLiteAgentReceiverStartFenceStore:
                     "INSERT INTO agent_receiver_start_fences VALUES(?,?,?,?)",
                     (attempt_id, digest, canonical_json(payload), digest),
                 )
+                self._before_claim_commit(conn)
                 conn.commit()
+                self._after_claim_commit()
                 return AgentReceiverStartFence(
                     attempt_id, digest, receiver, witness.receipt.artifact_hash,
                     witness.launch.artifact_hash, witness.start_result.artifact_hash,

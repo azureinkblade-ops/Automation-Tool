@@ -329,3 +329,69 @@ def test_post_database_pre_anchor_failure_is_sticky_unknown(tmp_path):
         ).status == "UNKNOWN"
     finally:
         start.close()
+
+
+def test_post_fence_commit_failure_is_sticky_unknown(tmp_path):
+    agent = "opencode-cli-agent"
+    authority, start, _, lease, _, _ = stores_and_artifacts(tmp_path, agent, ping=True)
+    try:
+        auth_store = qualification_store(tmp_path)
+        current = owner(authority, start, auth_store)
+        resolution = fake_resolution(agent)
+        current.bridge_store.reserve(lease.attempt_id, resolution)
+        auth = current.issue(lease.attempt_id, resolution).authorization
+
+        def fail_after_commit():
+            raise RuntimeError("injected post-fence-commit failure")
+
+        current.fence_store._after_claim_commit = fail_after_commit
+        first = current.claim_and_fence(lease.attempt_id, resolution, auth)
+        assert first.status == "UNKNOWN"
+        persisted = current.fence_store.get(lease.attempt_id)
+        assert persisted is not None
+        assert auth_store.consumed_count() == 1
+
+        reopened_auth = DurableInvocationAuthorizationStore(
+            auth_store.path, anchor_path=auth_store.anchor_path,
+        )
+        reopened = owner(authority, start, reopened_auth)
+        assert reopened.claim_and_fence(
+            lease.attempt_id, resolution, auth,
+        ).status == "UNKNOWN"
+        assert reopened.fence_store.get(lease.attempt_id) == persisted
+        assert reopened_auth.consumed_count() == 1
+    finally:
+        start.close()
+
+
+def test_pre_fence_commit_failure_is_sticky_unknown(tmp_path):
+    agent = "kilo-cli-agent"
+    authority, start, _, lease, _, _ = stores_and_artifacts(tmp_path, agent, ping=True)
+    try:
+        auth_store = qualification_store(tmp_path)
+        current = owner(authority, start, auth_store)
+        resolution = fake_resolution(agent)
+        current.bridge_store.reserve(lease.attempt_id, resolution)
+        auth = current.issue(lease.attempt_id, resolution).authorization
+
+        def fail_before_commit(_):
+            raise RuntimeError("injected pre-fence-commit failure")
+
+        current.fence_store._before_claim_commit = fail_before_commit
+        assert current.claim_and_fence(
+            lease.attempt_id, resolution, auth,
+        ).status == "UNKNOWN"
+        assert current.fence_store.get(lease.attempt_id) is None
+        assert auth_store.consumed_count() == 1
+
+        reopened_auth = DurableInvocationAuthorizationStore(
+            auth_store.path, anchor_path=auth_store.anchor_path,
+        )
+        reopened = owner(authority, start, reopened_auth)
+        assert reopened.claim_and_fence(
+            lease.attempt_id, resolution, auth,
+        ).status == "UNKNOWN"
+        assert reopened.fence_store.get(lease.attempt_id) is None
+        assert reopened_auth.consumed_count() == 1
+    finally:
+        start.close()
