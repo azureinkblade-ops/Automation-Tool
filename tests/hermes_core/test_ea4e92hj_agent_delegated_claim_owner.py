@@ -3,6 +3,7 @@
 from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
+import sqlite3
 
 import pytest
 
@@ -294,5 +295,37 @@ def test_precommit_authorization_failure_is_sticky_unknown(tmp_path):
         assert reopened.fence_store.get(lease.attempt_id) is None
         with pytest.raises(DelegationIntegrityError, match="claim intent"):
             reopened.issue(lease.attempt_id, resolution)
+    finally:
+        start.close()
+
+
+def test_post_database_pre_anchor_failure_is_sticky_unknown(tmp_path):
+    agent = "kilo-cli-agent"
+    authority, start, _, lease, _, _ = stores_and_artifacts(tmp_path, agent, ping=True)
+    try:
+        auth_store = qualification_store(tmp_path)
+        current = owner(authority, start, auth_store)
+        resolution = fake_resolution(agent)
+        current.bridge_store.reserve(lease.attempt_id, resolution)
+        auth = current.issue(lease.attempt_id, resolution).authorization
+
+        def fail_before_anchor():
+            raise RuntimeError("injected post-database failure")
+
+        auth_store._after_database_commit_before_anchor = fail_before_anchor
+        first = current.claim_and_fence(lease.attempt_id, resolution, auth)
+        assert first.status == "UNKNOWN"
+        assert current._claim_intent_exists(lease.attempt_id)
+        assert current.fence_store.get(lease.attempt_id) is None
+        with sqlite3.connect(auth_store.path) as conn:
+            row = conn.execute(
+                "SELECT consumed_state FROM invocation_authorizations "
+                "WHERE authorization_id=?",
+                (auth.invocation_authorization_id,),
+            ).fetchone()
+        assert row == ("CONSUMED",)
+        assert current.claim_and_fence(
+            lease.attempt_id, resolution, auth,
+        ).status == "UNKNOWN"
     finally:
         start.close()
