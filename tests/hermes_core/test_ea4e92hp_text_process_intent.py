@@ -7,9 +7,11 @@ from threading import Barrier
 
 import pytest
 
+from tests.hermes_core.durable_auth_test_support import qualification_store
 from tests.hermes_core.test_ea4e92fz_durable_agent_start import stores_and_artifacts
 from tests.hermes_core.test_ea4e92he_agent_invocation_bridge import NOW, fake_resolution
 from tests.hermes_core.test_ea4e92hc_agent_receiver_start_fence import fence
+from tests.hermes_core.test_ea4e92hj_agent_delegated_claim_owner import owner
 from tools.hermes_core.agent_invocation_bridge_store import SQLiteAgentInvocationBridgeStore
 from tools.hermes_core.agent_text_process_intent import SQLiteAgentTextProcessIntentStore
 from tools.hermes_core.delegated_task import DelegationIntegrityError
@@ -88,6 +90,33 @@ def test_intent_denies_already_claimed_receiver_start(tmp_path):
         with pytest.raises(DelegationIntegrityError, match="receiver start already claimed"):
             intent_store.reserve(lease.attempt_id, ["inert-receiver"])
         assert intent_store.get(lease.attempt_id) is None
+    finally:
+        start.close()
+
+
+def test_intent_denies_after_authorization_claim_intent_without_fence(tmp_path):
+    agent = "opencode-cli-agent"
+    authority, start, _, lease, _, _ = stores_and_artifacts(tmp_path, agent, ping=True)
+    try:
+        resolution = fake_resolution(agent)
+        bridge_store = SQLiteAgentInvocationBridgeStore(authority, start, clock=lambda: NOW)
+        bridge_store.reserve(lease.attempt_id, resolution)
+        intents = SQLiteAgentTextProcessIntentStore(bridge_store, clock=lambda: NOW)
+        auth_store = qualification_store(tmp_path)
+        current = owner(authority, start, auth_store)
+        authorization = current.issue(lease.attempt_id, resolution).authorization
+
+        def fail_before_fence(_):
+            raise RuntimeError("injected missing fence")
+
+        current.fence_store.claim = fail_before_fence
+        assert current.claim_and_fence(
+            lease.attempt_id, resolution, authorization,
+        ).status == "UNKNOWN"
+        assert current.fence_store.get(lease.attempt_id) is None
+        with pytest.raises(DelegationIntegrityError, match="claim already attempted"):
+            intents.reserve(lease.attempt_id, ["inert-receiver"])
+        assert intents.get(lease.attempt_id) is None
     finally:
         start.close()
 

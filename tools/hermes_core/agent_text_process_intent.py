@@ -168,6 +168,14 @@ class SQLiteAgentTextProcessIntentStore:
                     (attempt_id,),
                 ).fetchone():
                     raise DelegationIntegrityError("receiver start already claimed")
+                if conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name='agent_invocation_claim_intents'"
+                ).fetchone() and conn.execute(
+                    "SELECT 1 FROM agent_invocation_claim_intents WHERE attempt_id=?",
+                    (attempt_id,),
+                ).fetchone():
+                    raise DelegationIntegrityError("authorization claim already attempted")
                 for table, query in (
                     ("agent_terminal_captures",
                      "SELECT 1 FROM agent_terminal_captures WHERE attempt_id=?"),
