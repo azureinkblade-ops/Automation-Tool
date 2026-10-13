@@ -3,6 +3,8 @@
 import hashlib
 import inspect
 from pathlib import Path
+import stat
+from types import SimpleNamespace
 
 import pytest
 
@@ -62,3 +64,18 @@ def test_repo_path_is_rejected_without_creating_files():
 def test_materializer_has_no_container_or_network_capability():
     source = inspect.getsource(subject).lower()
     assert not any(name in source for name in ("subprocess", "requests", "socket", "popen", "exec("))
+
+
+@pytest.mark.skipif(
+    not hasattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT"),
+    reason="Windows reparse-point attribute is unavailable",
+)
+def test_reparse_point_detection_does_not_require_path_is_junction():
+    class LegacyWindowsPath:
+        def is_symlink(self):
+            return False
+
+        def lstat(self):
+            return SimpleNamespace(st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+    assert subject._is_link_or_reparse_point(LegacyWindowsPath()) is True

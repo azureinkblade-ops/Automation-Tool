@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path, PurePosixPath
+import stat
 import tempfile
 from typing import Any, Mapping
 
 from tools.hermes_core.local_kilo_inert_plan import HOME, build_inert_plan
+
+
+def _is_link_or_reparse_point(path: Path) -> bool:
+    if path.is_symlink():
+        return True
+    attributes = getattr(path.lstat(), "st_file_attributes", 0)
+    return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
 
 
 def prepare_inert_inputs(root: Path) -> dict:
@@ -73,7 +81,7 @@ def verified_inert_mount_sources(prepared: Mapping[str, Any]) -> tuple[str, str]
     runtime_dir = root / "runtime"
     if not input_dir.is_dir() or not runtime_dir.is_dir():
         raise ValueError("missing inert input directory")
-    if any(path.is_symlink() or path.is_junction() for path in (root, input_dir, runtime_dir)):
+    if any(_is_link_or_reparse_point(path) for path in (root, input_dir, runtime_dir)):
         raise ValueError("inert input directory is a link")
 
     files = prepared.get("files")
@@ -86,7 +94,7 @@ def verified_inert_mount_sources(prepared: Mapping[str, Any]) -> tuple[str, str]
         source = input_dir / Path(relative)
         runtime = runtime_dir / Path(relative)
         for path in (source, runtime):
-            if path.is_symlink() or path.resolve(strict=True) != path:
+            if _is_link_or_reparse_point(path) or path.resolve(strict=True) != path:
                 raise ValueError("inert input file is a link")
             if hashlib.sha256(path.read_bytes()).hexdigest() != item["sha256"]:
                 raise ValueError("inert input byte mismatch")
