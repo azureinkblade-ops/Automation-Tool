@@ -41,10 +41,11 @@ function validateResponse(responseBytes, expectedSha256, taskHash, receiptHash) 
 }
 
 function createPendingPing({ responseBytes, expectedSha256, taskHash, receiptHash,
-                             report, done }) {
+                             attemptId, report, done }) {
   const responseBody = validateResponse(responseBytes, expectedSha256,
                                         taskHash, receiptHash);
-  if (typeof report !== "function" || typeof done !== "function") {
+  if (typeof attemptId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(attemptId) ||
+      typeof report !== "function" || typeof done !== "function") {
     throw new Error("gateway callbacks required");
   }
   let state = "idle";
@@ -103,6 +104,7 @@ function createPendingPing({ responseBytes, expectedSha256, taskHash, receiptHas
         state = "pending";
         try {
           report({ event: "FAKE_PING_REQUEST_PENDING",
+            attempt_id: attemptId, response_sha256: expectedSha256,
             peer: req.socket.remoteAddress, body_bytes: bodyBytes,
             body_sha256: hash.digest("hex") });
         } catch (_) {
@@ -127,12 +129,17 @@ function loadFakeConfig(env) {
     throw new Error("noncanonical fake response encoding denied");
   }
   const config = {
+    attemptId: env.EA4E_ATTEMPT_ID,
     responseBytes, expectedSha256: env.EA4E_PING_SSE_SHA256,
     taskHash: env.EA4E_TASK_INPUT_HASH,
     receiptHash: env.EA4E_RECEIVER_RECEIPT_HASH,
   };
   validateResponse(config.responseBytes, config.expectedSha256,
                    config.taskHash, config.receiptHash);
+  if (typeof config.attemptId !== "string" ||
+      !/^[A-Za-z0-9._:-]{1,128}$/.test(config.attemptId)) {
+    throw new Error("attempt identity denied");
+  }
   return config;
 }
 

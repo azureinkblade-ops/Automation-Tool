@@ -9,6 +9,7 @@ const { createPendingPing, loadFakeConfig, MAX_BYTES } = require(
 
 const TASK = "a".repeat(64);
 const RECEIPT = "b".repeat(64);
+const ATTEMPT = "attempt-1";
 
 function body(taskHash = TASK, receiptHash = RECEIPT) {
   const candidate = JSON.stringify({
@@ -31,7 +32,7 @@ function fixture(overrides = {}) {
   const session = createPendingPing({
     responseBytes,
     expectedSha256: crypto.createHash("sha256").update(responseBytes).digest("hex"),
-    taskHash: TASK, receiptHash: RECEIPT,
+    taskHash: TASK, receiptHash: RECEIPT, attemptId: ATTEMPT,
     report: (event) => events.push(event), done: (status) => statuses.push(status),
     ...overrides,
   });
@@ -67,6 +68,8 @@ test("one bounded request releases only the pinned attempt response", () => {
   req.emit("end");
   assert.equal(res.ended, undefined);
   assert.deepEqual(events, [{ event: "FAKE_PING_REQUEST_PENDING",
+    attempt_id: ATTEMPT,
+    response_sha256: crypto.createHash("sha256").update(responseBytes).digest("hex"),
     peer: "172.20.0.2", body_bytes: sent.length,
     body_sha256: crypto.createHash("sha256").update(sent).digest("hex") }]);
   assert.equal(session.release(), true);
@@ -131,6 +134,7 @@ test("fake-only bootstrap requires canonical response and exact lineage", () => 
   const responseBytes = body();
   const env = {
     EA4E_QUALIFICATION_ONLY: "1",
+    EA4E_ATTEMPT_ID: ATTEMPT,
     EA4E_PING_SSE_BASE64: responseBytes.toString("base64"),
     EA4E_PING_SSE_SHA256:
       crypto.createHash("sha256").update(responseBytes).digest("hex"),
@@ -149,4 +153,6 @@ test("fake-only bootstrap requires canonical response and exact lineage", () => 
     "c".repeat(64) }), /response lineage denied/);
   assert.throws(() => loadFakeConfig({ ...env, EA4E_PING_SSE_SHA256:
     "0".repeat(64) }), /response hash mismatch/);
+  assert.throws(() => loadFakeConfig({ ...env, EA4E_ATTEMPT_ID: "bad attempt" }),
+    /attempt identity denied/);
 });
