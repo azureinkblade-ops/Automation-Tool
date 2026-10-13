@@ -25,6 +25,18 @@ function body(taskHash = TASK, receiptHash = RECEIPT) {
   })}\n\ndata: [DONE]\n\n`);
 }
 
+function requestBody() {
+  return Buffer.from(JSON.stringify({
+    model: "ea4e-inert",
+    messages: [
+      { role: "system", content: "dummy policy" },
+      { role: "user", content: ["synthetic ping"] },
+    ],
+    stream: true, stream_options: {}, tools: [],
+    tool_choice: "auto", max_tokens: 64,
+  }));
+}
+
 function fixture(overrides = {}) {
   const responseBytes = body();
   const events = [];
@@ -61,7 +73,7 @@ test("one bounded request releases only the pinned attempt response", () => {
   const { session, responseBytes, events, statuses } = fixture();
   const req = request();
   const res = response();
-  const sent = Buffer.from('{"model":"ea4e-inert"}');
+  const sent = requestBody();
   assert.equal(session.release(), false);
   session.accept(req, res);
   req.emit("data", sent);
@@ -114,7 +126,7 @@ test("report failure and client abort deny release", () => {
   const req = request();
   const res = response();
   failed.session.accept(req, res);
-  req.emit("data", Buffer.from("{}"));
+  req.emit("data", requestBody());
   req.emit("end");
   assert.equal(res.statusCode, 500);
   assert.equal(failed.session.release(), false);
@@ -123,7 +135,7 @@ test("report failure and client abort deny release", () => {
   const req2 = request();
   const res2 = response();
   aborted.session.accept(req2, res2);
-  req2.emit("data", Buffer.from("{}"));
+  req2.emit("data", requestBody());
   req2.emit("end");
   req2.emit("aborted");
   assert.equal(res2.statusCode, 504);
@@ -155,4 +167,25 @@ test("fake-only bootstrap requires canonical response and exact lineage", () => 
     "0".repeat(64) }), /response hash mismatch/);
   assert.throws(() => loadFakeConfig({ ...env, EA4E_ATTEMPT_ID: "bad attempt" }),
     /attempt identity denied/);
+});
+
+test("unexpected request shape never reaches pending or release", () => {
+  for (const raw of [
+    Buffer.from("{}"),
+    Buffer.from("not json"),
+    Buffer.from([0xff]),
+    Buffer.from(JSON.stringify({ ...JSON.parse(requestBody()), model: "other" })),
+    Buffer.from(JSON.stringify({ ...JSON.parse(requestBody()), extra: true })),
+    Buffer.from(JSON.stringify({ ...JSON.parse(requestBody()), stream: false })),
+  ]) {
+    const { session, events } = fixture();
+    const req = request();
+    const res = response();
+    session.accept(req, res);
+    req.emit("data", raw);
+    req.emit("end");
+    assert.equal(res.statusCode, 422);
+    assert.equal(session.release(), false);
+    assert.deepEqual(events, []);
+  }
 });

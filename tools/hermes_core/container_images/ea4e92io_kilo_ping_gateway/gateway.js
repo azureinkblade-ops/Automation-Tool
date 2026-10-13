@@ -2,9 +2,45 @@
 
 const crypto = require("node:crypto");
 const http = require("node:http");
+const { TextDecoder } = require("node:util");
 
 const MAX_BYTES = 65536;
 const TIMEOUT_MS = 20000;
+const REQUEST_FIELDS = ["model", "messages", "stream", "stream_options",
+  "tools", "tool_choice", "max_tokens"];
+
+function inertRequestShape(raw) {
+  let payload;
+  try {
+    payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw));
+  } catch (_) {
+    return false;
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload) ||
+      Object.keys(payload).length !== REQUEST_FIELDS.length ||
+      !REQUEST_FIELDS.every((field) => Object.hasOwn(payload, field)) ||
+      payload.model !== "ea4e-inert" || payload.stream !== true ||
+      !payload.stream_options || typeof payload.stream_options !== "object" ||
+      Array.isArray(payload.stream_options) || !Array.isArray(payload.tools) ||
+      typeof payload.tool_choice !== "string" ||
+      typeof payload.max_tokens !== "number" ||
+      !Number.isFinite(payload.max_tokens) ||
+      !Array.isArray(payload.messages) || payload.messages.length !== 2) {
+    return false;
+  }
+  const roles = new Set();
+  const kinds = new Set();
+  for (const message of payload.messages) {
+    if (!message || typeof message !== "object" || Array.isArray(message) ||
+        Object.keys(message).some((key) => !["role", "content", "name",
+          "tool_calls", "tool_call_id"].includes(key)) ||
+        !["system", "user"].includes(message.role)) return false;
+    roles.add(message.role);
+    kinds.add(Array.isArray(message.content) ? "array" : typeof message.content);
+  }
+  return roles.size === 2 && kinds.size === 2 &&
+    kinds.has("string") && kinds.has("array");
+}
 
 function validateResponse(responseBytes, expectedSha256, taskHash, receiptHash) {
   if (!Buffer.isBuffer(responseBytes) || responseBytes.length === 0 ||
@@ -85,6 +121,7 @@ function createPendingPing({ responseBytes, expectedSha256, taskHash, receiptHas
       response = res;
       const hash = crypto.createHash("sha256");
       let bodyBytes = 0;
+      const chunks = [];
       timer = setTimeout(() => finish(504), TIMEOUT_MS);
       timer.unref();
       res.on("close", () => finish(504));
@@ -96,11 +133,13 @@ function createPendingPing({ responseBytes, expectedSha256, taskHash, receiptHas
           return;
         }
         bodyBytes += part.length;
+        chunks.push(part);
         hash.update(part);
       });
       req.on("end", () => {
         if (state !== "reading") return;
         if (bodyBytes === 0) return finish(400);
+        if (!inertRequestShape(Buffer.concat(chunks, bodyBytes))) return finish(422);
         state = "pending";
         try {
           report({ event: "FAKE_PING_REQUEST_PENDING",
