@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const { EventEmitter } = require("node:events");
 const test = require("node:test");
-const { createPendingPing, MAX_BYTES } = require(
+const { createPendingPing, loadFakeConfig, MAX_BYTES } = require(
   "../../tools/hermes_core/container_images/ea4e92io_kilo_ping_gateway/gateway.js");
 
 const TASK = "a".repeat(64);
@@ -125,4 +125,28 @@ test("report failure and client abort deny release", () => {
   req2.emit("aborted");
   assert.equal(res2.statusCode, 504);
   assert.equal(aborted.session.release(), false);
+});
+
+test("fake-only bootstrap requires canonical response and exact lineage", () => {
+  const responseBytes = body();
+  const env = {
+    EA4E_QUALIFICATION_ONLY: "1",
+    EA4E_PING_SSE_BASE64: responseBytes.toString("base64"),
+    EA4E_PING_SSE_SHA256:
+      crypto.createHash("sha256").update(responseBytes).digest("hex"),
+    EA4E_TASK_INPUT_HASH: TASK,
+    EA4E_RECEIVER_RECEIPT_HASH: RECEIPT,
+  };
+  assert.deepEqual(loadFakeConfig(env).responseBytes, responseBytes);
+  assert.throws(() => loadFakeConfig({ ...env, EA4E_QUALIFICATION_ONLY: "0" }),
+    /fake-only gateway configuration denied/);
+  assert.throws(() => loadFakeConfig({ ...env, EA4E_PING_SSE_BASE64: "!!!!" }),
+    /fake-only gateway configuration denied/);
+  assert.throws(() => loadFakeConfig({ ...env, EA4E_PING_SSE_BASE64:
+    env.EA4E_PING_SSE_BASE64 + "=" }),
+  /noncanonical fake response encoding denied/);
+  assert.throws(() => loadFakeConfig({ ...env, EA4E_TASK_INPUT_HASH:
+    "c".repeat(64) }), /response lineage denied/);
+  assert.throws(() => loadFakeConfig({ ...env, EA4E_PING_SSE_SHA256:
+    "0".repeat(64) }), /response hash mismatch/);
 });

@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const http = require("node:http");
 
 const MAX_BYTES = 65536;
 const TIMEOUT_MS = 20000;
@@ -115,4 +116,50 @@ function createPendingPing({ responseBytes, expectedSha256, taskHash, receiptHas
   };
 }
 
-module.exports = { MAX_BYTES, validateResponse, createPendingPing };
+function loadFakeConfig(env) {
+  if (env.EA4E_QUALIFICATION_ONLY !== "1" ||
+      typeof env.EA4E_PING_SSE_BASE64 !== "string" ||
+      !/^[A-Za-z0-9+/]+={0,2}$/.test(env.EA4E_PING_SSE_BASE64)) {
+    throw new Error("fake-only gateway configuration denied");
+  }
+  const responseBytes = Buffer.from(env.EA4E_PING_SSE_BASE64, "base64");
+  if (responseBytes.toString("base64") !== env.EA4E_PING_SSE_BASE64) {
+    throw new Error("noncanonical fake response encoding denied");
+  }
+  const config = {
+    responseBytes, expectedSha256: env.EA4E_PING_SSE_SHA256,
+    taskHash: env.EA4E_TASK_INPUT_HASH,
+    receiptHash: env.EA4E_RECEIVER_RECEIPT_HASH,
+  };
+  validateResponse(config.responseBytes, config.expectedSha256,
+                   config.taskHash, config.receiptHash);
+  return config;
+}
+
+function runFakeGateway(env = process.env) {
+  const config = loadFakeConfig(env);
+  let server;
+  const session = createPendingPing({ ...config,
+    report: (event) => process.stdout.write(JSON.stringify(event) + "\n"),
+    done: (status) => {
+      if (status !== 200) process.exitCode = 2;
+      server.close();
+    },
+  });
+  server = http.createServer((req, res) => session.accept(req, res));
+  process.on("SIGUSR2", () => session.release());
+  server.requestTimeout = TIMEOUT_MS;
+  server.listen(8181, "0.0.0.0");
+  setTimeout(() => {
+    if (session.state() === "idle") {
+      process.exitCode = 2;
+      server.close();
+    }
+  }, TIMEOUT_MS).unref();
+  return server;
+}
+
+if (require.main === module) runFakeGateway();
+
+module.exports = { MAX_BYTES, validateResponse, createPendingPing,
+  loadFakeConfig, runFakeGateway };
