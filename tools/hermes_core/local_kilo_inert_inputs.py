@@ -18,7 +18,8 @@ def _is_link_or_reparse_point(path: Path) -> bool:
     return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
 
 
-def prepare_inert_inputs(root: Path) -> dict:
+def _prepare_planned_inputs(root: Path, planned_files: Mapping[str, Any],
+                            schema_id: str) -> dict:
     """Write reviewed input and separate runtime copies under a new temp root."""
     root = Path(root).resolve()
     temp_root = Path(tempfile.gettempdir()).resolve()
@@ -27,10 +28,11 @@ def prepare_inert_inputs(root: Path) -> dict:
     if not root.parent.is_dir():
         raise ValueError("root parent must already exist")
 
-    plan = build_inert_plan()
     prepared = []
-    for linux_path, item in plan["planned_files"].items():
+    for linux_path, item in planned_files.items():
         relative = PurePosixPath(linux_path).relative_to(PurePosixPath(HOME))
+        if not relative.parts or ".." in relative.parts:
+            raise ValueError("planned input path escaped home")
         content = item["content"].encode("ascii")
         if hashlib.sha256(content).hexdigest() != item["sha256"]:
             raise ValueError("planned input hash mismatch")
@@ -55,17 +57,26 @@ def prepare_inert_inputs(root: Path) -> dict:
         })
 
     return {
-        "schema_id": "hermes.local-kilo-inert-inputs/v1",
+        "schema_id": schema_id,
         "root": str(root),
         "files": records,
         "launch_authorized": False,
     }
 
 
-def verified_inert_mount_sources(prepared: Mapping[str, Any]) -> tuple[str, str]:
-    """Read back 92DP dummy bytes and derive the two expected bind sources."""
+def prepare_inert_inputs(root: Path) -> dict:
+    """Stage the original 92DP dummy config without a receiver launch."""
+    return _prepare_planned_inputs(
+        root, build_inert_plan()["planned_files"],
+        "hermes.local-kilo-inert-inputs/v1",
+    )
+
+
+def _verified_planned_mount_sources(prepared: Mapping[str, Any],
+                                    planned_files: Mapping[str, Any],
+                                    schema_id: str) -> tuple[str, str]:
     if (not isinstance(prepared, Mapping)
-            or prepared.get("schema_id") != "hermes.local-kilo-inert-inputs/v1"
+            or prepared.get("schema_id") != schema_id
             or prepared.get("launch_authorized") is not False):
         raise ValueError("invalid inert input manifest")
     root_text = prepared.get("root")
@@ -85,11 +96,10 @@ def verified_inert_mount_sources(prepared: Mapping[str, Any]) -> tuple[str, str]
         raise ValueError("inert input directory is a link")
 
     files = prepared.get("files")
-    plan = build_inert_plan()
-    if not isinstance(files, list) or len(files) != len(plan["planned_files"]):
+    if not isinstance(files, list) or len(files) != len(planned_files):
         raise ValueError("inert input file count mismatch")
     expected = set()
-    for linux_path, item in plan["planned_files"].items():
+    for linux_path, item in planned_files.items():
         relative = PurePosixPath(linux_path).relative_to(PurePosixPath(HOME))
         source = input_dir / Path(relative)
         runtime = runtime_dir / Path(relative)
@@ -107,3 +117,11 @@ def verified_inert_mount_sources(prepared: Mapping[str, Any]) -> tuple[str, str]
     if observed != expected:
         raise ValueError("inert input manifest mismatch")
     return str(input_dir), str(runtime_dir)
+
+
+def verified_inert_mount_sources(prepared: Mapping[str, Any]) -> tuple[str, str]:
+    """Read back 92DP dummy bytes and derive the two expected bind sources."""
+    return _verified_planned_mount_sources(
+        prepared, build_inert_plan()["planned_files"],
+        "hermes.local-kilo-inert-inputs/v1",
+    )
