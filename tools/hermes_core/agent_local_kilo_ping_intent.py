@@ -122,6 +122,23 @@ class SQLiteAgentLocalKiloPingIntentStore:
             ).fetchone() is not None
         return False
 
+    def _check_preclaim_window(self, conn, witness):
+        now = self._clock()
+        if type(now) is not datetime or now.tzinfo is None or now.utcoffset() is None:
+            raise DelegationIntegrityError("Linux Kilo intent clock invalid")
+        now = now.astimezone(timezone.utc).replace(microsecond=0)
+        if not (_parse_timestamp(witness.start_result.recorded_at) <= now
+                < _parse_timestamp(witness.lease.expires_at)):
+            raise DelegationIntegrityError("Linux Kilo intent outside lease window")
+        for table in (
+            "agent_text_process_intents", "agent_invocation_claim_intents",
+            "agent_receiver_start_fences", "agent_terminal_captures",
+            "delegation_results",
+        ):
+            if self._exists(conn, table, witness.lease.attempt_id):
+                raise DelegationIntegrityError("Linux Kilo intent too late or conflicting")
+        return now
+
     def reserve(self, attempt_id: str, plan: dict) -> AgentLocalKiloPingIntent:
         """Reserve a complete candidate before any claim; never start Docker."""
         witness = load_bound_agent_start(
@@ -137,20 +154,7 @@ class SQLiteAgentLocalKiloPingIntentStore:
                 if self._read(conn, attempt_id) is not None:
                     raise DelegationIntegrityError("Linux Kilo intent already reserved")
                 self._active(conn, witness, bridge)
-                now = self._clock()
-                if type(now) is not datetime or now.tzinfo is None or now.utcoffset() is None:
-                    raise DelegationIntegrityError("Linux Kilo intent clock invalid")
-                now = now.astimezone(timezone.utc).replace(microsecond=0)
-                if not (_parse_timestamp(witness.start_result.recorded_at) <= now
-                        < _parse_timestamp(witness.lease.expires_at)):
-                    raise DelegationIntegrityError("Linux Kilo intent outside lease window")
-                for table in (
-                    "agent_text_process_intents", "agent_invocation_claim_intents",
-                    "agent_receiver_start_fences", "agent_terminal_captures",
-                    "delegation_results",
-                ):
-                    if self._exists(conn, table, attempt_id):
-                        raise DelegationIntegrityError("Linux Kilo intent too late or conflicting")
+                now = self._check_preclaim_window(conn, witness)
                 payload = {
                     "schema_version": "ea4e92ib-local-kilo-ping-intent-v1",
                     "attempt_id": attempt_id, "bridge_hash": bridge.artifact_hash,
@@ -183,6 +187,7 @@ class SQLiteAgentLocalKiloPingIntentStore:
             conn.execute("BEGIN IMMEDIATE")
             intent = self._read(conn, attempt_id)
             self._active(conn, witness, bridge)
+            self._check_preclaim_window(conn, witness)
             row = conn.execute(
                 "SELECT canonical_payload FROM agent_local_kilo_ping_intents "
                 "WHERE attempt_id=?", (attempt_id,),

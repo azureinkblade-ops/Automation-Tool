@@ -135,6 +135,34 @@ def test_reservation_at_lease_expiry_denies(tmp_path):
         start.close()
 
 
+def test_reserved_plan_cannot_be_reverified_after_lease_expiry(tmp_path):
+    _, start, _, lease, bridges, plan = accepted(tmp_path)
+    try:
+        intents = SQLiteAgentLocalKiloPingIntentStore(bridges, clock=lambda: NOW)
+        saved = intents.reserve(lease.attempt_id, plan)
+        witness = load_bound_agent_start(bridges.authority, start, lease.attempt_id)
+        expired = datetime.fromisoformat(witness.lease.expires_at.replace("Z", "+00:00"))
+        reopened = SQLiteAgentLocalKiloPingIntentStore(bridges, clock=lambda: expired)
+        with pytest.raises(DelegationIntegrityError, match="outside lease window"):
+            reopened.verify_plan(lease.attempt_id, plan)
+        assert reopened.get(lease.attempt_id) == saved
+    finally:
+        start.close()
+
+
+def test_reserved_plan_cannot_be_reverified_after_start_fence(tmp_path):
+    authority, start, _, lease, bridges, plan = accepted(tmp_path)
+    try:
+        intents = SQLiteAgentLocalKiloPingIntentStore(bridges, clock=lambda: NOW)
+        saved = intents.reserve(lease.attempt_id, plan)
+        fence(authority, start).claim(lease.attempt_id)
+        with pytest.raises(DelegationIntegrityError, match="too late or conflicting"):
+            intents.verify_plan(lease.attempt_id, plan)
+        assert intents.get(lease.attempt_id) == saved
+    finally:
+        start.close()
+
+
 def test_independent_reservation_race_has_one_winner(tmp_path):
     _, start, _, lease, _, plan = accepted(tmp_path)
     try:

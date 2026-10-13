@@ -23,3 +23,14 @@ container owner must bind the same plan and accepted authority to exact
 image/config/peer identities, one process-start decision, bounded raw-byte
 capture, and confirmed containment. The real provider/model and credential
 scope need separate qualification and exact bounded live authorization.
+
+## Preclaim revalidation correction
+
+Before a future container owner can consume a reserved plan, `verify_plan()`
+must also recheck the lease window and absence of a claim, start fence, terminal
+capture, result, or conflicting Windows intent under the same SQLite write
+lock. The original 92IB reservation checked these only at reservation time.
+The corrected verifier denies a plan after lease expiry or a subsequent start
+fence while retaining the row for audit. Focused tests: 27 passed. Nearby
+handoff/claim regression: 116 passed. This does not authorize a container
+create/start or qualify a real receiver/model.
