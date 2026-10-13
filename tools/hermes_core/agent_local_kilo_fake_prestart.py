@@ -43,16 +43,18 @@ def inspect_agent_local_kilo_fake_prestart(
     if (config.get("User") != candidate["user"]
             or config.get("WorkingDir") != candidate["workdir"]):
         return ImageAdmissionResult("DENY", "RECEIVER_IDENTITY_MISMATCH")
-    expected_env = {f"{key}={value}" for key, value in candidate["env"].items()}
+    image_config = image.get("Config") if isinstance(image, Mapping) else None
+    image_env = image_config.get("Env") if isinstance(image_config, Mapping) else None
     observed_env = config.get("Env")
-    if (not isinstance(observed_env, list)
-            or any(type(item) is not str for item in observed_env)
-            or any("=" not in item for item in observed_env)
-            or len(observed_env) != len(set(observed_env))
-            or len({item.split("=", 1)[0] for item in observed_env}) != len(observed_env)
-            or not expected_env.issubset(set(observed_env))
-            or any(item.split("=", 1)[0] in candidate["env"]
-                   and item not in expected_env for item in observed_env)):
+    if (not isinstance(image_env, list) or not isinstance(observed_env, list)
+            or any(type(item) is not str or "=" not in item
+                   for item in image_env + observed_env)
+            or len({item.split("=", 1)[0] for item in image_env}) != len(image_env)
+            or len({item.split("=", 1)[0] for item in observed_env}) != len(observed_env)):
+        return ImageAdmissionResult("DENY", "RECEIVER_ENV_MISMATCH")
+    expected_env = dict(item.split("=", 1) for item in image_env)
+    expected_env.update(candidate["env"])
+    if dict(item.split("=", 1) for item in observed_env) != expected_env:
         return ImageAdmissionResult("DENY", "RECEIVER_ENV_MISMATCH")
     if config.get("ExposedPorts") or host.get("PortBindings") or host.get("PublishAllPorts"):
         return ImageAdmissionResult("DENY", "RECEIVER_PORTS_PRESENT")

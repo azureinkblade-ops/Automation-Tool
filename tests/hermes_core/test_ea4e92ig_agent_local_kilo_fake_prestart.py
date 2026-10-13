@@ -26,6 +26,7 @@ def fixture(tmp_path):
     root = Path(prepared["root"])
     image = image_metadata()
     image["RepoDigests"] = [f"hermes/kilo@{IMAGE_INDEX_ID}"]
+    image["Config"]["Env"] = ["PATH=/usr/bin:/bin", "HOME=/tmp/kilo-home"]
     container = {
         "Image": IMAGE_INDEX_ID,
         "State": {"Status": "created"},
@@ -34,7 +35,9 @@ def fixture(tmp_path):
             "Cmd": candidate["argv"],
             "User": candidate["user"],
             "WorkingDir": candidate["workdir"],
-            "Env": [f"{key}={value}" for key, value in candidate["env"].items()],
+            "Env": ["PATH=/usr/bin:/bin"] + [
+                f"{key}={value}" for key, value in candidate["env"].items()
+            ],
         },
         "HostConfig": {
             "NetworkMode": candidate["network"]["name"],
@@ -74,6 +77,7 @@ def test_candidate_metadata_match_is_not_start_authority(tmp_path):
     lambda c: c["Config"].update(Env=[]),
     lambda c: c["Config"]["Env"].append("HOME=/wrong"),
     lambda c: c["Config"]["Env"].append(c["Config"]["Env"][0]),
+    lambda c: c["Config"]["Env"].append("OPENAI_API_KEY=unreviewed"),
     lambda c: c["HostConfig"].update(NetworkMode="bridge"),
     lambda c: c["HostConfig"].update(ReadonlyRootfs=False),
     lambda c: c["HostConfig"].update(Privileged=True),
@@ -105,5 +109,16 @@ def test_changed_prepared_bytes_denied(tmp_path):
         assert inspect_agent_local_kilo_fake_prestart(
             intents, attempt, plan, prepared, container, image,
         ).decision == "DENY"
+    finally:
+        start.close()
+
+
+def test_missing_image_environment_denied(tmp_path):
+    start, intents, attempt, plan, prepared, container, image = fixture(tmp_path)
+    try:
+        del image["Config"]["Env"]
+        assert inspect_agent_local_kilo_fake_prestart(
+            intents, attempt, plan, prepared, container, image,
+        ).reason == "RECEIVER_ENV_MISMATCH"
     finally:
         start.close()
