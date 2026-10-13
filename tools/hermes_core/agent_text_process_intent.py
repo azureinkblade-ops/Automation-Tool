@@ -187,6 +187,14 @@ class SQLiteAgentTextProcessIntentStore:
             try:
                 if self._read(conn, attempt_id) is not None:
                     raise DelegationIntegrityError("text process intent already reserved")
+                if conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' "
+                    "AND name='agent_local_kilo_ping_intents'"
+                ).fetchone() and conn.execute(
+                    "SELECT 1 FROM agent_local_kilo_ping_intents WHERE attempt_id=?",
+                    (attempt_id,),
+                ).fetchone():
+                    raise DelegationIntegrityError("Linux Kilo plan already reserved")
                 delegation = conn.execute(
                     "SELECT status,artifact_hash FROM delegations WHERE delegation_id=?",
                     (witness.task.delegation_id,),
