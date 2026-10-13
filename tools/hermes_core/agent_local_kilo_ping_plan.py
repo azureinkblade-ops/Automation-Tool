@@ -6,7 +6,7 @@ from tools.hermes_core.agent_invocation_bridge import AgentInvocationBridge
 from tools.hermes_core.agent_start_witness import DurableAgentStart
 from tools.hermes_core.agent_text_ping_command import build_agent_text_ping_message
 from tools.hermes_core.delegated_task import DelegationIntegrityError
-from tools.hermes_core.hashing import sha256_payload
+from tools.hermes_core.hashing import canonical_json, sha256_payload
 from tools.hermes_core.local_kilo_inert_plan import build_inert_plan
 
 
@@ -45,8 +45,13 @@ def verify_agent_local_kilo_ping_plan(
     if type(plan) is not dict:
         raise DelegationIntegrityError("Linux Kilo ping plan type denied")
     expected = build_agent_local_kilo_ping_plan(witness, bridge)
-    if plan != expected or plan.get("plan_hash") != sha256_payload({
-        key: value for key, value in plan.items() if key != "plan_hash"
-    }):
+    try:
+        matches = (canonical_json(plan) == canonical_json(expected)
+                   and plan.get("plan_hash") == sha256_payload({
+                       key: value for key, value in plan.items() if key != "plan_hash"
+                   }))
+    except (TypeError, ValueError) as exc:
+        raise DelegationIntegrityError("Linux Kilo ping plan mismatch") from exc
+    if not matches:
         raise DelegationIntegrityError("Linux Kilo ping plan mismatch")
     return expected["plan_hash"]

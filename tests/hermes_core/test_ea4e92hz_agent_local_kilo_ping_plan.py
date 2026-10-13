@@ -83,6 +83,13 @@ def test_plan_mutation_is_denied(tmp_path, field, value):
         })
         with pytest.raises(DelegationIntegrityError, match="plan mismatch"):
             verify_agent_local_kilo_ping_plan(witness, bridge, changed)
+        changed = deepcopy(plan)
+        changed["rootfs_readonly"] = 1
+        changed["plan_hash"] = sha256_payload({
+            key: item for key, item in changed.items() if key != "plan_hash"
+        })
+        with pytest.raises(DelegationIntegrityError, match="plan mismatch"):
+            verify_agent_local_kilo_ping_plan(witness, bridge, changed)
     finally:
         start.close()
 
