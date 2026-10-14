@@ -8,6 +8,9 @@ from tools.hermes_core.agent_local_kilo_create_request import (
 from tools.hermes_core.agent_local_kilo_ping_intent import (
     SQLiteAgentLocalKiloPingIntentStore,
 )
+from tools.hermes_core.kilo_fake_gateway_probe_plan import (
+    GATEWAY_IMAGE, GATEWAY_INDEX_ID, GATEWAY_PLATFORM_MANIFEST,
+)
 from tools.hermes_core.delegated_task import DelegationIntegrityError
 from tools.hermes_core.hashing import sha256_payload
 
@@ -39,7 +42,7 @@ def build_kilo_create_issue_request(
             or not 0 < requested_ttl_seconds <= 300):
         raise DelegationIntegrityError("Kilo create issuer request input denied")
     request = {
-        "schema_id": "hermes.agent-local-kilo-create-issue-request/v1",
+        "schema_id": "hermes.agent-local-kilo-create-issue-request/v2",
         "attempt_id": attempt_id,
         "intent_hash": intent.payload_sha256,
         "candidate_hash": spec["candidate_hash"],
@@ -54,6 +57,9 @@ def build_kilo_create_issue_request(
         "network_name": spec["network"]["name"],
         "network_id": network_id,
         "gateway_id": gateway_id,
+        "gateway_image": GATEWAY_IMAGE,
+        "gateway_image_index": GATEWAY_INDEX_ID,
+        "gateway_image_manifest": GATEWAY_PLATFORM_MANIFEST,
         "operator_id": operator_id,
         "nonce": nonce,
         "requested_ttl_seconds": requested_ttl_seconds,

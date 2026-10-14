@@ -10,6 +10,9 @@ from tools.hermes_core.agent_local_kilo_create_issue_request import (
 )
 from tools.hermes_core.delegated_task import DelegationIntegrityError
 from tools.hermes_core.hashing import sha256_payload
+from tools.hermes_core.kilo_fake_gateway_probe_plan import (
+    GATEWAY_IMAGE, GATEWAY_INDEX_ID, GATEWAY_PLATFORM_MANIFEST,
+)
 
 
 def _build(values, spec, **changed):
@@ -36,6 +39,10 @@ def test_exact_request_is_stable_and_non_authorizing(tmp_path):
         assert request == _build(values, spec)
         assert request["spec_hash"] == spec["spec_hash"]
         assert request["network_name"] == spec["network"]["name"]
+        assert request["schema_id"] == "hermes.agent-local-kilo-create-issue-request/v2"
+        assert request["gateway_image"] == GATEWAY_IMAGE
+        assert request["gateway_image_index"] == GATEWAY_INDEX_ID
+        assert request["gateway_image_manifest"] == GATEWAY_PLATFORM_MANIFEST
         assert request["docker_engine_endpoint"] == (
             "npipe:////./pipe/dockerDesktopLinuxEngine"
         )
