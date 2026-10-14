@@ -15,6 +15,7 @@ CONTAINER_ID = "a" * 64
 NETWORK_ID = "b" * 64
 IMAGE_ID = "sha256:" + "c" * 64
 IMAGE_INDEX = "sha256:" + "d" * 64
+DOCKER_HOST = "npipe:////./pipe/dockerDesktopLinuxEngine"
 
 
 def fixture(tmp_path, *, response=None):
@@ -41,11 +42,11 @@ def test_exact_read_commands_and_bounds(tmp_path):
     assert client.inspect_image(IMAGE_INDEX, IMAGE_ID)["Id"] == IMAGE_ID
     assert client.inspect_network(NETWORK_ID)["Id"] == NETWORK_ID
     assert calls == [
-        ((str(executable), "--context", "desktop-linux", "container",
+        ((str(executable), "--host", DOCKER_HOST, "container",
           "inspect", CONTAINER_ID), 5, 1024 * 1024),
-        ((str(executable), "--context", "desktop-linux", "image",
+        ((str(executable), "--host", DOCKER_HOST, "image",
           "inspect", "--platform", "linux/amd64", IMAGE_INDEX), 5, 1024 * 1024),
-        ((str(executable), "--context", "desktop-linux", "network",
+        ((str(executable), "--host", DOCKER_HOST, "network",
           "inspect", NETWORK_ID), 5, 1024 * 1024),
     ]
     assert all("start" not in argv and "create" not in argv

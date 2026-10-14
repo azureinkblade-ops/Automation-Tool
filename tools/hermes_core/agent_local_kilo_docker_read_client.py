@@ -12,6 +12,7 @@ _ID = re.compile(r"[0-9a-f]{64}\Z")
 _IMAGE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _MAX_BYTES = 1024 * 1024
 _TIMEOUT_SECONDS = 5
+_DOCKER_HOST = "npipe:////./pipe/dockerDesktopLinuxEngine"
 
 
 def _unique_object(pairs):
@@ -60,12 +61,12 @@ class AgentLocalKiloDockerReadClient:
                 raise DelegationIntegrityError("Docker read image identity denied")
             if type(expected_id) is not str or not _IMAGE.fullmatch(expected_id):
                 raise DelegationIntegrityError("Docker read manifest identity denied")
-            argv = (str(self.executable), "--context", "desktop-linux", "image",
+            argv = (str(self.executable), "--host", _DOCKER_HOST, "image",
                     "inspect", "--platform", "linux/amd64", identity)
         elif kind in ("container", "network"):
             if type(identity) is not str or not _ID.fullmatch(identity):
                 raise DelegationIntegrityError("Docker read object identity denied")
-            argv = (str(self.executable), "--context", "desktop-linux", kind,
+            argv = (str(self.executable), "--host", _DOCKER_HOST, kind,
                     "inspect", identity)
         else:
             raise DelegationIntegrityError("Docker read kind denied")
