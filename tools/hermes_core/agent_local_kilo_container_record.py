@@ -42,6 +42,8 @@ class ReportedCreatedKiloContainer:
     candidate_hash: str
     container_id: str
     network_id: str
+    observed_container_hash: str
+    observed_image_hash: str
     payload_sha256: str
     launch_authorized: bool = False
 
@@ -91,7 +93,8 @@ class SQLiteAgentLocalKiloContainerRecordStore:
             raise DelegationIntegrityError("Kilo created report integrity mismatch") from exc
         return ReportedCreatedKiloContainer(
             attempt_id, payload["intent_hash"], payload["candidate_hash"],
-            payload["container_id"], payload["network_id"], row[3],
+            payload["container_id"], payload["network_id"],
+            payload["observed_container_hash"], payload["observed_image_hash"], row[3],
         )
 
     def get(self, attempt_id: str) -> ReportedCreatedKiloContainer | None:

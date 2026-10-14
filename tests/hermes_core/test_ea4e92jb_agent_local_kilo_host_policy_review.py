@@ -16,15 +16,16 @@ from tools.hermes_core.agent_local_kilo_fake_launch_candidate import (
 from tools.hermes_core.agent_local_kilo_host_policy_review import (
     review_reported_kilo_host_policy,
 )
+from tools.hermes_core.agent_local_kilo_provisional_launch_spec import (
+    build_provisional_kilo_launch_spec,
+)
 
 
 GATEWAY_ID = "c" * 64
 
 
-def fixture(tmp_path):
+def fixture(tmp_path, *, mutate_before_record=None):
     start, intents, attempt, plan, prepared, container, image = observed(tmp_path)
-    records = SQLiteAgentLocalKiloContainerRecordStore(intents)
-    report = records.record(attempt, plan, prepared, container, image)
     candidate = build_agent_local_kilo_fake_launch_candidate(intents, attempt, plan)
     name = candidate["network"]["name"]
     container["State"]["Running"] = False
@@ -39,7 +40,15 @@ def fixture(tmp_path):
         "Tmpfs": {
             "/work": "rw,nosuid,nodev,noexec,uid=65532,gid=65532,mode=0700,size=134217728",
         },
+        "RestartPolicy": {"Name": "no", "MaximumRetryCount": 0},
     })
+    spec = build_provisional_kilo_launch_spec(intents, attempt, plan, prepared)
+    container["Name"] = "/" + spec["container_name"]
+    container["Config"]["Labels"] = spec["labels"]
+    if mutate_before_record is not None:
+        mutate_before_record(container)
+    records = SQLiteAgentLocalKiloContainerRecordStore(intents)
+    report = records.record(attempt, plan, prepared, container, image)
     network = {
         "Id": report.network_id, "Name": name, "Driver": "bridge",
         "Internal": True, "EnableIPv6": False,

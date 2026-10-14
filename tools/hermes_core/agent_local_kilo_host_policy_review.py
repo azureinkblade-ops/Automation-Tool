@@ -14,6 +14,7 @@ from tools.hermes_core.agent_local_kilo_fake_prestart import (
 )
 from tools.hermes_core.agent_local_kilo_provisional_launch_spec import HOST_POLICY
 from tools.hermes_core.delegated_task import DelegationIntegrityError
+from tools.hermes_core.hashing import sha256_payload
 from tools.hermes_core.local_kilo_image_admission import ImageAdmissionResult
 
 
@@ -52,6 +53,9 @@ def review_reported_kilo_host_policy(
     )
     if report.candidate_hash != candidate["candidate_hash"]:
         raise DelegationIntegrityError("Kilo host policy candidate changed")
+    if (report.observed_container_hash != sha256_payload(container)
+            or report.observed_image_hash != sha256_payload(image)):
+        return ImageAdmissionResult("DENY", "CREATED_REPORT_BYTES_CHANGED")
     base = inspect_agent_local_kilo_fake_prestart(
         records.intents, attempt_id, v1_plan, prepared, container, image,
     )
