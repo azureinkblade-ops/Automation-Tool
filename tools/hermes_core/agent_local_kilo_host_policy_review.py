@@ -12,23 +12,21 @@ from tools.hermes_core.agent_local_kilo_fake_launch_candidate import (
 from tools.hermes_core.agent_local_kilo_fake_prestart import (
     inspect_agent_local_kilo_fake_prestart,
 )
+from tools.hermes_core.agent_local_kilo_provisional_launch_spec import HOST_POLICY
 from tools.hermes_core.delegated_task import DelegationIntegrityError
 from tools.hermes_core.local_kilo_image_admission import ImageAdmissionResult
 
 
 _ID = re.compile(r"[0-9a-f]{64}\Z")
-_TMPFS = frozenset({
-    "rw", "nosuid", "nodev", "noexec", "uid=65532", "gid=65532",
-    "mode=0700", "size=134217728",
-})
+_TMPFS = frozenset(HOST_POLICY["tmpfs"]["/work"].split(","))
 _EXPECTED = {
-    "NanoCpus": 2_000_000_000,
-    "Memory": 2 * 1024 * 1024 * 1024,
-    "PidsLimit": 64,
-    "ReadonlyRootfs": True,
-    "Privileged": False,
-    "PublishAllPorts": False,
-    "AutoRemove": False,
+    "NanoCpus": HOST_POLICY["nano_cpus"],
+    "Memory": HOST_POLICY["memory_bytes"],
+    "PidsLimit": HOST_POLICY["pids_limit"],
+    "ReadonlyRootfs": HOST_POLICY["read_only_rootfs"],
+    "Privileged": HOST_POLICY["privileged"],
+    "PublishAllPorts": HOST_POLICY["publish_all_ports"],
+    "AutoRemove": HOST_POLICY["auto_remove"],
 }
 
 
@@ -76,9 +74,9 @@ def review_reported_kilo_host_policy(
     if any(type(host.get(key)) is not type(value) or host[key] != value
            for key, value in _EXPECTED.items()):
         return ImageAdmissionResult("DENY", "RESOURCE_OR_LIFECYCLE_MISMATCH")
-    if (host.get("CapDrop") != ["ALL"]
+    if (host.get("CapDrop") != HOST_POLICY["cap_drop"]
             or host.get("CapAdd") not in (None, [])
-            or host.get("SecurityOpt") != ["no-new-privileges"]
+            or host.get("SecurityOpt") != HOST_POLICY["security_opt"]
             or host.get("PidMode") not in (None, "")
             or host.get("IpcMode") not in (None, "", "private")
             or host.get("Devices") not in (None, [])
