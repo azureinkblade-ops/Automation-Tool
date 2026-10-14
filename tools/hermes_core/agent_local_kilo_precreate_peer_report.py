@@ -39,6 +39,9 @@ class ReportedPrecreateKiloPeer:
     gateway_id: str
     issue_request_hash: str
     payload_sha256: str
+    network_hash: str
+    gateway_hash: str
+    image_hash: str
     ownership_verified: bool = False
     create_authorized: bool = False
     launch_authorized: bool = False
@@ -105,6 +108,7 @@ class SQLiteAgentLocalKiloPrecreatePeerReportStore:
             raise DelegationIntegrityError("Kilo peer report integrity mismatch") from exc
         return ReportedPrecreateKiloPeer(
             attempt_id, row[0], row[1], payload["issue_request_hash"], row[3],
+            payload["network_hash"], payload["gateway_hash"], payload["image_hash"],
         )
 
     def get(self, attempt_id: str) -> ReportedPrecreateKiloPeer | None:
@@ -166,6 +170,8 @@ class SQLiteAgentLocalKiloPrecreatePeerReportStore:
                 return ReportedPrecreateKiloPeer(
                     attempt_id, payload["network_id"], payload["gateway_id"],
                     payload["issue_request_hash"], digest,
+                    payload["network_hash"], payload["gateway_hash"],
+                    payload["image_hash"],
                 )
             except Exception:
                 conn.rollback()
