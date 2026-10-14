@@ -3,6 +3,9 @@
 from tools.hermes_core.agent_local_kilo_container_record import (
     SQLiteAgentLocalKiloContainerRecordStore,
 )
+from tools.hermes_core.agent_local_kilo_container_observation import (
+    SQLiteAgentLocalKiloContainerObservationStore,
+)
 from tools.hermes_core.agent_ping_result import validate_agent_ping_candidate
 from tools.hermes_core.agent_result_candidate import decode_agent_result_candidate
 from tools.hermes_core.agent_start_witness import load_bound_agent_start
@@ -53,3 +56,20 @@ def preview_reported_kilo_container_ping(
         witness.task, witness.lease, witness.receipt, candidate,
     )
     return candidate
+
+
+def preview_recorded_kilo_container_ping(
+    observations: SQLiteAgentLocalKiloContainerObservationStore,
+    attempt_id: str,
+):
+    """Preview the durable terminal row, without certifying its caller's report."""
+    if type(observations) is not SQLiteAgentLocalKiloContainerObservationStore:
+        raise DelegationIntegrityError("Kilo container observation store denied")
+    start = observations.get_start(attempt_id)
+    terminal = observations.get_terminal(attempt_id)
+    if start is None or terminal is None:
+        raise DelegationIntegrityError("Kilo container terminal absent")
+    return preview_reported_kilo_container_ping(
+        observations.created, attempt_id, start.container_id,
+        returncode=terminal.exit_code, stdout_bytes=terminal.stdout_bytes,
+    )
