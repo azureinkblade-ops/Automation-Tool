@@ -52,12 +52,14 @@ class AgentLocalKiloDockerReadClient:
         if digest.hexdigest() != self.executable_sha256:
             raise DelegationIntegrityError("Docker read executable changed")
 
-    def _inspect(self, kind: str, identity: str):
+    def _inspect(self, kind: str, identity: str, expected_id: str | None = None):
         if self.runner is None:
             raise DelegationIntegrityError("Docker read runner disabled")
         if kind == "image":
             if type(identity) is not str or not _IMAGE.fullmatch(identity):
                 raise DelegationIntegrityError("Docker read image identity denied")
+            if type(expected_id) is not str or not _IMAGE.fullmatch(expected_id):
+                raise DelegationIntegrityError("Docker read manifest identity denied")
             argv = (str(self.executable), "--context", "desktop-linux", "image",
                     "inspect", "--platform", "linux/amd64", identity)
         elif kind in ("container", "network"):
@@ -88,7 +90,7 @@ class AgentLocalKiloDockerReadClient:
         if type(value) is not list or len(value) != 1 or type(value[0]) is not dict:
             raise DelegationIntegrityError("Docker read response shape denied")
         if kind == "image":
-            if value[0].get("Id") != identity:
+            if value[0].get("Id") != expected_id:
                 raise DelegationIntegrityError("Docker read image mismatch")
         elif value[0].get("Id") != identity:
             raise DelegationIntegrityError("Docker read object mismatch")
@@ -97,8 +99,8 @@ class AgentLocalKiloDockerReadClient:
     def inspect_container(self, identity: str):
         return self._inspect("container", identity)
 
-    def inspect_image(self, identity: str):
-        return self._inspect("image", identity)
+    def inspect_image(self, image_index: str, image_manifest: str):
+        return self._inspect("image", image_index, image_manifest)
 
     def inspect_network(self, identity: str):
         return self._inspect("network", identity)

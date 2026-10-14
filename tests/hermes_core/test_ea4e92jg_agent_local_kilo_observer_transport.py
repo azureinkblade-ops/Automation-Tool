@@ -40,7 +40,7 @@ def test_fake_transport_observer_matches_but_denies_start(tmp_path):
         assert result.receiver_executed is False
         assert result.provenance_checked is False
         assert [call[0][-1] for call in calls] == [
-            record.container_id, spec["image_manifest"], record.network_id,
+            record.container_id, spec["image_index"], record.network_id,
         ]
         assert all(call[1:] == (5, 1024 * 1024) for call in calls)
     finally:

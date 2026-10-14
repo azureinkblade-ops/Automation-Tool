@@ -24,8 +24,8 @@ class FakeReadClient:
         self.calls.append(("container", identity))
         return deepcopy(self.container)
 
-    def inspect_image(self, identity):
-        self.calls.append(("image", identity))
+    def inspect_image(self, index, manifest):
+        self.calls.append(("image", index, manifest))
         return deepcopy(self.image)
 
     def inspect_network(self, identity):
@@ -52,7 +52,7 @@ def test_reads_exact_recorded_ids_and_remains_review_only(tmp_path):
         report = values["records"].get(values["attempt_id"])
         assert client.calls == [
             ("container", report.container_id),
-            ("image", spec["image_manifest"]),
+            ("image", spec["image_index"], spec["image_manifest"]),
             ("network", report.network_id),
         ]
         assert result.decision == "MATCH"

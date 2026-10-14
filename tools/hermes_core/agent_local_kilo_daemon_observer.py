@@ -40,7 +40,9 @@ class AgentLocalKiloDaemonObserver:
             return ImageAdmissionResult("DENY", "CREATED_REPORT_ABSENT_OR_CHANGED")
         try:
             container = self.read_client.inspect_container(report.container_id)
-            image = self.read_client.inspect_image(expected["image_manifest"])
+            image = self.read_client.inspect_image(
+                expected["image_index"], expected["image_manifest"],
+            )
             network = self.read_client.inspect_network(report.network_id)
         except Exception:
             return ImageAdmissionResult("DENY", "DAEMON_READ_FAILED")

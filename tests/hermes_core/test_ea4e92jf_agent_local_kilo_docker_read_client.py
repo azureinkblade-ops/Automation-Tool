@@ -14,6 +14,7 @@ from tools.hermes_core.delegated_task import DelegationIntegrityError
 CONTAINER_ID = "a" * 64
 NETWORK_ID = "b" * 64
 IMAGE_ID = "sha256:" + "c" * 64
+IMAGE_INDEX = "sha256:" + "d" * 64
 
 
 def fixture(tmp_path, *, response=None):
@@ -26,7 +27,7 @@ def fixture(tmp_path, *, response=None):
         calls.append((argv, timeout_seconds, max_output_bytes))
         if response is not None:
             return response
-        return json.dumps([{"Id": argv[-1]}]).encode("utf-8")
+        return json.dumps([{"Id": IMAGE_ID if "image" in argv else argv[-1]}]).encode("utf-8")
 
     client = AgentLocalKiloDockerReadClient(
         str(executable), digest, runner=runner,
@@ -37,13 +38,13 @@ def fixture(tmp_path, *, response=None):
 def test_exact_read_commands_and_bounds(tmp_path):
     executable, _, client, calls = fixture(tmp_path)
     assert client.inspect_container(CONTAINER_ID)["Id"] == CONTAINER_ID
-    assert client.inspect_image(IMAGE_ID)["Id"] == IMAGE_ID
+    assert client.inspect_image(IMAGE_INDEX, IMAGE_ID)["Id"] == IMAGE_ID
     assert client.inspect_network(NETWORK_ID)["Id"] == NETWORK_ID
     assert calls == [
         ((str(executable), "--context", "desktop-linux", "container",
           "inspect", CONTAINER_ID), 5, 1024 * 1024),
         ((str(executable), "--context", "desktop-linux", "image",
-          "inspect", "--platform", "linux/amd64", IMAGE_ID), 5, 1024 * 1024),
+          "inspect", "--platform", "linux/amd64", IMAGE_INDEX), 5, 1024 * 1024),
         ((str(executable), "--context", "desktop-linux", "network",
           "inspect", NETWORK_ID), 5, 1024 * 1024),
     ]
@@ -72,8 +73,26 @@ def test_default_disabled_and_changed_executable_deny(tmp_path):
 def test_invalid_identity_denied_before_runner(tmp_path, kind, identity):
     _, _, client, calls = fixture(tmp_path)
     with pytest.raises(DelegationIntegrityError, match="identity denied"):
-        getattr(client, f"inspect_{kind}")(identity)
+        if kind == "image":
+            client.inspect_image(identity, IMAGE_ID)
+        else:
+            getattr(client, f"inspect_{kind}")(identity)
     assert calls == []
+
+
+def test_invalid_manifest_denied_before_runner(tmp_path):
+    _, _, client, calls = fixture(tmp_path)
+    with pytest.raises(DelegationIntegrityError, match="manifest identity denied"):
+        client.inspect_image(IMAGE_INDEX, "bad")
+    assert calls == []
+
+
+def test_wrong_platform_manifest_denied(tmp_path):
+    _, _, client, _ = fixture(
+        tmp_path, response=json.dumps([{"Id": IMAGE_INDEX}]).encode("utf-8"),
+    )
+    with pytest.raises(DelegationIntegrityError, match="image mismatch"):
+        client.inspect_image(IMAGE_INDEX, IMAGE_ID)
 
 
 @pytest.mark.parametrize("response,reason", [
