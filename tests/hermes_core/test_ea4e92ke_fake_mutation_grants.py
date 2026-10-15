@@ -19,10 +19,10 @@ SOURCES = [
 ]
 GRANT = "a" * 64
 NONCE = "b" * 64
-ATTEMPT = "c" * 64
+ATTEMPT = "attempt-1"
 REQUEST = "d" * 64
 PREDECESSOR = "e" * 64
-COMMIT = "f" * 40
+COMMIT = "f" * 64
 
 
 @pytest.fixture(scope="module")
@@ -90,6 +90,23 @@ def test_issue_claim_and_reopen(executable, store):
     assert generation(store[0]) == 2
     assert state(store[0]) == "CLAIMED"
     assert call(executable, "open", *store).returncode == 0
+
+
+def test_issue_accepts_existing_network_request_identity_shape(executable, store, tmp_path):
+    from tests.hermes_core.test_ea4e92je_agent_local_kilo_daemon_observer import setup
+    from tests.hermes_core.test_ea4e92jv_agent_local_kilo_network_issue_request import _build
+
+    source = tmp_path / "network-request"
+    source.mkdir()
+    start, values, spec, _, _, _ = setup(source)
+    try:
+        request = _build(values, spec)
+    finally:
+        start.close()
+    assert issue(
+        executable, store, attempt=request["attempt_id"],
+        request=request["request_hash"], commit=request["governing_commit"],
+    ).returncode == 0
 
 
 def test_exact_duplicate_issue_does_not_replenish(executable, store):
@@ -189,6 +206,7 @@ def test_missing_anchor_after_claim_never_replays(executable, store):
 @pytest.mark.parametrize("changes", [
     {"grant": "bad"}, {"action": "model_run"},
     {"sid": "unverified"}, {"expires": 1400},
+    {"commit": "f" * 40}, {"attempt": "bad attempt"},
 ])
 def test_invalid_issue_has_no_row_or_generation(executable, store, changes):
     assert issue(executable, store, **changes).returncode == 1

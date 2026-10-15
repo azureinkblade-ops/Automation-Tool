@@ -8,7 +8,8 @@ using System.Text.RegularExpressions;
 internal sealed class Ea4eFakeDockerMutationGrants
 {
     private static readonly Regex Hex64 = new Regex(@"\A[0-9a-f]{64}\z");
-    private static readonly Regex Hex40 = new Regex(@"\A[0-9a-f]{40}\z");
+    private static readonly Regex AttemptId = new Regex(
+        @"\A[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\z");
     private static readonly Regex Sid = new Regex(@"\AS-[0-9]+(?:-[0-9]+)+\z");
     private readonly Ea4eDockerMutationStoreIdentity store;
 
@@ -49,10 +50,10 @@ internal sealed class Ea4eFakeDockerMutationGrants
         if (grantId == null || !Hex64.IsMatch(grantId)
             || nonce == null || !Hex64.IsMatch(nonce)
             || !IsAction(action)
-            || attemptId == null || !Hex64.IsMatch(attemptId)
+            || attemptId == null || !AttemptId.IsMatch(attemptId)
             || requestHash == null || !Hex64.IsMatch(requestHash)
             || predecessorHash == null || !Hex64.IsMatch(predecessorHash)
-            || sourceCommit == null || !Hex40.IsMatch(sourceCommit)
+            || sourceCommit == null || !Hex64.IsMatch(sourceCommit)
             || operatorSid == null || !Sid.IsMatch(operatorSid)
             || issuedAt <= 0 || expiresAt <= issuedAt
             || expiresAt - issuedAt > 300)
@@ -84,7 +85,7 @@ internal sealed class Ea4eFakeDockerMutationGrants
     {
         if (grantId == null || !Hex64.IsMatch(grantId)
             || !IsAction(action)
-            || attemptId == null || !Hex64.IsMatch(attemptId)
+            || attemptId == null || !AttemptId.IsMatch(attemptId)
             || requestHash == null || !Hex64.IsMatch(requestHash)
             || predecessorHash == null || !Hex64.IsMatch(predecessorHash)
             || now <= 0)
