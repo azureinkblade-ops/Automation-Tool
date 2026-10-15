@@ -163,6 +163,29 @@ def test_grant_row_tamper_cannot_replenish_claim(executable, store):
     assert claim(executable, store).returncode == 1
 
 
+def test_missing_anchor_after_issue_fails_closed(executable, store):
+    database, anchor = store
+    assert issue(executable, store).returncode == 0
+    issued_anchor = anchor.parent / (anchor.name + ".g00000001")
+    issued_anchor.rename(anchor.parent / "preserved-issued-anchor")
+    assert generation(database) == 1
+    assert state(database) == "ISSUED"
+    assert call(executable, "open", *store).returncode == 1
+    assert issue(executable, store).returncode == 1
+
+
+def test_missing_anchor_after_claim_never_replays(executable, store):
+    database, anchor = store
+    assert issue(executable, store).returncode == 0
+    assert claim(executable, store).returncode == 0
+    claimed_anchor = anchor.parent / (anchor.name + ".g00000002")
+    claimed_anchor.rename(anchor.parent / "preserved-claimed-anchor")
+    assert generation(database) == 2
+    assert state(database) == "CLAIMED"
+    assert call(executable, "open", *store).returncode == 1
+    assert claim(executable, store).returncode == 1
+
+
 @pytest.mark.parametrize("changes", [
     {"grant": "bad"}, {"action": "model_run"},
     {"sid": "unverified"}, {"expires": 1400},
