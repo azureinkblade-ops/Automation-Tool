@@ -100,6 +100,18 @@ internal sealed class Ea4eProtectedSqlite : IDisposable
             Check(result);
             Check(sqlite3_busy_timeout(db, 1000));
             Execute("PRAGMA foreign_keys = ON");
+            Execute("PRAGMA journal_mode = DELETE");
+            Execute("PRAGMA synchronous = FULL");
+            using (var journal = Prepare("PRAGMA journal_mode"))
+            {
+                if (!journal.Step() || journal.Text(0) != "delete")
+                    throw new InvalidOperationException("SQLite journal mode denied");
+            }
+            using (var sync = Prepare("PRAGMA synchronous"))
+            {
+                if (!sync.Step() || sync.Text(0) != "2")
+                    throw new InvalidOperationException("SQLite sync mode denied");
+            }
         }
         catch
         {

@@ -41,6 +41,7 @@ def test_bound_unicode_commit_reopen_and_rollback(executable, tmp_path, name):
         assert connection.execute("SELECT value FROM sample").fetchall() == [
             ("quote ' and Unicode \u96ea",),
         ]
+        assert connection.execute("PRAGMA journal_mode").fetchone() == ("delete",)
 
 
 def test_relative_store_path_denied(executable, tmp_path):
