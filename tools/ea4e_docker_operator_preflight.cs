@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text.RegularExpressions;
 
-internal static class Program
+internal static class Ea4eOperatorTokenObservation
 {
     private const uint TokenQuery = 0x0008;
     private const int TokenElevation = 20;
@@ -51,36 +51,37 @@ internal static class Program
         }
     }
 
-    private static int Main(string[] args)
+    internal static string Denial(string expectedSid)
     {
-        if (args.Length != 1 || !SidPattern.IsMatch(args[0]))
-        {
-            Console.WriteLine("DENY:EXPECTED_OPERATOR_SID_INVALID");
-            return 1;
-        }
+        if (String.IsNullOrEmpty(expectedSid) || !SidPattern.IsMatch(expectedSid))
+            return "EXPECTED_OPERATOR_SID_INVALID";
         try
         {
             using (WindowsIdentity identity = WindowsIdentity.GetCurrent())
             {
                 if (identity.User == null || !String.Equals(
-                    identity.User.Value, args[0], StringComparison.Ordinal))
-                {
-                    Console.WriteLine("DENY:OPERATOR_SID_MISMATCH");
-                    return 1;
-                }
+                    identity.User.Value, expectedSid, StringComparison.Ordinal))
+                    return "OPERATOR_SID_MISMATCH";
             }
             if (!IsElevated())
-            {
-                Console.WriteLine("DENY:OPERATOR_TOKEN_NOT_ELEVATED");
-                return 1;
-            }
-            Console.WriteLine("MATCH:EXPECTED_ELEVATED_TOKEN_OBSERVED");
-            return 0;
+                return "OPERATOR_TOKEN_NOT_ELEVATED";
+            return null;
         }
         catch (Exception)
         {
-            Console.WriteLine("DENY:WINDOWS_TOKEN_UNAVAILABLE");
-            return 1;
+            return "WINDOWS_TOKEN_UNAVAILABLE";
         }
+    }
+}
+
+internal static class Program
+{
+    private static int Main(string[] args)
+    {
+        string denial = Ea4eOperatorTokenObservation.Denial(
+            args.Length == 1 ? args[0] : null);
+        Console.WriteLine(denial == null
+            ? "MATCH:EXPECTED_ELEVATED_TOKEN_OBSERVED" : "DENY:" + denial);
+        return denial == null ? 0 : 1;
     }
 }
