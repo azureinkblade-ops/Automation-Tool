@@ -7,10 +7,15 @@ internal static class Ea4eNetworkIssuePreflightCandidate
 {
     private static int Main(string[] args)
     {
-        // SID and operator_id are distinct inputs until an issuer binds them.
+        // The request's operator candidate must equal the observed-token target.
         if (args.Length != 12)
         {
             Console.WriteLine("DENY:ARGUMENTS_INVALID");
+            return 1;
+        }
+        if (!String.Equals(args[6], args[0], StringComparison.Ordinal))
+        {
+            Console.WriteLine("DENY:OPERATOR_BINDING_MISMATCH");
             return 1;
         }
         string tokenDenial = Ea4eOperatorTokenObservation.Denial(args[0]);

@@ -14,7 +14,7 @@ from tests.hermes_core.test_ea4e92ki_network_request_candidate import (
 from tools.hermes_core.agent_local_docker_operator_token import (
     _read_current_windows_token,
 )
-from tools.hermes_core.hashing import canonical_json
+from tools.hermes_core.hashing import canonical_json, sha256_payload
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -46,8 +46,9 @@ def request_path(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
     start, values, spec, _, _, _ = setup(source)
+    sid, _ = _read_current_windows_token()
     try:
-        request = _build(values, spec)
+        request = _build(values, spec, operator_id=sid)
     finally:
         start.close()
     path = tmp_path / "request.json"
@@ -86,9 +87,26 @@ def test_actual_token_and_request(candidate, request_path):
 def test_wrong_sid_denied_before_request_read(candidate, request_path):
     request, path = request_path
     missing = path.with_name("never-created.json")
+    request["operator_id"] = "S-1-5-21-0-0-0-9999"
+    request["request_hash"] = sha256_payload({
+        key: value for key, value in request.items() if key != "request_hash"
+    })
     result = run(candidate, request, missing, "S-1-5-21-0-0-0-9999")
     assert result.returncode == 1
     assert result.stdout.strip() == "DENY:OPERATOR_SID_MISMATCH"
+
+
+def test_unbound_operator_denied(candidate, request_path):
+    request, path = request_path
+    sid, _ = _read_current_windows_token()
+    request["operator_id"] = "operator-candidate"
+    request["request_hash"] = sha256_payload({
+        key: value for key, value in request.items() if key != "request_hash"
+    })
+    path.write_bytes(canonical_json(request).encode())
+    result = run(candidate, request, path, sid)
+    assert result.returncode == 1
+    assert result.stdout.strip() == "DENY:OPERATOR_BINDING_MISMATCH"
 
 
 def test_bounded_request_read(candidate, request_path):
