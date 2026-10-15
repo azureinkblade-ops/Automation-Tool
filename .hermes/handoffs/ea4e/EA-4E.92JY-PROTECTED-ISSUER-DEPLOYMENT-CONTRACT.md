@@ -11,13 +11,16 @@ ordinary app account. The current worktree grants that account FullControl.
 Neither a worktree hash check performed by worktree code nor the 92JW token
 observer loaded from that tree can issue Docker authority.
 
-The first elevated executable must be the protected Windows PowerShell binary
-at `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, launched by
-an explicit operator ceremony, not by the app request path. The prospective
-issuer must be a self-contained script or a fully enumerated package in a
-separately protected install directory. Its transitive runtime, imports,
-configuration, native libraries, and store bootstrap must be enumerated and
-pinned. The current Python request-builder graph is not an elevated closure.
+The first elevated executable must be a reviewed, pinned binary from a
+protected installation, launched by an explicit operator ceremony, not by
+the app request path. Windows PowerShell is one candidate runtime, not a
+requirement. A self-contained compiled helper is also eligible if its
+compiler/build inputs, output bytes, and installation are reviewed and
+bound independently. The prospective issuer must have a fully enumerated
+closure in a separately protected install directory. Its transitive runtime,
+imports, configuration, native libraries, and store bootstrap must be
+enumerated and pinned. The current Python request-builder graph is not an
+elevated closure.
 No script from the worktree may be dot-sourced, imported, or executed with
 elevation, including during installation.
 

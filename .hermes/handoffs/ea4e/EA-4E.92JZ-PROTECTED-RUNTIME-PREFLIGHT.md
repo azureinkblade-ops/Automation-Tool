@@ -23,13 +23,15 @@ candidate protected base `C:\Program Files` was also not a reparse point
 and was TrustedInstaller-owned. These are path-based observations, not a
 handle-bound effective-access or race-proof installation attestation.
 
-This check does **not** qualify a helper, script, Python interpreter, module
-closure, store, installer, or UAC ceremony. PowerShell must eventually run
-with explicit `-NoProfile -NonInteractive` semantics and must not load
-user-controlled profiles, modules, or scripts. The executable hash, signer,
-resolved path, complete ancestor chain, and effective ACL must be checked
-again at the separately authorized installation/issuance time; Windows
-updates may legitimately change the hash.
+PowerShell is one candidate runtime, not the mandated issuer. A protected,
+reviewed compiled helper may be preferable if it avoids dynamic script or
+module loading. This check does **not** qualify a helper, script, Python
+interpreter, module closure, store, installer, or UAC ceremony. If selected,
+PowerShell must run with explicit `-NoProfile -NonInteractive` semantics and
+must not load user-controlled profiles, modules, or scripts. The executable
+hash, signer, resolved path, complete ancestor chain, and effective ACL must
+be checked again at the separately authorized installation/issuance time.
+Windows updates may legitimately change the hash.
 
 The next non-live implementation remains a reviewed, self-contained helper
 closure and fake-only source/ACL/store tests under 92JY. No elevation,
