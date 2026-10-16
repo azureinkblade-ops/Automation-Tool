@@ -88,6 +88,11 @@ internal static class Ea4eProtectedPathTopologyCandidate
 
     internal static string Denial(string path)
     {
+        return Denial(path, null);
+    }
+
+    internal static string Denial(string path, Func<SafeFileHandle, bool, string> observer)
+    {
         if (String.IsNullOrEmpty(path) || path.Length > 32767
             || path.Length < 4 || !Char.IsLetter(path[0]) || path[1] != ':'
             || path[2] != '\\' || path.IndexOf(':', 2) >= 0
@@ -143,6 +148,17 @@ internal static class Ea4eProtectedPathTopologyCandidate
             for (int index = 0; index < handles.Count; index++)
                 if (!SamePath(FinalPath(handles[index]), names[index]))
                     return "PATH_SUBSTITUTION_DENIED";
+            if (observer != null)
+            {
+                for (int index = handles.Count - 1; index >= 0; index--)
+                {
+                    string denial = observer(handles[index], index < handles.Count - 1);
+                    if (denial != null) return denial;
+                }
+                for (int index = 0; index < handles.Count; index++)
+                    if (!SamePath(FinalPath(handles[index]), names[index]))
+                        return "PATH_SUBSTITUTION_DENIED";
+            }
             return null;
         }
         catch
