@@ -18,16 +18,22 @@ issuer store, and it must not silently migrate or become real authority.
 1. Use a distinct store schema ID and a fresh store ID/epoch. Do not open a
    v3 store as v4 or import its fake grants as issued authority. Keep v3
    tests and evidence reproducible.
-2. Persist exact canonical v2 artifact bytes (ASCII text), their SHA-256,
-   one current state, and a unique grant/nonce/attempt-action/target-name
-   identity. The protected writer must revalidate the bytes against the
-   independent ceremony expectations at issue time. The source worktree
-   cannot supply its own trusted expectations.
-3. Include every persisted artifact byte and mutable state field in a
-   deterministic row digest, then bind that digest to every journal
-   generation and external anchor. Reject extra rows, duplicates, missing
-   anchors, changed store identity/epoch, and altered artifact bytes on
-   every reopen and before every transition.
+2. Persist only `grant_id`, exact canonical v2 artifact bytes (ASCII text),
+   and one current state in the grant row. The artifact itself contains
+   nonce, attempt/action, target name, and its own SHA-256. Do not add
+   redundant uniqueness columns unless each is also included in the row
+   digest and checked against the artifact on reopen. The protected writer
+   must revalidate the bytes against independent ceremony expectations at
+   issue time. The source worktree cannot supply its own trusted expectations.
+3. Include the grant ID, every persisted artifact byte, and mutable state
+   in a deterministic row digest, then bind that digest to every journal
+   generation and external anchor. During `BEGIN IMMEDIATE` issue, parse
+   and validate every existing artifact and reject duplicate nonce,
+   attempt/action, or network target before insertion. Reopen must repeat
+   these internal identity and uniqueness checks, including matching the
+   row grant ID to the embedded grant ID. Reject extra rows, missing anchors,
+   changed store identity/epoch, and altered artifact bytes before every
+   transition. No JSON1 or ad hoc substring query is a trust dependency.
 4. Issue, claim, revoke, and terminal uncertain-outcome transitions each
    use one `BEGIN IMMEDIATE` transaction with exact prior-state predicates.
    A claim consumes the one-attempt budget before Docker mutation. Reopen
