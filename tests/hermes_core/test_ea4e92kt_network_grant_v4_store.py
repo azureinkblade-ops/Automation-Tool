@@ -1,0 +1,200 @@
+"""Fake-only v4 grant-store qualification; no Docker or receiver calls."""
+
+import shutil
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from tests.hermes_core.test_ea4e92ko_complete_network_grant_candidate import (
+    KEYS, LABEL_KEYS, candidate, canonical,
+)
+
+
+ROOT = Path(__file__).resolve().parents[2]
+CSC = Path(r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe")
+SOURCES = [
+    ROOT / "tools" / "Ea4eProtectedSqlite.cs",
+    ROOT / "tools" / "Ea4eNetworkMutationGrantCandidate.cs",
+    ROOT / "tools" / "Ea4eNetworkGrantV4Digest.cs",
+    ROOT / "tools" / "Ea4eNetworkGrantV4Store.cs",
+    ROOT / "tests" / "hermes_core" / "fixtures"
+    / "ea4e92kt_network_grant_v4_store_probe.cs",
+]
+
+
+@pytest.fixture(scope="module")
+def executable(tmp_path_factory):
+    if sys.platform != "win32" or not CSC.is_file():
+        pytest.skip("Windows .NET Framework compiler unavailable")
+    target = tmp_path_factory.mktemp("network-grant-v4-store") / "probe.exe"
+    result = subprocess.run(
+        [str(CSC), "/nologo", "/target:exe", f"/out:{target}",
+         "/r:System.Web.Extensions.dll", *(str(source) for source in SOURCES)],
+        capture_output=True, text=True, timeout=15, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return target
+
+
+def call(executable, command, db, anchor, *extra):
+    return subprocess.run(
+        [str(executable), command, str(db), str(anchor), *(str(x) for x in extra)],
+        capture_output=True, text=True, timeout=10, check=False,
+    )
+
+
+@pytest.fixture
+def store(executable, tmp_path):
+    db, anchor = tmp_path / "grant-v4.sqlite", tmp_path / "grant-v4.anchor"
+    result = call(executable, "init", db, anchor, "c" * 64, 1)
+    assert result.returncode == 0, result.stdout
+    return db, anchor
+
+
+def issue(executable, store, tmp_path, grant=None, command="issue", expected=None):
+    db, anchor = store
+    grant = grant or candidate()
+    path = tmp_path / "grant.json"
+    path.write_bytes(canonical(grant).encode())
+    expected = expected or grant
+    return call(executable, command, db, anchor, path,
+                *(expected[key] for key in KEYS),
+                *(grant["labels"][key] for key in LABEL_KEYS))
+
+
+def test_issue_claim_replay_and_fresh_reopen(executable, store, tmp_path):
+    db, anchor = store
+    grant = candidate()
+    assert issue(executable, store, tmp_path, grant).returncode == 0
+    assert call(executable, "open", db, anchor).returncode == 0
+    assert call(executable, "claim", db, anchor, grant["grant_id"], 1050).returncode == 0
+    assert call(executable, "claim", db, anchor, grant["grant_id"], 1050).returncode == 1
+    assert call(executable, "revoke", db, anchor, grant["grant_id"], 1050).returncode == 1
+    assert call(executable, "uncertain", db, anchor, grant["grant_id"], 1050).returncode == 0
+    assert call(executable, "open", db, anchor).returncode == 0
+    with sqlite3.connect(db) as connection:
+        assert connection.execute(
+            "SELECT state FROM network_grant_v4_rows"
+        ).fetchone() == ("UNCERTAIN",)
+        assert connection.execute(
+            "SELECT generation FROM network_grant_v4_metadata"
+        ).fetchone() == ("3",)
+
+
+def test_revoke_and_expiry_deny_claim(executable, store, tmp_path):
+    db, anchor = store
+    grant = candidate()
+    assert issue(executable, store, tmp_path, grant).returncode == 0
+    assert call(executable, "claim", db, anchor, grant["grant_id"], 1100).returncode == 1
+    assert call(executable, "revoke", db, anchor, grant["grant_id"], 1050).returncode == 0
+    assert call(executable, "claim", db, anchor, grant["grant_id"], 1050).returncode == 1
+
+
+@pytest.mark.parametrize("change", [
+    {"nonce": "8" * 64},
+    {"attempt_id": "attempt-2", "labels": {
+        "hermes.ea4e.attempt": "attempt-2",
+        "hermes.ea4e.candidate_sha256": "6" * 64,
+        "hermes.ea4e.profile": "FAKE_ONLY_LOCAL_CONTAINER",
+        "hermes.ea4e.cleanup_owner": "ea4e-kilo-owner-" + "7" * 32,
+    }},
+    {"network_name": "ea4e-kilo-" + "8" * 32},
+    {"grant_id": "8" * 64},
+])
+def test_duplicate_identity_denied(executable, store, tmp_path, change):
+    first = candidate()
+    assert issue(executable, store, tmp_path, first).returncode == 0
+    second = candidate(**change)
+    assert issue(executable, store, tmp_path, second).returncode == 1
+    assert call(executable, "open", *store).returncode == 0
+
+
+def test_independent_expectation_mismatch_denied(executable, store, tmp_path):
+    grant = candidate(authority_id="8" * 64)
+    assert issue(executable, store, tmp_path, grant,
+                 expected=candidate()).returncode == 1
+    assert call(executable, "open", *store).returncode == 0
+
+
+def test_row_byte_tamper_denied(executable, store, tmp_path):
+    assert issue(executable, store, tmp_path).returncode == 0
+    db, anchor = store
+    with sqlite3.connect(db) as connection:
+        connection.execute("UPDATE network_grant_v4_rows SET artifact_json='{}'")
+    assert call(executable, "open", db, anchor).returncode == 1
+
+
+def test_current_state_tamper_denied(executable, store, tmp_path):
+    assert issue(executable, store, tmp_path).returncode == 0
+    db, anchor = store
+    with sqlite3.connect(db) as connection:
+        connection.execute("UPDATE network_grant_v4_rows SET state='CLAIMED'")
+    assert call(executable, "open", db, anchor).returncode == 1
+
+
+def test_post_commit_missing_anchor_fail_closed(executable, store, tmp_path):
+    result = issue(executable, store, tmp_path, command="crash-issue")
+    assert result.returncode == 1
+    assert "Injected post-commit anchor gap" in result.stdout
+    assert call(executable, "open", *store).returncode == 1
+
+
+def test_stale_handle_cannot_claim_after_other_handle_issues(executable, store, tmp_path):
+    result = issue(executable, store, tmp_path, command="stale")
+    assert result.returncode == 1
+    assert "Concurrent store drift denied" in result.stdout
+    assert call(executable, "open", *store).returncode == 0
+
+
+def test_database_rollback_denied(executable, store, tmp_path):
+    db, anchor = store
+    earlier = tmp_path / "earlier.sqlite"
+    shutil.copyfile(db, earlier)
+    assert issue(executable, store, tmp_path).returncode == 0
+    shutil.copyfile(earlier, db)
+    assert call(executable, "open", db, anchor).returncode == 1
+
+
+def test_missing_anchor_denied(executable, store, tmp_path):
+    db, anchor = store
+    assert issue(executable, store, tmp_path).returncode == 0
+    latest = anchor.parent / (anchor.name + ".g00000001")
+    latest.rename(anchor.parent / "preserved-anchor")
+    assert call(executable, "open", db, anchor).returncode == 1
+
+
+def test_anchor_tamper_denied(executable, store):
+    db, anchor = store
+    generation_zero = anchor.parent / (anchor.name + ".g00000000")
+    with generation_zero.open("ab") as handle:
+        handle.write(b"tamper")
+    assert call(executable, "open", db, anchor).returncode == 1
+
+
+def test_added_trigger_denied(executable, store):
+    db, anchor = store
+    with sqlite3.connect(db) as connection:
+        connection.execute(
+            "CREATE TRIGGER injected AFTER UPDATE ON network_grant_v4_rows "
+            "BEGIN DELETE FROM network_grant_v4_journal; END"
+        )
+    assert call(executable, "open", db, anchor).returncode == 1
+
+
+def test_actual_v3_store_cross_open_denied(executable, tmp_path):
+    db, anchor = tmp_path / "v3.sqlite", tmp_path / "v3.anchor"
+    old_exe = tmp_path / "v3-probe.exe"
+    result = subprocess.run(
+        [str(CSC), "/nologo", "/target:exe", f"/out:{old_exe}",
+         str(ROOT / "tools" / "Ea4eProtectedSqlite.cs"),
+         str(ROOT / "tools" / "Ea4eDockerMutationStoreIdentity.cs"),
+         str(ROOT / "tests" / "hermes_core" / "fixtures"
+             / "ea4e92kd_store_probe.cs")],
+        capture_output=True, text=True, timeout=15, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert call(old_exe, "init", db, anchor, "a" * 64, 1).returncode == 0
+    assert call(executable, "open", db, anchor).returncode == 1
