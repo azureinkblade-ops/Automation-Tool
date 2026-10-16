@@ -101,6 +101,65 @@ internal static class Ea4eNetworkMutationGrantCandidate
         throw new InvalidOperationException("Grant number denied");
     }
 
+    internal sealed class CompleteIdentity
+    {
+        internal readonly string GrantId;
+        internal readonly string Nonce;
+        internal readonly string AttemptId;
+        internal readonly string Action;
+        internal readonly string NetworkName;
+
+        internal CompleteIdentity(IDictionary<string, object> grant)
+        {
+            GrantId = (string)grant["grant_id"];
+            Nonce = (string)grant["nonce"];
+            AttemptId = (string)grant["attempt_id"];
+            Action = (string)grant["action"];
+            NetworkName = (string)grant["network_name"];
+        }
+    }
+
+    // Internal consistency only. Callers must separately bind trusted expectations.
+    internal static CompleteIdentity ReadCompleteIdentity(byte[] raw)
+    {
+        if (raw == null || raw.Length < 1 || raw.Length > 16384)
+            throw new InvalidOperationException("Grant bytes denied");
+        try
+        {
+            string json = new UTF8Encoding(false, true).GetString(raw);
+            var parser = new JavaScriptSerializer {
+                MaxJsonLength = 16384, RecursionLimit = 5,
+            };
+            var grant = parser.DeserializeObject(json) as IDictionary<string, object>;
+            if (grant == null || grant.Count != CompleteFields.Count
+                || !CompleteFields.SetEquals(grant.Keys))
+                throw new InvalidOperationException("Grant fields denied");
+            var expected = new Dictionary<string, string>();
+            foreach (string key in CompleteExpectedFields)
+            {
+                object value = grant[key];
+                expected.Add(key, value is string ? (string)value
+                    : Number(value).ToString(CultureInfo.InvariantCulture));
+            }
+            var rawLabels = grant["labels"] as IDictionary<string, object>;
+            if (rawLabels == null || rawLabels.Count != LabelKeys.Count
+                || !LabelKeys.SetEquals(rawLabels.Keys))
+                throw new InvalidOperationException("Grant labels denied");
+            var labels = new Dictionary<string, string>();
+            foreach (string key in LabelKeys)
+                labels.Add(key, rawLabels[key] as string);
+            if (!MatchesComplete(raw, expected, labels))
+                throw new InvalidOperationException("Grant structure denied");
+            return new CompleteIdentity(grant);
+        }
+        catch (Exception error)
+        {
+            if (error is OutOfMemoryException || error is StackOverflowException)
+                throw;
+            throw new InvalidOperationException("Grant identity denied", error);
+        }
+    }
+
     internal static bool Matches(byte[] raw, IDictionary<string, string> expected)
     {
         if (raw == null || raw.Length < 1 || raw.Length > 16384
