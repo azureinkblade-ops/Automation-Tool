@@ -306,6 +306,20 @@ internal sealed class Ea4eNetworkGrantV4Store : IDisposable
         catch { db.Dispose(); throw; }
     }
 
+    // The expected identity must come from outside the app-controlled store.
+    internal static Ea4eNetworkGrantV4Store OpenExpected(
+        string path, string anchorPrefix, string expectedStoreId, int expectedEpoch)
+    {
+        if (expectedStoreId == null || !Hex.IsMatch(expectedStoreId)
+            || expectedEpoch < 1)
+            throw new InvalidOperationException("Expected store identity denied");
+        var store = Open(path, anchorPrefix);
+        if (store.storeId == expectedStoreId && store.epoch == expectedEpoch)
+            return store;
+        store.Dispose();
+        throw new InvalidOperationException("Store identity substitution denied");
+    }
+
     private void Transition(string operationHash, Action<Ea4eProtectedSqlite, Head> mutate,
                             bool failAfterCommitForTest)
     {

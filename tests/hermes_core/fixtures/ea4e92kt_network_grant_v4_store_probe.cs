@@ -30,6 +30,11 @@ internal static class Ea4eNetworkGrantV4StoreProbe
             {
                 using (Ea4eNetworkGrantV4Store.Open(args[1], args[2])) { }
             }
+            else if (args[0] == "open-expected" && args.Length == 5)
+            {
+                using (Ea4eNetworkGrantV4Store.OpenExpected(
+                    args[1], args[2], args[3], Int32.Parse(args[4]))) { }
+            }
             else if ((args[0] == "issue" || args[0] == "crash-issue"
                       || args[0] == "stale")
                      && args.Length == 4 + Keys.Length + LabelKeys.Length)
@@ -43,16 +48,22 @@ internal static class Ea4eNetworkGrantV4StoreProbe
                 byte[] artifact = File.ReadAllBytes(args[3]);
                 if (args[0] == "stale")
                 {
-                    using (var old = Ea4eNetworkGrantV4Store.Open(args[1], args[2]))
+                    using (var old = Ea4eNetworkGrantV4Store.OpenExpected(
+                        args[1], args[2], expected["store_id"],
+                        Int32.Parse(expected["store_epoch"])))
                     {
-                        using (var current = Ea4eNetworkGrantV4Store.Open(args[1], args[2]))
+                        using (var current = Ea4eNetworkGrantV4Store.OpenExpected(
+                            args[1], args[2], expected["store_id"],
+                            Int32.Parse(expected["store_epoch"])))
                             current.IssueFake(artifact, expected, labels);
                         old.ClaimFake(expected["grant_id"], 1050);
                     }
                 }
                 else
                 {
-                    using (var store = Ea4eNetworkGrantV4Store.Open(args[1], args[2]))
+                    using (var store = Ea4eNetworkGrantV4Store.OpenExpected(
+                        args[1], args[2], expected["store_id"],
+                        Int32.Parse(expected["store_epoch"])))
                         store.IssueFake(artifact, expected, labels,
                                         args[0] == "crash-issue");
                 }

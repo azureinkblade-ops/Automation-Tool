@@ -198,3 +198,16 @@ def test_actual_v3_store_cross_open_denied(executable, tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert call(old_exe, "init", db, anchor, "a" * 64, 1).returncode == 0
     assert call(executable, "open", db, anchor).returncode == 1
+
+
+def test_expected_store_identity_rejects_valid_substitute(executable, store, tmp_path):
+    db, anchor = store
+    assert call(executable, "open-expected", db, anchor, "c" * 64, 1).returncode == 0
+    assert call(executable, "open-expected", db, anchor, "8" * 64, 1).returncode == 1
+    assert call(executable, "open-expected", db, anchor, "c" * 64, 2).returncode == 1
+    foreign_db = tmp_path / "foreign.sqlite"
+    foreign_anchor = tmp_path / "foreign.anchor"
+    assert call(executable, "init", foreign_db, foreign_anchor, "8" * 64, 1).returncode == 0
+    assert call(executable, "open", foreign_db, foreign_anchor).returncode == 0
+    assert call(executable, "open-expected", foreign_db, foreign_anchor,
+                "c" * 64, 1).returncode == 1
