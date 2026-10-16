@@ -1,5 +1,6 @@
 // Non-authorizing Windows ACL observation using retained topology handles.
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using Microsoft.Win32.SafeHandles;
@@ -9,7 +10,15 @@ internal static class Ea4eProtectedPathAccessCandidate
     private const uint TokenQuery = 0x0008;
     private const uint TokenDuplicate = 0x0002;
     private const uint MaximumAllowed = 0x02000000;
-    private const uint MutationRights = 0x000D0156;
+    private const uint ClosureMutationRights = 0x000D0156;
+    private const uint AncestorReplacementRights = 0x000D0152;
+
+    internal static bool GrantsMutation(bool inClosure, uint granted)
+    {
+        uint blocked = inClosure ? ClosureMutationRights
+                                 : AncestorReplacementRights;
+        return (granted & blocked) != 0;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct GenericMapping
@@ -79,7 +88,8 @@ internal static class Ea4eProtectedPathAccessCandidate
     }
 
     private static string CheckHandle(
-        SafeFileHandle handle, SafeFileHandle appToken, string appSid)
+        SafeFileHandle handle, SafeFileHandle appToken, string appSid,
+        bool inClosure)
     {
         IntPtr owner;
         IntPtr group;
@@ -123,7 +133,7 @@ internal static class Ea4eProtectedPathAccessCandidate
                 }
                 if (!ok) return "ACCESS_CHECK_UNAVAILABLE_" + Marshal.GetLastWin32Error();
                 if (!accessStatus) return "APP_ACCESS_DENIED";
-                if ((granted & MutationRights) != 0)
+                if (GrantsMutation(inClosure, granted))
                     return "APP_MUTATION_RIGHTS";
                 return null;
             }
@@ -138,9 +148,22 @@ internal static class Ea4eProtectedPathAccessCandidate
         }
     }
 
-    internal static string DenialForCurrentUnelevatedApp(string path, string expectedAppSid)
+    internal static string DenialForCurrentUnelevatedApp(
+        string path, string protectedRoot, string expectedAppSid)
     {
         if (String.IsNullOrEmpty(expectedAppSid)) return "APP_IDENTITY_UNBOUND";
+        string root;
+        try
+        {
+            root = Path.GetFullPath(protectedRoot);
+            if (!String.Equals(root, protectedRoot, StringComparison.OrdinalIgnoreCase)
+                || String.Equals(root, Path.GetPathRoot(root),
+                                 StringComparison.OrdinalIgnoreCase)
+                || !path.StartsWith(root.TrimEnd('\\') + "\\",
+                                    StringComparison.OrdinalIgnoreCase))
+                return "PROTECTED_ROOT_UNBOUND";
+        }
+        catch { return "PROTECTED_ROOT_UNBOUND"; }
         SafeFileHandle primary;
         if (!OpenProcessToken(GetCurrentProcess(), TokenQuery | TokenDuplicate,
                               out primary))
@@ -166,8 +189,12 @@ internal static class Ea4eProtectedPathAccessCandidate
                 using (impersonation)
                 {
                     return Ea4eProtectedPathTopologyCandidate.Denial(
-                        path, (handle, directory) =>
-                            CheckHandle(handle, impersonation, actualSid));
+                        path, (handle, objectPath, directory) =>
+                            CheckHandle(handle, impersonation, actualSid,
+                                String.Equals(objectPath, root,
+                                              StringComparison.OrdinalIgnoreCase)
+                                || objectPath.StartsWith(root.TrimEnd('\\') + "\\",
+                                    StringComparison.OrdinalIgnoreCase)));
                 }
             }
             catch

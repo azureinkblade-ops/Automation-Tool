@@ -28,9 +28,11 @@ def executable(tmp_path_factory):
     return target
 
 
-def check(executable, path, sid="SELF"):
+def check(executable, path, sid="SELF", protected_root=None):
+    protected_root = protected_root or Path(path).parent
     return subprocess.run(
-        [str(executable), str(path), sid], capture_output=True, text=True,
+        [str(executable), str(path), sid, str(protected_root)],
+        capture_output=True, text=True,
         timeout=10, check=False,
     )
 
@@ -66,3 +68,27 @@ def test_missing_target_denied(executable, tmp_path):
     result = check(executable, tmp_path / "missing.exe")
     assert result.returncode == 1
     assert result.stdout.strip() != "MATCH:ACL_SNAPSHOT_ONLY"
+
+
+def test_protected_root_must_contain_target(executable, tmp_path):
+    target = tmp_path / "candidate.exe"
+    target.write_bytes(b"inert")
+    result = check(executable, target, protected_root=tmp_path / "other")
+    assert result.returncode == 1
+    assert result.stdout.strip() == "DENY:PROTECTED_ROOT_UNBOUND"
+
+
+@pytest.mark.parametrize(("role", "granted", "expected"), [
+    ("ANCESTOR", "00000002", "BLOCK"),  # add-file / reparse-capable
+    ("ANCESTOR", "00000004", "ALLOW"),  # unrelated subdirectory
+    ("CLOSURE", "00000004", "BLOCK"),
+    ("ANCESTOR", "00000040", "BLOCK"),  # delete child
+    ("ANCESTOR", "00040000", "BLOCK"),  # change DACL
+])
+def test_ancestor_and_closure_mutation_masks(executable, role, granted, expected):
+    result = subprocess.run(
+        [str(executable), "MASK", role, granted], capture_output=True,
+        text=True, timeout=10, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == expected
