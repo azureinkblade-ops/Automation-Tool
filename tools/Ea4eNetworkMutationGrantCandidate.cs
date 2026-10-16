@@ -43,6 +43,7 @@ internal static class Ea4eNetworkMutationGrantCandidate
         "docker_executable_sha256", "network_name", "issued_at", "expires_at",
         "artifact_hash",
     };
+    private static readonly HashSet<string> CompleteBuildFields = BuildFields();
     private static readonly HashSet<string> LabelKeys = new HashSet<string> {
         "hermes.ea4e.attempt", "hermes.ea4e.candidate_sha256",
         "hermes.ea4e.profile", "hermes.ea4e.cleanup_owner",
@@ -99,6 +100,68 @@ internal static class Ea4eNetworkMutationGrantCandidate
         if (value is int) return (int)value;
         if (value is long) return (long)value;
         throw new InvalidOperationException("Grant number denied");
+    }
+
+    private static HashSet<string> BuildFields()
+    {
+        var fields = new HashSet<string>(CompleteExpectedFields);
+        fields.Remove("artifact_hash");
+        return fields;
+    }
+
+    // Constructs canonical candidate data only. The caller owns trusted sourcing.
+    internal static byte[] BuildCompleteCandidate(
+        IDictionary<string, string> fields, IDictionary<string, string> labels)
+    {
+        if (fields == null || fields.Count != CompleteBuildFields.Count
+            || !CompleteBuildFields.SetEquals(fields.Keys)
+            || labels == null || labels.Count != LabelKeys.Count
+            || !LabelKeys.SetEquals(labels.Keys))
+            throw new InvalidOperationException("Build inputs denied");
+        foreach (string key in CompleteBuildFields)
+            if (String.IsNullOrEmpty(fields[key]))
+                throw new InvalidOperationException("Build field denied");
+        var labelObjects = new Dictionary<string, object>();
+        foreach (string key in LabelKeys)
+        {
+            if (String.IsNullOrEmpty(labels[key]))
+                throw new InvalidOperationException("Build label denied");
+            labelObjects.Add(key, labels[key]);
+        }
+        int epoch;
+        long issued, expiry;
+        if (!Int32.TryParse(fields["store_epoch"], NumberStyles.None,
+                            CultureInfo.InvariantCulture, out epoch)
+            || !Int64.TryParse(fields["issued_at"], NumberStyles.None,
+                               CultureInfo.InvariantCulture, out issued)
+            || !Int64.TryParse(fields["expires_at"], NumberStyles.None,
+                               CultureInfo.InvariantCulture, out expiry))
+            throw new InvalidOperationException("Build time or epoch denied");
+        var grant = new Dictionary<string, object> {
+            { "schema_id", "hermes.docker-network-mutation-grant-candidate/v2" },
+            { "action", "network_create" },
+            { "docker_engine_endpoint", "npipe:////./pipe/dockerDesktopLinuxEngine" },
+            { "network_driver", "bridge" },
+            { "network_internal", true },
+            { "labels", labelObjects },
+            { "command_spec_hash", fields["request_hash"] },
+            { "one_attempt_budget", 1 },
+            { "state_at_issue", "ISSUED" },
+        };
+        foreach (string key in CompleteBuildFields)
+            grant.Add(key, key == "store_epoch" ? (object)epoch
+                : key == "issued_at" ? (object)issued
+                : key == "expires_at" ? (object)expiry : fields[key]);
+        byte[] payload = Encoding.UTF8.GetBytes(Canonical(grant));
+        using (var sha = SHA256.Create())
+            grant.Add("artifact_hash", BitConverter.ToString(sha.ComputeHash(payload))
+                .Replace("-", "").ToLowerInvariant());
+        byte[] raw = Encoding.UTF8.GetBytes(Canonical(grant));
+        var expected = new Dictionary<string, string>(fields);
+        expected.Add("artifact_hash", (string)grant["artifact_hash"]);
+        if (!MatchesComplete(raw, expected, labels))
+            throw new InvalidOperationException("Built candidate denied");
+        return raw;
     }
 
     internal sealed class CompleteIdentity
