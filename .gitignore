@@ -193,3 +193,25 @@ tools/loras/
 # separately before TikTok audio generation will work.
 tiktok-sound-bank/
 
+
+# --- generated, temp, model and secret material (C1 reconciliation) ---
+/graphify-out/
+/tmp/
+/pytest-of-*/
+/ea4e*/
+/.tmp_*
+/tmp_*
+/temp_*
+/output/
+/logs/
+/qualification-evidence/
+/chapter-workflow-state/
+/.hermes/
+/.kilo/
+/loras/
+*.safetensors
+*.ckpt
+.env.*
+*.env.copy
+*.bak
+*.bak.*

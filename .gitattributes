@@ -1,0 +1,3 @@
+# R21 qualified byte preservation: commit exact bytes (no EOL conversion)
+data/r21_reference/** -text
+tools/structured_scene_location_r21_wiring.py -text
