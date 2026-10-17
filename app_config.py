@@ -18,6 +18,20 @@ from pathlib import Path
 # ROOT is the project directory (the folder containing app.py).
 ROOT = Path(__file__).resolve().parent
 
+def _resolve_named_root(env_name: str, default: Path) -> Path:
+    """Env override, else the canonical checkout root. Does not create directories."""
+    env_val = os.environ.get(env_name, "").strip()
+    if env_val:
+        return Path(env_val)
+    return default
+
+# V2 modules already require these names. On this non-worktree checkout both
+# equal ROOT, matching the existing activation JSON and ROOT-relative outputs.
+# STATE_ROOT owns image_pipeline_v2_activation.json.
+# OUTPUT_ROOT is the parent used by tools/image_pipeline_v2_dispatch.py.
+STATE_ROOT = _resolve_named_root("STATE_ROOT", ROOT)
+OUTPUT_ROOT = _resolve_named_root("OUTPUT_ROOT", ROOT)
+
 # --- Output / asset directories (all ROOT-relative) ---
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".ogg"}
 LOCAL_FFMPEG_DIR = ROOT / "tools" / "ffmpeg"

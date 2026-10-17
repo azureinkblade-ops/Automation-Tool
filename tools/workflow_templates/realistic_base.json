@@ -1,0 +1,40 @@
+{
+  "v2_meta": {
+    "id": "realistic_base",
+    "version": "1.1",
+    "description": "SDXL text-to-image base workflow for the Realistic Posts V2 pipeline (M6). The Realistic Posts LoRA is load-bearing: LoraLoader (node 11) sits on both the model and CLIP conditioning paths feeding the KSampler and CLIPTextEncode nodes. ControlNet / IP-Adapter / Mask optional capabilities are DISABLED_FOR_BASE_PROFILE and are intentionally absent from this base graph (see REALISTIC_CAPABILITY_DISPOSITION). Semantic inputs are resolved deterministically from GenerationSpec by tools/realistic_pipeline_v2.resolve_realistic_workflow.",
+    "semantic_inputs": {
+      "positive_prompt": { "node": "6", "input": "text" },
+      "negative_prompt": { "node": "7", "input": "text" },
+      "checkpoint": { "node": "10", "input": "ckpt_name" },
+      "seed": { "node": "3", "input": "seed" },
+      "steps": { "node": "3", "input": "steps" },
+      "cfg": { "node": "3", "input": "cfg" },
+      "sampler": { "node": "3", "input": "sampler_name" },
+      "scheduler": { "node": "3", "input": "scheduler" },
+      "width": { "node": "5", "input": "width" },
+      "height": { "node": "5", "input": "height" },
+      "loras": { "node": "11", "input": "lora_name" },
+      "output_prefix": { "node": "8", "input": "filename_prefix" }
+    }
+  },
+  "nodes": {
+    "10": { "class_type": "CheckpointLoaderSimple", "inputs": { "ckpt_name": "REPLACE_CHECKPOINT" } },
+    "6": { "class_type": "CLIPTextEncode", "inputs": { "text": "REPLACE_POSITIVE", "clip": ["11", 1] } },
+    "7": { "class_type": "CLIPTextEncode", "inputs": { "text": "REPLACE_NEGATIVE", "clip": ["11", 1] } },
+    "3": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": 0, "steps": 28, "cfg": 4.5, "sampler_name": "dpmpp_2m", "scheduler": "karras",
+        "denoise": 1.0, "model": ["11", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0]
+      }
+    },
+    "5": { "class_type": "EmptyLatentImage", "inputs": { "width": 1024, "height": 1024, "batch_size": 1 } },
+    "11": {
+      "class_type": "LoraLoader",
+      "inputs": { "lora_name": "", "strength_model": 0.85, "strength_clip": 0.85, "model": ["10", 0], "clip": ["10", 1] }
+    },
+    "9": { "class_type": "VAEDecode", "inputs": { "samples": ["3", 0], "vae": ["10", 2] } },
+    "8": { "class_type": "SaveImage", "inputs": { "images": ["9", 0], "filename_prefix": "REPLACE_OUTPUT_PREFIX" } }
+  }
+}

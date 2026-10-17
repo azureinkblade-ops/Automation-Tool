@@ -1,0 +1,42 @@
+{
+  "v2_meta": {
+    "id": "promo_master_upscale",
+    "version": "1.0",
+    "description": "Promo Master Phase 2A finishing graph. RealESRGAN_x4plus image upscale then lanczos resize to 2048x2048. No sampler, checkpoint, CLIP, ControlNet, IPAdapter, or detailer.",
+    "semantic_inputs": {
+      "image": { "node": "1", "input": "image" },
+      "upscale_model": { "node": "2", "input": "model_name" },
+      "width": { "node": "4", "input": "width" },
+      "height": { "node": "4", "input": "height" },
+      "output_prefix": { "node": "5", "input": "filename_prefix" }
+    }
+  },
+  "nodes": {
+    "1": {
+      "class_type": "LoadImage",
+      "inputs": { "image": "REPLACE_IMAGE" }
+    },
+    "2": {
+      "class_type": "UpscaleModelLoader",
+      "inputs": { "model_name": "RealESRGAN_x4plus.pth" }
+    },
+    "3": {
+      "class_type": "ImageUpscaleWithModel",
+      "inputs": { "upscale_model": ["2", 0], "image": ["1", 0] }
+    },
+    "4": {
+      "class_type": "ImageScale",
+      "inputs": {
+        "image": ["3", 0],
+        "upscale_method": "lanczos",
+        "width": 2048,
+        "height": 2048,
+        "crop": "disabled"
+      }
+    },
+    "5": {
+      "class_type": "SaveImage",
+      "inputs": { "images": ["4", 0], "filename_prefix": "REPLACE_OUTPUT_PREFIX" }
+    }
+  }
+}
