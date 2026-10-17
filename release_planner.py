@@ -144,6 +144,10 @@ def parse_date(value: Any) -> date | None:
 
 
 def next_release_day(day: date, weekday_only: bool = True) -> date:
+    """Snap `day` forward onto a Monday-Friday if it falls on a weekend.
+
+    Does not advance a weekday. Saturday/Sunday become Monday.
+    """
     cursor = day
     if weekday_only:
         while cursor.weekday() >= 5:
@@ -152,8 +156,218 @@ def next_release_day(day: date, weekday_only: bool = True) -> date:
 
 
 def add_release_day(day: date, weekday_only: bool = True) -> date:
+    """Advance one calendar day, then skip Saturday and Sunday.
+
+    This is the canonical weekday pipeline step:
+    Mon->Tue, Tue->Wed, Wed->Thu, Thu->Fri, Fri->Mon, Sat->Mon, Sun->Mon.
+    """
     cursor = day + timedelta(days=1)
     return next_release_day(cursor, weekday_only)
+
+
+def advance_to_next_weekday(day: date) -> date:
+    """Canonical alias for the weekday pipeline step. Same as add_release_day."""
+    return add_release_day(day, weekday_only=True)
+
+
+def is_weekday(day: date) -> bool:
+    return day.weekday() < 5
+
+
+def tier_dates_from_inner(inner: date) -> dict[str, date]:
+    """Inner Disciple date plus Path Initiate +7d and Royal Road +14d."""
+    inner = next_release_day(inner, weekday_only=True)
+    return {
+        "innerDiscipleDate": inner,
+        "pathInitiateDate": inner + timedelta(days=7),
+        "royalRoadDate": inner + timedelta(days=14),
+    }
+
+
+def weekday_sequence(start: date, count: int) -> list[date]:
+    """Return `count` consecutive Monday-Friday dates starting at `start` (snapped)."""
+    cursor = next_release_day(start, weekday_only=True)
+    out = [cursor]
+    while len(out) < count:
+        cursor = add_release_day(cursor, weekday_only=True)
+        out.append(cursor)
+    return out
+
+
+def occupied_dates_from_assignments(
+    assignments: list[dict[str, Any]],
+    *,
+    abbr: str = "",
+    date_key: str = "innerDiscipleDate",
+) -> set[date]:
+    occupied: set[date] = set()
+    wanted = normalize_novel(abbr, allow_all=False) if abbr else ""
+    for item in assignments:
+        if not isinstance(item, dict):
+            continue
+        item_abbr = normalize_novel(item.get("abbr") or item.get("novelAbbr"), allow_all=False)
+        if wanted and item_abbr != wanted:
+            continue
+        parsed = parse_date(item.get(date_key))
+        if parsed:
+            occupied.add(parsed)
+    return occupied
+
+
+def max_existing_date(dates: set[date] | list[date] | None) -> date | None:
+    values = [item for item in (dates or []) if isinstance(item, date)]
+    if not values:
+        return None
+    return max(values)
+
+
+def propose_inner_disciple_date(
+    *,
+    today: date,
+    previous_inner: date | None = None,
+    existing_future_inners: set[date] | list[date] | None = None,
+    occupied_inner: set[date] | None = None,
+) -> date:
+    """Next Inner Disciple date from the existing queue, not from a today-only restart.
+
+    Priority:
+    1. Continue from the previous chapter's Inner Disciple weekday.
+    2. Never schedule before tomorrow's next valid weekday.
+    3. Append after the latest already-queued future Inner Disciple date.
+    4. Skip occupied weekdays. Never land on Saturday or Sunday.
+    """
+    occupied = set(occupied_inner or [])
+    existing = set(existing_future_inners or [])
+    floor = next_release_day(today + timedelta(days=1), weekday_only=True)
+    if previous_inner:
+        candidate = add_release_day(previous_inner, weekday_only=True)
+    else:
+        candidate = floor
+    if candidate < floor:
+        candidate = floor
+    queue_max = max_existing_date(existing)
+    if queue_max is not None:
+        after_queue = add_release_day(queue_max, weekday_only=True)
+        if candidate < after_queue:
+            candidate = after_queue
+    guard = 0
+    while candidate.weekday() >= 5 or candidate in occupied:
+        candidate += timedelta(days=1)
+        guard += 1
+        if guard > 370:
+            raise ValueError("Could not find an unoccupied Monday-Friday Inner Disciple date.")
+    return candidate
+
+
+def propose_release_dates(
+    *,
+    today: date,
+    previous_inner: date | None = None,
+    existing_future_inners: set[date] | list[date] | None = None,
+    occupied_inner: set[date] | None = None,
+    occupied_path: set[date] | None = None,
+    occupied_royal: set[date] | None = None,
+    already_scheduled: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Compute or preserve Inner Disciple / Path Initiate / Royal Road dates.
+
+    Existing valid dates are preserved. Missing tiers are derived from Inner
+    Disciple. Date conflicts fail closed instead of inventing a duplicate slot.
+    """
+    scheduled = already_scheduled or {}
+    existing_inner = parse_date(scheduled.get("innerDiscipleDate"))
+    existing_path = parse_date(scheduled.get("pathInitiateDate"))
+    existing_royal = parse_date(scheduled.get("royalRoadDate"))
+    if existing_inner:
+        inner = existing_inner
+        preserved = True
+    else:
+        inner = propose_inner_disciple_date(
+            today=today,
+            previous_inner=previous_inner,
+            existing_future_inners=existing_future_inners,
+            occupied_inner=occupied_inner,
+        )
+        preserved = False
+    derived = tier_dates_from_inner(inner)
+    path = existing_path or derived["pathInitiateDate"]
+    royal = existing_royal or derived["royalRoadDate"]
+    conflicts: list[str] = []
+    if inner.weekday() >= 5:
+        conflicts.append("INNER_DISCIPLE_WEEKEND")
+    if path.weekday() >= 5:
+        conflicts.append("PATH_INITIATE_WEEKEND")
+    if royal.weekday() >= 5:
+        conflicts.append("ROYAL_ROAD_WEEKEND")
+    if not existing_inner and inner in set(occupied_inner or []):
+        conflicts.append("INNER_DISCIPLE_OCCUPIED")
+    if not existing_path and path in set(occupied_path or []):
+        conflicts.append("PATH_INITIATE_OCCUPIED")
+    if not existing_royal and royal in set(occupied_royal or []):
+        conflicts.append("ROYAL_ROAD_OCCUPIED")
+    if path != inner + timedelta(days=7):
+        conflicts.append("PATH_INITIATE_OFFSET")
+    if royal != inner + timedelta(days=14):
+        conflicts.append("ROYAL_ROAD_OFFSET")
+    return {
+        "innerDiscipleDate": inner.isoformat(),
+        "pathInitiateDate": path.isoformat(),
+        "royalRoadDate": royal.isoformat(),
+        "preservedExisting": preserved,
+        "ok": not conflicts,
+        "conflicts": conflicts,
+    }
+
+
+def dates_for_new_queue_chapter(
+    *,
+    today: date,
+    existing_assignments: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Next Inner/Path/RR dates after the latest already-queued chapter.
+
+    Existing assignment dates are not modified. The next chapter is appended
+    after the last Inner Disciple weekday in `existing_assignments`.
+    """
+    inners: set[date] = set()
+    last_inner: date | None = None
+    last_chapter = -1
+    for item in existing_assignments:
+        if not isinstance(item, dict):
+            continue
+        chapter = int_value(item.get("chapter") or item.get("chapterNumber"))
+        inner = parse_date(item.get("innerDiscipleDate"))
+        if inner:
+            inners.add(inner)
+        if inner and chapter >= last_chapter:
+            last_chapter = chapter
+            last_inner = inner
+    return propose_release_dates(
+        today=today,
+        previous_inner=last_inner,
+        existing_future_inners=inners,
+        occupied_inner=inners,
+    )
+
+
+def assignment_key(abbr: str, chapter: int) -> str:
+    return f"{abbr}-{int(chapter)}"
+
+
+def existing_assignment_for_chapter(
+    assignments: list[dict[str, Any]],
+    abbr: str,
+    chapter: int,
+) -> dict[str, Any] | None:
+    wanted = normalize_novel(abbr, allow_all=False)
+    number = int_value(chapter)
+    for item in assignments:
+        if not isinstance(item, dict):
+            continue
+        item_abbr = normalize_novel(item.get("abbr") or item.get("novelAbbr"), allow_all=False)
+        if item_abbr == wanted and int_value(item.get("chapter") or item.get("chapterNumber")) == number:
+            return item
+    return None
 
 
 def build_release_plan_rows(

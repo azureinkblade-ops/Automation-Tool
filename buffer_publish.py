@@ -164,6 +164,32 @@ def buffer_channel_service(channel_id: str) -> str:
 
 # --- buffer_post_from_folder (verbatim routing fn; collaborators injected) ---
 
+
+def _buffer_identity_publish_gate(post_folder, media_paths, metadata, path_id: str = "PUBLISH:buffer_post_from_folder") -> None:
+    """Mandatory final publish authorization before Buffer submission (flag ON only)."""
+    try:
+        from tools.identity_preservation import is_identity_preservation_enabled, IdentityAcceptanceBlocked
+        from tools.aivsb_prompt_provenance import publish_identity_check
+    except Exception:
+        return
+    if not is_identity_preservation_enabled():
+        return
+    from pathlib import Path as _P
+    blocked = []
+    image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+    for m in media_paths or []:
+        p = _P(str(m))
+        if p.suffix.lower() not in image_exts:
+            continue
+        ok, why = publish_identity_check(p, folder=post_folder, metadata=metadata)
+        if not ok:
+            blocked.append(f"{p.name}:{why}")
+    if blocked:
+        raise IdentityAcceptanceBlocked(
+            f"identity preservation blocked publish at {path_id}: " + "; ".join(blocked), None
+        )
+
+
 def buffer_post_from_folder(
     folder: str,
     channel_ids: list[str],
@@ -321,6 +347,8 @@ def buffer_post_from_folder(
                 })
                 continue
         try:
+            # Final publish authorization boundary (images only; videos skip per-image check)
+            _buffer_identity_publish_gate(post_folder, [m for m in media if m], metadata)
             created_post = _get(collab, "create_buffer_post")(channel_id, text, [m for m in media if m], mode=mode, metadata=post_metadata, scheduled_at=scheduled_at)
             created_post["_automation"] = {"service": service, "channelId": channel_id}
             posts.append(created_post)

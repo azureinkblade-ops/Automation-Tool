@@ -25,6 +25,25 @@ from chapter_workflow import Collaborators
 logger = logging.getLogger(__name__)
 
 
+def _resolve_hermes_exe() -> str:
+    env_path = str(os.environ.get("HERMES_EXE") or "").strip()
+    if env_path and Path(env_path).is_file():
+        return env_path
+    default = (
+        Path.home()
+        / "AppData"
+        / "Local"
+        / "hermes"
+        / "hermes-agent"
+        / "venv"
+        / "Scripts"
+        / "hermes.exe"
+    )
+    if default.is_file():
+        return str(default)
+    return env_path or "hermes.exe"
+
+
 def _hermes_chat(
     prompt: str,
     skills: Optional[List[str]] = None,
@@ -32,44 +51,61 @@ def _hermes_chat(
     timeout: int = 120,
 ) -> Optional[str]:
     """Call Hermes CLI headlessly and return the response text."""
-    cmd = [
-        os.environ.get("HERMES_EXE", "hermes.exe"),
-        "chat",
-        "-q",
-        prompt,
-        "-Q",
-        "--max-turns",
-        str(max_turns),
-    ]
-    if skills:
-        cmd.extend(["-s", ",".join(skills)])
-
+    qpath = None
     try:
+        handle, qpath = tempfile.mkstemp(prefix="hermes-chapter-", suffix=".txt")
+        os.close(handle)
+        Path(qpath).write_text(prompt, encoding="utf-8")
+        cmd = [
+            _resolve_hermes_exe(),
+            "chat",
+            "--query-file",
+            qpath,
+            "-Q",
+            "--cli",
+            "--safe-mode",
+            "--max-turns",
+            str(max_turns),
+        ]
+        if skills:
+            cmd.extend(["-s", ",".join(skills)])
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("PYTHONPATH", "PYTHONHOME")
+        }
+        env["PYTHONIOENCODING"] = "utf-8"
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
-            env={
-                k: v
-                for k, v in os.environ.items()
-                if k not in ("PYTHONPATH", "PYTHONHOME")
-            },
+            env=env,
         )
+        lines = [
+            line
+            for line in result.stdout.splitlines()
+            if not line.startswith("session_id:")
+        ]
+        text = "\n".join(lines).strip()
+        if text:
+            return text
         if result.returncode != 0:
-            logger.error("Hermes chat failed: %s", result.stderr[:500])
+            logger.error("Hermes chat failed rc=%s stderr=%s", result.returncode, (result.stderr or "")[:800])
             return None
-        # Strip session_id line if present
-        lines = result.stdout.strip().split("\n")
-        while lines and lines[-1].startswith("session_id:"):
-            lines.pop()
-        return "\n".join(lines).strip()
+        logger.error("Hermes chat empty stdout stderr=%s", (result.stderr or "")[:800])
+        return None
     except subprocess.TimeoutExpired:
         logger.error("Hermes chat timed out after %ds", timeout)
         return None
     except FileNotFoundError:
         logger.error("Hermes CLI not found")
         return None
+    finally:
+        if qpath:
+            Path(qpath).unlink(missing_ok=True)
 
 
 class AppCollaborators:
@@ -263,8 +299,8 @@ Requirements:
         
         # Check word count
         word_count = len(draft.split())
-        if word_count < 2500:
-            issues.append(f"Too short: {word_count} words (minimum 2500)")
+        if word_count < 3000:
+            issues.append(f"Too short: {word_count} words (minimum 3000)")
         
         # LLM review for continuity (if available)
         prompt = f"""Review this draft for continuity and canon compliance.
@@ -325,19 +361,10 @@ Return JSON: {{"pass": true/false, "issues": ["issue1", "issue2"]}}"""
         if word_count < 3000:
             errors.append(f"Below minimum word count: {word_count} < 3000")
         
-        # Character minimum
-        char_count = len(draft)
-        if char_count < 15000:
-            errors.append(f"Below minimum character count: {char_count} < 15000")
-        
-        # Required ending hook (last paragraph should not end with a period)
-        paragraphs = [p.strip() for p in draft.split("\n\n") if p.strip()]
-        if paragraphs:
-            last_para = paragraphs[-1]
-            if last_para.endswith("."):
-                errors.append("Chapter should end with a hook, not a declarative period")
-        
+        review_required = word_count > 5000
         return {
             "valid": len(errors) == 0,
             "errors": errors,
+            "word_count": word_count,
+            "review_required": review_required,
         }

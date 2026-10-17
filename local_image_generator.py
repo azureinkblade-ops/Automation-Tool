@@ -6,6 +6,22 @@ import os
 import time
 from pathlib import Path
 
+# SCENE_ENVIRONMENT_LIVE_PATH_REMEDIATION_R3 Phase 0: refuse to run under test barrier.
+def _r3_gpu_barrier_check() -> None:
+    import os as _os
+    if (
+        _os.environ.get("AT_SD_ENABLED", "1").strip().lower() in {"0", "false", "no", "off"}
+        or _os.environ.get("LOCAL_SD_ENABLED", "1").strip().lower() in {"0", "false", "no", "off"}
+        or _os.environ.get("AT_GPU_TEST_BARRIER", "").strip() == "1"
+    ):
+        raise SystemExit(
+            "R3_GPU_TEST_BARRIER: local_image_generator.py refused to start "
+            "(REAL_GENERATOR_FALLTHROUGH_ALLOWED=NO)"
+        )
+
+
+_r3_gpu_barrier_check()
+
 
 def clamp_dimension(value: int) -> int:
     value = max(256, min(int(value), 1536))
