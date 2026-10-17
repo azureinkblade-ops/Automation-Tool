@@ -93,6 +93,19 @@ internal static class Ea4eProtectedPathTopologyCandidate
 
     internal static string Denial(string path, Func<SafeFileHandle, string, bool, string> observer)
     {
+        return DenialCore(path, observer, false);
+    }
+
+    internal static string DenialWithReadableLeaf(
+        string path, Func<SafeFileHandle, string, bool, string> observer)
+    {
+        return DenialCore(path, observer, true);
+    }
+
+    private static string DenialCore(
+        string path, Func<SafeFileHandle, string, bool, string> observer,
+        bool readableLeaf)
+    {
         if (String.IsNullOrEmpty(path) || path.Length > 32767
             || path.Length < 4 || !Char.IsLetter(path[0]) || path[1] != ':'
             || path[2] != '\\' || path.IndexOf(':', 2) >= 0
@@ -119,8 +132,11 @@ internal static class Ea4eProtectedPathTopologyCandidate
             if (names.Count < 2) return "TARGET_MISSING";
             for (int index = 0; index < names.Count; index++)
             {
-                var handle = CreateFile(names[index], ReadControl | ReadAttributes,
-                    ShareAll, IntPtr.Zero, OpenExisting,
+                bool leaf = index == names.Count - 1;
+                uint access = ReadControl | ReadAttributes | (leaf && readableLeaf ? 1u : 0u);
+                uint share = leaf && readableLeaf ? 1u : ShareAll;
+                var handle = CreateFile(names[index], access,
+                    share, IntPtr.Zero, OpenExisting,
                     BackupSemantics | OpenReparsePoint, IntPtr.Zero);
                 if (handle == null || handle.IsInvalid)
                 {
