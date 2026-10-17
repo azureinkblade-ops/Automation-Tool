@@ -19,6 +19,7 @@ def executable(tmp_path_factory):
     result = subprocess.run(
         [str(CSC), "/nologo", "/target:exe", f"/out:{target}",
          str(ROOT / "tools" / "Ea4eProtectedPathTopologyCandidate.cs"),
+         str(ROOT / "tools" / "Ea4eProtectedByteSnapshotCandidate.cs"),
          str(ROOT / "tools" / "Ea4eProtectedPathAccessCandidate.cs"),
          str(ROOT / "tests" / "hermes_core" / "fixtures"
              / "ea4e92la_protected_path_access_probe.cs")],

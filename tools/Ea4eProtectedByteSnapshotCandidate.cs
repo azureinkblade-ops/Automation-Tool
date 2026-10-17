@@ -10,19 +10,25 @@ internal static class Ea4eProtectedByteSnapshotCandidate
 
     internal static string Denial(string path, string expectedSha256)
     {
-        if (expectedSha256 == null || expectedSha256.Length != 64)
-            return "EXPECTED_HASH_INVALID";
-        foreach (char digit in expectedSha256)
-            if (!((digit >= '0' && digit <= '9') ||
-                  (digit >= 'a' && digit <= 'f')))
-                return "EXPECTED_HASH_INVALID";
+        if (!IsCanonicalHash(expectedSha256)) return "EXPECTED_HASH_INVALID";
 
         return Ea4eProtectedPathTopologyCandidate.DenialWithReadableLeaf(
             path, (handle, objectPath, directory) =>
                 directory ? null : CheckBytes(handle, expectedSha256));
     }
 
-    private static string CheckBytes(SafeFileHandle handle, string expectedSha256)
+    internal static bool IsCanonicalHash(string expectedSha256)
+    {
+        if (expectedSha256 == null || expectedSha256.Length != 64)
+            return false;
+        foreach (char digit in expectedSha256)
+            if (!((digit >= '0' && digit <= '9') ||
+                  (digit >= 'a' && digit <= 'f')))
+                return false;
+        return true;
+    }
+
+    internal static string CheckBytes(SafeFileHandle handle, string expectedSha256)
     {
         try
         {

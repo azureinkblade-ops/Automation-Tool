@@ -151,6 +151,22 @@ internal static class Ea4eProtectedPathAccessCandidate
     internal static string DenialForCurrentUnelevatedApp(
         string path, string protectedRoot, string expectedAppSid)
     {
+        return DenialCore(path, protectedRoot, expectedAppSid, null);
+    }
+
+    internal static string DenialWithByteSnapshotForCurrentUnelevatedApp(
+        string path, string protectedRoot, string expectedAppSid,
+        string expectedSha256)
+    {
+        if (!Ea4eProtectedByteSnapshotCandidate.IsCanonicalHash(expectedSha256))
+            return "EXPECTED_HASH_INVALID";
+        return DenialCore(path, protectedRoot, expectedAppSid, expectedSha256);
+    }
+
+    private static string DenialCore(
+        string path, string protectedRoot, string expectedAppSid,
+        string expectedSha256)
+    {
         if (String.IsNullOrEmpty(expectedAppSid)) return "APP_IDENTITY_UNBOUND";
         string root;
         try
@@ -188,13 +204,23 @@ internal static class Ea4eProtectedPathAccessCandidate
                     return "APP_IMPERSONATION_UNAVAILABLE";
                 using (impersonation)
                 {
-                    return Ea4eProtectedPathTopologyCandidate.Denial(
-                        path, (handle, objectPath, directory) =>
-                            CheckHandle(handle, impersonation, actualSid,
+                    Func<SafeFileHandle, string, bool, string> observer =
+                        (handle, objectPath, directory) =>
+                        {
+                            string denial = CheckHandle(handle, impersonation, actualSid,
                                 String.Equals(objectPath, root,
                                               StringComparison.OrdinalIgnoreCase)
                                 || objectPath.StartsWith(root.TrimEnd('\\') + "\\",
-                                    StringComparison.OrdinalIgnoreCase)));
+                                    StringComparison.OrdinalIgnoreCase));
+                            if (denial != null || directory || expectedSha256 == null)
+                                return denial;
+                            return Ea4eProtectedByteSnapshotCandidate.CheckBytes(
+                                handle, expectedSha256);
+                        };
+                    return expectedSha256 == null
+                        ? Ea4eProtectedPathTopologyCandidate.Denial(path, observer)
+                        : Ea4eProtectedPathTopologyCandidate.DenialWithReadableLeaf(
+                            path, observer);
                 }
             }
             catch
