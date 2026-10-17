@@ -8,12 +8,14 @@ internal static class Ea4e92lgPipeClientProcessProbe
 {
     private static int Main(string[] args)
     {
-        if (args.Length != 1) return 2;
+        if (args.Length != 1 && args.Length != 2) return 2;
         string name = "ea4e92lg-" + Guid.NewGuid().ToString("N");
         using (var server = new NamedPipeServerStream(
             name, PipeDirection.In, 1, PipeTransmissionMode.Byte))
         using (var release = new ManualResetEventSlim(false))
         using (var current = Process.GetCurrentProcess())
+        using (var other = args[0] == "OTHER"
+            ? Process.GetProcessById(int.Parse(args[1])) : null)
         {
             Task client = Task.Run(() =>
             {
@@ -41,6 +43,7 @@ internal static class Ea4e92lgPipeClientProcessProbe
                 case "NULL": expected = IntPtr.Zero; break;
                 case "PSEUDO": expected = new IntPtr(-1); break;
                 case "THREAD": expected = new IntPtr(-2); break;
+                case "OTHER": expected = other.Handle; break;
                 default: throw new ArgumentException("invalid mode");
             }
             string denial;

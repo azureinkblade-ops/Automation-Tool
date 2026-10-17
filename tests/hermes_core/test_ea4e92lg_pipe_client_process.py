@@ -1,5 +1,6 @@
 """Read-only pipe client/process-handle binding probe."""
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -41,3 +42,12 @@ def test_pipe_client_matches_only_retained_process_handle(executable, mode, expe
     )
     assert result.returncode == (0 if mode == "CURRENT" else 1)
     assert result.stdout.strip() == expected
+
+
+def test_live_other_process_handle_denied(executable):
+    result = subprocess.run(
+        [str(executable), "OTHER", str(os.getpid())],
+        capture_output=True, text=True, timeout=10, check=False,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert result.stdout.strip() == "DENY:CLIENT_PROCESS_MISMATCH"
