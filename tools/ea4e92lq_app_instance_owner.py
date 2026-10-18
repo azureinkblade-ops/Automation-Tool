@@ -5,6 +5,8 @@ import re
 import sys
 import uuid
 
+from tools.ea4e92s_retained_snapshot_provider import ProcessQuery
+
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_HANDLE = (2 * sys.maxsize) + 1
@@ -25,6 +27,7 @@ class AppLaunchReceipt:
     package_sha256: str
     process_handle: int
     process_id: int
+    process_creation_time_100ns: int
 
 
 @dataclass(frozen=True)
@@ -34,6 +37,7 @@ class AppProcessObservation:
     app_instance_nonce: str
     package_sha256: str
     alive: bool
+    process_creation_time_100ns: int
 
 
 def _uuid(value):
@@ -56,12 +60,14 @@ class AppInstanceOwner:
     this state machine can contribute to any production authority decision.
     """
 
-    def __init__(self, launcher, *, launcher_instance_id, package_sha256):
+    def __init__(self, launcher, *, launcher_instance_id, package_sha256,
+                 process_api=None):
         if not _uuid(launcher_instance_id):
             raise AppInstanceDenied("launcher identity malformed")
         if type(package_sha256) is not str or not _SHA256.fullmatch(package_sha256):
             raise AppInstanceDenied("package identity malformed")
         self._launcher = launcher
+        self._process_api = process_api
         self.launcher_instance_id = launcher_instance_id
         self.package_sha256 = package_sha256
         self.state = "NEW"
@@ -84,7 +90,9 @@ class AppInstanceOwner:
                 or not _uuid(receipt.app_instance_nonce)
                 or receipt.app_instance_nonce == self.launcher_instance_id
                 or not _positive(receipt.process_handle, _MAX_HANDLE)
-                or not _positive(receipt.process_id, 0xFFFFFFFF)):
+                or not _positive(receipt.process_id, 0xFFFFFFFF)
+                or not _positive(receipt.process_creation_time_100ns,
+                                 0xFFFFFFFFFFFFFFFF)):
             raise AppInstanceUnknown("launcher receipt is not canonical")
         self._receipt = receipt
         self.state = "OWNED"
@@ -94,7 +102,19 @@ class AppInstanceOwner:
             raise AppInstanceDenied("app instance is not owned")
         receipt = self._receipt
         try:
-            observation = self._launcher.observe(receipt.process_handle)
+            if self._process_api is None:
+                observation = self._launcher.observe(receipt.process_handle)
+            else:
+                process = self._process_api.query_process(receipt.process_handle)
+                if (type(process) is not ProcessQuery
+                        or type(process.process_id) is not int
+                        or type(process.creation_time_100ns) is not int
+                        or type(process.present) is not bool):
+                    raise ValueError("kernel process observation malformed")
+                observation = AppProcessObservation(
+                    receipt.process_handle, process.process_id,
+                    receipt.app_instance_nonce, receipt.package_sha256,
+                    process.present, process.creation_time_100ns)
         except BaseException as error:
             self.state = "UNKNOWN"
             raise AppInstanceUnknown("app observation outcome unknown") from error
@@ -103,7 +123,9 @@ class AppInstanceOwner:
                 or observation.process_handle != receipt.process_handle
                 or observation.process_id != receipt.process_id
                 or observation.app_instance_nonce != receipt.app_instance_nonce
-                or observation.package_sha256 != receipt.package_sha256):
+                or observation.package_sha256 != receipt.package_sha256
+                or observation.process_creation_time_100ns
+                != receipt.process_creation_time_100ns):
             self.state = "UNKNOWN"
             raise AppInstanceUnknown("app process identity drifted")
         if observation.alive is False:
@@ -116,8 +138,12 @@ class AppInstanceOwner:
             raise AppInstanceDenied("exited handle is not available for close")
         self.state = "UNKNOWN"
         try:
-            closed = self._launcher.close_process_handle(
-                self._receipt.process_handle)
+            if self._process_api is None:
+                closed = self._launcher.close_process_handle(
+                    self._receipt.process_handle)
+            else:
+                closed = self._process_api.close_process(
+                    self._receipt.process_handle)
         except BaseException as error:
             raise AppInstanceUnknown("app handle close outcome unknown") from error
         if closed is not True:

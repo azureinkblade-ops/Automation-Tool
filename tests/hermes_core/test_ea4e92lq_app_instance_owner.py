@@ -11,13 +11,14 @@ from tools.ea4e92lq_app_instance_owner import (
     AppLaunchReceipt,
     AppProcessObservation,
 )
+from tools.ea4e92s_retained_snapshot_provider import ProcessQuery
 
 
 LAUNCHER_ID = "92aa3d25-728d-49f0-9e55-e611b39ea9a8"
 INSTANCE_ID = "4ff38c48-eb14-4dbb-953c-110ce8c0661b"
 PACKAGE = "a" * 64
-RECEIPT = AppLaunchReceipt(LAUNCHER_ID, INSTANCE_ID, PACKAGE, 101, 202)
-LIVE = AppProcessObservation(101, 202, INSTANCE_ID, PACKAGE, True)
+RECEIPT = AppLaunchReceipt(LAUNCHER_ID, INSTANCE_ID, PACKAGE, 101, 202, 303)
+LIVE = AppProcessObservation(101, 202, INSTANCE_ID, PACKAGE, True, 303)
 
 
 class FakeLauncher:
@@ -67,6 +68,7 @@ def test_exact_launch_receipt_and_live_observation():
     replace(RECEIPT, process_handle=0),
     replace(RECEIPT, process_handle=True),
     replace(RECEIPT, process_id=0),
+    replace(RECEIPT, process_creation_time_100ns=0),
 ])
 def test_malformed_or_conflicting_launch_is_unknown_and_never_retried(bad):
     launcher = FakeLauncher(receipt=bad)
@@ -100,6 +102,7 @@ def test_ambiguous_launch_exception_cannot_retry():
     replace(LIVE, app_instance_nonce=LAUNCHER_ID),
     replace(LIVE, package_sha256="b" * 64),
     replace(LIVE, alive=1),
+    replace(LIVE, process_creation_time_100ns=304),
 ])
 def test_process_drift_never_returns_retained_handle(bad):
     launcher = FakeLauncher(observation=bad)
@@ -162,6 +165,65 @@ def test_close_exception_remains_unknown():
     with pytest.raises(AppInstanceUnknown):
         subject.close_exited()
     assert subject.state == "UNKNOWN"
+
+
+class FakeProcessApi:
+    def __init__(self, query=ProcessQuery(202, 303, True)):
+        self.query = query
+        self.queries = []
+        self.closes = []
+
+    def query_process(self, handle):
+        self.queries.append(handle)
+        return self.query
+
+    def close_process(self, handle):
+        self.closes.append(handle)
+        return True
+
+
+def test_kernel_query_uses_retained_handle_not_launcher_observation():
+    launcher = FakeLauncher(observation=None)
+    api = FakeProcessApi()
+    subject = AppInstanceOwner(
+        launcher, launcher_instance_id=LAUNCHER_ID,
+        package_sha256=PACKAGE, process_api=api)
+    subject.start()
+    assert subject.resolve_live() is RECEIPT
+    assert api.queries == [101]
+    assert launcher.observations == []
+
+
+@pytest.mark.parametrize("query", [
+    ProcessQuery(203, 303, True),
+    ProcessQuery(202, 304, True),
+    ProcessQuery(202, 303, 1),
+    ProcessQuery(202, 303.0, True),
+    ProcessQuery(True, 303, True),
+    None,
+])
+def test_kernel_query_drift_or_malformed_result_fails_closed(query):
+    api = FakeProcessApi(query)
+    subject = AppInstanceOwner(
+        FakeLauncher(), launcher_instance_id=LAUNCHER_ID,
+        package_sha256=PACKAGE, process_api=api)
+    subject.start()
+    with pytest.raises(AppInstanceUnknown):
+        subject.resolve_live()
+    assert subject.state == "UNKNOWN"
+
+
+def test_kernel_query_exit_closes_only_retained_handle():
+    api = FakeProcessApi(ProcessQuery(202, 303, False))
+    subject = AppInstanceOwner(
+        FakeLauncher(), launcher_instance_id=LAUNCHER_ID,
+        package_sha256=PACKAGE, process_api=api)
+    subject.start()
+    with pytest.raises(AppInstanceDenied, match="exited"):
+        subject.resolve_live()
+    subject.close_exited()
+    assert api.closes == [101]
+    assert subject.state == "CLOSED"
 
 
 @pytest.mark.parametrize("launcher_id,package", [
