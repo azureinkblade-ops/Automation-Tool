@@ -40,6 +40,12 @@ class AppProcessObservation:
     process_creation_time_100ns: int
 
 
+@dataclass(frozen=True)
+class AppPackageObservation:
+    package_sha256: str
+    complete: bool
+
+
 def _uuid(value):
     if type(value) is not str:
         return False
@@ -61,13 +67,18 @@ class AppInstanceOwner:
     """
 
     def __init__(self, launcher, *, launcher_instance_id, package_sha256,
-                 process_api=None):
+                 process_api=None, package_api=None, fake_only=False):
         if not _uuid(launcher_instance_id):
             raise AppInstanceDenied("launcher identity malformed")
         if type(package_sha256) is not str or not _SHA256.fullmatch(package_sha256):
             raise AppInstanceDenied("package identity malformed")
+        if type(fake_only) is not bool or (
+                fake_only and (process_api is not None or package_api is not None)
+        ) or (not fake_only and (process_api is None or package_api is None)):
+            raise AppInstanceDenied("app owner observation dependencies missing")
         self._launcher = launcher
         self._process_api = process_api
+        self._package_api = package_api
         self.launcher_instance_id = launcher_instance_id
         self.package_sha256 = package_sha256
         self.state = "NEW"
@@ -105,6 +116,11 @@ class AppInstanceOwner:
             if self._process_api is None:
                 observation = self._launcher.observe(receipt.process_handle)
             else:
+                package = self._package_api.observe_package(receipt)
+                if (type(package) is not AppPackageObservation
+                        or package.package_sha256 != receipt.package_sha256
+                        or package.complete is not True):
+                    raise ValueError("installed package observation mismatch")
                 process = self._process_api.query_process(receipt.process_handle)
                 if (type(process) is not ProcessQuery
                         or type(process.process_id) is not int
