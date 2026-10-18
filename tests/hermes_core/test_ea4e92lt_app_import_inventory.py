@@ -1,6 +1,8 @@
 """Static inventory qualification; no imported source is executed."""
 
+import ast
 import hashlib
+from pathlib import Path
 
 import pytest
 
@@ -79,3 +81,33 @@ def test_explicit_dynamic_module_is_included_and_missing_one_denied(tmp_path):
     with pytest.raises(ValueError, match="unavailable"):
         inventory_local_imports(
             tmp_path, "app.py", additional_modules=("../receiver",))
+
+
+def test_qualified_receiver_factories_are_in_app_source_inventory():
+    root = Path(__file__).resolve().parents[2]
+    registry = root / "tools/hermes_core/production_executor_binding.py"
+    tree = ast.parse(registry.read_bytes(), filename=str(registry))
+    assignments = [
+        node.value for node in tree.body
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "QUALIFIED_EXECUTOR_IMPLEMENTATIONS"
+    ]
+    assert len(assignments) == 1
+    modules = set()
+    for receiver in assignments[0].values:
+        fields = {
+            key.value: value for key, value in zip(receiver.keys, receiver.values)
+            if isinstance(key, ast.Constant)
+        }
+        factory = fields["executor_factory"]
+        assert isinstance(factory, ast.Constant) and isinstance(factory.value, str)
+        modules.add(factory.value.split(":", 1)[0])
+    assert modules == {
+        "tools.hermes_core.kilo_live_binding",
+        "tools.hermes_core.opencode_live_binding",
+    }
+    inventory = inventory_local_imports(
+        root, "app.py", additional_modules=tuple(sorted(modules)))
+    paths = {source.path for source in inventory.files}
+    assert {module.replace(".", "/") + ".py" for module in modules} <= paths
