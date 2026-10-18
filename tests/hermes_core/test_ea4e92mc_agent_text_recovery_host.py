@@ -162,3 +162,32 @@ def test_host_rejects_ping_schema_and_invalid_attempt(tmp_path):
             subject.inspect("")
     finally:
         start.close()
+
+
+@pytest.mark.parametrize("agent", ["kilo-cli-agent", "opencode-cli-agent"])
+def test_inspect_denies_structurally_captured_but_forged_text(tmp_path, agent):
+    start, task, _, bridges, _, witness, _ = ready_process(tmp_path, agent)
+    authority = bridges.authority
+    registry = CodexInvocationRegistry(str(tmp_path / "codex.sqlite3"))
+    registry.initialize()
+    try:
+        body = body_for(witness, text="cedar")
+        body["result_payload"]["receiver_receipt_hash"] = "0" * 64
+        outcome = terminal_outcome(witness)
+        outcome = replace(
+            outcome, verified_result=replace(
+                outcome.verified_result,
+                payload={"type": "text", "text": canonical_json(body)},
+            ),
+        )
+        capture_store(authority, start).capture(witness.lease.attempt_id, outcome)
+        subject, results = host(authority, start, registry)
+        with pytest.raises(DelegationIntegrityError, match="payload mismatch"):
+            subject.inspect(witness.lease.attempt_id)
+        with pytest.raises(DelegationIntegrityError):
+            subject.recover(witness.lease.attempt_id)
+        with pytest.raises(DelegationNotFoundError):
+            results.get_result(witness.lease.attempt_id)
+        assert authority.list_mailbox(task.originator_agent_id) == []
+    finally:
+        start.close()

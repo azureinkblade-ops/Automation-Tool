@@ -4,7 +4,9 @@ from tools.hermes_core.agent_codex_terminal_witness import load_codex_terminal_o
 from tools.hermes_core.agent_receiver_start_fence import SQLiteAgentReceiverStartFenceStore
 from tools.hermes_core.agent_start_witness import load_bound_agent_start
 from tools.hermes_core.agent_terminal_capture import SQLiteAgentTerminalCaptureStore
-from tools.hermes_core.agent_text_result import AGENT_TEXT_SCHEMA_ID
+from tools.hermes_core.agent_text_result import (
+    AGENT_TEXT_SCHEMA_ID, validate_agent_text_candidate,
+)
 from tools.hermes_core.agent_text_return import return_bound_agent_text
 from tools.hermes_core.codex_adapter import CodexInvocationRegistry
 from tools.hermes_core.delegated_task import DelegationIntegrityError, DelegationNotFoundError
@@ -106,9 +108,14 @@ class AgentTextRecoveryHost:
             if registry.get(witness.bound.invocation.idempotency_key) is None:
                 return "NO_TERMINAL_EVIDENCE"
             load_codex_terminal_observation(witness, registry)
-        elif captures.get(attempt_id) is None:
-            if (self._receiver_starts is not None
-                    and self._receiver_starts.get(attempt_id) is not None):
-                return "RECEIVER_START_UNKNOWN"
-            return "NO_TERMINAL_EVIDENCE"
+        else:
+            captured = captures.get(attempt_id)
+            if captured is None:
+                if (self._receiver_starts is not None
+                        and self._receiver_starts.get(attempt_id) is not None):
+                    return "RECEIVER_START_UNKNOWN"
+                return "NO_TERMINAL_EVIDENCE"
+            validate_agent_text_candidate(
+                witness.task, witness.lease, witness.receipt, captured.candidate,
+            )
         return "TERMINAL_EVIDENCE_AVAILABLE"
