@@ -7,6 +7,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from tools.hermes_core.agent_ping_result import validate_agent_ping_candidate
+from tools.hermes_core.agent_text_result import (
+    AGENT_TEXT_SCHEMA_ID, validate_agent_text_candidate,
+)
 from tools.hermes_core.agent_ping_terminal import bind_codex_structured_candidate
 from tools.hermes_core.agent_result_candidate import AgentResultCandidate
 from tools.hermes_core.agent_start_witness import DurableAgentStart
@@ -56,7 +59,10 @@ def _load_codex_terminal_record(
             process_started=True, replayed=False,
         ),
     )
-    validate_agent_ping_candidate(witness.task, witness.lease, witness.receipt, candidate)
+    if witness.task.expected_result_schema_id == AGENT_TEXT_SCHEMA_ID:
+        validate_agent_text_candidate(witness.task, witness.lease, witness.receipt, candidate)
+    else:
+        validate_agent_ping_candidate(witness.task, witness.lease, witness.receipt, candidate)
     return candidate, record
 
 

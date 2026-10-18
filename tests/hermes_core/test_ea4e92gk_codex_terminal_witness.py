@@ -17,7 +17,7 @@ from tools.hermes_core.delegated_task import DelegationIntegrityError
 
 
 def durable_codex_record(tmp_path, witness, *, pid=1234, statement=None,
-                         returncode=0, launch_id=None, clock=None):
+                         returncode=0, launch_id=None, clock=None, body=None):
     registry = CodexInvocationRegistry(str(tmp_path / "codex-transport.sqlite3"), clock=clock)
     registry.initialize()
     invocation = witness.bound.invocation
@@ -28,7 +28,7 @@ def durable_codex_record(tmp_path, witness, *, pid=1234, statement=None,
         delegation_id=invocation.lineage.delegation_id,
         argv_hash="b" * 64,
     )
-    body = codex_outcome(witness).verified_result.payload
+    body = codex_outcome(witness).verified_result.payload if body is None else body
     if statement is not None:
         body["result_payload"]["statement"] = statement
     process = CodexProcessResult(

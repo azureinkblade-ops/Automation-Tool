@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .agent_ping_result import AGENT_PING_SCHEMA_ID
+from .agent_text_result import AGENT_TEXT_SCHEMA_ID, MAX_TEXT_BYTES
 from .delegated_task import (
     DelegationIntegrityError,
     DelegationNotFoundError,
@@ -135,6 +136,32 @@ class SQLiteDelegationResultStore:
                         "sha256": receipt.artifact_hash,
                     },)):
                 raise DelegationIntegrityError("agent ping result contract mismatch")
+        if validated_result_schema_id == AGENT_TEXT_SCHEMA_ID:
+            payload = result.result_payload
+            text = payload.get("text")
+            try:
+                text_size = len(text.encode("utf-8")) if type(text) is str else -1
+            except UnicodeError:
+                text_size = -1
+            expected_evidence = ({
+                "ordinal": 0, "evidence_type": "receiver_acceptance_sha256",
+            },)
+            if (result.outcome != "SUCCEEDED" or result.output_manifest
+                    or tuple(envelope["expected_evidence"]) != expected_evidence
+                    or tuple(lease.expected_evidence) != expected_evidence
+                    or set(payload) != {
+                        "task_input_hash", "receiver_receipt_hash", "text",
+                    }
+                    or payload["task_input_hash"] != envelope["task_input_hash"]
+                    or payload["receiver_receipt_hash"] != receipt.artifact_hash
+                    or type(text) is not str or not text.strip()
+                    or text_size < 0 or text_size > MAX_TEXT_BYTES
+                    or result.evidence_manifest != ({
+                        "ordinal": 0,
+                        "evidence_type": "receiver_acceptance_sha256",
+                        "sha256": receipt.artifact_hash,
+                    },)):
+                raise DelegationIntegrityError("agent text result contract mismatch")
         allowed_outputs = set(lease.permitted_write_paths)
         for output in result.output_manifest:
             if output["reference_type"] == "workspace_file" and output["reference"] not in allowed_outputs:
@@ -227,16 +254,17 @@ class SQLiteDelegationResultStore:
                     delegation_row["status"] != "CREATED" or lease_row["status"] != "ACTIVE"
                 ):
                     raise DelegationIntegrityError("inactive delegation or lease cannot produce a new success")
-                if result.outcome == "SUCCEEDED" and validated_result_schema_id == AGENT_PING_SCHEMA_ID:
+                if result.outcome == "SUCCEEDED" and validated_result_schema_id in {
+                        AGENT_PING_SCHEMA_ID, AGENT_TEXT_SCHEMA_ID}:
                     now = self._clock()
                     if type(now) is not datetime or now.tzinfo is None or now.utcoffset() is None:
-                        raise DelegationIntegrityError("trusted ping clock must be timezone-aware")
+                        raise DelegationIntegrityError("trusted agent clock must be timezone-aware")
                     now = now.astimezone(timezone.utc).replace(microsecond=0)
                     trusted_delivery_time = now.strftime("%Y-%m-%dT%H:%M:%SZ")
                     if (not _parse_timestamp(lease.not_before) <= now < _parse_timestamp(lease.expires_at)
                             or _parse_timestamp(result.completed_at) > now
                             or delivered_at not in (None, trusted_delivery_time)):
-                        raise DelegationIntegrityError("ping result is outside trusted lease time")
+                        raise DelegationIntegrityError("agent result is outside trusted lease time")
                     delivered_at = trusted_delivery_time
                 elif delivered_at is None:
                     raise DelegationIntegrityError("delivery time is required for other result schemas")
