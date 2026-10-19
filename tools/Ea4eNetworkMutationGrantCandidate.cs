@@ -10,6 +10,10 @@ using System.Web.Script.Serialization;
 
 internal static class Ea4eNetworkMutationGrantCandidate
 {
+    private const string FakeSchema = "hermes.docker-network-mutation-grant-candidate/v2";
+    private const string FakeProfile = "FAKE_ONLY_LOCAL_CONTAINER";
+    private const string ProtectedSchema = "hermes.docker-network-mutation-grant/protected-v1";
+    private const string ProtectedProfile = "LOCAL_CONTAINER_PROTECTED_ISSUER";
     private static readonly Regex Hex = new Regex(@"\A[0-9a-f]{64}\z");
     private static readonly Regex Network = new Regex(@"\Aea4e-kilo-[0-9a-f]{32}\z");
     private static readonly Regex Attempt = new Regex(@"\A[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\z");
@@ -113,6 +117,20 @@ internal static class Ea4eNetworkMutationGrantCandidate
     internal static byte[] BuildCompleteCandidate(
         IDictionary<string, string> fields, IDictionary<string, string> labels)
     {
+        return BuildCandidate(fields, labels, FakeSchema, FakeProfile);
+    }
+
+    // Pure contract bytes, not an issuance or a substitute for a protected store.
+    internal static byte[] BuildProtectedCandidate(
+        IDictionary<string, string> fields, IDictionary<string, string> labels)
+    {
+        return BuildCandidate(fields, labels, ProtectedSchema, ProtectedProfile);
+    }
+
+    private static byte[] BuildCandidate(
+        IDictionary<string, string> fields, IDictionary<string, string> labels,
+        string schema, string profile)
+    {
         if (fields == null || fields.Count != CompleteBuildFields.Count
             || !CompleteBuildFields.SetEquals(fields.Keys)
             || labels == null || labels.Count != LabelKeys.Count
@@ -138,7 +156,7 @@ internal static class Ea4eNetworkMutationGrantCandidate
                                CultureInfo.InvariantCulture, out expiry))
             throw new InvalidOperationException("Build time or epoch denied");
         var grant = new Dictionary<string, object> {
-            { "schema_id", "hermes.docker-network-mutation-grant-candidate/v2" },
+            { "schema_id", schema },
             { "action", "network_create" },
             { "docker_engine_endpoint", "npipe:////./pipe/dockerDesktopLinuxEngine" },
             { "network_driver", "bridge" },
@@ -159,7 +177,7 @@ internal static class Ea4eNetworkMutationGrantCandidate
         byte[] raw = Encoding.UTF8.GetBytes(Canonical(grant));
         var expected = new Dictionary<string, string>(fields);
         expected.Add("artifact_hash", (string)grant["artifact_hash"]);
-        if (!MatchesComplete(raw, expected, labels))
+        if (!MatchesContract(raw, expected, labels, schema, profile))
             throw new InvalidOperationException("Built candidate denied");
         return raw;
     }
@@ -191,6 +209,16 @@ internal static class Ea4eNetworkMutationGrantCandidate
     // Internal consistency only. Callers must separately bind trusted expectations.
     internal static CompleteIdentity ReadCompleteIdentity(byte[] raw)
     {
+        return ReadIdentity(raw, FakeSchema, FakeProfile);
+    }
+
+    internal static CompleteIdentity ReadProtectedIdentity(byte[] raw)
+    {
+        return ReadIdentity(raw, ProtectedSchema, ProtectedProfile);
+    }
+
+    private static CompleteIdentity ReadIdentity(byte[] raw, string schema, string profile)
+    {
         if (raw == null || raw.Length < 1 || raw.Length > 16384)
             throw new InvalidOperationException("Grant bytes denied");
         try
@@ -217,7 +245,7 @@ internal static class Ea4eNetworkMutationGrantCandidate
             var labels = new Dictionary<string, string>();
             foreach (string key in LabelKeys)
                 labels.Add(key, rawLabels[key] as string);
-            if (!MatchesComplete(raw, expected, labels))
+            if (!MatchesContract(raw, expected, labels, schema, profile))
                 throw new InvalidOperationException("Grant structure denied");
             return new CompleteIdentity(grant);
         }
@@ -302,6 +330,22 @@ internal static class Ea4eNetworkMutationGrantCandidate
         IDictionary<string, string> expected,
         IDictionary<string, string> expectedLabels)
     {
+        return MatchesContract(raw, expected, expectedLabels, FakeSchema, FakeProfile);
+    }
+
+    internal static bool MatchesProtected(byte[] raw,
+        IDictionary<string, string> expected,
+        IDictionary<string, string> expectedLabels)
+    {
+        return MatchesContract(raw, expected, expectedLabels,
+            ProtectedSchema, ProtectedProfile);
+    }
+
+    private static bool MatchesContract(byte[] raw,
+        IDictionary<string, string> expected,
+        IDictionary<string, string> expectedLabels,
+        string schema, string profile)
+    {
         if (raw == null || raw.Length < 1 || raw.Length > 16384
             || expected == null || expected.Count != CompleteExpectedFields.Count
             || !CompleteExpectedFields.SetEquals(expected.Keys)
@@ -322,8 +366,7 @@ internal static class Ea4eNetworkMutationGrantCandidate
             if (grant == null || grant.Count != CompleteFields.Count
                 || !CompleteFields.SetEquals(grant.Keys) || Canonical(grant) != json)
                 return false;
-            if (!Equals(grant["schema_id"],
-                        "hermes.docker-network-mutation-grant-candidate/v2")
+            if (!Equals(grant["schema_id"], schema)
                 || !Equals(grant["action"], "network_create")
                 || !Equals(grant["docker_engine_endpoint"],
                            "npipe:////./pipe/dockerDesktopLinuxEngine")
@@ -361,8 +404,7 @@ internal static class Ea4eNetworkMutationGrantCandidate
             if (!Equals(labels["hermes.ea4e.attempt"], grant["attempt_id"])
                 || !(labels["hermes.ea4e.candidate_sha256"] is string)
                 || !Hex.IsMatch((string)labels["hermes.ea4e.candidate_sha256"])
-                || !Equals(labels["hermes.ea4e.profile"],
-                           "FAKE_ONLY_LOCAL_CONTAINER")
+                || !Equals(labels["hermes.ea4e.profile"], profile)
                 || !(labels["hermes.ea4e.cleanup_owner"] is string)
                 || !Owner.IsMatch((string)labels["hermes.ea4e.cleanup_owner"]))
                 return false;
