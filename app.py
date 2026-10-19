@@ -43038,6 +43038,7 @@ _GOVERNED_PRODUCTION_RECOVERY = None
 _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER = None
 _GOVERNED_PRODUCTION_DEPLOYMENT_OWNER = None
 _GOVERNED_AGENT_PING_RECOVERY_HOST = None
+_GOVERNED_AGENT_TEXT_RECOVERY_HOST = None
 
 
 def configure_governed_agent_ping_recovery(authority, start, captures, registry,
@@ -43071,6 +43072,39 @@ def inspect_governed_agent_ping(attempt_id):
     if _GOVERNED_AGENT_PING_RECOVERY_HOST is None:
         raise DelegationIntegrityError("agent ping recovery host is not configured")
     return _GOVERNED_AGENT_PING_RECOVERY_HOST.inspect(attempt_id)
+
+
+def configure_governed_agent_text_recovery(authority, start, captures, registry,
+                                           results, *, enabled=False,
+                                           receiver_starts=None):
+    """Explicitly attach bounded text-result stores; never start an agent."""
+    from tools.hermes_core.agent_text_recovery_host import AgentTextRecoveryHost
+
+    host = AgentTextRecoveryHost(
+        authority, start, captures, registry, results, enabled=enabled,
+        receiver_starts=receiver_starts,
+    )
+    global _GOVERNED_AGENT_TEXT_RECOVERY_HOST
+    _GOVERNED_AGENT_TEXT_RECOVERY_HOST = host
+    return host
+
+
+def inspect_governed_agent_text(attempt_id):
+    """Read durable bounded-text progress without returning a result."""
+    from tools.hermes_core.delegated_task import DelegationIntegrityError
+
+    if _GOVERNED_AGENT_TEXT_RECOVERY_HOST is None:
+        raise DelegationIntegrityError("agent text recovery host is not configured")
+    return _GOVERNED_AGENT_TEXT_RECOVERY_HOST.inspect(attempt_id)
+
+
+def recover_governed_agent_text(attempt_id):
+    """Return one existing bounded-text result through the explicit host."""
+    from tools.hermes_core.delegated_task import DelegationIntegrityError
+
+    if _GOVERNED_AGENT_TEXT_RECOVERY_HOST is None:
+        raise DelegationIntegrityError("agent text recovery host is not configured")
+    return _GOVERNED_AGENT_TEXT_RECOVERY_HOST.recover(attempt_id)
 
 
 def configure_governed_production_action(runtime_config):
