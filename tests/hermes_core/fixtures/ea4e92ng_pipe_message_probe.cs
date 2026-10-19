@@ -1,7 +1,9 @@
 using System;
+using System.Diagnostics;
 using System.IO.Pipes;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Win32.SafeHandles;
 
 internal static class Ea4e92ngPipeMessageProbe
 {
@@ -21,9 +23,11 @@ internal static class Ea4e92ngPipeMessageProbe
                     ".", name, PipeDirection.Out))
                 {
                     connection.Connect(3000);
-                    if (mode == "VALID") connection.Write(new byte[] { 1, 2, 3 }, 0, 3);
+                    if (mode == "VALID" || mode == "DENY_OBSERVER" ||
+                        mode == "KERNEL_MATCH" || mode == "KERNEL_MISMATCH")
+                        connection.Write(new byte[] { 1, 2, 3 }, 0, 3);
                     if (mode == "OVERSIZE") connection.Write(new byte[513], 0, 513);
-                    if (mode == "TIMEOUT") release.Wait(3000);
+                    if (mode != "DISCONNECT") release.Wait(3000);
                 }
             });
             try
@@ -31,8 +35,25 @@ internal static class Ea4e92ngPipeMessageProbe
                 Task accept = server.WaitForConnectionAsync();
                 if (!accept.Wait(3000)) return 3;
                 byte[] frame;
-                string denial = Ea4ePipeChallengeMessageCandidate.Capture(
-                    server, 200, out frame);
+                Func<SafePipeHandle, string> observer =
+                    mode == "NO_OBSERVER" ? null :
+                    new Func<SafePipeHandle, string>(handle =>
+                    {
+                        if (mode == "DENY_OBSERVER")
+                            return "CLIENT_IDENTITY_MISMATCH";
+                        if (mode == "KERNEL_MATCH" || mode == "KERNEL_MISMATCH")
+                        {
+                            using (var current = Process.GetCurrentProcess())
+                                return Ea4ePipeClientProcessLeaseCandidate.Denial(
+                                    handle, (process, pid, creation) =>
+                                        pid == (uint)current.Id && creation > 0 &&
+                                        mode == "KERNEL_MATCH"
+                                            ? null : "CLIENT_IDENTITY_MISMATCH");
+                        }
+                        return null;
+                    });
+                string denial = Ea4ePipeChallengeMessageCandidate.CaptureAndObserve(
+                    server, 200, observer, out frame);
                 string result = denial ?? (frame.Length == 3 && frame[0] == 1
                     ? "BYTES_ONLY" : "WRONG_BYTES");
                 Console.WriteLine(result);

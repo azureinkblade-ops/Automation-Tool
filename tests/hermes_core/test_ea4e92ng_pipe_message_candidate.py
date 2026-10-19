@@ -19,6 +19,7 @@ def executable(tmp_path_factory):
     result = subprocess.run(
         [str(CSC), "/nologo", "/target:exe", f"/out:{target}",
          str(ROOT / "tools/Ea4ePipeChallengeMessageCandidate.cs"),
+         str(ROOT / "tools/Ea4ePipeClientProcessLeaseCandidate.cs"),
          str(ROOT / "tests/hermes_core/fixtures/ea4e92ng_pipe_message_probe.cs")],
         capture_output=True, text=True, timeout=15, check=False,
     )
@@ -31,6 +32,10 @@ def executable(tmp_path_factory):
     ("OVERSIZE", "FRAME_SIZE_OR_BOUNDARY_INVALID"),
     ("TIMEOUT", "READ_DEADLINE_EXCEEDED"),
     ("DISCONNECT", "CLIENT_DISCONNECTED"),
+    ("NO_OBSERVER", "CLIENT_OBSERVER_UNAVAILABLE"),
+    ("DENY_OBSERVER", "CLIENT_IDENTITY_MISMATCH"),
+    ("KERNEL_MATCH", "BYTES_ONLY"),
+    ("KERNEL_MISMATCH", "CLIENT_IDENTITY_MISMATCH"),
 ])
 def test_one_message_is_bounded(executable, mode, expected):
     result = subprocess.run(

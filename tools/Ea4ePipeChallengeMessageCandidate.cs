@@ -2,10 +2,30 @@ using System;
 using System.IO.Pipes;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Win32.SafeHandles;
 
 // Captures bytes from an already connected pipe; it grants no identity or authority.
 internal static class Ea4ePipeChallengeMessageCandidate
 {
+    internal static string CaptureAndObserve(
+        NamedPipeServerStream pipe, int deadlineMilliseconds,
+        Func<SafePipeHandle, string> observe, out byte[] frame)
+    {
+        frame = null;
+        if (observe == null) return "CLIENT_OBSERVER_UNAVAILABLE";
+        byte[] captured;
+        string denial = Capture(pipe, deadlineMilliseconds, out captured);
+        if (denial != null) return denial;
+        if (!pipe.IsConnected || pipe.SafePipeHandle.IsClosed ||
+            pipe.SafePipeHandle.IsInvalid) return "CLIENT_CONNECTION_LOST";
+        try { denial = observe(pipe.SafePipeHandle); }
+        catch (Exception) { return "CLIENT_OBSERVATION_FAILED"; }
+        if (denial != null) return denial;
+        if (!pipe.IsConnected) return "CLIENT_CONNECTION_LOST";
+        frame = captured;
+        return null;
+    }
+
     internal static string Capture(
         NamedPipeServerStream pipe, int deadlineMilliseconds, out byte[] frame)
     {
