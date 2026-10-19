@@ -16,17 +16,32 @@ internal static class Ea4eProtectedPipeDescriptorScreen
 
     internal static string Screen(string sddl, string appSidText)
     {
-        SecurityIdentifier appSid;
         RawSecurityDescriptor descriptor;
         try
         {
-            appSid = new SecurityIdentifier(appSidText);
             descriptor = new RawSecurityDescriptor(sddl);
         }
         catch (ArgumentException)
         {
             return "DENY:INVALID_INPUT";
         }
+        return ScreenDescriptor(descriptor, appSidText);
+    }
+
+    internal static string ScreenDescriptor(RawSecurityDescriptor descriptor,
+                                             string appSidText)
+    {
+        SecurityIdentifier appSid;
+        try
+        {
+            appSid = new SecurityIdentifier(appSidText);
+        }
+        catch (ArgumentException)
+        {
+            return "DENY:INVALID_INPUT";
+        }
+        if (descriptor == null)
+            return "DENY:INVALID_INPUT";
 
         if (IsBroadTrustee(appSid) ||
             appSid.IsWellKnown(WellKnownSidType.LocalSystemSid) ||
