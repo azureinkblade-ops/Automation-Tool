@@ -46,10 +46,18 @@ internal static class Ea4ePipeClientTokenCandidate
 
     internal static string Denial(SafePipeHandle pipe, string expectedAppSid)
     {
+        return DenialWithToken(pipe, expectedAppSid, token => null);
+    }
+
+    internal static string DenialWithToken(
+        SafePipeHandle pipe, string expectedAppSid,
+        Func<SafeFileHandle, string> observe)
+    {
         if (String.IsNullOrEmpty(expectedAppSid) || !SidPattern.IsMatch(expectedAppSid))
             return "EXPECTED_APP_SID_INVALID";
         if (pipe == null || pipe.IsInvalid || pipe.IsClosed)
             return "PIPE_HANDLE_UNAVAILABLE";
+        if (observe == null) return "CLIENT_OBSERVER_UNAVAILABLE";
         if (!ImpersonateNamedPipeClient(pipe))
             return "CLIENT_IMPERSONATION_FAILED";
         try
@@ -73,7 +81,7 @@ internal static class Ea4ePipeClientTokenCandidate
                     if (identity.User == null || !String.Equals(
                         identity.User.Value, expectedAppSid, StringComparison.Ordinal))
                         return "CLIENT_SID_MISMATCH";
-                return null;
+                return observe(token);
             }
         }
         catch

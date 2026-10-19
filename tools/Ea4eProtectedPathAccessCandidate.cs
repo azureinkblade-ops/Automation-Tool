@@ -163,6 +163,68 @@ internal static class Ea4eProtectedPathAccessCandidate
         return DenialCore(path, protectedRoot, expectedAppSid, expectedSha256);
     }
 
+    internal static string DenialWithBoundClientToken(
+        string path, string protectedRoot, string expectedAppSid,
+        string expectedSha256, SafeFileHandle appToken)
+    {
+        if (String.IsNullOrEmpty(expectedAppSid)) return "APP_IDENTITY_UNBOUND";
+        if (expectedSha256 != null
+            && !Ea4eProtectedByteSnapshotCandidate.IsCanonicalHash(expectedSha256))
+            return "EXPECTED_HASH_INVALID";
+        if (appToken == null || appToken.IsInvalid || appToken.IsClosed)
+            return "APP_TOKEN_UNAVAILABLE";
+        string root;
+        try
+        {
+            root = Path.GetFullPath(protectedRoot);
+            if (!String.Equals(root, protectedRoot, StringComparison.OrdinalIgnoreCase)
+                || String.Equals(root, Path.GetPathRoot(root),
+                                 StringComparison.OrdinalIgnoreCase)
+                || !path.StartsWith(root.TrimEnd('\\') + "\\",
+                                    StringComparison.OrdinalIgnoreCase))
+                return "PROTECTED_ROOT_UNBOUND";
+        }
+        catch { return "PROTECTED_ROOT_UNBOUND"; }
+        try
+        {
+            using (var identity = new WindowsIdentity(appToken.DangerousGetHandle()))
+                if (identity.User == null || !String.Equals(
+                    identity.User.Value, expectedAppSid, StringComparison.OrdinalIgnoreCase))
+                    return "APP_IDENTITY_MISMATCH";
+            int elevated;
+            uint returned;
+            if (!GetTokenInformation(appToken, 20, out elevated, 4, out returned)
+                || returned != 4 || elevated != 0)
+                return "APP_TOKEN_NOT_UNELEVATED";
+            return ObserveBoundToken(path, root, expectedAppSid,
+                                     expectedSha256, appToken);
+        }
+        catch { return "ACCESS_OBSERVATION_UNAVAILABLE"; }
+    }
+
+    private static string ObserveBoundToken(
+        string path, string root, string appSid, string expectedSha256,
+        SafeFileHandle appToken)
+    {
+        Func<SafeFileHandle, string, bool, string> observer =
+            (handle, objectPath, directory) =>
+            {
+                string denial = CheckHandle(handle, appToken, appSid,
+                    String.Equals(objectPath, root,
+                                  StringComparison.OrdinalIgnoreCase)
+                    || objectPath.StartsWith(root.TrimEnd('\\') + "\\",
+                        StringComparison.OrdinalIgnoreCase));
+                if (denial != null || directory || expectedSha256 == null)
+                    return denial;
+                return Ea4eProtectedByteSnapshotCandidate.CheckBytes(
+                    handle, expectedSha256);
+            };
+        return expectedSha256 == null
+            ? Ea4eProtectedPathTopologyCandidate.Denial(path, observer)
+            : Ea4eProtectedPathTopologyCandidate.DenialWithReadableLeaf(
+                path, observer);
+    }
+
     private static string DenialCore(
         string path, string protectedRoot, string expectedAppSid,
         string expectedSha256)
@@ -204,23 +266,8 @@ internal static class Ea4eProtectedPathAccessCandidate
                     return "APP_IMPERSONATION_UNAVAILABLE";
                 using (impersonation)
                 {
-                    Func<SafeFileHandle, string, bool, string> observer =
-                        (handle, objectPath, directory) =>
-                        {
-                            string denial = CheckHandle(handle, impersonation, actualSid,
-                                String.Equals(objectPath, root,
-                                              StringComparison.OrdinalIgnoreCase)
-                                || objectPath.StartsWith(root.TrimEnd('\\') + "\\",
-                                    StringComparison.OrdinalIgnoreCase));
-                            if (denial != null || directory || expectedSha256 == null)
-                                return denial;
-                            return Ea4eProtectedByteSnapshotCandidate.CheckBytes(
-                                handle, expectedSha256);
-                        };
-                    return expectedSha256 == null
-                        ? Ea4eProtectedPathTopologyCandidate.Denial(path, observer)
-                        : Ea4eProtectedPathTopologyCandidate.DenialWithReadableLeaf(
-                            path, observer);
+                    return ObserveBoundToken(path, root, actualSid,
+                                             expectedSha256, impersonation);
                 }
             }
             catch
