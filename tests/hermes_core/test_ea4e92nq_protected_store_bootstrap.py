@@ -64,6 +64,35 @@ def test_duplicate_init_denied(executable, store):
     assert call(executable, "open", db, anchor).returncode == 0
 
 
+def test_external_identity_required(executable, store):
+    db, anchor = store
+    assert call(executable, "expected", db, anchor, "a" * 64, 1).returncode == 0
+    assert call(executable, "expected", db, anchor, "b" * 64, 1).returncode == 1
+    assert call(executable, "expected", db, anchor, "a" * 64, 2).returncode == 1
+    assert call(executable, "expected", db, anchor, "invalid", 1).returncode == 1
+
+
+@pytest.mark.parametrize("sql", [
+    "CREATE TABLE extra_data (value TEXT)",
+    "CREATE VIEW extra_view AS SELECT store_id FROM protected_grant_metadata",
+    "CREATE TRIGGER extra_trigger AFTER INSERT ON protected_grant_rows "
+    "BEGIN SELECT 1; END",
+    "CREATE INDEX extra_index ON protected_grant_rows(state)",
+])
+def test_extra_schema_object_denied(executable, store, sql):
+    db, anchor = store
+    with sqlite3.connect(db) as connection:
+        connection.execute(sql)
+    assert call(executable, "open", db, anchor).returncode == 1
+
+
+def test_table_ddl_drift_denied(executable, store):
+    db, anchor = store
+    with sqlite3.connect(db) as connection:
+        connection.execute("ALTER TABLE protected_grant_rows ADD COLUMN extra TEXT")
+    assert call(executable, "open", db, anchor).returncode == 1
+
+
 @pytest.mark.parametrize("field,value", [
     ("schema_id", "hermes.docker-mutation-store-identity/v3"),
     ("store_id", "b" * 64),

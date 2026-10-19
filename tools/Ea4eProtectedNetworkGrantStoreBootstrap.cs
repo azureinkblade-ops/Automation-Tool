@@ -1,5 +1,6 @@
 // Separate protected-store bootstrap only. No grant transition or Docker capability.
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -8,6 +9,17 @@ using System.Text.RegularExpressions;
 internal sealed class Ea4eProtectedNetworkGrantStoreBootstrap : IDisposable
 {
     internal const string Schema = "hermes.docker-network-grant-store/protected-v1";
+    private const string MetadataDdl = "CREATE TABLE protected_grant_metadata (" +
+        "schema_id TEXT NOT NULL,store_id TEXT NOT NULL," +
+        "epoch TEXT NOT NULL,generation TEXT NOT NULL," +
+        "state_hash TEXT NOT NULL)";
+    private const string EventsDdl = "CREATE TABLE protected_grant_events (" +
+        "generation INTEGER PRIMARY KEY,event_hash TEXT NOT NULL," +
+        "prior_hash TEXT NOT NULL,state_hash TEXT NOT NULL)";
+    private const string RowsDdl = "CREATE TABLE protected_grant_rows (" +
+        "grant_id TEXT PRIMARY KEY,nonce TEXT NOT NULL UNIQUE," +
+        "attempt_id TEXT NOT NULL UNIQUE,artifact_hash TEXT NOT NULL," +
+        "state TEXT NOT NULL,one_attempt_budget TEXT NOT NULL)";
     private static readonly Regex Hex = new Regex(@"\A[0-9a-f]{64}\z");
     private readonly Ea4eProtectedSqlite db;
 
@@ -43,6 +55,30 @@ internal sealed class Ea4eProtectedNetworkGrantStoreBootstrap : IDisposable
             InitialHash(storeId, epoch) + "\n";
     }
 
+    private static void VerifySchema(Ea4eProtectedSqlite db)
+    {
+        var expected = new Dictionary<string, string>(StringComparer.Ordinal) {
+            { "protected_grant_metadata", MetadataDdl },
+            { "protected_grant_events", EventsDdl },
+            { "protected_grant_rows", RowsDdl },
+        };
+        using (var read = db.Prepare(
+            "SELECT type,name,sql FROM sqlite_master WHERE type IN " +
+            "('table','trigger','view') OR (type='index' AND sql IS NOT NULL)"))
+        {
+            while (read.Step())
+            {
+                string name = read.Text(1), ddl;
+                if (read.Text(0) != "table" || name == null
+                    || !expected.TryGetValue(name, out ddl) || read.Text(2) != ddl)
+                    throw new InvalidOperationException("Protected store schema drift denied");
+                expected.Remove(name);
+            }
+        }
+        if (expected.Count != 0)
+            throw new InvalidOperationException("Protected store schema incomplete");
+    }
+
     internal static Ea4eProtectedNetworkGrantStoreBootstrap Initialize(
         string path, string anchor, string storeId, int epoch)
     {
@@ -54,17 +90,9 @@ internal sealed class Ea4eProtectedNetworkGrantStoreBootstrap : IDisposable
         try
         {
             db.Execute("BEGIN IMMEDIATE");
-            db.Execute("CREATE TABLE protected_grant_metadata (" +
-                "schema_id TEXT NOT NULL,store_id TEXT NOT NULL," +
-                "epoch TEXT NOT NULL,generation TEXT NOT NULL," +
-                "state_hash TEXT NOT NULL)");
-            db.Execute("CREATE TABLE protected_grant_events (" +
-                "generation INTEGER PRIMARY KEY,event_hash TEXT NOT NULL," +
-                "prior_hash TEXT NOT NULL,state_hash TEXT NOT NULL)");
-            db.Execute("CREATE TABLE protected_grant_rows (" +
-                "grant_id TEXT PRIMARY KEY,nonce TEXT NOT NULL UNIQUE," +
-                "attempt_id TEXT NOT NULL UNIQUE,artifact_hash TEXT NOT NULL," +
-                "state TEXT NOT NULL,one_attempt_budget TEXT NOT NULL)");
+            db.Execute(MetadataDdl);
+            db.Execute(EventsDdl);
+            db.Execute(RowsDdl);
             using (var insert = db.Prepare(
                 "INSERT INTO protected_grant_metadata VALUES (?,?,?,?,?)"))
             {
@@ -102,6 +130,7 @@ internal sealed class Ea4eProtectedNetworkGrantStoreBootstrap : IDisposable
         var db = new Ea4eProtectedSqlite(path);
         try
         {
+            VerifySchema(db);
             string storeId, epochText, generation, stateHash;
             using (var read = db.Prepare(
                 "SELECT schema_id,store_id,epoch,generation,state_hash " +
@@ -139,6 +168,34 @@ internal sealed class Ea4eProtectedNetworkGrantStoreBootstrap : IDisposable
         catch
         {
             db.Dispose();
+            throw;
+        }
+    }
+
+    // The caller must source these expectations outside the store and anchor.
+    internal static Ea4eProtectedNetworkGrantStoreBootstrap OpenExpected(
+        string path, string anchor, string expectedStoreId, int expectedEpoch)
+    {
+        if (expectedStoreId == null || !Hex.IsMatch(expectedStoreId)
+            || expectedEpoch < 1)
+            throw new InvalidOperationException("Expected protected store identity denied");
+        var store = Open(path, anchor);
+        try
+        {
+            using (var read = store.db.Prepare(
+                "SELECT store_id,epoch FROM protected_grant_metadata"))
+            {
+                if (!read.Step() || read.Text(0) != expectedStoreId
+                    || read.Text(1) != expectedEpoch.ToString(
+                        System.Globalization.CultureInfo.InvariantCulture)
+                    || read.Step())
+                    throw new InvalidOperationException("Protected store substitution denied");
+            }
+            return store;
+        }
+        catch
+        {
+            store.Dispose();
             throw;
         }
     }

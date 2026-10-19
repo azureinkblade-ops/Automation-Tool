@@ -18,6 +18,12 @@ internal static class Ea4e92NqProtectedStoreBootstrapProbe
                     args[1], args[2])) { }
                 return 0;
             }
+            if (args.Length == 5 && args[0] == "expected")
+            {
+                using (Ea4eProtectedNetworkGrantStoreBootstrap.OpenExpected(
+                    args[1], args[2], args[3], Int32.Parse(args[4]))) { }
+                return 0;
+            }
         }
         catch (Exception error)
         {
