@@ -8,7 +8,12 @@ using Microsoft.Win32.SafeHandles;
 internal static class Ea4eProtectedPipeReadbackCandidate
 {
     private const int SeKernelObject = 6;
-    private const uint OwnerGroupDaclSacl = 0x0000000f;
+    private const uint OwnerGroupDaclSaclLabel = 0x0000001f;
+
+    internal static uint RequestedSecurityInformation()
+    {
+        return OwnerGroupDaclSaclLabel;
+    }
 
     [DllImport("advapi32.dll", ExactSpelling = true)]
     private static extern uint GetSecurityInfo(
@@ -95,7 +100,7 @@ internal static class Ea4eProtectedPipeReadbackCandidate
         try
         {
             uint status = GetSecurityInfo(handle, SeKernelObject,
-                OwnerGroupDaclSacl, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero,
+                RequestedSecurityInformation(), IntPtr.Zero, IntPtr.Zero, IntPtr.Zero,
                 IntPtr.Zero, out descriptor);
             if (status == 5) return "DENY:READBACK_ACCESS_DENIED";
             if (status == 1314) return "DENY:READBACK_PRIVILEGE_NOT_HELD";

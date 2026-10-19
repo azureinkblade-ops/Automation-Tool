@@ -142,6 +142,12 @@ internal static class Ea4e92nvNativePipeReadbackProbe
             Console.WriteLine("SOURCE_ONLY:ONE_PIPE_READBACK_NO_CLIENT");
             return 0;
         }
+        if (args.Length == 1 && args[0] == "--readback-flags")
+        {
+            Console.WriteLine(Ea4eProtectedPipeReadbackCandidate
+                .RequestedSecurityInformation().ToString("x8"));
+            return 0;
+        }
         if (args.Length == 2 && args[0] == "--classify-readback")
             return ReadbackExit(args[1]);
         if (args.Length != 5 || args[0] != "--native-readback")

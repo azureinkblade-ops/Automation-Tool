@@ -43,6 +43,15 @@ def test_inert_description(executable):
     assert result.stdout.strip() == "SOURCE_ONLY:ONE_PIPE_READBACK_NO_CLIENT"
 
 
+def test_readback_requests_mandatory_label_without_native_call(executable):
+    result = subprocess.run(
+        [str(executable), "--readback-flags"], capture_output=True,
+        text=True, timeout=10, check=False,
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip() == "0000001f"
+
+
 @pytest.mark.parametrize("args", [[], ["--native-readback"], ["--unknown"]])
 def test_incomplete_cli_denied_without_native_call(executable, args):
     result = subprocess.run(
