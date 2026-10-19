@@ -4,6 +4,16 @@ using Microsoft.Win32.SafeHandles;
 
 internal static class Ea4ePipeClientPathObservationCandidate
 {
+    internal static string DenialForKernelClient(
+        SafePipeHandle pipe, string expectedAppSid, string path,
+        string protectedRoot, string expectedSha256)
+    {
+        return Ea4ePipeClientProcessLeaseCandidate.Denial(
+            pipe, (process, processId, creationTime) =>
+                Denial(pipe, process, expectedAppSid, path,
+                       protectedRoot, expectedSha256));
+    }
+
     internal static string Denial(
         SafePipeHandle pipe, IntPtr expectedProcess, string expectedAppSid,
         string path, string protectedRoot, string expectedSha256)

@@ -19,6 +19,7 @@ def executable(tmp_path_factory):
     target = tmp_path_factory.mktemp("pipe-client-path") / "probe.exe"
     sources = [
         "Ea4ePipeClientProcessCandidate.cs",
+        "Ea4ePipeClientProcessLeaseCandidate.cs",
         "Ea4ePipeClientTokenCandidate.cs",
         "Ea4eProtectedPathTopologyCandidate.cs",
         "Ea4eProtectedByteSnapshotCandidate.cs",
@@ -36,7 +37,9 @@ def executable(tmp_path_factory):
     return target
 
 
-@pytest.mark.parametrize("mode", ["WRITABLE", "WRONG_SID", "WRONG_PROCESS",
+@pytest.mark.parametrize("mode", ["WRITABLE", "KERNEL_WRITABLE",
+                                        "KERNEL_WRONG_SID",
+                                        "WRONG_SID", "WRONG_PROCESS",
                                         "BAD_HASH", "MISSING"])
 def test_bound_client_path_observation_denies_without_authority(
     executable, tmp_path, mode,
@@ -54,6 +57,8 @@ def test_bound_client_path_observation_denies_without_authority(
     assert result.returncode == 1, result.stdout + result.stderr
     expected = {
         "WRITABLE": {"DENY:APP_OWNS_OBJECT", "DENY:APP_MUTATION_RIGHTS"},
+        "KERNEL_WRITABLE": {"DENY:APP_OWNS_OBJECT", "DENY:APP_MUTATION_RIGHTS"},
+        "KERNEL_WRONG_SID": {"DENY:CLIENT_SID_MISMATCH"},
         "WRONG_SID": {"DENY:CLIENT_SID_MISMATCH"},
         "WRONG_PROCESS": {"DENY:CLIENT_PROCESS_MISMATCH"},
         "BAD_HASH": {"DENY:EXPECTED_HASH_INVALID"},

@@ -11,7 +11,8 @@ internal static class Ea4e92mzPipeClientPathProbe
     {
         if (args.Length < 3 || args.Length > 4) return 2;
         string mode = args[0];
-        string expectedSid = mode == "WRONG_SID" ? "S-1-5-18"
+        string expectedSid = mode == "WRONG_SID" || mode == "KERNEL_WRONG_SID"
+            ? "S-1-5-18"
             : WindowsIdentity.GetCurrent().User.Value;
         string expectedHash = mode == "BAD_HASH" ? "not-a-hash" : null;
         string name = "ea4e92mz-" + Guid.NewGuid().ToString("N");
@@ -44,10 +45,14 @@ internal static class Ea4e92mzPipeClientPathProbe
             string denial;
             try
             {
-                denial = Ea4ePipeClientPathObservationCandidate.Denial(
-                    server.SafePipeHandle,
-                    other == null ? current.Handle : other.Handle,
-                    expectedSid, args[1], args[2], expectedHash);
+                denial = mode == "KERNEL_WRITABLE" || mode == "KERNEL_WRONG_SID"
+                    ? Ea4ePipeClientPathObservationCandidate.DenialForKernelClient(
+                        server.SafePipeHandle, expectedSid,
+                        args[1], args[2], expectedHash)
+                    : Ea4ePipeClientPathObservationCandidate.Denial(
+                        server.SafePipeHandle,
+                        other == null ? current.Handle : other.Handle,
+                        expectedSid, args[1], args[2], expectedHash);
             }
             finally
             {
