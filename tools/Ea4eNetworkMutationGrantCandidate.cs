@@ -191,6 +191,7 @@ internal static class Ea4eNetworkMutationGrantCandidate
         internal readonly string NetworkName;
         internal readonly string StoreId;
         internal readonly int StoreEpoch;
+        internal readonly long IssuedAt;
         internal readonly long ExpiresAt;
 
         internal CompleteIdentity(IDictionary<string, object> grant)
@@ -202,6 +203,7 @@ internal static class Ea4eNetworkMutationGrantCandidate
             NetworkName = (string)grant["network_name"];
             StoreId = (string)grant["store_id"];
             StoreEpoch = checked((int)Number(grant["store_epoch"]));
+            IssuedAt = Number(grant["issued_at"]);
             ExpiresAt = Number(grant["expires_at"]);
         }
     }

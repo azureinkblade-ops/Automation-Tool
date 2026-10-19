@@ -1,5 +1,6 @@
 """Non-live v5 production-profile store qualification; no issuer or Docker."""
 
+from concurrent.futures import ThreadPoolExecutor
 import shutil
 import sqlite3
 import subprocess
@@ -80,12 +81,33 @@ def test_issue_claim_reopen_and_replay_denial(executable, store, tmp_path):
         ).fetchone() == ("UNCERTAIN",)
 
 
+def test_concurrent_claims_have_at_most_one_winner(executable, store, tmp_path):
+    grant = protected()
+    assert issue(executable, store, tmp_path).returncode == 0
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(
+            lambda _: call(executable, "claim", *store, grant["grant_id"], 1050),
+            range(2),
+        ))
+    assert sorted(result.returncode for result in results) == [0, 1]
+    assert call(executable, "open", *store).returncode == 0
+
+
 def test_revocation_and_expiry(executable, store, tmp_path):
     grant = protected()
     assert issue(executable, store, tmp_path).returncode == 0
     assert call(executable, "claim", *store, grant["grant_id"], 1100).returncode == 1
     assert call(executable, "revoke", *store, grant["grant_id"], 1050).returncode == 0
     assert call(executable, "claim", *store, grant["grant_id"], 1050).returncode == 1
+
+
+def test_preissuance_time_denied_for_claim_and_revocation(executable, store, tmp_path):
+    grant = protected()
+    assert issue(executable, store, tmp_path).returncode == 0
+    assert call(executable, "claim", *store, grant["grant_id"], 999).returncode == 1
+    assert call(executable, "revoke", *store, grant["grant_id"], 999).returncode == 1
+    assert call(executable, "open", *store).returncode == 0
+    assert call(executable, "claim", *store, grant["grant_id"], 1000).returncode == 0
 
 
 def test_fake_grant_and_store_identity_denied(executable, store, tmp_path):

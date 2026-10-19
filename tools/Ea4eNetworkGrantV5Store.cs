@@ -430,7 +430,7 @@ internal sealed class Ea4eNetworkGrantV5Store : IDisposable
                     string artifact = read.Text(0);
                     var identity = Ea4eNetworkMutationGrantCandidate.ReadProtectedIdentity(
                         Encoding.ASCII.GetBytes(artifact));
-                    if (identity.GrantId != grantId ||
+                    if (identity.GrantId != grantId || now < identity.IssuedAt ||
                         (next == "CLAIMED" && now >= identity.ExpiresAt))
                         throw new InvalidOperationException("Grant expired or drifted");
                 }
