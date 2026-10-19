@@ -97,9 +97,12 @@ internal static class Ea4eProtectedPipeReadbackCandidate
             uint status = GetSecurityInfo(handle, SeKernelObject,
                 OwnerGroupDaclSacl, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero,
                 IntPtr.Zero, out descriptor);
-            if (status != 0 || descriptor == IntPtr.Zero
-                || !IsValidSecurityDescriptor(descriptor))
-                return "DENY:NATIVE_READBACK";
+            if (status == 5) return "DENY:READBACK_ACCESS_DENIED";
+            if (status == 1314) return "DENY:READBACK_PRIVILEGE_NOT_HELD";
+            if (status != 0) return "DENY:READBACK_API_ERROR";
+            if (descriptor == IntPtr.Zero) return "DENY:READBACK_NULL_DESCRIPTOR";
+            if (!IsValidSecurityDescriptor(descriptor))
+                return "DENY:READBACK_INVALID_DESCRIPTOR";
             uint length = GetSecurityDescriptorLength(descriptor);
             if (length < 20 || length > 8192)
                 return "DENY:DESCRIPTOR_SIZE";

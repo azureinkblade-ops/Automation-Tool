@@ -142,6 +142,8 @@ internal static class Ea4e92nvNativePipeReadbackProbe
             Console.WriteLine("SOURCE_ONLY:ONE_PIPE_READBACK_NO_CLIENT");
             return 0;
         }
+        if (args.Length == 2 && args[0] == "--classify-readback")
+            return ReadbackExit(args[1]);
         if (args.Length != 5 || args[0] != "--native-readback")
             return 2;
 
@@ -180,7 +182,7 @@ internal static class Ea4e92nvNativePipeReadbackProbe
                 stage = "PRIVILEGE_RESTORE";
             }
             if (readback != "CANDIDATE:READBACK_STRUCTURE_ONLY")
-                return Deny("READBACK");
+                return ReadbackExit(readback);
             Console.WriteLine("CANDIDATE:READBACK_ONLY:" + name);
             return 0;
         }
@@ -189,7 +191,33 @@ internal static class Ea4e92nvNativePipeReadbackProbe
             if (error is OutOfMemoryException || error is StackOverflowException)
                 throw;
             return Deny(error is PrivilegeRestoreFailure
-                ? "PRIVILEGE_RESTORE" : stage);
+                ? "PRIVILEGE_RESTORE" : stage == "READBACK"
+                    ? "READBACK_EXCEPTION" : stage);
+        }
+    }
+
+    private static int ReadbackExit(string result)
+    {
+        Console.WriteLine(result);
+        switch (result)
+        {
+            case "DENY:READBACK_ACCESS_DENIED": return 18;
+            case "DENY:READBACK_PRIVILEGE_NOT_HELD": return 19;
+            case "DENY:READBACK_API_ERROR": return 20;
+            case "DENY:READBACK_NULL_DESCRIPTOR": return 21;
+            case "DENY:READBACK_INVALID_DESCRIPTOR": return 22;
+            case "DENY:DESCRIPTOR_SIZE": return 23;
+            case "DENY:OWNER_GROUP_OR_ACE_COUNT": return 24;
+            case "DENY:UNREVIEWED_ACE": return 25;
+            case "DENY:APP_ACE": return 26;
+            case "DENY:DUPLICATE_SYSTEM_ACE": return 27;
+            case "DENY:DUPLICATE_ADMIN_ACE": return 28;
+            case "DENY:FOREIGN_ACE": return 29;
+            case "DENY:REQUIRED_ACE_MISSING": return 30;
+            case "DENY:DESCRIPTOR_SCREEN": return 31;
+            case "DENY:INVALID_DESCRIPTOR": return 32;
+            case "DENY:INVALID_HANDLE": return 33;
+            default: return 35;
         }
     }
 
@@ -205,6 +233,7 @@ internal static class Ea4e92nvNativePipeReadbackProbe
             case "PIPE_CREATE": return 14;
             case "READBACK": return 15;
             case "PRIVILEGE_RESTORE": return 16;
+            case "READBACK_EXCEPTION": return 34;
             default: return 17;
         }
     }

@@ -70,3 +70,31 @@ def test_preflight_denies_without_native_call(executable, ceremony,
     )
     assert result.returncode == exit_code
     assert result.stdout.strip() == denial
+
+
+@pytest.mark.parametrize("denial,exit_code", [
+    ("DENY:READBACK_ACCESS_DENIED", 18),
+    ("DENY:READBACK_PRIVILEGE_NOT_HELD", 19),
+    ("DENY:READBACK_API_ERROR", 20),
+    ("DENY:READBACK_NULL_DESCRIPTOR", 21),
+    ("DENY:READBACK_INVALID_DESCRIPTOR", 22),
+    ("DENY:DESCRIPTOR_SIZE", 23),
+    ("DENY:OWNER_GROUP_OR_ACE_COUNT", 24),
+    ("DENY:UNREVIEWED_ACE", 25),
+    ("DENY:APP_ACE", 26),
+    ("DENY:DUPLICATE_SYSTEM_ACE", 27),
+    ("DENY:DUPLICATE_ADMIN_ACE", 28),
+    ("DENY:FOREIGN_ACE", 29),
+    ("DENY:REQUIRED_ACE_MISSING", 30),
+    ("DENY:DESCRIPTOR_SCREEN", 31),
+    ("DENY:INVALID_DESCRIPTOR", 32),
+    ("DENY:INVALID_HANDLE", 33),
+    ("DENY:UNRECOGNIZED", 35),
+])
+def test_readback_exit_mapping_is_inert(executable, denial, exit_code):
+    result = subprocess.run(
+        [str(executable), "--classify-readback", denial],
+        capture_output=True, text=True, timeout=10, check=False,
+    )
+    assert result.returncode == exit_code
+    assert result.stdout.strip() == denial
