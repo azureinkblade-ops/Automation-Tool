@@ -101,3 +101,11 @@ def check_current_windows_operator_token(expected_sid: str) -> OperatorTokenChec
     if elevated is not True:
         return OperatorTokenCheck("DENY", "OPERATOR_TOKEN_NOT_ELEVATED")
     return OperatorTokenCheck("MATCH", "EXPECTED_ELEVATED_TOKEN_OBSERVED")
+
+
+def read_current_windows_account_sid() -> str:
+    """Observe the current process account without requiring elevation."""
+    sid, _ = _read_current_windows_token()
+    if type(sid) is not str or not _SID.fullmatch(sid):
+        raise OSError("Windows account SID is malformed")
+    return sid

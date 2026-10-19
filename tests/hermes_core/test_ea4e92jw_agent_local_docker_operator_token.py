@@ -37,3 +37,14 @@ def test_token_read_failure_denied(monkeypatch):
     assert token.check_current_windows_operator_token(SID).reason == (
         "WINDOWS_TOKEN_UNAVAILABLE"
     )
+
+
+def test_account_sid_reader_does_not_require_elevation(monkeypatch):
+    monkeypatch.setattr(token, "_read_current_windows_token", lambda: (SID, False))
+    assert token.read_current_windows_account_sid() == SID
+
+
+def test_account_sid_reader_denies_malformed_token(monkeypatch):
+    monkeypatch.setattr(token, "_read_current_windows_token", lambda: ("bad", True))
+    with pytest.raises(OSError, match="malformed"):
+        token.read_current_windows_account_sid()

@@ -94,3 +94,25 @@ def check_local_app_host(
             or observed_store != (policy.store_instance_id, policy.store_generation)):
         return deny("LOCAL_PROFILE_STORE_MISMATCH")
     return LocalAppHostDecision("MATCH", "LOCAL_PROFILE_CONTEXT_ONLY")
+
+
+def check_current_local_app_host(
+    policy: LocalAppHostPolicy,
+    request: LocalAppHostRequest,
+    store,
+) -> LocalAppHostDecision:
+    """Read this process account and one verified durable-store identity."""
+    from tools.hermes_core.agent_local_docker_operator_token import (
+        read_current_windows_account_sid,
+    )
+
+    def read_store_identity():
+        with store._connection() as connection:
+            return store._verify_store_identity(connection)
+
+    return check_local_app_host(
+        policy,
+        request,
+        account_reader=read_current_windows_account_sid,
+        store_reader=read_store_identity if store is not None else None,
+    )

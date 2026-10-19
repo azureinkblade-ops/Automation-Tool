@@ -8,6 +8,7 @@ from tools.hermes_core.local_container_app_host_admission import (
     LocalAppHostPolicy,
     LocalAppHostRequest,
     check_local_app_host,
+    check_current_local_app_host,
 )
 
 
@@ -99,4 +100,65 @@ def test_observer_failure_denied(context):
 
     assert assess(context, account_reader=fail).reason == (
         "LOCAL_PROFILE_OBSERVATION_UNAVAILABLE"
+    )
+
+
+def test_current_observation_adapter_is_read_only(context, monkeypatch):
+    from tools.hermes_core import agent_local_docker_operator_token as token
+
+    class Store:
+        reads = 0
+
+        def _connection(self):
+            class Connection:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_):
+                    return None
+
+            return Connection()
+
+        def _verify_store_identity(self, _connection):
+            self.reads += 1
+            return STORE_ID, 4
+
+    monkeypatch.setattr(token, "read_current_windows_account_sid", lambda: SID)
+    store = Store()
+    assert check_current_local_app_host(*context, store).reason == (
+        "LOCAL_PROFILE_CONTEXT_ONLY"
+    )
+    assert store.reads == 1
+
+
+def test_current_observation_adapter_denies_missing_store(context, monkeypatch):
+    from tools.hermes_core import agent_local_docker_operator_token as token
+
+    monkeypatch.setattr(token, "read_current_windows_account_sid", lambda: SID)
+    assert check_current_local_app_host(*context, None).reason == (
+        "LOCAL_PROFILE_OBSERVER_MISSING"
+    )
+    assert check_current_local_app_host(*context, object()).reason == (
+        "LOCAL_PROFILE_OBSERVATION_UNAVAILABLE"
+    )
+
+
+def test_current_observation_adapter_reads_durable_store_once(tmp_path, monkeypatch):
+    from tools.hermes_core import agent_local_docker_operator_token as token
+    from tools.hermes_core.durable_invocation_authorization_store import (
+        DurableInvocationAuthorizationStore,
+    )
+
+    store = DurableInvocationAuthorizationStore.initialize(
+        tmp_path / "auth.sqlite3", anchor_path=tmp_path / "auth.anchor"
+    )
+    with store._connection() as connection:
+        store_id, generation = store._verify_store_identity(connection)
+    policy = LocalAppHostPolicy(
+        APP_ID, SID, store_id, generation, COMMIT, enabled=True
+    )
+    request = LocalAppHostRequest(APP_ID, store_id, generation, COMMIT)
+    monkeypatch.setattr(token, "read_current_windows_account_sid", lambda: SID)
+    assert check_current_local_app_host(policy, request, store).reason == (
+        "LOCAL_PROFILE_CONTEXT_ONLY"
     )
