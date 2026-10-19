@@ -4,6 +4,24 @@ using Microsoft.Win32.SafeHandles;
 
 internal static class Ea4ePipeClientPathObservationCandidate
 {
+    internal static string DenialForExpectedKernelClient(
+        SafePipeHandle pipe, uint expectedProcessId, long expectedCreationTime,
+        string expectedAppSid, string path, string protectedRoot,
+        string expectedSha256)
+    {
+        if (expectedProcessId == 0 || expectedCreationTime <= 0)
+            return "EXPECTED_APP_PROCESS_INVALID";
+        return Ea4ePipeClientProcessLeaseCandidate.Denial(
+            pipe, (process, processId, creationTime) =>
+            {
+                if (processId != expectedProcessId
+                    || creationTime != expectedCreationTime)
+                    return "APP_PROCESS_IDENTITY_MISMATCH";
+                return Denial(pipe, process, expectedAppSid, path,
+                              protectedRoot, expectedSha256);
+            });
+    }
+
     internal static string DenialForKernelClient(
         SafePipeHandle pipe, string expectedAppSid, string path,
         string protectedRoot, string expectedSha256)

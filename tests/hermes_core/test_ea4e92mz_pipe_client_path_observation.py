@@ -40,7 +40,9 @@ def executable(tmp_path_factory):
 @pytest.mark.parametrize("mode", ["WRITABLE", "KERNEL_WRITABLE",
                                         "KERNEL_WRONG_SID",
                                         "WRONG_SID", "WRONG_PROCESS",
-                                        "BAD_HASH", "MISSING"])
+                                        "BAD_HASH", "MISSING",
+                                        "EXPECTED_WRITABLE", "EXPECTED_WRONG_PID",
+                                        "EXPECTED_WRONG_TIME", "EXPECTED_ZERO_TIME"])
 def test_bound_client_path_observation_denies_without_authority(
     executable, tmp_path, mode,
 ):
@@ -63,5 +65,9 @@ def test_bound_client_path_observation_denies_without_authority(
         "WRONG_PROCESS": {"DENY:CLIENT_PROCESS_MISMATCH"},
         "BAD_HASH": {"DENY:EXPECTED_HASH_INVALID"},
         "MISSING": {"DENY:OPEN_DENIED"},
+        "EXPECTED_WRITABLE": {"DENY:APP_OWNS_OBJECT", "DENY:APP_MUTATION_RIGHTS"},
+        "EXPECTED_WRONG_PID": {"DENY:APP_PROCESS_IDENTITY_MISMATCH"},
+        "EXPECTED_WRONG_TIME": {"DENY:APP_PROCESS_IDENTITY_MISMATCH"},
+        "EXPECTED_ZERO_TIME": {"DENY:EXPECTED_APP_PROCESS_INVALID"},
     }
     assert result.stdout.strip() in expected[mode]

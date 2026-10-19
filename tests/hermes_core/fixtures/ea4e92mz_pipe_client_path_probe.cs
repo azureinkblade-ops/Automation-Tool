@@ -45,7 +45,17 @@ internal static class Ea4e92mzPipeClientPathProbe
             string denial;
             try
             {
-                denial = mode == "KERNEL_WRITABLE" || mode == "KERNEL_WRONG_SID"
+                denial = mode.StartsWith("EXPECTED_", StringComparison.Ordinal)
+                    ? Ea4ePipeClientPathObservationCandidate.DenialForExpectedKernelClient(
+                        server.SafePipeHandle,
+                        mode == "EXPECTED_WRONG_PID" ? (uint)current.Id + 1u
+                            : (uint)current.Id,
+                        mode == "EXPECTED_WRONG_TIME"
+                            ? current.StartTime.ToUniversalTime().ToFileTimeUtc() + 1
+                            : mode == "EXPECTED_ZERO_TIME" ? 0
+                            : current.StartTime.ToUniversalTime().ToFileTimeUtc(),
+                        expectedSid, args[1], args[2], expectedHash)
+                    : mode == "KERNEL_WRITABLE" || mode == "KERNEL_WRONG_SID"
                     ? Ea4ePipeClientPathObservationCandidate.DenialForKernelClient(
                         server.SafePipeHandle, expectedSid,
                         args[1], args[2], expectedHash)
