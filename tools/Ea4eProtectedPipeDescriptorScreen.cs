@@ -38,6 +38,8 @@ internal static class Ea4eProtectedPipeDescriptorScreen
         if (descriptor.DiscretionaryAcl == null ||
             (descriptor.ControlFlags & ControlFlags.DiscretionaryAclProtected) == 0)
             return "DENY:DACL_MISSING_OR_UNPROTECTED";
+        if (!HasExactMediumLabel(descriptor))
+            return "DENY:LABEL_MISSING_OR_UNREVIEWED";
 
         bool appWrite = false;
         foreach (GenericAce ace in descriptor.DiscretionaryAcl)
@@ -79,5 +81,28 @@ internal static class Ea4eProtectedPipeDescriptorScreen
             sid.IsWellKnown(WellKnownSidType.BuiltinUsersSid) ||
             sid.IsWellKnown(WellKnownSidType.InteractiveSid) ||
             sid.IsWellKnown(WellKnownSidType.CreatorOwnerSid);
+    }
+
+    private static bool HasExactMediumLabel(RawSecurityDescriptor descriptor)
+    {
+        if (descriptor.SystemAcl == null || descriptor.SystemAcl.Count != 1)
+            return false;
+        CustomAce label = descriptor.SystemAcl[0] as CustomAce;
+        if (label == null || (byte)label.AceType != 0x11 ||
+            label.AceFlags != AceFlags.None)
+            return false;
+        byte[] opaque = label.GetOpaque();
+        if (opaque.Length < 12 || BitConverter.ToUInt32(opaque, 0) != 1)
+            return false;
+        try
+        {
+            SecurityIdentifier sid = new SecurityIdentifier(opaque, 4);
+            return opaque.Length == 4 + sid.BinaryLength &&
+                sid.Value == "S-1-16-8192";
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
     }
 }

@@ -10,7 +10,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 CSC = Path(r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe")
 APP = "S-1-5-21-1-2-3-1001"
-BASE = "O:BAG:BAD:P(A;;0x00000002;;;" + APP + ")(A;;GA;;;SY)(A;;GA;;;BA)"
+BASE = ("O:BAG:BAD:P(A;;0x00000002;;;" + APP + ")"
+        "(A;;GA;;;SY)(A;;GA;;;BA)S:(ML;;NW;;;ME)")
 
 
 @pytest.fixture(scope="module")
@@ -62,7 +63,8 @@ def test_narrow_candidate_remains_static_only(executable):
      "DENY:UNTRUSTED_MUTATION_GRANT"),
     (BASE.replace("(A;;GA;;;SY)", "(A;;0x00000004;;;S-1-5-21-1-2-3-2002)"),
      "DENY:UNTRUSTED_MUTATION_GRANT"),
-    (BASE + "(A;;0x00000002;;;" + APP + ")", "DENY:APP_GRANT_NOT_EXACT"),
+    (BASE.replace("S:(ML", "(A;;0x00000002;;;" + APP + ")S:(ML"),
+     "DENY:APP_GRANT_NOT_EXACT"),
     (BASE.replace("(A;;GA;;;SY)", "(A;CI;0x2;;;SY)"), "DENY:UNREVIEWED_ACE"),
 ])
 def test_descriptor_cases(executable, sddl, expected):
@@ -72,6 +74,17 @@ def test_descriptor_cases(executable, sddl, expected):
 def test_invalid_inputs(executable):
     assert screen(executable, "not-sddl") == "DENY:INVALID_INPUT"
     assert screen(executable, BASE, "not-sid") == "DENY:INVALID_INPUT"
+
+
+@pytest.mark.parametrize("sddl", [
+    BASE.replace("S:(ML;;NW;;;ME)", ""),
+    BASE.replace("S:(ML;;NW;;;ME)", "S:(ML;;NW;;;HI)"),
+    BASE.replace("S:(ML;;NW;;;ME)", "S:(ML;;NW;;;LW)"),
+    BASE.replace("S:(ML;;NW;;;ME)", "S:(ML;;NR;;;ME)"),
+    BASE.replace("S:(ML;;NW;;;ME)", "S:(ML;;NW;;;ME)(ML;;NW;;;ME)"),
+])
+def test_missing_or_changed_mandatory_label_denied(executable, sddl):
+    assert screen(executable, sddl) == "DENY:LABEL_MISSING_OR_UNREVIEWED"
 
 
 @pytest.mark.parametrize("app", ["WD", "AU", "BU", "IU", "CO", "SY", "BA"])

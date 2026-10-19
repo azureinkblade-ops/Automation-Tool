@@ -16,9 +16,9 @@ medium callers. The label must not be low, absent, or silently defaulted.
 The source-only proposed SACL fragment is `S:(ML;;NW;;;ME)`, with expected
 readback SID `S-1-16-8192` and policy `0x00000001`. It is a proposal for
 native qualification, not a claim that the elevated creator can set it on
-the pipe or that the limited app can then connect. The source-only 92NL
-screen does not inspect this SACL, and its `CANDIDATE:STATIC_ONLY` result
-must not be used to infer this requirement passed.
+the pipe or that the limited app can then connect. At the 92NM checkpoint,
+the source-only 92NL screen did not inspect this SACL; the following 92NN
+checkpoint adds that static check. Neither result proves the created pipe.
 
 Before a protected issuer can qualify, freeze the complete owner/DACL/SACL
 descriptor and creation flags, compile and hash the exact candidate binary,
