@@ -5,6 +5,7 @@ from dataclasses import replace
 import pytest
 
 from tools.ea4e92lq_app_instance_owner import (
+    AppChallengeObservation,
     AppInstanceDenied,
     AppInstanceOwner,
     AppInstanceUnknown,
@@ -194,18 +195,33 @@ class FakePackageApi:
         return self.observation
 
 
+CHALLENGE = AppChallengeObservation(INSTANCE_ID, 202, 303, True)
+
+
+class FakeChallengeApi:
+    def __init__(self, observation=CHALLENGE):
+        self.observation = observation
+        self.receipts = []
+
+    def observe_challenge(self, receipt):
+        self.receipts.append(receipt)
+        return self.observation
+
+
 def test_kernel_query_uses_retained_handle_not_launcher_observation():
     launcher = FakeLauncher(observation=None)
     api = FakeProcessApi()
     package_api = FakePackageApi()
+    challenge_api = FakeChallengeApi()
     subject = AppInstanceOwner(
         launcher, launcher_instance_id=LAUNCHER_ID,
         package_sha256=PACKAGE, process_api=api,
-        package_api=package_api)
+        package_api=package_api, challenge_api=challenge_api)
     subject.start()
     assert subject.resolve_live() is RECEIPT
-    assert api.queries == [101]
+    assert api.queries == [101, 101]
     assert package_api.receipts == [RECEIPT]
+    assert challenge_api.receipts == [RECEIPT]
     assert launcher.observations == []
 
 
@@ -222,7 +238,7 @@ def test_kernel_query_drift_or_malformed_result_fails_closed(query):
     subject = AppInstanceOwner(
         FakeLauncher(), launcher_instance_id=LAUNCHER_ID,
         package_sha256=PACKAGE, process_api=api,
-        package_api=FakePackageApi())
+        package_api=FakePackageApi(), challenge_api=FakeChallengeApi())
     subject.start()
     with pytest.raises(AppInstanceUnknown):
         subject.resolve_live()
@@ -234,7 +250,7 @@ def test_kernel_query_exit_closes_only_retained_handle():
     subject = AppInstanceOwner(
         FakeLauncher(), launcher_instance_id=LAUNCHER_ID,
         package_sha256=PACKAGE, process_api=api,
-        package_api=FakePackageApi())
+        package_api=FakePackageApi(), challenge_api=FakeChallengeApi())
     subject.start()
     with pytest.raises(AppInstanceDenied, match="exited"):
         subject.resolve_live()
@@ -255,7 +271,7 @@ def test_native_package_drift_denies_before_process_query(observation):
     subject = AppInstanceOwner(
         FakeLauncher(), launcher_instance_id=LAUNCHER_ID,
         package_sha256=PACKAGE, process_api=api,
-        package_api=package_api)
+        package_api=package_api, challenge_api=FakeChallengeApi())
     subject.start()
     with pytest.raises(AppInstanceUnknown):
         subject.resolve_live()
@@ -269,7 +285,7 @@ def test_native_package_is_reobserved_on_each_resolution():
     subject = AppInstanceOwner(
         FakeLauncher(), launcher_instance_id=LAUNCHER_ID,
         package_sha256=PACKAGE, process_api=FakeProcessApi(),
-        package_api=package_api)
+        package_api=package_api, challenge_api=FakeChallengeApi())
     subject.start()
     assert subject.resolve_live() is RECEIPT
     package_api.observation = AppPackageObservation("b" * 64, True)
@@ -278,12 +294,70 @@ def test_native_package_is_reobserved_on_each_resolution():
     assert len(package_api.receipts) == 2
 
 
+@pytest.mark.parametrize("observation", [
+    None,
+    replace(CHALLENGE, app_instance_nonce=LAUNCHER_ID),
+    replace(CHALLENGE, process_id=203),
+    replace(CHALLENGE, process_creation_time_100ns=304),
+    replace(CHALLENGE, complete=False),
+    replace(CHALLENGE, complete=1),
+])
+def test_native_challenge_mismatch_denies_without_receipt(observation):
+    challenge_api = FakeChallengeApi(observation)
+    api = FakeProcessApi()
+    subject = AppInstanceOwner(
+        FakeLauncher(), launcher_instance_id=LAUNCHER_ID,
+        package_sha256=PACKAGE, process_api=api,
+        package_api=FakePackageApi(), challenge_api=challenge_api)
+    subject.start()
+    with pytest.raises(AppInstanceUnknown):
+        subject.resolve_live()
+    assert subject.state == "UNKNOWN"
+    assert challenge_api.receipts == [RECEIPT]
+    assert api.queries == [101]
+
+
+def test_process_exit_during_challenge_denies():
+    api = FakeProcessApi()
+    observations = iter((ProcessQuery(202, 303, True),
+                         ProcessQuery(202, 303, False)))
+    api.query_process = lambda handle: next(observations)
+    subject = AppInstanceOwner(
+        FakeLauncher(), launcher_instance_id=LAUNCHER_ID,
+        package_sha256=PACKAGE, process_api=api,
+        package_api=FakePackageApi(), challenge_api=FakeChallengeApi())
+    subject.start()
+    with pytest.raises(AppInstanceUnknown):
+        subject.resolve_live()
+    assert subject.state == "UNKNOWN"
+
+
+def test_challenge_exception_denies_without_retry():
+    challenge_api = FakeChallengeApi()
+    def unavailable(receipt):
+        raise OSError("challenge unavailable")
+    challenge_api.observe_challenge = unavailable
+    subject = AppInstanceOwner(
+        FakeLauncher(), launcher_instance_id=LAUNCHER_ID,
+        package_sha256=PACKAGE, process_api=FakeProcessApi(),
+        package_api=FakePackageApi(), challenge_api=challenge_api)
+    subject.start()
+    with pytest.raises(AppInstanceUnknown):
+        subject.resolve_live()
+    with pytest.raises(AppInstanceDenied):
+        subject.resolve_live()
+
+
 @pytest.mark.parametrize("options", [
     {},
     {"process_api": FakeProcessApi()},
     {"package_api": FakePackageApi()},
+    {"process_api": FakeProcessApi(), "package_api": FakePackageApi()},
+    {"process_api": FakeProcessApi(), "challenge_api": FakeChallengeApi()},
+    {"package_api": FakePackageApi(), "challenge_api": FakeChallengeApi()},
     {"fake_only": True, "process_api": FakeProcessApi(),
      "package_api": FakePackageApi()},
+    {"fake_only": True, "challenge_api": FakeChallengeApi()},
 ])
 def test_owner_requires_explicit_native_pair_or_fake_mode(options):
     with pytest.raises(AppInstanceDenied, match="dependencies missing"):

@@ -46,6 +46,14 @@ class AppPackageObservation:
     complete: bool
 
 
+@dataclass(frozen=True)
+class AppChallengeObservation:
+    app_instance_nonce: str
+    process_id: int
+    process_creation_time_100ns: int
+    complete: bool
+
+
 def _uuid(value):
     if type(value) is not str:
         return False
@@ -62,23 +70,27 @@ def _positive(value, maximum):
 class AppInstanceOwner:
     """Retain one collaborator-returned receipt and deny ambiguous transitions.
 
-    The collaborator must be an independently trusted native launcher before
-    this state machine can contribute to any production authority decision.
+    The launcher and challenge observer must be independently trusted native
+    components before this state machine can contribute to production authority.
     """
 
     def __init__(self, launcher, *, launcher_instance_id, package_sha256,
-                 process_api=None, package_api=None, fake_only=False):
+                 process_api=None, package_api=None, challenge_api=None,
+                 fake_only=False):
         if not _uuid(launcher_instance_id):
             raise AppInstanceDenied("launcher identity malformed")
         if type(package_sha256) is not str or not _SHA256.fullmatch(package_sha256):
             raise AppInstanceDenied("package identity malformed")
         if type(fake_only) is not bool or (
-                fake_only and (process_api is not None or package_api is not None)
-        ) or (not fake_only and (process_api is None or package_api is None)):
+                fake_only and (process_api is not None or package_api is not None
+                               or challenge_api is not None)
+        ) or (not fake_only and (process_api is None or package_api is None
+                                or challenge_api is None)):
             raise AppInstanceDenied("app owner observation dependencies missing")
         self._launcher = launcher
         self._process_api = process_api
         self._package_api = package_api
+        self._challenge_api = challenge_api
         self.launcher_instance_id = launcher_instance_id
         self.package_sha256 = package_sha256
         self.state = "NEW"
@@ -127,9 +139,24 @@ class AppInstanceOwner:
                         or type(process.creation_time_100ns) is not int
                         or type(process.present) is not bool):
                     raise ValueError("kernel process observation malformed")
+                observed_nonce = receipt.app_instance_nonce
+                if process.present:
+                    challenge = self._challenge_api.observe_challenge(receipt)
+                    if (type(challenge) is not AppChallengeObservation
+                            or challenge.complete is not True
+                            or challenge.app_instance_nonce != receipt.app_instance_nonce
+                            or challenge.process_id != receipt.process_id
+                            or challenge.process_creation_time_100ns
+                            != receipt.process_creation_time_100ns):
+                        raise ValueError("app challenge observation mismatch")
+                    after_challenge = self._process_api.query_process(
+                        receipt.process_handle)
+                    if after_challenge != process:
+                        raise ValueError("process drifted during challenge")
+                    observed_nonce = challenge.app_instance_nonce
                 observation = AppProcessObservation(
                     receipt.process_handle, process.process_id,
-                    receipt.app_instance_nonce, receipt.package_sha256,
+                    observed_nonce, receipt.package_sha256,
                     process.present, process.creation_time_100ns)
         except BaseException as error:
             self.state = "UNKNOWN"
