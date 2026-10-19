@@ -108,6 +108,30 @@ def test_file_directory_manifest_collision_denied(executable, tmp_path):
     assert result.stdout.strip() == "DENY:EXPECTED_MANIFEST_INVALID"
 
 
+def test_directory_case_collision_denied(executable, tmp_path):
+    root = package(tmp_path)
+    result = check(executable, root, ("tools/worker.py", b"worker"),
+                   ("TOOLS/other.py", b"other"))
+    assert result.returncode == 1
+    assert result.stdout.strip() == "DENY:EXPECTED_MANIFEST_INVALID"
+
+
+def test_file_case_mismatch_denied(executable, tmp_path):
+    root = package(tmp_path)
+    result = check(executable, root, ("App.py", b"app"),
+                   ("tools/worker.py", b"worker"))
+    assert result.returncode == 1
+    assert result.stdout.strip() == "DENY:UNEXPECTED_OR_DUPLICATE_FILE"
+
+
+def test_directory_case_mismatch_denied(executable, tmp_path):
+    root = package(tmp_path)
+    result = check(executable, root, ("app.py", b"app"),
+                   ("TOOLS/worker.py", b"worker"))
+    assert result.returncode == 1
+    assert result.stdout.strip() == "DENY:UNEXPECTED_DIRECTORY"
+
+
 def test_file_cannot_be_package_root(executable, tmp_path):
     root = package(tmp_path)
     result = check(executable, root / "app.py", ("app.py", b"app"))

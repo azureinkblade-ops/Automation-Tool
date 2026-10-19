@@ -40,7 +40,8 @@ internal static class Ea4ePackageClosureWalkCandidate
         if (expected == null || expected.Count == 0 || expected.Count > MaxEntries)
             return "EXPECTED_MANIFEST_INVALID";
         var wanted = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var wantedDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var wantedSpellings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var wantedDirectories = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (KeyValuePair<string, string> pair in expected)
         {
             if (!CanonicalRelative(pair.Key)
@@ -48,11 +49,19 @@ internal static class Ea4ePackageClosureWalkCandidate
                 || wanted.ContainsKey(pair.Key))
                 return "EXPECTED_MANIFEST_INVALID";
             wanted.Add(pair.Key, pair.Value);
+            wantedSpellings.Add(pair.Key, pair.Key);
             string[] parts = pair.Key.Split('/');
             for (int index = 1; index < parts.Length; index++)
-                wantedDirectories.Add(String.Join("/", parts, 0, index));
+            {
+                string directory = String.Join("/", parts, 0, index);
+                string prior;
+                if (wantedDirectories.TryGetValue(directory, out prior)
+                    && !String.Equals(directory, prior, StringComparison.Ordinal))
+                    return "EXPECTED_MANIFEST_INVALID";
+                wantedDirectories[directory] = directory;
+            }
         }
-        foreach (string directory in wantedDirectories)
+        foreach (string directory in wantedDirectories.Keys)
             if (wanted.ContainsKey(directory)) return "EXPECTED_MANIFEST_INVALID";
         if (String.IsNullOrEmpty(root)) return "ROOT_INVALID";
         string rootDenial = Ea4eProtectedPathTopologyCandidate.DenialDirectory(root);
@@ -81,7 +90,10 @@ internal static class Ea4ePackageClosureWalkCandidate
                     if (topology != null) return topology;
                     if (isDirectory)
                     {
-                        if (!wantedDirectories.Contains(relative))
+                        string expectedDirectory;
+                        if (!wantedDirectories.TryGetValue(relative, out expectedDirectory)
+                            || !String.Equals(relative, expectedDirectory,
+                                StringComparison.Ordinal))
                             return "UNEXPECTED_DIRECTORY";
                         if (directory.Item3 >= MaxDepth) return "DEPTH_LIMIT_EXCEEDED";
                         pending.Push(Tuple.Create(path, relative, directory.Item3 + 1));
@@ -89,7 +101,11 @@ internal static class Ea4ePackageClosureWalkCandidate
                     else if (File.Exists(path))
                     {
                         string digest;
+                        string expectedPath;
                         if (!wanted.TryGetValue(relative, out digest)
+                            || !wantedSpellings.TryGetValue(relative, out expectedPath)
+                            || !String.Equals(relative, expectedPath,
+                                StringComparison.Ordinal)
                             || !seen.Add(relative))
                             return "UNEXPECTED_OR_DUPLICATE_FILE";
                         string bytes = Ea4eProtectedByteSnapshotCandidate.Denial(path, digest);
