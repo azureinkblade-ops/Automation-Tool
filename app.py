@@ -43039,6 +43039,26 @@ _GOVERNED_PRODUCTION_ACTIVATION_AUTH_ISSUER = None
 _GOVERNED_PRODUCTION_DEPLOYMENT_OWNER = None
 _GOVERNED_AGENT_PING_RECOVERY_HOST = None
 _GOVERNED_AGENT_TEXT_RECOVERY_HOST = None
+_LOCAL_CONTAINER_APP_HOST_CONTEXT = None
+
+
+def configure_local_container_app_host(policy, store, *, enabled=False):
+    """Attach an explicit read-only local-profile context check."""
+    global _LOCAL_CONTAINER_APP_HOST_CONTEXT
+    _LOCAL_CONTAINER_APP_HOST_CONTEXT = (policy, store, enabled is True)
+
+
+def inspect_local_container_app_host(request):
+    """Inspect app/account/store context; never authorize execution."""
+    from tools.hermes_core.local_container_app_host_admission import (
+        LocalAppHostDecision,
+        check_current_local_app_host,
+    )
+
+    context = _LOCAL_CONTAINER_APP_HOST_CONTEXT
+    if context is None or context[2] is not True:
+        return LocalAppHostDecision("DENY", "LOCAL_PROFILE_DISABLED")
+    return check_current_local_app_host(context[0], request, context[1])
 
 
 def configure_governed_agent_ping_recovery(authority, start, captures, registry,
