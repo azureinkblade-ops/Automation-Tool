@@ -72,3 +72,12 @@ def test_descriptor_cases(executable, sddl, expected):
 def test_invalid_inputs(executable):
     assert screen(executable, "not-sddl") == "DENY:INVALID_INPUT"
     assert screen(executable, BASE, "not-sid") == "DENY:INVALID_INPUT"
+
+
+@pytest.mark.parametrize("app", ["WD", "AU", "BU", "IU", "CO", "SY", "BA"])
+def test_broad_or_privileged_identity_cannot_be_app(executable, app):
+    sid = {"WD": "S-1-1-0", "AU": "S-1-5-11", "BU": "S-1-5-32-545",
+           "IU": "S-1-5-4", "CO": "S-1-3-0", "SY": "S-1-5-18",
+           "BA": "S-1-5-32-544"}[app]
+    sddl = BASE.replace(APP, sid)
+    assert screen(executable, sddl, sid) == "DENY:APP_IDENTITY_NOT_INDIVIDUAL"

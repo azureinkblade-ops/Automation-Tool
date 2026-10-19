@@ -11,7 +11,7 @@ selected broad trustees, and mutation rights for non-SYSTEM/non-admin
 trustees. Unsupported ACE shapes fail closed. The only non-denial result is
 `CANDIDATE:STATIC_ONLY`, deliberately not PASS or AUTHORIZED.
 
-The 20 synthetic cases in
+The original 20 synthetic cases in
 `tests/hermes_core/test_ea4e92nl_descriptor_screen.py` compile the candidate
 with the installed .NET Framework C# compiler and exercise these rejections.
 They create no pipe, token, issuer, container, receiver, or model process.
@@ -19,6 +19,11 @@ They do not prove Windows effective access, trustee group membership, owner
 rights, mandatory integrity, deny-ACE effects, instance or remote flags,
 readback of a created object, or the final issuer SDDL. In particular,
 `CANDIDATE:STATIC_ONLY` may still be unusable or unsafe at runtime.
+
+Follow-up correction (92NL-1): reject broad/privileged identities as the
+claimed app SID and reject callback ACEs before considering an allow. The
+original commit remains in history; the corrected source/test matrix has
+27 cases and is qualified and checkpointed separately.
 
 This source screen cannot be used to issue authority or activate production.
 Next: freeze the exact owner/SDDL/label and native creator/client binary,

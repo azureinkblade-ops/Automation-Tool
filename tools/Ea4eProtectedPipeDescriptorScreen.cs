@@ -28,6 +28,11 @@ internal static class Ea4eProtectedPipeDescriptorScreen
             return "DENY:INVALID_INPUT";
         }
 
+        if (IsBroadTrustee(appSid) ||
+            appSid.IsWellKnown(WellKnownSidType.LocalSystemSid) ||
+            appSid.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid))
+            return "DENY:APP_IDENTITY_NOT_INDIVIDUAL";
+
         if (descriptor.Owner == null || descriptor.Owner.Equals(appSid))
             return "DENY:APP_OWNER_OR_OWNER_MISSING";
         if (descriptor.DiscretionaryAcl == null ||
@@ -38,7 +43,8 @@ internal static class Ea4eProtectedPipeDescriptorScreen
         foreach (GenericAce ace in descriptor.DiscretionaryAcl)
         {
             CommonAce common = ace as CommonAce;
-            if (common == null || common.AceFlags != AceFlags.None ||
+            if (common == null || common.IsCallback ||
+                common.AceFlags != AceFlags.None ||
                 (common.AceQualifier != AceQualifier.AccessAllowed &&
                  common.AceQualifier != AceQualifier.AccessDenied))
                 return "DENY:UNREVIEWED_ACE";
@@ -54,11 +60,7 @@ internal static class Ea4eProtectedPipeDescriptorScreen
                 continue;
             }
 
-            if (sid.IsWellKnown(WellKnownSidType.WorldSid) ||
-                sid.IsWellKnown(WellKnownSidType.AuthenticatedUserSid) ||
-                sid.IsWellKnown(WellKnownSidType.BuiltinUsersSid) ||
-                sid.IsWellKnown(WellKnownSidType.InteractiveSid) ||
-                sid.IsWellKnown(WellKnownSidType.CreatorOwnerSid))
+            if (IsBroadTrustee(sid))
                 return "DENY:BROAD_ALLOW";
 
             if ((common.AccessMask & Dangerous) != 0 &&
@@ -68,5 +70,14 @@ internal static class Ea4eProtectedPipeDescriptorScreen
         }
 
         return appWrite ? "CANDIDATE:STATIC_ONLY" : "DENY:APP_WRITE_MISSING";
+    }
+
+    private static bool IsBroadTrustee(SecurityIdentifier sid)
+    {
+        return sid.IsWellKnown(WellKnownSidType.WorldSid) ||
+            sid.IsWellKnown(WellKnownSidType.AuthenticatedUserSid) ||
+            sid.IsWellKnown(WellKnownSidType.BuiltinUsersSid) ||
+            sid.IsWellKnown(WellKnownSidType.InteractiveSid) ||
+            sid.IsWellKnown(WellKnownSidType.CreatorOwnerSid);
     }
 }
