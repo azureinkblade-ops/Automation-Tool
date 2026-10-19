@@ -93,18 +93,23 @@ internal static class Ea4eProtectedPathTopologyCandidate
 
     internal static string Denial(string path, Func<SafeFileHandle, string, bool, string> observer)
     {
-        return DenialCore(path, observer, false);
+        return DenialCore(path, observer, false, false);
+    }
+
+    internal static string DenialDirectory(string path)
+    {
+        return DenialCore(path, null, false, true);
     }
 
     internal static string DenialWithReadableLeaf(
         string path, Func<SafeFileHandle, string, bool, string> observer)
     {
-        return DenialCore(path, observer, true);
+        return DenialCore(path, observer, true, false);
     }
 
     private static string DenialCore(
         string path, Func<SafeFileHandle, string, bool, string> observer,
-        bool readableLeaf)
+        bool readableLeaf, bool directoryLeaf)
     {
         if (String.IsNullOrEmpty(path) || path.Length > 32767
             || path.Length < 4 || !Char.IsLetter(path[0]) || path[1] != ':'
@@ -151,7 +156,7 @@ internal static class Ea4eProtectedPathTopologyCandidate
                 if ((tag.Attributes & ReparseAttribute) != 0)
                     return "REPARSE_DENIED";
                 bool directory = (tag.Attributes & DirectoryAttribute) != 0;
-                if (directory != (index < names.Count - 1))
+                if (directory != (index < names.Count - 1 || (leaf && directoryLeaf)))
                     return "OBJECT_TYPE_DENIED";
                 ByHandleFileInformation identity;
                 if (!GetFileInformationByHandle(handle, out identity))
