@@ -12,6 +12,10 @@ instance, one instance total, local-only clients, overlapped message mode,
 512-byte buffers, and a non-inheritable handle. The proposed descriptor
 must pass the 92NN static screen before `Open` can be called.
 
+The following 92NP correction adds the SACL access request and ceremony ID
+to the name. The 92NO commit is retained as historical source evidence,
+not a runnable native qualification.
+
 The template fixture invokes only `BuildSddl`; it never calls `Open`.
 Focused template and adjacent descriptor tests: 37 passed, 0 failed in
 the current tree. This is not a protected-pipe installation or effective
