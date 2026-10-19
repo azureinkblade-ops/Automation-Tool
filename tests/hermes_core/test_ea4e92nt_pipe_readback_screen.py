@@ -62,6 +62,18 @@ def test_wrong_structure_denied(executable, sddl):
     assert result.stdout.startswith("DENY:"), result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("sddl,denial", [
+    (BASE.replace("S:(ML;;NW;;;ME)", ""),
+     "DENY:LABEL_MISSING_OR_UNREVIEWED"),
+    (BASE.replace("D:P", "D:"),
+     "DENY:DACL_MISSING_OR_UNPROTECTED"),
+])
+def test_secondary_screen_reason_is_preserved(executable, sddl, denial):
+    result = call(executable, "sddl", sddl=sddl)
+    assert result.returncode == 0
+    assert result.stdout.strip() == denial
+
+
 def test_foreign_expected_app_denied(executable):
     result = call(executable, "sddl", app="S-1-5-21-100-200-300-1002")
     assert result.stdout.startswith("DENY:"), result.stdout + result.stderr

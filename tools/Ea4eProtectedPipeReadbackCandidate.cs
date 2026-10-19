@@ -72,10 +72,10 @@ internal static class Ea4eProtectedPipeReadbackCandidate
             }
             if (!appSeen || !systemSeen || !adminSeen)
                 return "DENY:REQUIRED_ACE_MISSING";
-            return Ea4eProtectedPipeDescriptorScreen.ScreenDescriptor(
-                descriptor, appSidText)
-                == "CANDIDATE:STATIC_ONLY"
-                ? "CANDIDATE:READBACK_STRUCTURE_ONLY" : "DENY:DESCRIPTOR_SCREEN";
+            string screen = Ea4eProtectedPipeDescriptorScreen.ScreenDescriptor(
+                descriptor, appSidText);
+            return screen == "CANDIDATE:STATIC_ONLY"
+                ? "CANDIDATE:READBACK_STRUCTURE_ONLY" : screen;
         }
         catch (Exception error)
         {

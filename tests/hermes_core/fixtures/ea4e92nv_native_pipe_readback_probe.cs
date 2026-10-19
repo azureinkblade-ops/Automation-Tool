@@ -217,6 +217,15 @@ internal static class Ea4e92nvNativePipeReadbackProbe
             case "DENY:DESCRIPTOR_SCREEN": return 31;
             case "DENY:INVALID_DESCRIPTOR": return 32;
             case "DENY:INVALID_HANDLE": return 33;
+            case "DENY:APP_IDENTITY_NOT_INDIVIDUAL": return 36;
+            case "DENY:APP_OWNER_OR_OWNER_MISSING": return 37;
+            case "DENY:DACL_MISSING_OR_UNPROTECTED": return 38;
+            case "DENY:LABEL_MISSING_OR_UNREVIEWED": return 39;
+            case "DENY:APP_GRANT_NOT_EXACT": return 40;
+            case "DENY:BROAD_ALLOW": return 41;
+            case "DENY:UNTRUSTED_MUTATION_GRANT": return 42;
+            case "DENY:APP_WRITE_MISSING": return 43;
+            case "DENY:INVALID_INPUT": return 44;
             default: return 35;
         }
     }
