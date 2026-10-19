@@ -53,14 +53,14 @@ def test_incomplete_cli_denied_without_native_call(executable, args):
     assert result.stdout == ""
 
 
-@pytest.mark.parametrize("ceremony,offset,denial", [
-    ("not-a-guid", 1, "DENY:INPUT"),
-    ("00000000-0000-0000-0000-000000000000", 1, "DENY:INPUT"),
-    ("11111111-1111-1111-1111-111111111111", -1, "DENY:DEADLINE"),
-    ("11111111-1111-1111-1111-111111111111", 5, "DENY:DEADLINE"),
+@pytest.mark.parametrize("ceremony,offset,denial,exit_code", [
+    ("not-a-guid", 1, "DENY:INPUT", 10),
+    ("00000000-0000-0000-0000-000000000000", 1, "DENY:INPUT", 10),
+    ("11111111-1111-1111-1111-111111111111", -1, "DENY:DEADLINE", 11),
+    ("11111111-1111-1111-1111-111111111111", 5, "DENY:DEADLINE", 11),
 ])
 def test_preflight_denies_without_native_call(executable, ceremony,
-                                               offset, denial):
+                                               offset, denial, exit_code):
     deadline = (datetime.now(timezone.utc) + timedelta(minutes=offset))
     result = subprocess.run(
         [str(executable), "--native-readback", "S-1-5-21-100-200-300-1001",
@@ -68,5 +68,5 @@ def test_preflight_denies_without_native_call(executable, ceremony,
          deadline.strftime("%Y-%m-%dT%H:%M:%SZ")],
         capture_output=True, text=True, timeout=10, check=False,
     )
-    assert result.returncode == 1
+    assert result.returncode == exit_code
     assert result.stdout.strip() == denial

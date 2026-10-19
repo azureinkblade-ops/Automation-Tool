@@ -6,6 +6,8 @@ using Microsoft.Win32.SafeHandles;
 
 internal static class Ea4e92nvNativePipeReadbackProbe
 {
+    private sealed class PrivilegeRestoreFailure : Exception { }
+
     private const uint TokenAdjustPrivileges = 0x20;
     private const uint TokenQuery = 0x08;
     private const uint SePrivilegeEnabled = 0x02;
@@ -126,7 +128,7 @@ internal static class Ea4e92nvNativePipeReadbackProbe
                         (uint)Marshal.SizeOf(typeof(TokenPrivileges)),
                         out ignored, out returned) ||
                         Marshal.GetLastWin32Error() != 0)
-                        throw new InvalidOperationException("Privilege restore denied");
+                        throw new PrivilegeRestoreFailure();
                 }
             }
             finally { token.Dispose(); }
@@ -155,6 +157,7 @@ internal static class Ea4e92nvNativePipeReadbackProbe
         if (remaining <= TimeSpan.Zero || remaining > TimeSpan.FromMinutes(2))
             return Deny("DEADLINE");
 
+        string stage = "OPERATOR_TOKEN";
         try
         {
             var token = Ea4eProtectedIssuerToken.ReadCurrent();
@@ -163,14 +166,18 @@ internal static class Ea4e92nvNativePipeReadbackProbe
                 return Deny("OPERATOR_TOKEN");
             string name;
             string readback;
+            stage = "PRIVILEGE_ENABLE";
             using (SecurityPrivilegeScope.Enable())
             {
+                stage = "PIPE_CREATE";
                 using (var pipe = Ea4eProtectedPipeCreatorCandidate.Open(
                     args[1], ceremony, out name))
                 {
+                    stage = "READBACK";
                     readback = Ea4eProtectedPipeReadbackCandidate.Read(
                         pipe, args[1]);
                 }
+                stage = "PRIVILEGE_RESTORE";
             }
             if (readback != "CANDIDATE:READBACK_STRUCTURE_ONLY")
                 return Deny("READBACK");
@@ -181,13 +188,24 @@ internal static class Ea4e92nvNativePipeReadbackProbe
         {
             if (error is OutOfMemoryException || error is StackOverflowException)
                 throw;
-            return Deny("NATIVE_ERROR");
+            return Deny(error is PrivilegeRestoreFailure
+                ? "PRIVILEGE_RESTORE" : stage);
         }
     }
 
     private static int Deny(string reason)
     {
         Console.WriteLine("DENY:" + reason);
-        return 1;
+        switch (reason)
+        {
+            case "INPUT": return 10;
+            case "DEADLINE": return 11;
+            case "OPERATOR_TOKEN": return 12;
+            case "PRIVILEGE_ENABLE": return 13;
+            case "PIPE_CREATE": return 14;
+            case "READBACK": return 15;
+            case "PRIVILEGE_RESTORE": return 16;
+            default: return 17;
+        }
     }
 }
