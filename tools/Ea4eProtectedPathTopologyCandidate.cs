@@ -93,23 +93,36 @@ internal static class Ea4eProtectedPathTopologyCandidate
 
     internal static string Denial(string path, Func<SafeFileHandle, string, bool, string> observer)
     {
-        return DenialCore(path, observer, false, false);
+        return DenialCore(path, observer, false, false, 0);
     }
 
     internal static string DenialDirectory(string path)
     {
-        return DenialCore(path, null, false, true);
+        return DenialCore(path, null, false, true, 0);
     }
 
     internal static string DenialWithReadableLeaf(
         string path, Func<SafeFileHandle, string, bool, string> observer)
     {
-        return DenialCore(path, observer, true, false);
+        return DenialCore(path, observer, true, false, 1);
+    }
+
+    internal static uint AnnouncementLeafShareMode()
+    {
+        return 3; // FILE_SHARE_READ | FILE_SHARE_WRITE for retained writer.
+    }
+
+    internal static string DenialWithAnnouncementLeaf(
+        string path, Func<SafeFileHandle, string, bool, string> observer)
+    {
+        if (observer == null) return "ANNOUNCEMENT_OBSERVER_REQUIRED";
+        return DenialCore(path, observer, true, false,
+                          AnnouncementLeafShareMode());
     }
 
     private static string DenialCore(
         string path, Func<SafeFileHandle, string, bool, string> observer,
-        bool readableLeaf, bool directoryLeaf)
+        bool readableLeaf, bool directoryLeaf, uint readableLeafShare)
     {
         if (String.IsNullOrEmpty(path) || path.Length > 32767
             || path.Length < 4 || !Char.IsLetter(path[0]) || path[1] != ':'
@@ -139,7 +152,7 @@ internal static class Ea4eProtectedPathTopologyCandidate
             {
                 bool leaf = index == names.Count - 1;
                 uint access = ReadControl | ReadAttributes | (leaf && readableLeaf ? 1u : 0u);
-                uint share = leaf && readableLeaf ? 1u : ShareAll;
+                uint share = leaf && readableLeaf ? readableLeafShare : ShareAll;
                 var handle = CreateFile(names[index], access,
                     share, IntPtr.Zero, OpenExisting,
                     BackupSemantics | OpenReparsePoint, IntPtr.Zero);
