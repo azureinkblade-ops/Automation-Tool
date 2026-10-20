@@ -168,6 +168,18 @@ internal static class Ea4eAnnouncementFileDescriptorCandidate
     internal static string Read(SafeFileHandle handle, string appSidText,
                                 out byte[] bytes)
     {
+        return ReadCore(handle, appSidText, false, out bytes);
+    }
+
+    internal static string ReadDirectory(SafeFileHandle handle,
+                                         string appSidText, out byte[] bytes)
+    {
+        return ReadCore(handle, appSidText, true, out bytes);
+    }
+
+    private static string ReadCore(SafeFileHandle handle, string appSidText,
+                                   bool directory, out byte[] bytes)
+    {
         bytes = null;
         if (handle == null || handle.IsInvalid || handle.IsClosed)
             return "DENY:INVALID_HANDLE";
@@ -186,8 +198,12 @@ internal static class Ea4eAnnouncementFileDescriptorCandidate
             if (length < 20 || length > 8192) return "DENY:DESCRIPTOR_SIZE";
             byte[] observed = new byte[length];
             Marshal.Copy(descriptor, observed, 0, checked((int)length));
-            string result = ScreenBytes(observed, appSidText);
-            if (result == "CANDIDATE:FILE_DESCRIPTOR_STRUCTURE_ONLY")
+            string result = directory
+                ? ScreenDirectoryBytes(observed, appSidText)
+                : ScreenBytes(observed, appSidText);
+            if (result == (directory
+                ? "CANDIDATE:DIRECTORY_DESCRIPTOR_STRUCTURE_ONLY"
+                : "CANDIDATE:FILE_DESCRIPTOR_STRUCTURE_ONLY"))
                 bytes = observed;
             return result;
         }
