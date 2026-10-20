@@ -10,6 +10,7 @@ internal static class Ea4eAnnouncementFileDescriptorCandidate
     private const int SeFileObject = 1;
     private const uint OwnerGroupDaclSaclLabel = 0x0000001f;
     private const int AppReadOnly = 0x00020081;
+    private const int AppDirectoryReadTraverse = 0x000200a1;
     private const int TrustedFileAll = 0x001f01ff;
 
     [DllImport("advapi32.dll", ExactSpelling = true)]
@@ -35,7 +36,21 @@ internal static class Ea4eAnnouncementFileDescriptorCandidate
 
     internal static string ScreenSddl(string sddl, string appSidText)
     {
-        try { return ScreenDescriptor(new RawSecurityDescriptor(sddl), appSidText); }
+        return ScreenSddlCore(sddl, appSidText, AppReadOnly,
+                              "CANDIDATE:FILE_DESCRIPTOR_STRUCTURE_ONLY");
+    }
+
+    internal static string ScreenDirectorySddl(string sddl, string appSidText)
+    {
+        return ScreenSddlCore(sddl, appSidText, AppDirectoryReadTraverse,
+                              "CANDIDATE:DIRECTORY_DESCRIPTOR_STRUCTURE_ONLY");
+    }
+
+    private static string ScreenSddlCore(string sddl, string appSidText,
+                                         int appAccess, string success)
+    {
+        try { return ScreenDescriptor(new RawSecurityDescriptor(sddl),
+                                      appSidText, appAccess, success); }
         catch (SystemException error)
         {
             if (error is OutOfMemoryException || error is StackOverflowException)
@@ -45,7 +60,8 @@ internal static class Ea4eAnnouncementFileDescriptorCandidate
     }
 
     private static string ScreenDescriptor(RawSecurityDescriptor descriptor,
-                                           string appSidText)
+                                           string appSidText, int appAccess,
+                                           string success)
     {
         SecurityIdentifier app;
         try { app = new SecurityIdentifier(appSidText); }
@@ -76,7 +92,7 @@ internal static class Ea4eAnnouncementFileDescriptorCandidate
                 return "DENY:UNREVIEWED_DACL_ACE";
             if (allow.SecurityIdentifier.Equals(app))
             {
-                if (appSeen || allow.AccessMask != AppReadOnly)
+                if (appSeen || allow.AccessMask != appAccess)
                     return "DENY:APP_ACCESS";
                 appSeen = true;
             }
@@ -113,10 +129,23 @@ internal static class Ea4eAnnouncementFileDescriptorCandidate
                 return "DENY:LABEL_IDENTITY";
         }
         catch (ArgumentException) { return "DENY:LABEL_IDENTITY"; }
-        return "CANDIDATE:FILE_DESCRIPTOR_STRUCTURE_ONLY";
+        return success;
     }
 
     internal static string ScreenBytes(byte[] bytes, string appSidText)
+    {
+        return ScreenBytesCore(bytes, appSidText, AppReadOnly,
+                               "CANDIDATE:FILE_DESCRIPTOR_STRUCTURE_ONLY");
+    }
+
+    internal static string ScreenDirectoryBytes(byte[] bytes, string appSidText)
+    {
+        return ScreenBytesCore(bytes, appSidText, AppDirectoryReadTraverse,
+                               "CANDIDATE:DIRECTORY_DESCRIPTOR_STRUCTURE_ONLY");
+    }
+
+    private static string ScreenBytesCore(byte[] bytes, string appSidText,
+                                          int appAccess, string success)
     {
         if (bytes == null || bytes.Length < 20 || bytes.Length > 8192)
             return "DENY:DESCRIPTOR_SIZE";
@@ -125,7 +154,7 @@ internal static class Ea4eAnnouncementFileDescriptorCandidate
             var descriptor = new RawSecurityDescriptor(bytes, 0);
             if (descriptor.BinaryLength != bytes.Length)
                 return "DENY:DESCRIPTOR_TRAILING_BYTES";
-            return ScreenDescriptor(descriptor, appSidText);
+            return ScreenDescriptor(descriptor, appSidText, appAccess, success);
         }
         catch (SystemException error)
         {
