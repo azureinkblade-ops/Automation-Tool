@@ -48,8 +48,19 @@ def call(executable, mode):
     ("throw-parent", ["DENY:PORT_UNCERTAIN", "1:0:0:False:False"]),
     ("throw-create", ["DENY:PORT_UNCERTAIN", "1:1:0:True:True"]),
     ("throw-screen", ["DENY:PORT_UNCERTAIN", "1:1:1:True:True"]),
+    ("throw-dispose", ["DENY:PORT_UNCERTAIN", "1:1:1:True:True"]),
 ])
 def test_fake_sequence(executable, mode, expected):
+    assert call(executable, mode) == expected
+
+
+@pytest.mark.parametrize("mode,expected", [
+    ("retain-pass", ["CANDIDATE:FIRST_CHILD_FAKE_ONLY", "1:1:1:True:False", "True", "True"]),
+    ("retain-collision", ["DENY:CREATE_ALREADY_EXISTS", "1:1:0:True:True", "False", "True"]),
+    ("retain-readback", ["DENY:CREATED_DESCRIPTOR_MISMATCH", "1:1:1:True:True", "False", "True"]),
+    ("retain-throw-screen", ["DENY:PORT_UNCERTAIN", "1:1:1:True:True", "False", "True"]),
+])
+def test_handle_transfers_only_after_successful_screen(executable, mode, expected):
     assert call(executable, mode) == expected
 
 

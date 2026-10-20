@@ -16,6 +16,29 @@ internal static class Ea4eDirectoryFirstChildCandidate
                                    string pinnedManifestRoot, string appSid,
                                    IEa4eDirectoryFirstChildPort port)
     {
+        IDisposable retained;
+        string result = AttemptAndRetain(resolvedProgramData,
+            pinnedManifestRoot, appSid, port, out retained);
+        try
+        {
+            if (retained != null) retained.Dispose();
+        }
+        catch (Exception error)
+        {
+            if (error is OutOfMemoryException || error is StackOverflowException)
+                throw;
+            return "DENY:PORT_UNCERTAIN";
+        }
+        return result;
+    }
+
+    internal static string AttemptAndRetain(string resolvedProgramData,
+                                            string pinnedManifestRoot,
+                                            string appSid,
+                                            IEa4eDirectoryFirstChildPort port,
+                                            out IDisposable retainedHandle)
+    {
+        retainedHandle = null;
         if (port == null) return "DENY:PORT_MISSING";
         string[] paths;
         string sddl;
@@ -39,6 +62,8 @@ internal static class Ea4eDirectoryFirstChildCandidate
                 if (created == null) return "DENY:CREATE_HANDLE_MISSING";
                 denial = port.ScreenCreated(created, paths[0], sddl);
                 if (denial != null) return "DENY:CREATED_" + denial;
+                retainedHandle = created;
+                created = null;
                 return "CANDIDATE:FIRST_CHILD_FAKE_ONLY";
             }
             finally
