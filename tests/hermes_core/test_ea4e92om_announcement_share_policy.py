@@ -9,7 +9,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 CSC = Path(r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe")
-EXPECTED = ("01020002", "00000001", "00020081", "00000003")
+EXPECTED = ("01020083", "00000001", "00020081", "00000003")
 
 
 @pytest.fixture(scope="module")
@@ -42,7 +42,7 @@ def test_exact_masks(executable):
 
 
 @pytest.mark.parametrize("index,replacement", [
-    (0, "00020002"), (0, "00000002"),
+    (0, "01020002"), (0, "00020083"), (0, "00000002"),
     (1, "00000000"), (1, "00000003"),
     (2, "00000001"), (2, "40020081"),
     (3, "00000001"), (3, "00000007"),

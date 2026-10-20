@@ -14,7 +14,8 @@ internal static class Ea4eAnnouncementSharePolicyCandidate
 
     internal static uint CreatorDesiredAccess()
     {
-        return FileWriteData | ReadControl | AccessSystemSecurity;
+        return FileReadData | FileWriteData | FileReadAttributes |
+            ReadControl | AccessSystemSecurity;
     }
     internal static uint CreatorShareMode() { return FileShareRead; }
     internal static uint ReaderDesiredAccess()
