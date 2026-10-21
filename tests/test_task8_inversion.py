@@ -18,7 +18,13 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
-os.environ.setdefault("OPENAI_API_KEY", "x")  # tests never hit the real API
+import pytest
+
+# Dummy key only while this script-style module runs (tests never hit the real API);
+# undone at module end so it does not leak into the rest of the pytest session.
+_ENV = pytest.MonkeyPatch()
+if "OPENAI_API_KEY" not in os.environ:
+    _ENV.setenv("OPENAI_API_KEY", "x")
 
 import app as app_mod
 import release_automation as ra_mod
@@ -79,6 +85,8 @@ for mod in ("promo_copy", "promo_builder", "release_state", "approval_inbox",
                                     cwd=REPO, capture_output=True, text=True, timeout=120)
     line = [l for l in r.stdout.splitlines() if l.startswith(mod)][0]
     check(f"{mod} imports without app", line.endswith("imports_app=False"), True)
+
+_ENV.undo()  # restore OPENAI_API_KEY to its pre-import state
 
 if FAILS:
     print("FAIL", len(FAILS))

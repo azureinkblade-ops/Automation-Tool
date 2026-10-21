@@ -1,0 +1,210 @@
+{
+ "SCHEMA": "R21_PORTABLE_BEATS_V1",
+ "PROVENANCE": {
+  "DESCRIPTION": "BEAT_TEXT_SHA256 values copied verbatim from the qualified Writer/runtime beat export (SHA field already present in source; nothing recomputed). No beat text, excerpts or NOTE content included.",
+  "SOURCES": [
+   {
+    "FILE": "writer_location_tags.csv",
+    "SHA256": "5ffeb86a4e7fa69aa5b38c5ea2e5ca4efa41fd2252a173cdca8deaf046696f9b",
+    "USED_COLUMNS": [
+     "NOVEL_ID",
+     "CHAPTER_ID",
+     "BEAT_INDEX",
+     "BEAT_TEXT_SHA256",
+     "LOCATION_ID"
+    ],
+    "ROLE": "19 tagged beats (1 record withheld from the pushable set)"
+   },
+   {
+    "FILE": "beats_for_tagging.jsonl",
+    "SHA256": "7c56a55a0e948d7f9c4b823a03bfb68755de51aeff1fdb3a2e4e56291a8aa86c",
+    "USED_FIELDS": [
+     "NOVEL_ID",
+     "CHAPTER_ID",
+     "BEAT_INDEX",
+     "BEAT_TEXT_SHA256"
+    ],
+    "ROLE": "3 neutral controls SF-124#1, EN-127#0, EN-127#2"
+   }
+  ],
+  "TAG_STORE": "data/r21_reference/writer_tag_store.json (sha256 prefix DC329320)"
+ },
+ "RECORDS": [
+  {
+   "NOVEL_ID": "EN",
+   "CHAPTER_ID": "EN-124",
+   "BEAT_INDEX": 1,
+   "BEAT_TEXT_SHA256": "11147883b03389329c02cf12731a91c4cf9545dd3c60e34b8963fc02ed6471d7",
+   "EXPECTED_LOCATION_ID": "en_nexus_pod",
+   "EXPECTED_STRUCTURED_BIND": true
+  },
+  {
+   "NOVEL_ID": "EN",
+   "CHAPTER_ID": "EN-125",
+   "BEAT_INDEX": 0,
+   "BEAT_TEXT_SHA256": "8d35a2e86cf53243aede24b61a47e519d24c147ce7144ac6e42e7f1335963948",
+   "EXPECTED_LOCATION_ID": "en_nexus_pod",
+   "EXPECTED_STRUCTURED_BIND": true
+  },
+  {
+   "NOVEL_ID": "EN",
+   "CHAPTER_ID": "EN-127",
+   "BEAT_INDEX": 1,
+   "BEAT_TEXT_SHA256": "278b96ebe9adea8754556bc78db71d612e6368e14cf09c1f35bc584adccbfbe3",
+   "EXPECTED_LOCATION_ID": "en_giant_pod_chamber",
+   "EXPECTED_STRUCTURED_BIND": true
+  },
+  {
+   "NOVEL_ID": "EN",
+   "CHAPTER_ID": "EN-128",
+   "BEAT_INDEX": 0,
+   "BEAT_TEXT_SHA256": "9589cb40d758852aa92c3dd6854c29989e9c2cd99dd6f0917ad405f8119b2ae9",
+   "EXPECTED_LOCATION_ID": "en_giant_pod_chamber",
+   "EXPECTED_STRUCTURED_BIND": true
+  },
+  {
+   "NOVEL_ID": "HA",
+   "CHAPTER_ID": "HA-84",
+   "BEAT_INDEX": 2,
+   "BEAT_TEXT_SHA256": "b56b38a9b0d8c88bb9ad6ae807b37dc432cedcf0da7a878dc48c2198b8f9b973",
+   "EXPECTED_LOCATION_ID": "ha_emergency_center",
+   "EXPECTED_STRUCTURED_BIND": true
+  },
+  {
+   "NOVEL_ID": "HA",
+   "CHAPTER_ID": "HA-108",
+   "BEAT_INDEX": 0,
+   "BEAT_TEXT_SHA256": "f1746072c21a0656c240a569bb8aa1f1f31d963d0c076445bd4e9cd45eb69ab2",
+   "EXPECTED_LOCATION_ID": "ha_clinic",
+   "EXPECTED_STRUCTURED_BIND": true
+  },
+  {
+   "NOVEL_ID": "HA",
+   "CHAPTER_ID": "HA-111",
+   "BEAT_INDEX": 1,
+   "BEAT_TEXT_SHA256": "71a1f380619fe0b3c5b4b9b2bdfd5622a4c13a3e84b8217e14f0dc0f13b4e7f4",
+   "EXPECTED_LOCATION_ID": "ha_clinic",
+   "EXPECTED_STRUCTURED_BIND": true
+  },
+  {
+   "NOVEL_ID": "HP",
+   "CHAPTER_ID": "HP-141",
+   "BEAT_INDEX": 0,
+   "BEAT_TEXT_SHA256": "b205dea3afccdd1d5b0eb73a4805e99aec2d3fbf3c3174cb63de0e431274b5b6",
+   "EXPECTED_LOCATION_ID": "hp_red_forest_broken_tower",
+   "EXPECTED_STRUCTURED_BIND": true
+  },
+  {
+   "NOVEL_ID": "HP",
+   "CHAPTER_ID": "HP-141",
+   "BEAT_INDEX": 1,
+   "BEAT_TEXT_SHA256": "2fd178f3008d005e3388b9b74ff26bd55359c873b4187ccdf5fc21c7b4d704aa",
+   "EXPECTED_LOCATION_ID": "hp_red_forest_broken_tower",
+   "EXPECTED_STRUCTURED_BIND": true
+  },
+  {
+   "NOVEL_ID": "HP",
+   "CHAPTER_ID": "HP-141",
+   "BEAT_INDEX": 2,
+   "BEAT_TEXT_SHA256": "9292861c19d8e20bb1a7bd9184f69239412ed5a5de18d2f5496a8a5755ae9df0",
+   "EXPECTED_LOCATION_ID": "hp_red_forest_broken_tower",
+   "EXPECTED_STRUCTURED_BIND": true
+  },
+  {
+   "NOVEL_ID": "HP",
+   "CHAPTER_ID": "HP-150",
+   "BEAT_INDEX": 2,
+   "BEAT_TEXT_SHA256": "2f884f828f3975ac14e91507c39c1b4f9c2a25dab9acac94f7e693973edb56a2",
+   "EXPECTED_LOCATION_ID": "hp_sect",
+   "EXPECTED_STRUCTURED_BIND": true
+  },
+  {
+   "NOVEL_ID": "HP",
+   "CHAPTER_ID": "HP-151",
+   "BEAT_INDEX": 1,
+   "BEAT_TEXT_SHA256": "938075a53752fd9f7516ade05cb0cb6ebca486b1c8cebd05688f9c8a936807a5",
+   "EXPECTED_LOCATION_ID": "hp_sect",
+   "EXPECTED_STRUCTURED_BIND": true
+  },
+  {
+   "NOVEL_ID": "HP",
+   "CHAPTER_ID": "HP-153",
+   "BEAT_INDEX": 0,
+   "BEAT_TEXT_SHA256": "48605fe031b15c792b111553a25f5f3ec684494f51c0429b932711d7138a28d3",
+   "EXPECTED_LOCATION_ID": "hp_village",
+   "EXPECTED_STRUCTURED_BIND": true
+  },
+  {
+   "NOVEL_ID": "HP",
+   "CHAPTER_ID": "HP-154",
+   "BEAT_INDEX": 1,
+   "BEAT_TEXT_SHA256": "2649c7a7733876a17725ca2664f1a4beaf552226cac46dca6848a953648fea9f",
+   "EXPECTED_LOCATION_ID": "hp_village",
+   "EXPECTED_STRUCTURED_BIND": true
+  },
+  {
+   "NOVEL_ID": "SF",
+   "CHAPTER_ID": "SF-117",
+   "BEAT_INDEX": 1,
+   "BEAT_TEXT_SHA256": "0a5f73ed52b14c109fb1be41d77b1c859d00e4f71fd3949f360e6b44bf6b2019",
+   "EXPECTED_LOCATION_ID": "sf_sanctuary",
+   "EXPECTED_STRUCTURED_BIND": true
+  },
+  {
+   "NOVEL_ID": "SF",
+   "CHAPTER_ID": "SF-118",
+   "BEAT_INDEX": 1,
+   "BEAT_TEXT_SHA256": "f63ffd57698dbfe623cb397a49758ca50b2597e0824998b007252b0bfa998a4b",
+   "EXPECTED_LOCATION_ID": "sf_sanctuary",
+   "EXPECTED_STRUCTURED_BIND": true
+  },
+  {
+   "NOVEL_ID": "SF",
+   "CHAPTER_ID": "SF-123",
+   "BEAT_INDEX": 0,
+   "BEAT_TEXT_SHA256": "c7e3f7501d2f69e4cbb31b2a56877c37d333fd2f7599266bc2313688ebfb3017",
+   "EXPECTED_LOCATION_ID": "sf_forge_heart_cavern",
+   "EXPECTED_STRUCTURED_BIND": true
+  },
+  {
+   "NOVEL_ID": "SF",
+   "CHAPTER_ID": "SF-123",
+   "BEAT_INDEX": 1,
+   "BEAT_TEXT_SHA256": "b2bc8fdc642df4011e5d21535964b92780f1b31d8c2e4f0d93226a4ac6fc3739",
+   "EXPECTED_LOCATION_ID": "sf_forge_heart_cavern",
+   "EXPECTED_STRUCTURED_BIND": true
+  },
+  {
+   "NOVEL_ID": "SF",
+   "CHAPTER_ID": "SF-124",
+   "BEAT_INDEX": 2,
+   "BEAT_TEXT_SHA256": "13986aced642f9917ed05ea73fc7532460c9cb87e167dc254681c20713dca143",
+   "EXPECTED_LOCATION_ID": "sf_forge_heart_cavern",
+   "EXPECTED_STRUCTURED_BIND": true
+  },
+  {
+   "NOVEL_ID": "EN",
+   "CHAPTER_ID": "EN-127",
+   "BEAT_INDEX": 0,
+   "BEAT_TEXT_SHA256": "8396b7ca422b78989c18a3dd11334d08764d0d49ca24e8f6107bef72e0cd9580",
+   "EXPECTED_LOCATION_ID": null,
+   "EXPECTED_STRUCTURED_BIND": false
+  },
+  {
+   "NOVEL_ID": "EN",
+   "CHAPTER_ID": "EN-127",
+   "BEAT_INDEX": 2,
+   "BEAT_TEXT_SHA256": "7242d471085a63fce59d7fd293be9af0a700a726c50c55af2ef3498425bb73b9",
+   "EXPECTED_LOCATION_ID": null,
+   "EXPECTED_STRUCTURED_BIND": false
+  },
+  {
+   "NOVEL_ID": "SF",
+   "CHAPTER_ID": "SF-124",
+   "BEAT_INDEX": 1,
+   "BEAT_TEXT_SHA256": "c768ed3f349c769d5bed921176252de1972fd8dbeb105b91a9cfd8cf73f3cf33",
+   "EXPECTED_LOCATION_ID": null,
+   "EXPECTED_STRUCTURED_BIND": false
+  }
+ ]
+}

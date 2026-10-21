@@ -87,19 +87,31 @@ def _fake_agent_result_metadata(result):
     }
 
 
-# --- promo_builder stub collaborators (so the Reel/Short pack builds offline) ---
-TMP = Path(tempfile.mkdtemp(prefix="callsite_pack_test_"))
-ASSET_DIR = TMP / "assets"
-ASSET_DIR.mkdir(parents=True, exist_ok=True)
+# PYTEST_LIVE_SIDE_EFFECT_ISOLATION: everything below used to run at module import
+# (i.e. at pytest COLLECTION time) and reached real image generation. It now runs
+# only inside the test function / __main__; the checks themselves are unchanged.
+TMP = None
+ASSET_DIR = None
 _IMAGE_PATHS = []
-for _i in range(3):
-    _p = ASSET_DIR / f"EN_12_{_i}.png"
-    _p.write_text("img", encoding="utf-8")
-    _p.with_name(f"{_p.name}.track").write_text("main-posts", encoding="utf-8")
-    _IMAGE_PATHS.append(str(_p))
-_SOUND = ASSET_DIR / "sound.mp3"
-_SOUND.write_text("snd", encoding="utf-8")
-PACK_FOLDER = TMP / "pack"
+_SOUND = None
+PACK_FOLDER = None
+
+
+def _setup_fixture_files():
+    global TMP, ASSET_DIR, _IMAGE_PATHS, _SOUND, PACK_FOLDER
+    _IMAGE_PATHS = []
+    TMP = Path(tempfile.mkdtemp(prefix="callsite_pack_test_"))
+    ASSET_DIR = TMP / "assets"
+    ASSET_DIR.mkdir(parents=True, exist_ok=True)
+    for _i in range(3):
+        _p = ASSET_DIR / f"EN_12_{_i}.png"
+        _p.write_text("img", encoding="utf-8")
+        _p.with_name(f"{_p.name}.track").write_text("main-posts", encoding="utf-8")
+        _IMAGE_PATHS.append(str(_p))
+    _SOUND = ASSET_DIR / "sound.mp3"
+    _SOUND.write_text("snd", encoding="utf-8")
+    PACK_FOLDER = TMP / "pack"
+
 
 
 def _fake_assets():
@@ -137,21 +149,28 @@ def _fake_overlays(*a, **k):
     return ["OVERLAY ONE", "OVERLAY TWO", "OVERLAY THREE", "READ ON ROYAL ROAD"]
 
 
-_COLLAB = {name: getattr(app_mod, name) for name in pb.REQUIRED_COLLABORATORS}
-_COLLAB.update(
-    {
-        "list_tiktok_assets": _fake_assets,
-        "stable_chapter_folder": _fake_folder,
-        "prepare_tiktok_outro_image": _fake_outro,
-        "tiktok_chapter_teaser_overlays": _fake_overlays,
-        "write_tiktok_video_helper": _noop,
-        "generate_deep_tiktok_narration": _noop,
-        "generate_tiktok_images": _noop,
-        "update_chapter_ledger": _noop,
-        "auto_publish_generated_media": lambda folder, payload: payload,
-    }
-)
-pb.set_collaborators(_COLLAB)
+
+_COLLAB = {}
+
+
+def _install_pb_collaborators():
+    global _COLLAB
+    _COLLAB = {name: getattr(app_mod, name) for name in pb.REQUIRED_COLLABORATORS}
+    _COLLAB.update(
+        {
+            "list_tiktok_assets": _fake_assets,
+            "stable_chapter_folder": _fake_folder,
+            "prepare_tiktok_outro_image": _fake_outro,
+            "tiktok_chapter_teaser_overlays": _fake_overlays,
+            "write_tiktok_video_helper": _noop,
+            "generate_deep_tiktok_narration": _noop,
+            "generate_tiktok_images": _noop,
+            "update_chapter_ledger": _noop,
+            "auto_publish_generated_media": lambda folder, payload: payload,
+        }
+    )
+    pb.set_collaborators(_COLLAB)
+
 
 
 # --- heavy deep-pack helpers stubbed at the app layer -------------------------
@@ -200,6 +219,12 @@ _DEEP_STUBS = {
     "generate_deep_tiktok_narration": _noop,
     "prepare_tiktok_outro_image": _fake_outro,
     "content_hash": lambda v: "h-" + str(hash(v)),
+    # PYTEST_LIVE_SIDE_EFFECT_ISOLATION: the app-layer image path must stay offline too.
+    # The promo_builder collaborators above already stub these; without the app-layer
+    # stubs make_or_generate_tiktok_pack read the live TikTok asset dir and called the
+    # real app.generate_tiktok_images -> generate_promo_image_v2 -> ComfyUI :8188.
+    "list_tiktok_assets": _fake_assets,
+    "generate_tiktok_images": _noop,
 }
 
 
@@ -232,134 +257,148 @@ def _with_agent(enabled=True):
 
 # --- Test A/B/C/D/E -----------------------------------------------------------
 _CALLS = []
-_ORIG_GEN = apw.generate_post_result
-_ORIG_META = apw.agent_result_metadata
-_ORIG_DB = app_mod.automation_db
+_ORIG_GEN = None
+_ORIG_META = None
+_ORIG_DB = None
 
-apw.generate_post_result = _fake_generate_post_result
-apw.agent_result_metadata = _fake_agent_result_metadata
-app_mod.automation_db = _FakeDB
-app_mod._AGENT_COPY_MEMO.clear()
-app_mod._AGENT_RECORDED_PLATFORMS.clear()
 
-try:
-    _with_agent(True)
-    deep_saved = _install_deep_stubs()
-
-    # A. Reel/Short pack + deep TikTok share one Hermes run (memoized).
-    RECORDED.clear()
-    pack = app_mod.make_or_generate_tiktok_pack(ABBR, CHAPTER, chapter_text=CHAPTER_BODY)
-    check("A reel/short pack has agent caption", AGENT_CAPTION in pack.get("instagram_reel_caption", ""), True)
-    # FRESH-1: the normal TikTok caption must now consume the differentiated
-    # agent copy (not just the Reel/Short bundle).
-    check("A fresh tiktok pack uses agent caption", AGENT_CAPTION in pack.get("caption", ""), True)
-    check("A fresh youtube short desc uses agent copy", AGENT_CAPTION in pack.get("youtube_shorts_description", ""), True)
-    check("A reel/short pack _agent_run_id in metadata",
-          json.loads((PACK_FOLDER / "metadata.json").read_text(encoding="utf-8")).get("_agent_run_id"), RUN_ID)
-
-    deep = app_mod.make_deep_tiktok_pack(ABBR, CHAPTER)
-    check("A deep caption uses agent copy", AGENT_CAPTION in deep.get("caption", ""), True)
-    check("A deep title uses agent copy", deep.get("tiktok_title"), AGENT_TITLE)
-
-    # Provenance written for both products under the SAME run_id.
-    _run_ids = {r[0] for r in RECORDED}
-    check("A one shared run_id across pack+deep", _run_ids, {RUN_ID})
-    _all_plats = sorted(p for _, rows in RECORDED for (p, _t, _u, _fr) in rows)
-    check("A platforms recorded", _all_plats,
-          sorted(["instagram_reel", "tiktok_long", "youtube_short"]))
-    # Single Hermes invocation because of the memo (Reel/Short + deep same chapter).
-    check("A memoized -> one Hermes call", len(_CALLS), 1)
-
-    # FRESH-2: a REUSED pack must NOT revert TikTok to generic copy. The A build
-    # already wrote a pack to disk; a second build reuses it and must reapply the
-    # differentiated agent caption just like the fresh branch (the reused branch
-    # rebuilds caption fields separately, which is the original defect).
-    app_mod._AGENT_COPY_MEMO.clear()
-    reused_pack = app_mod.make_or_generate_tiktok_pack(ABBR, CHAPTER, chapter_text=CHAPTER_BODY)
-    check("FRESH-2 reused tiktok uses agent caption", AGENT_CAPTION in reused_pack.get("caption", ""), True)
-    check("FRESH-2 reused instagram reel uses agent copy", AGENT_CAPTION in reused_pack.get("instagram_reel_caption", ""), True)
-
-    # C. A memo hit does NOT overwrite provenance: a second full build within TTL
-    # reuse the memo and must not re-record (de-dup via _AGENT_RECORDED_PLATFORMS).
-    deep_saved2 = _install_deep_stubs()
-    RECORDED.clear()
+def _run_callsite_checks():
+    global _ORIG_GEN, _ORIG_META, _ORIG_DB
+    _setup_fixture_files()
+    _install_pb_collaborators()
     _CALLS.clear()
-    app_mod.make_or_generate_tiktok_pack(ABBR, CHAPTER, chapter_text=CHAPTER_BODY)
-    app_mod.make_deep_tiktok_pack(ABBR, CHAPTER)
-    check("C memo hit -> no new Hermes call", len(_CALLS), 0)
-    check("C memo hit -> no new provenance write", len(RECORDED), 0)
-    _restore_deep_stubs(deep_saved2)
+    _ORIG_GEN = apw.generate_post_result
+    _ORIG_META = apw.agent_result_metadata
+    _ORIG_DB = app_mod.automation_db
 
-    # B. A chapter revision change re-invokes the agent.
-    RECORDED.clear()
-    _CALLS.clear()
-    app_mod._AGENT_COPY_MEMO.clear()
-    app_mod.make_or_generate_tiktok_pack(ABBR, CHAPTER, chapter_text="a totally different revised body here")
-    check("B revision change re-invokes agent", len(_CALLS), 1)
-    app_mod._AGENT_COPY_MEMO.clear()
-
-    # D. Empty chapter_text fallback resolves authoritative text so the memo key
-    # is NOT the empty-string sha (e3b0c442...); docs_chapter_text supplies body.
-    RECORDED.clear()
-    _CALLS.clear()
-    app_mod._AGENT_COPY_MEMO.clear()
-    app_mod.make_or_generate_tiktok_pack(ABBR, CHAPTER, chapter_text="")
-    check("D empty chapter_text still resolves agent", len(_CALLS), 1)
-    # The resolver was handed real chapter text (not the empty sha key).
-    check("D resolver received non-empty text", _CALLS[0][2] != "", True)
-
-    _restore_deep_stubs(deep_saved)
-
-    # E. Disabled agent -> template copy, no provenance, no Hermes call.
-    _with_agent(False)
+    apw.generate_post_result = _fake_generate_post_result
+    apw.agent_result_metadata = _fake_agent_result_metadata
+    app_mod.automation_db = _FakeDB
     app_mod._AGENT_COPY_MEMO.clear()
     app_mod._AGENT_RECORDED_PLATFORMS.clear()
-    RECORDED.clear()
-    _CALLS.clear()
-    deep_saved3 = _install_deep_stubs()
-    pack_off = app_mod.make_or_generate_tiktok_pack(ABBR, CHAPTER, chapter_text=CHAPTER_BODY)
-    check("E disabled -> no Hermes call", len(_CALLS), 0)
-    check("E disabled -> no provenance", len(RECORDED), 0)
-    check("E disabled -> template copy (no agent caption)",
-          AGENT_CAPTION in pack_off.get("instagram_reel_caption", ""), False)
-    deep_off = app_mod.make_deep_tiktok_pack(ABBR, CHAPTER)
-    check("E disabled deep -> no agent caption", AGENT_CAPTION in deep_off.get("caption", ""), False)
-    check("E disabled deep -> no provenance", len(RECORDED), 0)
-    # FRESH-3: explicit agent_copy=None (e.g. resolver failure) must still build a
-    # deterministic TikTok caption and must NOT raise. Exercise the promo_builder
-    # path directly with agent_copy=None to prove the fallback is fail-soft.
-    _fresh_none = pb.make_tiktok_pack(
-        ABBR, CHAPTER, chapter_text=CHAPTER_BODY,
-        agent_copy=None, agent_meta={},
-    )
-    _expected_tiktok_fallback = pb.copy.public_copy_without_links(
-        app_mod.tiktok_caption(NOVEL, CHAPTER),
-        "tiktok",
-    )
-    check(
-        "FRESH-3 agent_copy=None uses deterministic tiktok caption",
-        _fresh_none.get("caption"),
-        _expected_tiktok_fallback,
-    )
-    check("FRESH-3 agent_copy=None no agent caption leaked",
-          AGENT_CAPTION in _fresh_none.get("caption", ""), False)
-    _restore_deep_stubs(deep_saved3)
-finally:
-    apw.generate_post_result = _ORIG_GEN
-    apw.agent_result_metadata = _ORIG_META
-    app_mod.automation_db = _ORIG_DB
-    app_mod._AGENT_COPY_MEMO.clear()
-    app_mod._AGENT_RECORDED_PLATFORMS.clear()
-    shutil.rmtree(TMP, ignore_errors=True)
+
+    try:
+        _with_agent(True)
+        deep_saved = _install_deep_stubs()
+
+        # A. Reel/Short pack + deep TikTok share one Hermes run (memoized).
+        RECORDED.clear()
+        pack = app_mod.make_or_generate_tiktok_pack(ABBR, CHAPTER, chapter_text=CHAPTER_BODY)
+        check("A reel/short pack has agent caption", AGENT_CAPTION in pack.get("instagram_reel_caption", ""), True)
+        # FRESH-1: the normal TikTok caption must now consume the differentiated
+        # agent copy (not just the Reel/Short bundle).
+        check("A fresh tiktok pack uses agent caption", AGENT_CAPTION in pack.get("caption", ""), True)
+        check("A fresh youtube short desc uses agent copy", AGENT_CAPTION in pack.get("youtube_shorts_description", ""), True)
+        check("A reel/short pack _agent_run_id in metadata",
+              json.loads((PACK_FOLDER / "metadata.json").read_text(encoding="utf-8")).get("_agent_run_id"), RUN_ID)
+
+        deep = app_mod.make_deep_tiktok_pack(ABBR, CHAPTER)
+        check("A deep caption uses agent copy", AGENT_CAPTION in deep.get("caption", ""), True)
+        check("A deep title uses agent copy", deep.get("tiktok_title"), AGENT_TITLE)
+
+        # Provenance written for both products under the SAME run_id.
+        _run_ids = {r[0] for r in RECORDED}
+        check("A one shared run_id across pack+deep", _run_ids, {RUN_ID})
+        _all_plats = sorted(p for _, rows in RECORDED for (p, _t, _u, _fr) in rows)
+        check("A platforms recorded", _all_plats,
+              sorted(["instagram_reel", "tiktok_long", "youtube_short"]))
+        # Single Hermes invocation because of the memo (Reel/Short + deep same chapter).
+        check("A memoized -> one Hermes call", len(_CALLS), 1)
+
+        # FRESH-2: a REUSED pack must NOT revert TikTok to generic copy. The A build
+        # already wrote a pack to disk; a second build reuses it and must reapply the
+        # differentiated agent caption just like the fresh branch (the reused branch
+        # rebuilds caption fields separately, which is the original defect).
+        app_mod._AGENT_COPY_MEMO.clear()
+        reused_pack = app_mod.make_or_generate_tiktok_pack(ABBR, CHAPTER, chapter_text=CHAPTER_BODY)
+        check("FRESH-2 reused tiktok uses agent caption", AGENT_CAPTION in reused_pack.get("caption", ""), True)
+        check("FRESH-2 reused instagram reel uses agent copy", AGENT_CAPTION in reused_pack.get("instagram_reel_caption", ""), True)
+
+        # C. A memo hit does NOT overwrite provenance: a second full build within TTL
+        # reuse the memo and must not re-record (de-dup via _AGENT_RECORDED_PLATFORMS).
+        deep_saved2 = _install_deep_stubs()
+        RECORDED.clear()
+        _CALLS.clear()
+        app_mod.make_or_generate_tiktok_pack(ABBR, CHAPTER, chapter_text=CHAPTER_BODY)
+        app_mod.make_deep_tiktok_pack(ABBR, CHAPTER)
+        check("C memo hit -> no new Hermes call", len(_CALLS), 0)
+        check("C memo hit -> no new provenance write", len(RECORDED), 0)
+        _restore_deep_stubs(deep_saved2)
+
+        # B. A chapter revision change re-invokes the agent.
+        RECORDED.clear()
+        _CALLS.clear()
+        app_mod._AGENT_COPY_MEMO.clear()
+        app_mod.make_or_generate_tiktok_pack(ABBR, CHAPTER, chapter_text="a totally different revised body here")
+        check("B revision change re-invokes agent", len(_CALLS), 1)
+        app_mod._AGENT_COPY_MEMO.clear()
+
+        # D. Empty chapter_text fallback resolves authoritative text so the memo key
+        # is NOT the empty-string sha (e3b0c442...); docs_chapter_text supplies body.
+        RECORDED.clear()
+        _CALLS.clear()
+        app_mod._AGENT_COPY_MEMO.clear()
+        app_mod.make_or_generate_tiktok_pack(ABBR, CHAPTER, chapter_text="")
+        check("D empty chapter_text still resolves agent", len(_CALLS), 1)
+        # The resolver was handed real chapter text (not the empty sha key).
+        check("D resolver received non-empty text", _CALLS[0][2] != "", True)
+
+        _restore_deep_stubs(deep_saved)
+
+        # E. Disabled agent -> template copy, no provenance, no Hermes call.
+        _with_agent(False)
+        app_mod._AGENT_COPY_MEMO.clear()
+        app_mod._AGENT_RECORDED_PLATFORMS.clear()
+        RECORDED.clear()
+        _CALLS.clear()
+        deep_saved3 = _install_deep_stubs()
+        pack_off = app_mod.make_or_generate_tiktok_pack(ABBR, CHAPTER, chapter_text=CHAPTER_BODY)
+        check("E disabled -> no Hermes call", len(_CALLS), 0)
+        check("E disabled -> no provenance", len(RECORDED), 0)
+        check("E disabled -> template copy (no agent caption)",
+              AGENT_CAPTION in pack_off.get("instagram_reel_caption", ""), False)
+        deep_off = app_mod.make_deep_tiktok_pack(ABBR, CHAPTER)
+        check("E disabled deep -> no agent caption", AGENT_CAPTION in deep_off.get("caption", ""), False)
+        check("E disabled deep -> no provenance", len(RECORDED), 0)
+        # FRESH-3: explicit agent_copy=None (e.g. resolver failure) must still build a
+        # deterministic TikTok caption and must NOT raise. Exercise the promo_builder
+        # path directly with agent_copy=None to prove the fallback is fail-soft.
+        _fresh_none = pb.make_tiktok_pack(
+            ABBR, CHAPTER, chapter_text=CHAPTER_BODY,
+            agent_copy=None, agent_meta={},
+        )
+        _expected_tiktok_fallback = pb.copy.public_copy_without_links(
+            app_mod.tiktok_caption(NOVEL, CHAPTER),
+            "tiktok",
+        )
+        check(
+            "FRESH-3 agent_copy=None uses deterministic tiktok caption",
+            _fresh_none.get("caption"),
+            _expected_tiktok_fallback,
+        )
+        check("FRESH-3 agent_copy=None no agent caption leaked",
+              AGENT_CAPTION in _fresh_none.get("caption", ""), False)
+        _restore_deep_stubs(deep_saved3)
+    finally:
+        apw.generate_post_result = _ORIG_GEN
+        apw.agent_result_metadata = _ORIG_META
+        app_mod.automation_db = _ORIG_DB
+        app_mod._AGENT_COPY_MEMO.clear()
+        app_mod._AGENT_RECORDED_PLATFORMS.clear()
+        shutil.rmtree(TMP, ignore_errors=True)
 
 
 def test_agent_shortform_callsite_checks():
+    FAILS.clear()
+    _run_callsite_checks()
     assert not FAILS, "\n\n".join(FAILS)
 
 
-if FAILS:
-    print(f"FAILED ({len(FAILS)}):")
-    for item in FAILS:
-        print(" -", item)
-    sys.exit(1)
-print("All agent short-form call-site wiring tests passed.")
+if __name__ == "__main__":
+    _run_callsite_checks()
+    if FAILS:
+        print(f"FAILED ({len(FAILS)}):")
+        for item in FAILS:
+            print(" -", item)
+        sys.exit(1)
+    print("All agent short-form call-site wiring tests passed.")

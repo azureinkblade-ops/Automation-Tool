@@ -1,0 +1,12 @@
+# Test-only governed-location fixture for portable R21 tests (CI without private Inkblade data).
+# Structural fields only (id, novel). No names, descriptions, aliases, canon, visual direction or quotes.
+locations:
+  - {id: en_giant_pod_chamber, novel: EN}
+  - {id: en_nexus_pod, novel: EN}
+  - {id: ha_clinic, novel: HA}
+  - {id: ha_emergency_center, novel: HA}
+  - {id: hp_red_forest_broken_tower, novel: HP}
+  - {id: hp_sect, novel: HP}
+  - {id: hp_village, novel: HP}
+  - {id: sf_forge_heart_cavern, novel: SF}
+  - {id: sf_sanctuary, novel: SF}
