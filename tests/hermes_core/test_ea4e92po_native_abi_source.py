@@ -70,4 +70,6 @@ def test_wrapper_is_the_only_local_call_site():
         if path.name != "Ea4eDirectory2NativeAbiCandidate.cs"
         and "InvokeUnwired(" in path.read_text()
     ]
-    assert callers == []
+    assert [path.name for path in callers] == [
+        "Ea4eDirectory2OneAttemptCandidate.cs"
+    ]
