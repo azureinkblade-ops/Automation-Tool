@@ -1,11 +1,16 @@
 // Unwired source candidate. No production entry point invokes this owner.
 using System;
+using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
 internal static class Ea4eDirectory2OneAttemptCandidate
 {
     private const string ShapeCandidate = "CANDIDATE:RETAINED_DIRECTORY_SHAPE_ONLY";
     private const string DescriptorCandidate = "CANDIDATE:DIRECTORY_DESCRIPTOR_STRUCTURE_ONLY";
+
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
 
     internal static string ScreenInputs(string resolvedProgramData,
         string pinnedManifestRoot, string path, string appSid, string sddl,
@@ -57,10 +62,23 @@ internal static class Ea4eDirectory2OneAttemptCandidate
                 attributes => {
                     IntPtr raw = Ea4eDirectory2NativeAbiCandidate.InvokeUnwired(
                         path, access, share, flags, attributes, out observedError);
-                    if (Ea4eDirectory2HandleResultCandidate.Screen(raw) !=
-                        "CANDIDATE:NON_SENTINEL_ONLY")
+                    if (raw == IntPtr.Zero || raw == new IntPtr(-1))
                         return "DENY:NATIVE_RESULT_UNCERTAIN";
-                    owned = new SafeFileHandle(raw, true);
+                    bool transferred = false;
+                    try
+                    {
+                        if (Ea4eDirectory2HandleResultCandidate.Screen(raw) !=
+                            "CANDIDATE:NON_SENTINEL_ONLY")
+                            return "DENY:NATIVE_RESULT_UNCERTAIN";
+                        owned = new SafeFileHandle(raw, true);
+                        transferred = true;
+                    }
+                    finally
+                    {
+                        if (!transferred && !CloseHandle(raw))
+                            throw new InvalidOperationException(
+                                "Raw directory handle close failed");
+                    }
                     string shape = Ea4eDirectory2RetainedShapeCandidate.Read(
                         owned, path, out observedVolume, out observedId);
                     if (shape != ShapeCandidate) return shape;

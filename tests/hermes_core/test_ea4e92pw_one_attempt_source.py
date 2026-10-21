@@ -53,3 +53,10 @@ def test_owner_is_unwired_and_single_call():
                if path.name != "Ea4eDirectory2OneAttemptCandidate.cs"
                and "AttemptUnwired(" in path.read_text()]
     assert callers == []
+
+
+def test_raw_handle_has_pre_wrapper_cleanup_edge():
+    source = (ROOT / "tools" / "Ea4eDirectory2OneAttemptCandidate.cs").read_text()
+    assert "bool transferred = false;" in source
+    assert "owned = new SafeFileHandle(raw, true);" in source
+    assert "if (!transferred && !CloseHandle(raw))" in source
