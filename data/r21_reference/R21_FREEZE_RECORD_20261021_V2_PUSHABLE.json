@@ -1,0 +1,25 @@
+{
+ "RECORD_TYPE": "R21_PUSHABLE_FREEZE",
+ "PUSHABLE_R21_FREEZE_ID": "BBC1114A576D32CE919C5C4F9D7B1011F6F85231017E6E67BFA1C684C91D3642",
+ "R21_FREEZE_ID_METHOD": "sha256 of canonical JSON {filename: sha256} of the pushable data/r21_reference/writer_tag_store.json and writer_location_tags.csv (sorted keys, no whitespace)",
+ "R21_FREEZE_CHANGE_REASON": "PRIVACY_SANITIZATION_NOTE_REMOVAL_PLUS_SEALED_SET_HASH_WITHHOLD",
+ "PUSHABLE_TAG_COUNT": 19,
+ "PUSHABLE_NEUTRAL_CONTROL_COUNT": 3,
+ "WITHHELD_RECORD_COUNT": 1,
+ "WITHHELD_REASON": "BEAT_TEXT_SHA256 coincides with a sealed evaluation set fingerprint (disclosure risk only; no contamination)",
+ "NOTE_FIELD_PRESENT": false,
+ "UNTAGGED_REASONS_FILE_INCLUDED": false,
+ "LOCAL_FULL_R21_AUTHORITY": {
+  "TAG_COUNT": 20,
+  "STORE_SHA256": "c763760a4f0a1fd6a31f0dfb951ff8228e560d732297681c942ab5fa59c21642",
+  "R21_FREEZE_ID": "45D1A852DED97484E7E003F67D3D2E68AAAC10B233E27B7DE7E60F1064BE3B3A",
+  "LOCATION": "local, untracked, not pushed",
+  "REPLACED_BY_PUSHABLE_SET": false
+ },
+ "HISTORICAL_FREEZE": "DBF232DE...53BF (retained as historical evidence, not replaced in history)",
+ "MANIFEST_SHA256": {
+  "writer_location_tags.csv": "c2e63cf15468884a8b724fd0f34b6a8c83cc9921c005a717e884a5cfa1fc8f6c",
+  "writer_tag_store.json": "dc3293208e31f60e220ece394ddf815cdff7c664d7d4c3ade1dfb424b1e31a87"
+ },
+ "DATE": "2026-10-21"
+}
