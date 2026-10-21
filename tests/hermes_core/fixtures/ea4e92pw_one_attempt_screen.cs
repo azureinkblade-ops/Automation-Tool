@@ -41,6 +41,12 @@ internal static class Ea4e92pwOneAttemptScreen
             result = Ea4eDirectory2OneAttemptCandidate.ClassifyRelease(true);
         else if (args[0] == "wrapper-close-unobserved")
             result = Ea4eDirectory2OneAttemptCandidate.ClassifyRelease(false);
+        else if (args[0] == "pre-attempt-denial")
+            result = Ea4eDirectory2OneAttemptCandidate.ClassifyDisposition(false, false);
+        else if (args[0] == "post-attempt-denial")
+            result = Ea4eDirectory2OneAttemptCandidate.ClassifyDisposition(true, false);
+        else if (args[0] == "post-attempt-retained")
+            result = Ea4eDirectory2OneAttemptCandidate.ClassifyDisposition(true, true);
         else return 2;
         Console.WriteLine(result ?? "CANDIDATE:INPUTS_ONLY");
         return 0;

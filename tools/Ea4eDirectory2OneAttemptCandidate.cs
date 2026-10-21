@@ -24,6 +24,12 @@ internal static class Ea4eDirectory2OneAttemptCandidate
         return observed ? null : "DENY:WRAPPER_CLOSE_UNCERTAIN";
     }
 
+    internal static string ClassifyDisposition(bool attempted, bool retained)
+    {
+        return attempted && !retained
+            ? "DENY:POST_ATTEMPT_RECONCILIATION_REQUIRED" : null;
+    }
+
     internal static string ScreenInputs(string resolvedProgramData,
         string pinnedManifestRoot, string path, string appSid, string sddl,
         uint access, uint share, uint flags)
@@ -55,25 +61,33 @@ internal static class Ea4eDirectory2OneAttemptCandidate
         string pinnedManifestRoot, string path, string appSid, string sddl,
         uint access, uint share, uint flags,
         out Ea4eDirectoryObservedHandleCandidate retained,
-        out int lastError, out int releaseError,
+        out int lastError, out int closeError,
+        out string observationStatus, out string closeStatus,
         out string volumeHex, out string fileIdHex)
     {
         retained = null;
         lastError = 0;
-        releaseError = 0;
+        closeError = 0;
+        observationStatus = null;
+        closeStatus = "NOT_ATTEMPTED";
         volumeHex = null;
         fileIdHex = null;
         string denial = ScreenInputs(resolvedProgramData, pinnedManifestRoot,
             path, appSid, sddl, access, share, flags);
-        if (denial != null) return denial;
+        if (denial != null)
+        {
+            observationStatus = denial;
+            return denial;
+        }
 
         Ea4eDirectoryObservedHandleCandidate owned = null;
         Ea4eDirectoryObservedHandleCandidate accepted = null;
         int observedError = 0;
-        int observedReleaseError = 0;
+        int observedCloseError = 0;
         bool attempted = false, rawCloseFailed = false;
         bool wrapperCloseUncertain = false;
         string observedVolume = null, observedId = null;
+        string observedCloseStatus = "NOT_ATTEMPTED";
         string result = null;
         try
         {
@@ -95,11 +109,18 @@ internal static class Ea4eDirectory2OneAttemptCandidate
                     }
                     finally
                     {
-                        if (!transferred && !CloseHandle(raw))
+                        if (!transferred)
                         {
-                            rawCloseFailed = true;
-                            throw new InvalidOperationException(
-                                "Raw directory handle close failed");
+                            bool closed = CloseHandle(raw);
+                            observedCloseError = closed ? 0 : Marshal.GetLastWin32Error();
+                            observedCloseStatus = closed ? "CANDIDATE:RAW_CLOSED" :
+                                "DENY:RAW_HANDLE_CLOSE_UNCERTAIN";
+                            if (!closed)
+                            {
+                                rawCloseFailed = true;
+                                throw new InvalidOperationException(
+                                    "Raw directory handle close failed");
+                            }
                         }
                     }
                     string shape = Ea4eDirectory2RetainedShapeCandidate.Read(
@@ -120,6 +141,7 @@ internal static class Ea4eDirectory2OneAttemptCandidate
                 volumeHex = observedVolume;
                 fileIdHex = observedId;
                 accepted = null;
+                observedCloseStatus = "RETAINED_BY_CALLER";
             }
         }
         catch (Exception error)
@@ -135,18 +157,33 @@ internal static class Ea4eDirectory2OneAttemptCandidate
             {
                 owned.Dispose();
                 wrapperCloseUncertain |= !owned.ReleaseObserved;
+                observedCloseStatus = owned.ReleaseObserved ?
+                    "CANDIDATE:WRAPPER_CLOSED" : ClassifyRelease(false);
                 if (!owned.ReleaseObserved)
-                    observedReleaseError = owned.ReleaseError;
+                    observedCloseError = owned.ReleaseError;
             }
             if (accepted != null)
             {
                 accepted.Dispose();
                 wrapperCloseUncertain |= !accepted.ReleaseObserved;
+                observedCloseStatus = accepted.ReleaseObserved ?
+                    "CANDIDATE:WRAPPER_CLOSED" : ClassifyRelease(false);
                 if (!accepted.ReleaseObserved)
-                    observedReleaseError = accepted.ReleaseError;
+                    observedCloseError = accepted.ReleaseError;
             }
-            releaseError = observedReleaseError;
+            closeError = observedCloseError;
+            closeStatus = observedCloseStatus;
         }
-        return wrapperCloseUncertain ? ClassifyRelease(false) : result;
+        observationStatus = result;
+        bool acceptedResult = result == "CANDIDATE:RETAINED_DIRECTORY_READBACK_ONLY" &&
+            retained != null && !wrapperCloseUncertain;
+        string disposition = ClassifyDisposition(attempted, acceptedResult);
+        if (disposition != null)
+        {
+            volumeHex = observedVolume;
+            fileIdHex = observedId;
+            return disposition;
+        }
+        return result;
     }
 }

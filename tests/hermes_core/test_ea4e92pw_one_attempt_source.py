@@ -41,6 +41,9 @@ def executable(tmp_path_factory):
     ("raw-close", "DENY:RAW_HANDLE_CLOSE_UNCERTAIN"),
     ("wrapper-close-observed", "CANDIDATE:INPUTS_ONLY"),
     ("wrapper-close-unobserved", "DENY:WRAPPER_CLOSE_UNCERTAIN"),
+    ("pre-attempt-denial", "CANDIDATE:INPUTS_ONLY"),
+    ("post-attempt-denial", "DENY:POST_ATTEMPT_RECONCILIATION_REQUIRED"),
+    ("post-attempt-retained", "CANDIDATE:INPUTS_ONLY"),
 ])
 def test_pre_call_screen_only(executable, mode, expected):
     result = subprocess.run(
@@ -64,7 +67,8 @@ def test_raw_handle_has_pre_wrapper_cleanup_edge():
     source = (ROOT / "tools" / "Ea4eDirectory2OneAttemptCandidate.cs").read_text()
     assert "bool transferred = false;" in source
     assert "owned = new Ea4eDirectoryObservedHandleCandidate(raw);" in source
-    assert "if (!transferred && !CloseHandle(raw))" in source
+    assert "if (!transferred)" in source
+    assert "bool closed = CloseHandle(raw);" in source
     assert "lastError = observedError;" in source
 
 
@@ -73,8 +77,11 @@ def test_transferred_handle_has_one_observable_release_edge():
     handle = (ROOT / "tools" / "Ea4eDirectoryObservedHandleCandidate.cs").read_text()
     assert "wrapperCloseUncertain |= !owned.ReleaseObserved;" in owner
     assert "wrapperCloseUncertain |= !accepted.ReleaseObserved;" in owner
-    assert "releaseError = observedReleaseError;" in owner
-    assert "return wrapperCloseUncertain ? ClassifyRelease(false) : result;" in owner
+    assert "closeError = observedCloseError;" in owner
+    assert "ClassifyDisposition(attempted, acceptedResult)" in owner
+    assert "observationStatus = result;" in owner
+    assert "volumeHex = observedVolume;" in owner
+    assert "fileIdHex = observedId;" in owner
     assert "protected override bool ReleaseHandle()" in handle
     assert handle.count("CloseHandle(handle)") == 1
     assert "Marshal.GetLastWin32Error()" in handle
