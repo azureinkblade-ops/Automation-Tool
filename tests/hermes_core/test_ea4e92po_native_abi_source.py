@@ -49,6 +49,25 @@ def test_no_argument_route(executable):
     assert result.stdout == ""
 
 
-def test_declaration_has_no_call_site():
+def test_unwired_wrapper_signature_without_native_call(executable):
+    result = subprocess.run(
+        [str(executable), "wrapper"], capture_output=True, text=True,
+        timeout=10, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == [
+        "System.IntPtr", "System.String", "System.UInt32", "System.UInt32",
+        "System.UInt32", "System.IntPtr", "System.Int32&",
+    ]
+
+
+def test_wrapper_is_the_only_local_call_site():
     source = (ROOT / "tools" / "Ea4eDirectory2NativeAbiCandidate.cs").read_text()
-    assert source.count("CreateDirectory2W(") == 1
+    assert source.count("CreateDirectory2W(") == 2
+    assert "lastError = Marshal.GetLastWin32Error();" in source
+    callers = [
+        path for path in (ROOT / "tools").glob("Ea4e*.cs")
+        if path.name != "Ea4eDirectory2NativeAbiCandidate.cs"
+        and "InvokeUnwired(" in path.read_text()
+    ]
+    assert callers == []
