@@ -27,11 +27,71 @@ DETACHED_PROCESS = 0x00000008
 CREATE_BREAKAWAY_FROM_JOB = 0x01000000
 
 
+class CanonicalRuntimeError(RuntimeError):
+    """Fail-closed Automation Tool server interpreter selection."""
+
+
+def canonical_venv_python(root: Path | None = None) -> Path:
+    base = Path(root) if root is not None else ROOT
+    return (base / ".venv-gpu" / "Scripts" / "python.exe").resolve()
+
+
 def bundled_python() -> Path:
+    """Legacy Codex runtime locator. Must not be used to launch app.py."""
     candidate = Path.home() / ".cache" / "codex-runtimes" / "codex-primary-runtime" / "dependencies" / "python" / "python.exe"
     if candidate.exists():
         return candidate
     return Path(sys.executable)
+
+
+def _is_codex_runtime(path: Path) -> bool:
+    text = str(path).replace("\\", "/").casefold()
+    return "codex-runtimes" in text or "codex-primary-runtime" in text
+
+
+def require_canonical_python(root: Path | None = None) -> Path:
+    base = Path(root) if root is not None else ROOT
+    exe = canonical_venv_python(base)
+    if not exe.is_file():
+        raise CanonicalRuntimeError(f"canonical interpreter missing: {exe}")
+    if _is_codex_runtime(exe):
+        raise CanonicalRuntimeError(f"canonical interpreter must not be Codex runtime: {exe}")
+    return exe
+
+
+def canonical_runtime_preflight(python_exe: Path, timeout: float = 20.0) -> dict[str, Any]:
+    if _is_codex_runtime(python_exe):
+        raise CanonicalRuntimeError(f"refusing Codex runtime: {python_exe}")
+    env = {k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "PYTHONHOME"}}
+    probe = (
+        "import json,sys,yaml;"
+        "print(json.dumps({"
+        "'ok': True,"
+        "'prefix': sys.prefix,"
+        "'base_prefix': sys.base_prefix,"
+        "'yaml': getattr(yaml,'__version__',''),"
+        "'yaml_file': getattr(yaml,'__file__',''),"
+        "}))"
+    )
+    run = subprocess.run(
+        [str(python_exe), "-c", probe],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+        env=env,
+    )
+    if run.returncode != 0:
+        raise CanonicalRuntimeError(
+            f"canonical dependency preflight failed rc={run.returncode}: {(run.stderr or run.stdout or '').strip()}"
+        )
+    try:
+        payload = json.loads((run.stdout or "").strip().splitlines()[-1])
+    except Exception as exc:
+        raise CanonicalRuntimeError("canonical dependency preflight returned no JSON") from exc
+    if not payload.get("ok") or not payload.get("yaml"):
+        raise CanonicalRuntimeError(f"canonical yaml preflight failed: {payload}")
+    return payload
 
 
 def listener_pids(port: int) -> list[int]:
@@ -114,7 +174,8 @@ def wait_for_health(port: int, timeout_seconds: int = 45) -> dict[str, Any] | No
 
 
 def start_server(port: int) -> dict[str, Any]:
-    python_exe = bundled_python()
+    python_exe = require_canonical_python()
+    preflight = canonical_runtime_preflight(python_exe)
     env = dict(os.environ)
     env["AUTOMATION_TOOL_PORT"] = str(port)
     env.setdefault("PYTHONUNBUFFERED", "1")
@@ -165,6 +226,7 @@ def start_server(port: int) -> dict[str, Any]:
         "outLog": str(out_log),
         "errLog": str(err_log),
         "creationMode": creation_mode,
+        "preflight": preflight,
     }
 
 
@@ -246,7 +308,14 @@ def main() -> int:
         print(json.dumps(report, indent=2))
         return 1
 
-    report["started"] = start_server(args.port)
+    try:
+        report["started"] = start_server(args.port)
+    except CanonicalRuntimeError as exc:
+        report["ok"] = False
+        report["message"] = f"Canonical server runtime rejected: {exc}"
+        write_report(report)
+        print(json.dumps(report, indent=2))
+        return 1
     health = wait_for_health(args.port)
     report["health"] = health
     if not health_matches_current_app(health, args.port):

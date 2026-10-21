@@ -1,0 +1,97 @@
+{
+  "template_id": "bounded_sdxl_inpaint_v1",
+  "description": "Bounded SDXL inpaint. Explicit mask only. No OpenPose, no ControlNet, one KSampler.",
+  "openpose_controlnet_used": false,
+  "automatic_localization": false,
+  "encode_architecture": "VAEEncodeForInpaint",
+  "checkpoint": "sd_xl_base_1.0.safetensors",
+  "final_composite": "cpu_side_against_original_source",
+  "feather": {
+    "algorithm": "deterministic_inward_linear_chebyshev_ramp",
+    "direction": "inward",
+    "note": "Pixels with mask alpha 0 are copied from the source and are never feathered outward."
+  },
+  "prompt": {
+    "1": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "REPLACE_CHECKPOINT"
+      }
+    },
+    "2": {
+      "class_type": "LoraLoader",
+      "inputs": {
+        "lora_name": "REPLACE_LORA",
+        "strength_model": "REPLACE_LORA_STRENGTH",
+        "strength_clip": "REPLACE_LORA_STRENGTH",
+        "model": ["1", 0],
+        "clip": ["1", 1]
+      }
+    },
+    "3": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "REPLACE_POSITIVE",
+        "clip": ["2", 1]
+      }
+    },
+    "4": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "REPLACE_NEGATIVE",
+        "clip": ["2", 1]
+      }
+    },
+    "5": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "REPLACE_SOURCE_IMAGE"
+      }
+    },
+    "6": {
+      "class_type": "LoadImageMask",
+      "inputs": {
+        "image": "REPLACE_REPAIR_MASK",
+        "channel": "red"
+      }
+    },
+    "7": {
+      "class_type": "VAEEncodeForInpaint",
+      "inputs": {
+        "pixels": ["5", 0],
+        "vae": ["1", 2],
+        "mask": ["6", 0],
+        "grow_mask_by": "REPLACE_GROW_MASK_BY"
+      }
+    },
+    "8": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": "REPLACE_SEED",
+        "steps": "REPLACE_STEPS",
+        "cfg": "REPLACE_CFG",
+        "sampler_name": "REPLACE_SAMPLER",
+        "scheduler": "REPLACE_SCHEDULER",
+        "denoise": "REPLACE_DENOISE",
+        "model": ["2", 0],
+        "positive": ["3", 0],
+        "negative": ["4", 0],
+        "latent_image": ["7", 0]
+      }
+    },
+    "9": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["8", 0],
+        "vae": ["1", 2]
+      }
+    },
+    "10": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "images": ["9", 0],
+        "filename_prefix": "REPLACE_OUTPUT_PREFIX"
+      }
+    }
+  }
+}

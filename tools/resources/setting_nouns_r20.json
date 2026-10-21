@@ -1,0 +1,249 @@
+{
+ "RESOURCE": "SETTING_NOUNS_R20",
+ "MODE": "POSITIVE_SETTING_CANDIDATE_ONLY",
+ "RULE": "Membership may only set SETTING_CANDIDATE=YES. It never sets a LOCATION_ROLE or a bind; every event/subject gate and R12 _new_bind still decide.",
+ "CAP": 100,
+ "BUILT_FROM": [
+  "output/r19-calibration/setting_definition.md",
+  "output/r19-calibration/calibration_scale.jsonl"
+ ],
+ "AMBIGUOUS_EXCLUDED": [
+  "arch",
+  "ark",
+  "chamber",
+  "door",
+  "edge",
+  "forge",
+  "glass",
+  "river",
+  "road",
+  "seam",
+  "shelf",
+  "stall",
+  "van",
+  "wall"
+ ],
+ "EXCLUDED_NON_CONCRETE": [
+  "gathering"
+ ],
+ "ENTRIES": [
+  {
+   "LEMMA": "archive",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "canyon",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "citadel",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "crosswalk",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "den",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "divide",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "doorway",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "entrance",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "exit",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "field",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "fissure",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "gorge",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "gully",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "gym",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "hills",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "hollow",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "landing",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "loft",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "outpost",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "parapet",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "pass",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "quarter",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "ravine",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "ridge",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "ruin",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "scriptorium",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "spire",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "stair",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "stairway",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS+SETTING_DEFINITION",
+   "SOURCE": "SETTING_DEFINITION"
+  },
+  {
+   "LEMMA": "store",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "study",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "terrace",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  },
+  {
+   "LEMMA": "threshold",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS+SETTING_DEFINITION",
+   "SOURCE": "SETTING_DEFINITION"
+  },
+  {
+   "LEMMA": "yard",
+   "SETTING_CLASS": "SETTING",
+   "RATIONALE": "tagged SETTING (whole-image environment) and never LOCAL_SPOT in CALIBRATION_CORPUS",
+   "SOURCE": "CALIBRATION_CORPUS"
+  }
+ ],
+ "EXCLUDED_ON_AUDIT": {
+  "heart": "partitive part noun (PART_NOUNS); the place is its 'of' object",
+  "shape": "head-extraction artifact, not a place",
+  "tea": "compound modifier ('tea shop'), not a head",
+  "nexus": "part of a named place ('Nexus Pod'); named places never depend on the list",
+  "vale": "character name (Vale), extraction artifact",
+  "cut": "head-extraction artifact",
+  "kiln": "compound modifier ('kiln hall'), not a head",
+  "rock": "definition rule 3: could be a local surface",
+  "grass": "definition rule 3: could be a local surface",
+  "scrub": "definition rule 3: could be a local surface",
+  "relay": "definition rule 3: unclear whether a whole background",
+  "firepit": "fixture inside a setting (phrase tagged SETTING via courtyard); definition rule 3"
+ }
+}

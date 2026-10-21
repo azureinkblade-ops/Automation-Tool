@@ -1,0 +1,14 @@
+﻿{
+  "RESOURCE": "SEMANTIC_RELATION_RESOURCES_R19",
+  "MODE": "CLASSIFICATION_AND_SUPPRESSION_ONLY",
+  "RULE": "Entries map lemmas to semantic classes. No entry can create CURRENT_SITE or SUCCESSFUL_DESTINATION; membership can only classify a relation as reference/cessation/denial and keep a location nonbinding.",
+  "CAP_TOTAL_ENTRIES_ALL_R19_RESOURCES": 100,
+  "TRANSACTION_PREDICATE": ["invest", "buy", "sell", "pay", "rent", "lease", "own", "insure", "mortgage", "fund", "sponsor", "auction", "purchase", "sublet", "finance", "subsidize"],
+  "TRANSACTION_OBJECT": ["rent", "lease", "deed", "share", "stake", "tax", "due", "mortgage", "title", "bill", "fee", "insurance", "dividend", "property"],
+  "CESSATION_PREDICATE": ["cease", "quit", "stop", "retire", "discontinue", "halt"],
+  "DENIAL_IDIOM_NONCOMPOSITIONAL": [["show", "door"], ["turn", "away"], ["turn", "back"], ["send", "away"], ["send", "back"], ["send", "packing"],
+                                    ["kick", "out"], ["throw", "out"], ["order", "off"], ["order", "out"], ["chase", "off"], ["chase", "away"],
+                                    ["wave", "off"], ["wave", "away"], ["hustle", "away"], ["hustle", "out"], ["escort", "off"], ["escort", "out"],
+                                    ["shoo", "away"], ["bounce", ""], ["refuse", ""], ["deny", ""], ["bar", ""], ["rebuff", ""], ["reject", ""], ["block", ""]],
+  "CESSATION_IDIOM_NONCOMPOSITIONAL": [["give", "up"], ["use", "to"]]
+}

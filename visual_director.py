@@ -27,6 +27,16 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from tools.scene_environment import (
+    HP_HARD_LANDMARKS,
+    UNSPECIFIED,
+    build_still_cameras_poses,
+    match_studio_bible_location,
+    resolve_scene_environment,
+    reject_cross_novel_landmarks,
+    vd_effective_lead,
+)
+
 # --- Bible (Studio Canon) location -----------------------------------------
 # The Bible lives in the separate AIVSB repo. app.py does not track this path,
 # so we define it here. Override with AIVSB_BIBLE_DIR if the repo moves.
@@ -254,20 +264,14 @@ def extract_character_names(scene_text: str, profiles: Dict[str, Dict[str, Any]]
 
 
 def match_location(scene_text: str, locations: List[Dict[str, Any]], novel: str) -> Optional[Dict[str, Any]]:
-    """Find a recurring location whose name/id keywords appear in scene text."""
-    text = str(scene_text or "").lower()
-    nov = str(novel).lower()
-    best: Optional[Dict[str, Any]] = None
-    best_score = 0
-    for loc in locations:
-        if nov and str(loc.get("novel") or "").lower() != nov:
-            continue
-        hay = f"{loc.get('name', '')} {loc.get('id', '')} {loc.get('history', '')}".lower()
-        score = sum(1 for word in hay.split() if len(word) > 3 and word in text)
-        if score > best_score:
-            best_score = score
-            best = loc
-    return best if best_score > 0 else None
+    """Find a recurring location whose name/id/architecture keywords appear in scene text.
+
+    SCENE_ENVIRONMENT_CONSISTENCY_REMEDIATION: delegates to novel-scoped Studio Bible
+    matcher (aliases + field haystack). Unknown -> None (UNSPECIFIED); never borrows
+    another novel's landmarks.
+    """
+    return match_studio_bible_location(scene_text, locations, novel)
+
 
 
 # --- Package builder -------------------------------------------------------
@@ -417,6 +421,96 @@ def _looks_like_weapon(token: str) -> bool:
     return any(w in t for w in ("sword", "jian", "blade", "weapon", "spear", "staff", "polearm", "saber", "sabre"))
 
 
+# IDENTITY_PRODUCTION_COVERAGE_REMEDIATION_20260929 (Part A). Everything below is used ONLY
+# when ENABLE_IDENTITY_PRESERVATION is ON; flag-OFF prompts are byte-identical to legacy.
+# The jian lock is Liang's canon weapon (Bible 'silver_edged' -> 'silver-edged sword'), so it
+# is emitted only for a character whose canon weapon normalizes to that, in its own Weapon
+# section (never inside the Character Identity block) and with no pronoun.
+_JIAN_CANON_WEAPON = "silver-edged sword"
+_WEAPON_LOCK_NEUTRAL = "one standard-length Chinese jian, straight double-edged blade, simple silver guard, sheathed at the left hip"
+_ID_ON_NON_WEAPON = ("none", "unknown", "ui", "holo", "qi", "n/a")
+
+
+def _primary_canon_weapons(primary: Any) -> List[str]:
+    """Canon positive weapon phrases for the SELECTED character (flag ON only)."""
+    if not isinstance(primary, dict):
+        return []
+    out: List[str] = []
+    for w in list(primary.get("weapons", []) or []):
+        cleaned = _clean_canon_token(str(w)).lower()
+        if not cleaned or any(re.search(rf"\b{re.escape(b)}\b", cleaned) for b in _ID_ON_NON_WEAPON):
+            continue
+        if any(b in cleaned for b in ("no weapon", "carries no", "unarmed")):
+            continue
+        canon = _canon_weapon(str(w))
+        if canon and canon not in out:
+            out.append(canon)
+    return out
+
+
+def _primary_has_jian_canon(primary: Any) -> bool:
+    return _JIAN_CANON_WEAPON in _primary_canon_weapons(primary)
+
+
+def _primary_wardrobe_tokens(primary: Any) -> List[str]:
+    """Bible clothing for the Wardrobe section (flag ON): no scene placement, no weapons."""
+    if not isinstance(primary, dict):
+        return []
+    out: List[str] = []
+    for c in list(primary.get("clothing", []) or []):
+        cleaned = _clean_canon_token(str(c))
+        if not cleaned or _is_scene_placement(cleaned) or _looks_like_weapon(cleaned):
+            continue
+        if cleaned.lower() not in [o.lower() for o in out]:
+            out.append(cleaned)
+    return out
+
+
+def _identity_on_governed_primary(novel: str) -> Optional[str]:
+    """Flag ON, no character named in the scene text: the single governed character bound by
+    structured context (ambient IdentityProductionContext, else the novel id/abbreviation)."""
+    try:
+        from tools.identity_preservation import (current_identity_context, governed_character_keys_for_novel,
+                                                 resolve_production_novel_alias)
+    except Exception:  # pragma: no cover
+        return None
+    ctx = current_identity_context()
+    if ctx is not None and (ctx.character_id or ctx.character_name):
+        from tools.identity_preservation import normalize_identity_character_key
+        key = normalize_identity_character_key(ctx.character_id or ctx.character_name)
+        if key:
+            return key
+    nid = None
+    if ctx is not None:
+        nid = resolve_production_novel_alias(ctx.novel_id) or resolve_production_novel_alias(ctx.novel_abbreviation)
+    nid = nid or resolve_production_novel_alias(novel)
+    keys = governed_character_keys_for_novel(nid) if nid else []
+    if len(keys) == 1:
+        return keys[0]
+    return None
+
+
+def _identity_contract_for(primary: Any):
+    """(identity_flag_on, governed IdentityContract or None). Flag OFF -> (False, None)."""
+    try:
+        from tools.identity_preservation import get_identity_contract, is_identity_preservation_enabled
+    except Exception:  # pragma: no cover - module always present with this source
+        return False, None
+    if not is_identity_preservation_enabled():
+        return False, None
+    name = primary.get("name", "") if isinstance(primary, dict) else ""
+    return True, get_identity_contract(name)
+
+
+def _identity_contract_sex(contract: Any) -> str:
+    """Sealed TEXT_CANON sex only (Jarek male); '' for UNSPECIFIED / scene-dependent / ungoverned."""
+    if contract is None or not getattr(contract, "sex", None):
+        return ""
+    if not str(contract.authority().get("SEX", "")).startswith("TEXT_CANON"):
+        return ""
+    return str(contract.sex)
+
+
 def _derive_gender(scene_text: str) -> str:
     """Infer character gender from scene-text pronouns (canon YAML has none).
 
@@ -513,67 +607,45 @@ def _build_shot_plan(
     shots_text: Optional[List[str]] = None,
     scene_text: str = "",
 ) -> List[Dict[str, Any]]:
-    """Three-shot cinematic plan per the user's brief + Visual Creative Director
-    priority (character identity > emotion > story moment > composition > style).
+    """Three-shot cinematic plan with novel-scoped SceneEnvironmentSpec.
 
-    Slice A: each shot now carries its OWN narrative objective (not the shared
-    scene_text repeated 3x), a pose/action, explicit camera direction, emotion,
-    and an ENVIRONMENT STATE block derived from the matched location's
-    damage_state / weather / ambient_particles (so SDXL images the *condition*
-    of the place, not just its name). This directly attacks the A/B findings:
-    scene repetition, static descriptors, and 'beautiful but wrong location'.
+    SCENE_ENVIRONMENT_CONSISTENCY_REMEDIATION:
+    - Cameras/poses derive from resolved environment + scene action (no generic HP hardcode).
+    - HP landmarks (ruined sect hall / jade altar) only when HP scene supports them.
+    - Authority: TEXT_CANON_SCENE > STUDIO_BIBLE_LOCATION > SCENE_CONTEXT > VISUAL_DIRECTION > MODEL_PRIOR.
     """
     primary = characters[0] if characters else {}
     primary_name = primary.get("name") or "the protagonist"
-    env_name = location.get("name") if location else f"the {novel.upper()} setting"
     lighting = location.get("lighting") if location else primary.get("lighting_preference") or ""
-    magic = primary.get("magic_style") or location.get("magic_effects") or ""
+    if _identity_contract_for(primary)[0]:
+        magic = primary.get("magic_style") or (location or {}).get("magic_effects") or ""
+    else:
+        magic = primary.get("magic_style") or (location.get("magic_effects") if location else "") or ""
 
     gender = _derive_gender(scene_text) if scene_text else (
         _derive_gender(primary.get("notes", "")) if isinstance(primary, dict) else ""
     )
+    _id_on, _id_contract = _identity_contract_for(primary)
+    if _id_on:
+        gender = _identity_contract_sex(_id_contract)
 
-    # Environment STATE: location tells SDXL WHERE; state tells SDXL WHAT
-    # HAPPENED THERE. Build from the matched location's damage/weather/particle
-    # fields so a 'ruined' site renders ruined, not pristine.
-    # Field-hygiene (user finding #1): the frozen Bible sometimes stores an
-    # abstract state word like 'ordered' in damage_state that directly
-    # CONTRADICTS a 'ruined' scene cue and makes SDXL draw intact temples. We
-    # drop those contradictory abstract words and, when the scene text or the
-    # location implies ruin, inject concrete ruin descriptors instead.
-    state_bits: List[str] = []
-    if location:
-        def _skip(v: str) -> bool:
-            vl = v.lower()
-            return vl in ("intact", "n/a", "none", "") or "n/a" in vl or "none" in vl
-        dmg = str(location.get("damage_state", "")).replace("_", " ").strip()
-        if dmg and not _skip(dmg):
-            # drop individual contradictory abstract tokens (e.g. 'ordered',
-            # 'pristine') that conflict with a ruined scene, keep the rest.
-            dmg_tokens = [t for t in dmg.split(",") if t.strip().lower() not in _RUIN_CONTRADICTORY]
-            dmg_clean = ", ".join(dict.fromkeys(t.strip() for t in dmg_tokens if t.strip()))
-            if dmg_clean:
-                state_bits.append(dmg_clean)
-        weather = str(location.get("weather", "")).replace("_", " ").strip()
-        if weather and not _skip(weather):
-            state_bits.append(weather)
-        for key in ("fog_density", "ambient_particles"):
-            v = str(location.get(key, "")).replace("_", " ").strip()
-            if v and not _skip(v):
-                state_bits.append(v)
-    # Concrete ruin language when the scene or location implies abandonment.
-    # This overrides the Bible's 'ordered' tendency (user finding #1).
-    ruin_signals = ("ruin", "ruined", "collaps", "broken", "abandon", "wreck", "decay")
-    implies_ruin = any(s in scene_text.lower() for s in ruin_signals) or (
-        location and any(s in str(location.get("damage_state", "")).lower() for s in ("ruin", "ruined", "collaps", "broken"))
+    # Resolve environment for the package (still_index 0 base; per-shot role applied below).
+    base_spec = resolve_scene_environment(
+        novel,
+        scene_text,
+        location=location,
+        still_index=0,
+        composition_goal=(shots_text[0] if shots_text else None),
+        shots_text=shots_text,
     )
-    if implies_ruin and not any(s in " ".join(state_bits).lower() for s in ("ruin", "collaps", "broken", "abandon")):
-        state_bits.append("abandoned for centuries, partially collapsed, cracked stone stairs, broken jade railings, fallen roof tiles, faded and torn banners, dust and mist inside the hall")
-    env_state = ", ".join(dict.fromkeys(state_bits)) if state_bits else ""
+    env_name = (
+        base_spec.location_name
+        if base_spec.location_name and base_spec.location_name != UNSPECIFIED
+        else base_spec.place_phrase
+    )
+    env_state = base_spec.environment_state
 
-    # Banners belong under SETTING (user finding #5 + #6), never in the
-    # Character Identity block. Collect from the character's clothing placement
-    # tokens and from the location; render as plain cloth with NO pseudo-text.
+    # Banners belong under SETTING, never in Character Identity.
     banner_bits: List[str] = []
     if primary:
         for c in primary.get("clothing", []) or []:
@@ -586,73 +658,219 @@ def _build_shot_plan(
                 banner_bits.append(v)
     banner_line = ", ".join(dict.fromkeys(banner_bits)) if banner_bits else ""
 
-    # Per-image narrative objectives. If caller passes shots_text (the exact
-    # per-image beats from the app), use them. Otherwise narrate a generic
-    # arrival / ascent / climax arc so the three frames progress. The fallback
-    # is novel-agnostic (uses the matched character + location) so non-HP
-    # novels do not get HP-specific "sect ruins / jade altar" wording.
+    has_jian = bool(_id_on and _primary_has_jian_canon(primary))
+    # SCENE_ENV_IDENTITY_OFF_LEGACY_HP_CAMERAS:
+    # SCENE_ENVIRONMENT_LIVE_PATH_REMEDIATION_R2 (Part I, option A) + R3 Phase 4:
+    # Do NOT apply landmark/template content merely because NOVEL_ID=HP or hp_landmarks_allowed.
+    # Require scene/location support for EACH specific landmark (altar / broken staircase /
+    # gateway formations). Outside-gate: exterior gate ok; interior altar/staircase not unless
+    # source supports them. Preferred: build from SceneEnvironmentSpec like other novels.
+    _hp_supported = list((base_spec.observability or {}).get("SUPPORTED_HP_LANDMARKS") or [])
+    _has_hall = any("sect hall" in s or "ruined sect" in s for s in _hp_supported)
+    _has_stair = any("stair" in s for s in _hp_supported)
+    _has_altar = any("altar" in s for s in _hp_supported)
+    _has_formation = any("formation" in s for s in _hp_supported)
+    _has_gate = any("gate" in s for s in _hp_supported)
+    _hp_interior_ok = _has_hall or _has_stair or _has_altar or _has_formation
+    if (not _id_on and str(novel).lower() == "hp" and base_spec.hp_landmarks_allowed and _hp_interior_ok):
+        place = env_name or f"the {str(novel).upper()} setting"
+        bg0 = "the ruined sect hall and gateway" if _has_hall else ("the sect gate exterior" if _has_gate else place)
+        climb = (
+            "as he climbs the broken stair" if _has_stair else f"as he advances through {place}"
+        )
+        ahead = "with the jade altar rising ahead" if _has_altar else f"with {place} ahead"
+        climax = (
+            "kneeling on one knee before the altar with the dormant formation glowing on the floor behind him"
+            if (_has_altar and _has_formation) else (
+                "kneeling on one knee before the altar" if _has_altar else
+                f"at the decisive beat within {place}"
+            )
+        )
+        cameras = [
+            (
+                f"full-body medium shot of Liang {'entering the ruined sect hall' if _has_hall else f'at {place}'}; "
+                f"Liang fills approximately 20 to 25 percent of the frame height and is immediately recognizable "
+                f"even at thumbnail size, while {bg0} fill the background"
+            ),
+            (
+                f"over-the-shoulder tracking shot from behind Liang {climb}; "
+                f"Liang fills approximately 20 to 25 percent of the frame height and is clearly visible and "
+                f"prominent, {ahead}"
+            ),
+            (
+                f"three-quarter side view, Liang clearly the subject {climax}; "
+                f"Liang fills approximately 20 to 25 percent of the frame height"
+            ),
+        ]
+        gate_look = (
+            "looking at the ancient formations above the gateway" if (_has_formation and _has_gate)
+            else ("looking toward the sect gate" if _has_gate else f"looking into {place}")
+        )
+        mid = (
+            "midway up the broken staircase, one foot planted on a higher step, body leaning forward, robe trailing behind him, right hand hovering over the sword hilt"
+            if _has_stair else
+            f"midway through the advance through {place}, body leaning forward, robe trailing behind him, right hand hovering over the sword hilt"
+        )
+        end = (
+            "kneeling on one knee before the altar, left hand pressed to the cold stone, silver qi visibly flowing through the dormant formation lines on the floor"
+            if (_has_altar and _has_formation) else (
+                "kneeling on one knee before the altar, left hand pressed to the cold stone" if _has_altar else
+                f"holding at the turning moment within {place}"
+            )
+        )
+        poses = [
+            f"standing at the entrance, head tilted upward, {gate_look}",
+            mid,
+            end,
+        ]
+        place = env_name or f"the {str(novel).upper()} setting"
+        # R2 round 4: action-first default objectives (same rule as build_still_cameras_poses) so the
+        # scene beat lands inside the CLIP-77 window after the long legacy HP poses.
+        _act = str(base_spec.composition_goal or base_spec.scene_action or "").strip()
+        if _act:
+            default_objectives = [
+                f"{_act} (establishing Liang at {place})",
+                f"{_act} (advancing deeper into {place})",
+                f"{_act} (the hidden power as the moment turns)",
+            ]
+        else:
+            default_objectives = [
+                f"Establish Liang arriving at {place}",
+                f"Show Liang advancing deeper into {place}",
+                f"Reveal the hidden power as the moment turns",
+            ]
+        if shots_text and len(shots_text) >= 3:
+            objectives = [s.strip() for s in shots_text[:3]]
+        else:
+            objectives = default_objectives
+        emotions = ["awe and uncertainty", "determination", "discovery"]
+        expressions = ["quiet awe", "determined focus", "solemn discovery"]
+        shot_types = ["establishing", "travel", "climax"]
+        shots = []
+        for i in range(3):
+            shot_env_state = env_state
+            if shot_types[i] in _INTERACTION_SHOT_TYPES:
+                shot_env_state = _trim_env_for_interaction(env_state)
+            shots.append({
+                "type": shot_types[i],
+                "camera": cameras[i],
+                "purpose": objectives[i],
+                "narrative_objective": objectives[i],
+                "subject": primary_name,
+                "gender": gender,
+                "action": poses[i],
+                "expression": expressions[i],
+                "emotion": emotions[i],
+                "environment": env_name,
+                "environment_state": shot_env_state,
+                "banner_line": banner_line,
+                "lighting": str(lighting).replace("_", " "),
+                "effect": str(magic).replace("_", " "),
+                "still_index": i,
+                "still_role": shot_types[i],
+                "composition_goal": objectives[i],
+                "location_id": base_spec.location_id,
+                "environment_authority": base_spec.authority,
+                "scene_environment_observability": {
+                    **base_spec.observability,
+                    "identity_off_legacy_hp_cameras": True,
+                    "still_index": i,
+                    "still_role": shot_types[i],
+                },
+                "effective_lead": vd_effective_lead(base_spec, cameras[i], still_index=i, still_role=shot_types[i]),
+            })
+        return shots
+
+    cameras, poses, default_objectives = build_still_cameras_poses(
+        base_spec,
+        primary_name,
+        identity_on=bool(_id_on),
+        has_jian=has_jian,
+    )
+
+    # Per-image narrative objectives from caller shots_text when provided.
     if shots_text and len(shots_text) >= 3:
         objectives = [s.strip() for s in shots_text[:3]]
+        # Rebuild cameras/poses per still so composition tracks each scene beat.
+        cameras = []
+        poses = []
+        for i in range(3):
+            role = ["establishing", "travel", "climax"][i]
+            spec_i = resolve_scene_environment(
+                novel,
+                scene_text,
+                location=location,
+                still_index=i,
+                still_role=role,
+                composition_goal=shots_text[i],
+                shots_text=shots_text,
+            )
+            cam_i, pose_i, _obj = build_still_cameras_poses(
+                spec_i, primary_name, identity_on=bool(_id_on), has_jian=has_jian
+            )
+            cameras.append(cam_i[i])
+            poses.append(pose_i[i])
     else:
-        place = env_name or f"the {novel.upper()} setting"
-        objectives = [
-            f"Establish {primary_name} arriving at {place}",
-            f"Show {primary_name} advancing deeper into {place}",
-            f"Reveal the hidden power as the moment turns",
-        ]
+        # Scene-specific: even without shots_text, differentiate via scene_text clauses.
+        objectives = default_objectives
+        # When scene_text differs across packages, place/action in cameras already differ
+        # via base_spec. For multi-still within one package, role clauses differ.
+        cameras = []
+        poses = []
+        for i in range(3):
+            role = ["establishing", "travel", "climax"][i]
+            spec_i = resolve_scene_environment(
+                novel,
+                scene_text,
+                location=location,
+                still_index=i,
+                still_role=role,
+                composition_goal=scene_text,
+                shots_text=shots_text,
+            )
+            cam_i, pose_i, _obj = build_still_cameras_poses(
+                spec_i, primary_name, identity_on=bool(_id_on), has_jian=has_jian
+            )
+            cameras.append(cam_i[i])
+            poses.append(pose_i[i])
+        objectives = default_objectives
 
-    # Pose / action per shot (SDXL treats weak verbs as suggestions; user
-    # finding #2/#4: 'climbing' -> standing near stairs, 'kneeling' -> standing
-    # hero). Use STRONG bodily mechanics so the requested motion is unambiguous.
-    poses = [
-        "standing at the entrance, head tilted upward, looking at the ancient formations above the gateway",
-        "midway up the broken staircase, one foot planted on a higher step, body leaning forward, robe trailing behind him, right hand hovering over the sword hilt",
-        "kneeling on one knee before the altar, left hand pressed to the cold stone, silver qi visibly flowing through the dormant formation lines on the floor",
-    ]
-    # Camera language must AGREE with the pose (user finding #3): 'low-angle
-    # hero shot' biased the kneeling frame to an upright stance, so the climax
-    # uses a three-quarter side view from altar height instead.
-    cameras = [
-        # Slice A.5 (user-directed, evidence from Run 5): the bottleneck is
-        # COMPOSITION, not wording. SDXL is trained to favor sweeping
-        # environmental concept art, so "wide low-angle environmental shot"
-        # demotes Liang to a speck. Reframe to keep Liang visually PROMINENT
-        # (specify a relative framing ratio + environmental context retained)
-        # without changing any prompt semantics elsewhere.
-        # Slice A.7: make character SIZE an explicit, evaluable rule (Run 7
-        # review) - target ~20-25% of frame height, recognizable at thumbnail.
-        "full-body medium shot of Liang entering the ruined sect hall; Liang fills approximately 20 to 25 percent of the frame height and is immediately recognizable even at thumbnail size, while the towering ruined sect hall and gateway fill the background",
-        "over-the-shoulder tracking shot from behind Liang as he climbs the broken stair; Liang fills approximately 20 to 25 percent of the frame height and is clearly visible and prominent, with the jade altar rising ahead",
-        "three-quarter side view from altar height, Liang clearly the subject kneeling on one knee before the altar with the dormant formation glowing on the floor behind him; Liang fills approximately 20 to 25 percent of the frame height",
-    ]
     emotions = ["awe and uncertainty", "determination", "discovery"]
-    # Slice A.7 (user review Run 7): separate POSE (body mechanics) from
-    # EXPRESSION (emotional face) so each constraint is explicit and tunable,
-    # rather than combining them into one body+emotion blob.
     expressions = ["quiet awe", "determined focus", "solemn discovery"]
     shot_types = ["establishing", "travel", "climax"]
 
     shots = []
     for i in range(3):
-        # Slice A.6 (user-directed, Run 6 evidence): for an INTERACTION /
-        # RITUAL shot the narrative hinge is the pose, not the architecture. The
-        # long environmental inventory (mist layers, falling leaves, qi motes,
-        # cracked stairs, broken railings, roof tiles, banners, dust, hall)
-        # competes for model attention with the kneeling / hand-on-stone /
-        # formation interaction. Trim the env-state to a minimal location
-        # establishing descriptor so attention is freed for the action. Non-
-        # interaction shots keep the full descriptive env-state.
         shot_env_state = env_state
         if shot_types[i] in _INTERACTION_SHOT_TYPES:
             shot_env_state = _trim_env_for_interaction(env_state)
+        # Strip HP hard landmarks from non-HP shots (defense in depth).
+        cam = cameras[i]
+        act = poses[i]
+        if str(novel).lower() != "hp" or not base_spec.hp_landmarks_allowed:
+            for lm in HP_HARD_LANDMARKS:
+                if lm in cam.lower():
+                    cam = re.sub(re.escape(lm), env_name or "the setting", cam, flags=re.I)
+                if lm in act.lower():
+                    act = re.sub(re.escape(lm), "the focal point", act, flags=re.I)
+        spec_obs = resolve_scene_environment(
+            novel,
+            scene_text,
+            location=location,
+            still_index=i,
+            still_role=shot_types[i],
+            composition_goal=objectives[i],
+            shots_text=shots_text,
+        )
+        obs = spec_obs.observability
         shots.append({
             "type": shot_types[i],
-            "camera": cameras[i],
+            "camera": cam,
             "purpose": objectives[i],
             "narrative_objective": objectives[i],
             "subject": primary_name,
             "gender": gender,
-            "action": poses[i],
+            "action": act,
             "expression": expressions[i],
             "emotion": emotions[i],
             "environment": env_name,
@@ -660,8 +878,16 @@ def _build_shot_plan(
             "banner_line": banner_line,
             "lighting": str(lighting).replace("_", " "),
             "effect": str(magic).replace("_", " "),
+            "still_index": i,
+            "still_role": shot_types[i],
+            "composition_goal": objectives[i],
+            "location_id": base_spec.location_id,
+            "environment_authority": base_spec.authority,
+            "scene_environment_observability": obs,
+            "effective_lead": vd_effective_lead(spec_obs, cam, still_index=i, still_role=shot_types[i]),
         })
     return shots
+
 
 
 # Shot types whose narrative hinge is NOT primarily "show the epic environment,"
@@ -760,6 +986,13 @@ def _assemble_image_prompts(
     primary = characters[0] if characters else {}
     gender = shots[0].get("gender", "") if shots else ""
     age_canon = _AGE_CANON.get(str(primary.get("age", "")).strip().lower(), "young adult") if isinstance(primary, dict) else "young adult"
+    # IDENTITY_PRODUCTION_PLUMBING_20260929: identity ON -> governed TEXT_CANON age
+    # (Jarek 16, never the "young adult" fallback); gender line only from sealed canon.
+    _id_on, _id_contract = _identity_contract_for(primary)
+    if _id_on:
+        if _id_contract is not None:
+            age_canon = _id_contract.vd_age
+        gender = _identity_contract_sex(_id_contract)
     body = _clean_canon_token(primary.get("body_type") or "") if isinstance(primary, dict) else ""
     # Build the appearance line, then FORCE the precise weapon lock so the model
     # cannot drift to a staff/polearm (user finding #4). Strip any loose weapon
@@ -776,6 +1009,29 @@ def _assemble_image_prompts(
     # Explicit, unambiguous weapon lock appended to the identity block.
     identity_bits.append(f"Weapon: {_weapon_lock_phrase()}")
     identity_block = "; ".join(identity_bits)
+    wardrobe_line = ""
+    weapon_line = ""
+    if _id_on:
+        # Part A (flag ON): the Character Identity block is identity-only. Wardrobe and the
+        # character's OWN canon weapon move to separate domain sections (not identity
+        # authority); HUD / qi / glyph effects stay out of the block (Power line unchanged).
+        from tools.identity_preservation import (identity_lock_denylist_hits, record_identity_only_lock,
+                                                 visual_director_identity_bits)
+        pname = primary.get("name", "the protagonist") if isinstance(primary, dict) else "the protagonist"
+        if _id_contract is not None:
+            identity_bits = [f"Name: {pname}"] + visual_director_identity_bits(_id_contract)
+        else:
+            lock = _appearance_lock(primary, None) if isinstance(primary, dict) and primary else {}
+            hair = _clean_canon_token(lock.get("hair", "")) if lock.get("hair") else ""
+            eyes = _clean_canon_token(lock.get("eyes", "")) if lock.get("eyes") else ""
+            only = record_identity_only_lock(hair, eyes, body)
+            identity_bits = [f"Name: {pname}", f"Age: {age_canon}"]
+            if only and not identity_lock_denylist_hits(only):
+                identity_bits.append(f"Appearance: {only}")
+        identity_block = "; ".join(identity_bits)
+        wardrobe_line = ", ".join(_primary_wardrobe_tokens(primary))
+        weapons = _primary_canon_weapons(primary)
+        weapon_line = ", ".join(_WEAPON_LOCK_NEUTRAL if w == _JIAN_CANON_WEAPON else w for w in weapons)
 
     env_line = ""
     if location:
@@ -803,7 +1059,10 @@ def _assemble_image_prompts(
         # that encodes the visible event as a direct instruction. Everything
         # else (Setting, Environment State, Character Identity, Camera,
         # Lighting, Power, Emotion, Palette, Consistency) is unchanged.
-        parts = [f"{genre}, vertical 9:16."]
+        # SCENE_ENVIRONMENT_LIVE_PATH_REMEDIATION_R2 (Part E/F): STILL_ROLE + CAMERA + LOCATION lead in the
+        # first sentence so they survive the 77-token CLIP window; beat/action/subject follow in 'Depict'.
+        _lead = str(shot.get("effective_lead") or "").strip()
+        parts = [f"{genre}, vertical 9:16, {_lead}." if _lead else f"{genre}, vertical 9:16."]
         imperative = _imperative_scene(shot, primary.get("name", "the protagonist") if isinstance(primary, dict) else "the protagonist")
         if imperative:
             parts.append(imperative)
@@ -814,6 +1073,10 @@ def _assemble_image_prompts(
         if shot.get("environment_state"):
             parts.append(f"Environment State: {shot['environment_state']}.")
         parts.append(f"Character Identity: {identity_block}.")
+        if wardrobe_line:
+            parts.append(f"Wardrobe: {wardrobe_line}.")
+        if weapon_line:
+            parts.append(f"Weapon: {weapon_line}.")
         parts.append(f"Camera: {shot.get('camera', 'wide cinematic')}.")
         # Slice A.7: explicit POSE (body mechanics) + EXPRESSION (face) as two
         # independent fields so each constraint is separately tunable, instead
@@ -858,11 +1121,72 @@ def _imperative_scene(shot: Dict[str, Any], name: str = "the protagonist") -> st
     return scene
 
 
+def _identity_vd_structured_intent(scene_composition: Any):
+    """IDENTITY_FINAL_COVERAGE_HARDENING_20260930 (Part G, flag ON only): the structured scene
+    composition supplied by the upstream request (explicit scene_composition, else the ambient
+    ImageIntent bound by the production caller). Returns (request or None, non-depiction class or "").
+    Only STRUCTURED fields count (scene subject / asset role / background-only marker); free text never."""
+    from tools.identity_preservation import (ASSET_ROLE_CLASSES, NON_DEPICTION_INTENT_CLASSES,
+                                             SCENE_SUBJECT_CLASSES, _merge_intent_requests, _vocab_key,
+                                             coerce_image_intent_request, current_image_intent)
+    req = _merge_intent_requests(current_image_intent(), coerce_image_intent_request(scene_composition))
+    if req is None or req.depicted_characters:
+        return req, ""
+    subj = _vocab_key(req.scene_subject)
+    if subj:
+        cls = SCENE_SUBJECT_CLASSES.get(subj, "")
+        return req, (cls if cls in NON_DEPICTION_INTENT_CLASSES else "")
+    for rv in (req.asset_role, req.requested_asset_type):
+        cls = ASSET_ROLE_CLASSES.get(_vocab_key(rv), "")
+        if cls:
+            return req, (cls if cls in NON_DEPICTION_INTENT_CLASSES else "")
+    if req.background_only is True:
+        return req, "ENVIRONMENT_ONLY"
+    return req, ""
+
+
+def _assemble_non_depiction_prompts(novel: str, shots: List[Dict[str, Any]], location: Optional[Dict[str, Any]],
+                                    palette: Dict[str, Any], scene_text: str, shots_text: Optional[List[str]],
+                                    intent_class: str) -> List[str]:
+    """Flag ON, structured non-depiction scene with no named character: scenery / environment / object
+    prompts with NO Character Identity block and NO protagonist subject (Part G). Environment wording
+    is taken from the same location / shot data as the character path (not remediated here)."""
+    genre = NOVEL_GENRE_LABEL.get(str(novel).lower(), "fantasy illustration")
+    env_line = ""
+    if location:
+        env_line = ", ".join(b for b in [str(location.get("name", ""))] if b)
+    palette_hint = _palette_phrase(palette)
+    focus = {"OBJECT_ONLY": "object still life", "ENVIRONMENT_ONLY": "environment plate",
+             "SCENERY_ONLY": "establishing scenery", "ABSTRACT": "abstract composition"}.get(intent_class, "scenery")
+    prompts: List[str] = []
+    beats = list(shots_text or []) or [scene_text]
+    for i, shot in enumerate(shots or [{}]):
+        beat = str(beats[i] if i < len(beats) else beats[-1] if beats else "").strip().rstrip(".")
+        _lead = str(shot.get("effective_lead") or "").strip()
+        parts = [f"{genre}, vertical 9:16, {focus}, {_lead}." if _lead else f"{genre}, vertical 9:16, {focus}."]
+        if beat:
+            parts.append(f"Depict {beat}.")
+        if env_line:
+            parts.append(f"Setting: {env_line}.")
+        if shot.get("environment_state"):
+            parts.append(f"Environment State: {shot['environment_state']}.")
+        parts.append(f"Camera: {shot.get('camera', 'wide cinematic')}.")
+        if shot.get("lighting"):
+            parts.append(f"Lighting: {shot['lighting']}.")
+        if palette_hint:
+            parts.append(f"Palette: {palette_hint}.")
+        parts.append("No people, no figures, no characters.")
+        prompts.append(" ".join(p for p in parts if p))
+    return prompts
+
+
 def build_visual_scene_package(
     novel: str,
     chapter: str,
     scene_text: str,
     shots_text: Optional[List[str]] = None,
+    *,
+    scene_composition: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Slice 1 entry point.
 
@@ -872,6 +1196,15 @@ def build_visual_scene_package(
     Output: VisualScenePackage with character_locks, shot_plan,
             negative_prompt, and image_prompts (ready for metadata.json).
     """
+    # SCENE_ENVIRONMENT_LIVE_PATH_REMEDIATION_R2 (Part A/H): canonical novel id before palette, genre,
+    # location resolution and composition ('Eternal Nexus' / 'EN' / ' en ' -> 'en'). Unknown values pass
+    # through unchanged (no guess) and resolve no Bible canon.
+    _input_novel = novel
+    try:
+        from tools.novel_id import normalize_novel_id as _normalize_novel_id
+        novel = _normalize_novel_id(novel) or novel
+    except Exception:  # noqa: BLE001
+        pass
     profiles = load_character_profiles()
     locations = load_locations()
     palette = load_novel_palette(novel)
@@ -879,23 +1212,100 @@ def build_visual_scene_package(
     warnings: List[str] = []
     char_names = extract_character_names(scene_text, profiles)
     chars = [profiles[n] for n in char_names if n in profiles]
+    _id_on = _identity_contract_for({})[0]
+    _intent_req, _nondepiction = (None, "")
+    _intent_extra: Dict[str, Any] = {}
+    if _id_on:
+        # IDENTITY_FINAL_COVERAGE_HARDENING_20260930 (Part G): depiction intent from VD scene
+        # structure. Named characters -> depicted subjects; no names + structured non-depiction
+        # composition -> scenery (no protagonist injection); otherwise the protagonist injection
+        # below stays (safe default: potentially governed).
+        _intent_req, _nondepiction = _identity_vd_structured_intent(scene_composition)
+        if chars:
+            _nondepiction = ""
+    if not chars and _id_on and not _nondepiction:
+        _gov = _identity_on_governed_primary(novel)
+        if _gov and _gov in profiles:
+            chars = [profiles[_gov]]
     location = match_location(scene_text, locations, novel)
+    scene_env_spec = resolve_scene_environment(
+        novel, scene_text, location=location, locations=locations,
+        shots_text=shots_text,
+    )
 
     character_locks = [_appearance_lock(c, warnings) for c in chars]
     shots = _build_shot_plan(novel, chars, location, shots_text=shots_text, scene_text=scene_text)
     negative = _negative_prompt(chars[0]) if chars else list(CANON_NEGATIVE_CONSTRAINTS)
-    image_prompts = _assemble_image_prompts(
-        novel, chapter, scene_text, chars, shots, location, palette, warnings=warnings
-    )
+    if _id_on and _nondepiction:
+        image_prompts = _assemble_non_depiction_prompts(
+            novel, shots, location, palette, scene_text, shots_text, _nondepiction)
+    else:
+        image_prompts = _assemble_image_prompts(
+            novel, chapter, scene_text, chars, shots, location, palette, warnings=warnings
+        )
+    if _id_on:
+        from tools.identity_preservation import (ImageIntentRequest, normalize_identity_character_key,
+                                                 register_prompt_image_intent)
+        if _nondepiction:
+            _vd_req = ImageIntentRequest(
+                scene_subject={"SCENERY_ONLY": "scenery", "ENVIRONMENT_ONLY": "environment",
+                               "OBJECT_ONLY": "object", "ABSTRACT": "abstract"}[_nondepiction],
+                background_only=True if _nondepiction == "ENVIRONMENT_ONLY" else None,
+                origin="visual_director.structured_scene_composition")
+            _vd_source = "STRUCTURED_SCENE_SUBJECT"
+        elif char_names:
+            _vd_req = ImageIntentRequest(
+                depicted_characters=tuple(str(c.get("name", "")) for c in chars if isinstance(c, dict) and c.get("name")),
+                origin="visual_director.scene_named_characters")
+            _vd_source = "STRUCTURED_DEPICTED_CHARACTER"
+        elif _intent_req is not None and _intent_req.depicted_characters:
+            _vd_req = ImageIntentRequest(depicted_characters=tuple(_intent_req.depicted_characters),
+                                         origin="visual_director.upstream_depicted_characters")
+            _vd_source = "STRUCTURED_DEPICTED_CHARACTER"
+        elif chars:
+            # injected governed protagonist (no names, no structured non-depiction marker): novel
+            # membership is NOT depiction evidence, so no structured intent is registered; the emitted
+            # Character Identity block forces governed review downstream (safe default).
+            _vd_req = ImageIntentRequest(origin="visual_director.safe_default_protagonist")
+            _vd_source = "SAFE_DEFAULT_NO_STRUCTURED_INTENT"
+        else:
+            _vd_req = ImageIntentRequest(origin="visual_director.no_structured_intent")
+            _vd_source = "SAFE_DEFAULT_NO_STRUCTURED_INTENT"
+        for _p in image_prompts:
+            register_prompt_image_intent(_p, _vd_req)
+        _intent_extra["image_intent"] = {
+            "IMAGE_INTENT_CLASS": _nondepiction or (
+                "GOVERNED_CHARACTER_DEPICTION" if any(normalize_identity_character_key(c.get("name", ""))
+                                                      for c in chars if isinstance(c, dict))
+                else "NON_GOVERNED_CHARACTER_DEPICTION" if chars else "UNDETERMINED"),
+            "IMAGE_INTENT_SOURCE": _vd_source,
+            "request": _vd_req.to_dict(),
+            "upstream_request": _intent_req.to_dict() if _intent_req is not None else None,
+        }
 
     return {
         "novel": novel,
+        "input_novel": _input_novel,
+        "normalized_novel_id": novel if str(novel) in ("ha", "en", "hp", "sf") else "UNRESOLVED",
         "chapter": chapter,
         "scene_summary": scene_text,
         "shots_text": shots_text or [],
         "characters": chars,
         "character_locks": character_locks,
-        "environment": location or {"novel": novel, "palette_ref": palette.get("color_grading", "")},
+        "environment": (
+            location
+            if location
+            else {
+                "novel": novel,
+                "palette_ref": palette.get("color_grading", ""),
+                "location_id": scene_env_spec.location_id,
+                "location_name": scene_env_spec.location_name,
+                "authority": scene_env_spec.authority,
+                "place_phrase": scene_env_spec.place_phrase,
+                "unknown_location": scene_env_spec.unknown_location,
+            }
+        ),
+        "scene_environment": scene_env_spec.to_dict(),
         "shots": shots,
         "style_constraints": {
             "novel": novel,
@@ -909,4 +1319,5 @@ def build_visual_scene_package(
         "canon_warnings": warnings,
         # compatibility shim: downstream metadata.json expects these names
         "image_sources": [],
+        **_intent_extra,
     }

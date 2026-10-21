@@ -85,6 +85,7 @@ REQUIRED_COLLABORATORS = [
     "social_post_folder",        # pure: build output path
     "generate_tiktok_images",    # side-effect: image-gen (Task 5)
     "create_fresh_social_image_from_caption",  # side-effect: image-gen (Task 5)
+    "generate_promo_image_v2",   # side-effect: weekday V2 opt-in (Task 5)
     "social_copy_with_openai",   # side-effect: OpenAI network (Task 5)
     "auto_publish_generated_media",  # side-effect: publish (Task 6)
     "update_chapter_ledger",     # side-effect: DB write (Task 3)
@@ -191,6 +192,36 @@ def _apply_agent_provenance(target: dict[str, Any], agent_meta: dict[str, Any] |
             target[key] = value
 
 
+def _identity_flag_on_pb() -> bool:
+    """IDENTITY_FINAL_COVERAGE_HARDENING_20260930: same flag parser as the identity module."""
+    from tools.identity_preservation import is_identity_preservation_enabled
+    return bool(is_identity_preservation_enabled())
+
+
+def _tiktok_reuse_identity_allowed(paths: Any, *, abbr: str, asset_class: str, fallback_source: str,
+                                   path_id: str) -> bool:
+    """Part J (IDENTITY_FINAL_COVERAGE_HARDENING_20260930): every reused TikTok image must pass the
+    governed fallback / reuse policy (verified now, compatible prior review, or a sha-bound structured
+    scenery record). Flag OFF: never called (legacy flow unchanged). ON: any error -> not allowed."""
+    try:
+        from tools.identity_preservation import (
+            ImageIntentRequest, build_identity_context, evaluate_governed_fallback)
+        ctx = build_identity_context(abbr=str(abbr or ""), source="promo_builder.make_tiktok_pack")
+        intent = ImageIntentRequest(asset_role="tiktok pack reuse", origin="promo_builder.make_tiktok_pack")
+        items = [Path(str(p)) for p in (paths or []) if str(p or "").strip()]
+        if not items:
+            return False
+        for p in items:
+            res = evaluate_governed_fallback(
+                p, fallback_source=fallback_source, asset_class=asset_class, path_id=path_id,
+                identity_context=ctx, image_intent=intent, tiktok_reuse=True)
+            if not res.auto_accept_allowed:
+                return False
+        return True
+    except Exception:  # noqa: BLE001 - fail closed under flag ON
+        return False
+
+
 def make_tiktok_pack(
     abbr: str,
     chapter: str | None = None,
@@ -207,7 +238,14 @@ def make_tiktok_pack(
     # Single-style lock (Workstream E): pick ONE track for the whole pack. Default main-posts;
     # caller may request realistic-posts / comic-style. We filter the asset group to that track and
     # regenerate if we don't have >=3 on-style images, so the video never mixes styles.
-    pack_track = style if style in LORA_STYLE_TRACKS else "main-posts"
+    from tools.image_pipeline_v2_profiles import PHOTOREALISTIC_PROFILE, is_explicit_photorealistic_style
+
+    # Photographic aliases stay photorealistic. Do not coerce them onto
+    # main-posts or the cinematic azink_real track.
+    if is_explicit_photorealistic_style(style):
+        pack_track = PHOTOREALISTIC_PROFILE
+    else:
+        pack_track = style if style in LORA_STYLE_TRACKS else "main-posts"
     assets = _get(collab, "list_tiktok_assets")()
     groups = [group for group in assets["imageGroups"] if group["abbr"] == abbr]
     if chapter:
@@ -226,6 +264,21 @@ def make_tiktok_pack(
             force_new_images=True, chapter_text=chapter_text, style=pack_track,
         )
         on_style = generated.get("created", [])[:3] or on_style
+    elif not force_new_images and _identity_flag_on_pb() and not _tiktok_reuse_identity_allowed(
+            on_style[:3], abbr=abbr, asset_class="TIKTOK_ASSET_GROUP_IMAGE",
+            fallback_source="tiktok_asset_group_reuse", path_id="FALLBACK:make_tiktok_pack:asset_group_reuse"):
+        # IDENTITY_FINAL_COVERAGE_HARDENING_20260930 (Part J): reused asset-group images failed the
+        # identity reuse gate -> regenerate on-track (fresh images pass the generation-time gate);
+        # never fall back to the unverified reused files.
+        generated = _get(collab, "generate_tiktok_images")(
+            abbr, str(group["chapter"]), visual_prompt,
+            force_new_images=True, chapter_text=chapter_text, style=pack_track,
+        )
+        on_style = generated.get("created", [])[:3]
+        if len(on_style) < 3:
+            raise RuntimeError("TikTok asset-group reuse blocked by identity preservation and regeneration "
+                               "did not produce 3 images.")
+        force_new_images = True  # the reusable pack below holds the same unverified reuse lineage
     group = {**group, "files": on_style[:3]}
     sounds = assets["sounds"]
     if not sounds:
@@ -233,6 +286,12 @@ def make_tiktok_pack(
     sound = random.choice(sounds)
     folder = _get(collab, "stable_chapter_folder")(TIKTOK_OUTPUT_DIR, "tiktok", f"{abbr} Chapter {group['chapter']}", abbr, group["chapter"])
     reused = _get(collab, "reusable_pack_result")(folder, required_files=["caption.txt", "instagram-reel-caption.txt", "youtube-shorts-description.txt"])
+    if (not force_new_images and reused and reused.get("chapter") == group["chapter"] and reused.get("abbr") == abbr
+            and _identity_flag_on_pb() and not _tiktok_reuse_identity_allowed(
+                [str(folder / Path(v).name) for v in (reused.get("images") or []) if (folder / Path(v).name).exists()],
+                abbr=abbr, asset_class="REUSABLE_PACK_IMAGE", fallback_source="tiktok_reusable_pack",
+                path_id="FALLBACK:make_tiktok_pack:reusable_pack_result")):
+        reused = None  # Part J: unverified reusable-pack images -> rebuild the pack (flag ON only)
     if not force_new_images and reused and reused.get("chapter") == group["chapter"] and reused.get("abbr") == abbr:
         novel = NOVEL_NAMES.get(abbr, abbr)
         # Reused packs must NOT silently revert to generic copy: prefer the
@@ -295,6 +354,13 @@ def make_tiktok_pack(
         sidecar = source.with_name(f"{source.name}.track")
         if sidecar.exists():
             shutil.copy2(sidecar, folder / sidecar.name)
+        if _identity_flag_on_pb():
+            # AIVSB_DURABLE_PROVENANCE_REMEDIATION_20261004: reused pixels keep their image-bound prompt
+            # provenance and sha-bound prior review record (flag ON only; OFF: unchanged).
+            for _suf in (".aivsb_provenance.json", ".identity_review_record.json"):
+                _side = source.with_name(source.name + _suf)
+                if _side.exists():
+                    shutil.copy2(_side, folder / _side.name)
         copied_images.append(str(target))
     sound_source = Path(sound["path"])
     sound_target = folder / sound_source.name
@@ -368,8 +434,22 @@ def make_social_post(
     agent_meta: dict | None = None,
     *,
     collaborators: dict[str, Any] | None = None,
+    weekday_v2_enabled: bool | None = None,
+    publish_generated_media: bool = True,
+    promo_master_enabled: bool | None = None,
 ) -> dict[str, Any]:
     collab = collaborators if collaborators is not None else _COLLAB
+    from tools.still_caller_activation import resolve_still_caller_flags
+
+    _act = resolve_still_caller_flags(
+        v2_explicit=weekday_v2_enabled,
+        pm_explicit=promo_master_enabled,
+        novel=abbr,
+        seam="weekday",
+    )
+    weekday_v2_enabled = _act["v2_enabled"]
+    _pm_explicit = _act["pm_explicit"]
+    _pm_effective = _act["pm_enabled"]
     matches = [
         item
         for item in _get(collab, "list_daily_promo_images")()
@@ -472,15 +552,43 @@ def make_social_post(
         copy.setdefault("caption_style", "")
 
     image_target = folder / f"{abbr}_{item['day']}.png"
-    image_source = _get(collab, "create_fresh_social_image_from_caption")(
-        image_target,
-        abbr=abbr,
-        novel=item["novel"],
-        title=f"{item['novel']} {item['day']} social post",
-        caption=copy["instagram"],
-        hook=copy.get("x", ""),
-        index=DAYS.index(item["day"]) + 1 if item["day"] in DAYS else 1,
-    )
+    posting_image = image_target
+    if weekday_v2_enabled:
+        from tools.promo_master_production import posting_image_from_promo_master_out
+
+        v2_prompt = str(copy.get("instagram") or copy.get("x") or "").strip()
+        _pm_out: dict[str, Any] = {}
+        image_source = _get(collab, "generate_promo_image_v2")(
+            "main-posts",
+            v2_prompt,
+            image_target,
+            abbr=abbr,
+            index=DAYS.index(item["day"]) + 1 if item["day"] in DAYS else 1,
+            novel=item["novel"],
+            chapter=str(chapter_number).strip() or None,
+            scene_text=v2_prompt or None,
+            promo_master_enabled=_pm_explicit,
+            promo_master_out=_pm_out,
+        )
+        if not image_source:
+            raise RuntimeError("weekday V2 generated no source; will not fall back to legacy image generation")
+        if not Path(image_target).is_file():
+            raise RuntimeError("weekday V2 missing generated artifact; will not fall back to legacy image generation")
+        posting_image = posting_image_from_promo_master_out(
+            promo_master_enabled=_pm_effective,
+            promo_master_out=_pm_out,
+            base_path=image_target,
+        )
+    else:
+        image_source = _get(collab, "create_fresh_social_image_from_caption")(
+            image_target,
+            abbr=abbr,
+            novel=item["novel"],
+            title=f"{item['novel']} {item['day']} social post",
+            caption=copy["instagram"],
+            hook=copy.get("x", ""),
+            index=DAYS.index(item["day"]) + 1 if item["day"] in DAYS else 1,
+        )
     copy["image_source"] = image_source
 
     payload = {
@@ -488,7 +596,7 @@ def make_social_post(
         **copy,
         "source": source,
         "folder": str(folder),
-        "image": str(image_target),
+        "image": str(posting_image),
         "prompt_template": prompt_template,
         "post_focus": focus,
     }
@@ -549,6 +657,8 @@ def make_social_post(
         )
     except Exception:
         pass
+    if not publish_generated_media:
+        return payload
     return _get(collab, "auto_publish_generated_media")(folder, payload)
 
 

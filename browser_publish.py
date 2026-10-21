@@ -94,6 +94,23 @@ def _get(collab: dict[str, Any], name: str):
 
 # --- publish_x_post (verbatim; network collaborators injected) ---
 
+
+def _browser_identity_publish_gate(post_folder, image_path, metadata, path_id: str = "PUBLISH:publish_x_post") -> None:
+    """Mandatory final publish authorization before X/browser submission (flag ON only)."""
+    try:
+        from tools.identity_preservation import is_identity_preservation_enabled, IdentityAcceptanceBlocked
+        from tools.aivsb_prompt_provenance import publish_identity_check
+    except Exception:
+        return
+    if not is_identity_preservation_enabled():
+        return
+    ok, why = publish_identity_check(image_path, folder=post_folder, metadata=metadata)
+    if not ok:
+        raise IdentityAcceptanceBlocked(
+            f"identity preservation blocked publish at {path_id}: {Path(str(image_path)).name}:{why}", None
+        )
+
+
 def publish_x_post(folder: str, *, collaborators: dict[str, Any] | None = None) -> dict[str, Any]:
     collab = collaborators if collaborators is not None else _COLLAB
     token = os.environ.get("X_ACCESS_TOKEN", "").strip()
@@ -110,6 +127,7 @@ def publish_x_post(folder: str, *, collaborators: dict[str, Any] | None = None) 
     x_text = metadata.get("x") or metadata.get("x_post") or ""
     if not x_text.strip():
         raise RuntimeError("No X post text found in metadata (expected 'x' or 'x_post').")
+    _browser_identity_publish_gate(post_folder, image_path, metadata)
     upload = _get(collab, "multipart_bearer_request")(
         "https://api.x.com/2/media/upload",
         token,

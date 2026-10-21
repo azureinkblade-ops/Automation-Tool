@@ -1,0 +1,42 @@
+{
+  "v2_meta": {
+    "id": "comic_base",
+    "version": "1.0",
+    "description": "SDXL text-to-image base workflow for the comic pipeline. Semantic inputs are resolved deterministically from GenerationSpec by comfyui_adapter.build_workflow.",
+    "semantic_inputs": {
+      "positive_prompt": { "node": "6", "input": "text" },
+      "negative_prompt": { "node": "7", "input": "text" },
+      "checkpoint": { "node": "10", "input": "ckpt_name" },
+      "seed": { "node": "3", "input": "seed" },
+      "steps": { "node": "3", "input": "steps" },
+      "cfg": { "node": "3", "input": "cfg" },
+      "sampler": { "node": "3", "input": "sampler_name" },
+      "scheduler": { "node": "3", "input": "scheduler" },
+      "width": { "node": "5", "input": "width" },
+      "height": { "node": "5", "input": "height" },
+      "loras": { "node": "11", "input": "lora" },
+      "controlnet": { "node": "12", "input": "control_net" },
+      "ipadapter": { "node": "13", "input": "model" },
+      "mask": { "node": "14", "input": "mask" }
+    }
+  },
+  "nodes": {
+    "10": { "class_type": "CheckpointLoaderSimple", "inputs": { "ckpt_name": "REPLACE_CHECKPOINT" } },
+    "6": { "class_type": "CLIPTextEncode", "inputs": { "text": "REPLACE_POSITIVE", "clip": ["10", 1] } },
+    "7": { "class_type": "CLIPTextEncode", "inputs": { "text": "REPLACE_NEGATIVE", "clip": ["10", 1] } },
+    "3": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": 0, "steps": 20, "cfg": 7.5, "sampler_name": "euler", "scheduler": "normal",
+        "denoise": 1.0, "model": ["10", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0]
+      }
+    },
+    "5": { "class_type": "EmptyLatentImage", "inputs": { "width": 1024, "height": 1024, "batch_size": 1 } },
+    "11": { "class_type": "LoraLoader", "inputs": { "lora": [], "model": ["10", 0], "clip": ["10", 1] } },
+    "12": { "class_type": "ControlNetLoader", "inputs": { "control_net": "REPLACE_CONTROLNET" } },
+    "13": { "class_type": "IPAdapterModelLoader", "inputs": { "model": "REPLACE_IPADAPTER" } },
+    "14": { "class_type": "LoadImageMask", "inputs": { "mask": "REPLACE_MASK" } },
+    "9": { "class_type": "VAEDecode", "inputs": { "samples": ["3", 0], "vae": ["10", 2] } },
+    "8": { "class_type": "SaveImage", "inputs": { "images": ["9", 0] } }
+  }
+}

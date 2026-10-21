@@ -7,11 +7,14 @@ import hmac
 import html
 import io
 import json
+import logging
 import math
 import mimetypes
 import os
 import random
 import re
+import traceback
+import uuid
 import shutil
 import subprocess
 import sys
@@ -1179,6 +1182,356 @@ def ensure_quality_gate(folder: str, text_kind: str = "instagram") -> dict[str, 
     return gate
 
 
+# ---------------------------------------------------------------------------
+# IDENTITY_PRODUCTION_COVERAGE_REMEDIATION_20260929
+# Structured identity context carrier (Part B/C) + governed fallback helpers (Part G/K).
+# ENABLE_IDENTITY_PRESERVATION OFF: every helper below is a pass-through / no-op, so legacy
+# behaviour (prompts, fallbacks, attribution) is unchanged.
+# ---------------------------------------------------------------------------
+def _identity_flag_on() -> bool:
+    from tools.identity_preservation import is_identity_preservation_enabled
+    return is_identity_preservation_enabled()
+
+
+def _identity_ctx_values_from_folder(folder: Any) -> dict[str, str]:
+    """Structured novel context recorded by the pack builder in <folder>/metadata.json."""
+    try:
+        meta_path = Path(str(folder or "")).resolve() / "metadata.json"
+        data = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    return {"abbr": str(data.get("abbr") or ""), "novel": str(data.get("novel") or "")}
+
+
+# IDENTITY_FINAL_COVERAGE_HARDENING_20260930 (Parts C/H): structured asset role recorded per
+# production path (the requested asset type of the caller). Every production role below is
+# character-capable, so under flag ON it carries NO scenery evidence: the gate applies the safe
+# default (potentially governed; review kept) unless a more specific upstream intent (Visual
+# Director scene structure, explicit image_intent) is bound. Never used while the flag is OFF.
+_IDENTITY_PATH_ASSET_ROLES: dict[str, str] = {
+    "regenerate_image_with_local_reference": "img2img regeneration",
+    "regenerate_weak_images": "weak image regeneration",
+    "import_deep_tiktok_browser_images": "browser imported image",
+    "create_fresh_social_image_from_caption": "social post image",
+    "write_variant_short_pack": "variant short image",
+    "prepare_tiktok_outro_image": "tiktok outro promo card",
+    "generate_tiktok_images": "tiktok scene image",
+    "make_deep_tiktok_pack": "deep tiktok scene image",
+    "make_deep_tiktok_novel_pack": "deep tiktok scene image",
+    "make_weekend_social_post": "weekend post image",
+    "build_story_hook_video_files": "story hook image",
+    "social_image_for_manual_post": "social post image",
+    "generate_youtube_generated_background": "youtube background keyframe",
+    "build_youtube_from_text": "youtube chapter pack",
+    "make_chapter_image_prompts": "chapter still prompt",
+    "create_prompt_fallback_image": "prompt fallback image",
+    "create_unique_prompt_fallback_image": "prompt fallback image",
+    "make_campaign": "campaign image",
+    "build_story_hook_thumbnail_base": "story hook thumbnail",
+    "import_story_hook_thumbnail": "browser imported image",
+    "build_youtube_thumbnail": "youtube thumbnail",
+}
+
+
+def _identity_context_from_args(*, abbr: str = "", novel: str = "", folder: str = "", resolver: Any = None,
+                                asset_role: str = ""):
+    """Decorator: bind the caller's structured novel context (abbr / novel / pack folder
+    metadata) as the ambient IdentityProductionContext for the duration of the call, so every
+    identity gate reached below (V1 primitives, fallbacks) binds structurally instead of by
+    prompt wording. Flag OFF: calls straight through."""
+    import functools
+    import inspect
+
+    def deco(fn):
+        sig = inspect.signature(fn)
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            if not _identity_flag_on():
+                return fn(*args, **kwargs)
+            from tools.identity_preservation import build_identity_context, identity_production_context
+            folder_val = None
+            try:
+                vals = sig.bind_partial(*args, **kwargs).arguments
+                folder_val = vals.get(folder) if folder else None
+                got: dict[str, Any] = {}
+                if resolver is not None:
+                    got = dict(resolver(vals) or {})
+                if folder and vals.get(folder):
+                    got = {**_identity_ctx_values_from_folder(vals.get(folder)), **{k: v for k, v in got.items() if v}}
+                a = str(got.get("abbr") or (vals.get(abbr) if abbr else "") or "")
+                n = str(got.get("novel") or (vals.get(novel) if novel else "") or "")
+                ctx = build_identity_context(abbr=a, novel=n, source=f"app.{fn.__name__}")
+            except Exception as exc:  # context derivation must never silently weaken binding
+                ctx = build_identity_context(source=f"app.{fn.__name__}:CONTEXT_DERIVATION_ERROR:{type(exc).__name__}")
+            from tools.identity_preservation import ImageIntentRequest, image_intent_scope
+            role = asset_role or _IDENTITY_PATH_ASSET_ROLES.get(fn.__name__, "")
+            with identity_production_context(ctx), image_intent_scope(
+                    ImageIntentRequest(asset_role=role, origin=f"app.{fn.__name__}"), only_if_unset=True), \
+                    _aivsb_prov_reader_scope(folder_val):  # AIVSB_DURABLE_PROVENANCE_REMEDIATION_20261004
+                return fn(*args, **kwargs)
+
+        return wrapper
+
+    return deco
+
+
+def _aivsb_prov_reader_from_args(*, folder: str):
+    """AIVSB_DURABLE_PROVENANCE_REMEDIATION_20261004: persisted-prompt reader that produces no image
+    itself (e.g. deep-TikTok prompt sheet): restore the folder's durable AIVSB provenance as the
+    ambient reader scope. Flag OFF: calls straight through."""
+    import functools
+    import inspect
+
+    def deco(fn):
+        sig = inspect.signature(fn)
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            if not _identity_flag_on():
+                return fn(*args, **kwargs)
+            try:
+                folder_val = sig.bind_partial(*args, **kwargs).arguments.get(folder)
+            except Exception:  # noqa: BLE001
+                folder_val = None
+            with _aivsb_prov_reader_scope(folder_val):
+                return fn(*args, **kwargs)
+
+        return wrapper
+
+    return deco
+
+
+def _identity_fallback_allowed(candidate: Any, *, asset_class: str, fallback_source: str, path_id: str,
+                               prompt: str = "", quarantine: bool = False, tiktok_reuse: bool = False,
+                               image_intent: Any = None) -> bool:
+    """Governed fallback / reuse policy check (Part G). OFF: True with no side effects.
+    ON: True only if the candidate is NO_GOVERNED_CHARACTER, identity-verified now, or carries
+    a compatible prior identity-review record; an observability record is always emitted."""
+    if not _identity_flag_on():
+        return True
+    from tools.identity_preservation import evaluate_governed_fallback
+    result = evaluate_governed_fallback(
+        Path(str(candidate)), asset_class=asset_class, fallback_source=fallback_source, path_id=path_id,
+        prompt=str(prompt or ""), quarantine=quarantine, tiktok_reuse=tiktok_reuse, image_intent=image_intent,
+    )
+    return bool(result.auto_accept_allowed)
+
+
+def _identity_enforce_fallback(candidate: Any, *, asset_class: str, fallback_source: str, path_id: str,
+                               prompt: str = "", quarantine: bool = False) -> None:
+    """Like _identity_fallback_allowed but raises IdentityAcceptanceBlocked (fail closed)."""
+    if not _identity_flag_on():
+        return
+    from tools.identity_preservation import enforce_governed_fallback
+    enforce_governed_fallback(
+        Path(str(candidate)), asset_class=asset_class, fallback_source=fallback_source, path_id=path_id,
+        prompt=str(prompt or ""), quarantine=quarantine,
+    )
+
+
+def _identity_pack_reuse_allowed(result: Any, folder: Any, fallback_source: str, path_id: str,
+                                 tiktok_reuse: bool = False) -> bool:
+    """Part K: a reusable pack (reusable_pack_result) is reused pixels; every image in it must
+    pass the governed fallback policy (REUSABLE_PACK_IMAGE) or the pack is regenerated."""
+    if not _identity_flag_on():
+        return True
+    images = [Path(str(i)) for i in ((result or {}).get("images") or []) if str(i or "").strip()]
+    images = [i for i in images if i.exists() and i.is_file() and i.suffix.lower() in IMAGE_EXTENSIONS]
+    if not images:
+        try:
+            images = sorted(i for i in Path(str(folder)).glob("*") if i.is_file() and i.suffix.lower() in IMAGE_EXTENSIONS)
+        except Exception:
+            images = []
+    return all(
+        _identity_fallback_allowed(i, asset_class="REUSABLE_PACK_IMAGE", fallback_source=fallback_source, path_id=path_id,
+                                   tiktok_reuse=tiktok_reuse)
+        for i in images
+    )
+
+
+def _identity_classify_procedural(target: Any, *, path_id: str, fallback_source: str, prompt: str = "") -> None:
+    """Part J: record procedural faceless emergency art as NON_CANON_CHARACTER_DEPICTION."""
+    if not _identity_flag_on():
+        return
+    from tools.identity_preservation import IdentityAcceptanceBlocked, classify_procedural_emergency_art
+    result = classify_procedural_emergency_art(Path(str(target)), path_id=path_id, fallback_source=fallback_source,
+                                               prompt=str(prompt or ""))
+    if not result.auto_accept_allowed:
+        raise IdentityAcceptanceBlocked(
+            f"identity preservation could not classify procedural art at {path_id}: {result.fail_reason}", result)
+
+
+# ---------------------------------------------------------------------------
+# AIVSB_DURABLE_PROVENANCE_REMEDIATION_20261004: durable AIVSB prompt provenance (flag ON only).
+# Every helper below is called only behind _identity_flag_on(); with ENABLE_IDENTITY_PRESERVATION
+# OFF no provenance is computed, written or read (prompts / metadata / outputs byte-identical).
+# ---------------------------------------------------------------------------
+_AIVSB_PROV_SIDECAR_SUFFIXES = (".aivsb_provenance.json", ".identity_review_record.json")
+
+
+def _aivsb_prov_run_id(prefix: str) -> str:
+    return f"{prefix}_{time.strftime('%Y%m%d')}_{uuid.uuid4().hex[:12]}"
+
+
+def _legacy_chapter_still_prompt(novel: str, title: str, phrase: str, beat: str, keywords: str) -> str:
+    context = f"{novel}, {title}".strip(", ")
+    return (
+        "Vertical 9:16 cinematic fantasy web novel cover art, no text or typography. "
+        f"Story context: {context}. "
+        f"Teaser text to visually match: {phrase}. "
+        f"Scene must clearly depict the teaser with concrete visible elements: {beat}. "
+        f"Visual motifs: {keywords}. "
+        "Dramatic lighting, detailed environment, strong focal subject, social media promo composition. "
+        "Avoid generic landscapes unless the teaser explicitly calls for a landscape."
+    )
+
+
+def _aivsb_prov_chapter_record(prompt: str, aivsb_composed: bool, *, novel: str, title: str, chapter: str,
+                               phrase: str, beat: str, phrases: list[str], keywords: str, index: int,
+                               run_id: str) -> dict:
+    """Original provenance record for a chapter-still prompt, captured from the SOURCE text (title /
+    chapter / phrases / beat) BEFORE AIVSB composition stripped character names."""
+    from tools import aivsb_prompt_provenance as _prov
+    from tools.identity_preservation import current_image_intent
+    nid = (novel or title).strip().lower()
+    rec = _prov.build_record(
+        prompt,
+        source_prompt=_legacy_chapter_still_prompt(novel, title, phrase, beat, keywords),
+        source_text=" ".join(str(x or "") for x in [title, chapter, phrase, beat, *list(phrases or [])]),
+        novel_id=nid, aivsb_composed=bool(aivsb_composed), source_run_id=run_id,
+        source_asset_id=f"{nid}:chapter_still:{index}", pre_aivsb_image_intent=current_image_intent(),
+        origin="app.make_chapter_image_prompts:" + ("aivsb" if aivsb_composed else "legacy"))
+    _prov.register_record(rec)
+    return rec
+
+
+def _aivsb_prov_store_for_prompts(prompts: list[str], *, assets: list[str], source_text: str, novel: str,
+                                  origin: str, run_id: str, known_non_aivsb: bool):
+    """Provenance store for a writer's persisted prompts: the record made when the prompt was produced
+    (process cache, same request), else - only for prompts this writer KNOWS are not AIVSB output - a
+    new aivsb_composed=false record. Unknown origin -> no record (absence is never non-AIVSB)."""
+    from tools import aivsb_prompt_provenance as _prov
+    from tools.identity_preservation import current_image_intent
+    store = _prov.ProvenanceStore(source="WRITER")
+    recs: list = []
+    for i, prompt in enumerate(prompts):
+        asset = assets[i] if i < len(assets) else ""
+        rec = _prov.lookup_index(prompt)
+        if rec is None and known_non_aivsb and _prov.detect_aivsb_format(prompt)[0] == "NO_MATCH":
+            rec = _prov.build_record(prompt, source_prompt=prompt, source_text=f"{source_text} {prompt}", novel_id=novel,
+                                     aivsb_composed=False, source_run_id=run_id, source_asset_id=asset,
+                                     pre_aivsb_image_intent=current_image_intent(), origin=origin + ":non_aivsb_prompt")
+            _prov.register_record(rec)
+        if rec is not None:
+            store.add(rec, asset=asset)
+        recs.append(rec)
+    return store, recs
+
+
+def _aivsb_prov_bind_images(images: list, recs: list, reused_sources: dict | None = None) -> None:
+    """Bind each written image to its prompt provenance (image sha256 sidecar). Reused pixels keep
+    their own provenance sidecar when one exists. Failure -> no sidecar (absence -> review)."""
+    from tools import aivsb_prompt_provenance as _prov
+    for i, img in enumerate(images):
+        try:
+            src = (reused_sources or {}).get(i)
+            if src and _prov.copy_image_provenance(src, img):
+                continue
+            if _prov.read_image_provenance(img)[1] == "VALID_BINDING":
+                continue  # same bytes already bound: reused pixels keep their original provenance
+            if i < len(recs) and recs[i] is not None:
+                _prov.write_image_provenance(img, recs[i])
+        except Exception as exc:  # noqa: BLE001
+            print(f"[aivsb-provenance] image binding failed for {img}: {exc}")
+
+
+def _identity_copy_reuse_sidecars(src: Any, dst: Any) -> None:
+    """Reused pixels are production output: carry their image-bound provenance and sha-bound prior
+    review record with the copy (bytes identical, bindings stay valid). Flag OFF: no-op."""
+    if not _identity_flag_on():
+        return
+    s_p, d_p = Path(str(src)), Path(str(dst))
+    for suf in _AIVSB_PROV_SIDECAR_SUFFIXES:
+        side = s_p.with_name(s_p.name + suf)
+        try:
+            if side.exists():
+                shutil.copy2(side, d_p.with_name(d_p.name + suf))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[aivsb-provenance] sidecar copy failed {side} -> {d_p}: {exc}")
+
+
+def _aivsb_prov_reader_scope(folder_value: Any):
+    """Persisted-reader scope: provenance restored from <folder>/metadata.json + folder sidecar."""
+    import contextlib
+    if not folder_value:
+        return contextlib.nullcontext()
+    from tools import aivsb_prompt_provenance as _prov
+    return _prov.provenance_scope(_prov.load_folder_store(Path(str(folder_value)).resolve()))
+
+
+def _aivsb_prov_derive_into_metadata(metadata: dict, pairs: list, *, transform: str, origin: str) -> int:
+    """Deliberate prompt transforms of persisted prompts (e.g. browser prompt sheets): a derived record
+    links to the source record and keeps its governed context; the original is never overwritten."""
+    from tools import aivsb_prompt_provenance as _prov
+    key = _prov.METADATA_KEY
+    src = _prov.merge_stores(_prov.current_scope(), _prov.store_from_block(metadata.get(key), source="METADATA")
+                             if key in metadata else None, source="READER")
+    out = _prov.store_from_block(metadata.get(key), source="METADATA") if key in metadata else _prov.ProvenanceStore(source="WRITER")
+    n = 0
+    for base, new_prompt in pairs:
+        if not str(base or "").strip():
+            continue
+        for h in _prov.candidate_prompt_hashes(base):
+            for pid in list(src.by_prompt_hash.get(h, [])):
+                par = src.records.get(pid)
+                if par is None or not _prov.validate_record(par, parents=src.records)[0]:
+                    continue
+                d = _prov.derive_record(par, new_prompt, transform=transform, origin=origin)
+                out.add(par)
+                out.add(d)
+                n += 1
+    if n:
+        metadata[key] = out.to_block()
+    return n
+
+
+def _identity_publish_eligible(files: list, path_id: str, *, folder: Any = None, metadata: Any = None) -> list:
+    """Mandatory final publish authorization boundary (flag ON only; OFF returns the list unchanged).
+
+    Every adapter must call this (or publish_identity_check) immediately before the outward
+    submit. Governed-character slots require approval bound to exact image SHA-256 + character
+    ID + identity contract; missing/ambiguous/tampered provenance or review fails closed.
+    Prompt provenance alone is never image approval. LEGACY_MISSING_RECORD_AUTOACCEPT=NO.
+    """
+    if not _identity_flag_on():
+        return files
+    from tools.aivsb_prompt_provenance import publish_identity_check
+    from tools.identity_preservation import IdentityAcceptanceBlocked
+    blocked = []
+    folder_hint = folder
+    meta_hint = metadata
+    if folder_hint is None:
+        # Infer a common parent folder when callers pass a file list from one pack.
+        try:
+            parents = {str(Path(str(f)).resolve().parent) for f in files if f}
+            if len(parents) == 1:
+                folder_hint = next(iter(parents))
+        except Exception:
+            folder_hint = folder
+    for f in files:
+        ok, why = publish_identity_check(f, folder=folder_hint, metadata=meta_hint)
+        if not ok:
+            blocked.append(f"{Path(str(f)).name}:{why}")
+    if blocked:
+        print(f"[identity-publish] {path_id} blocked: {'; '.join(blocked)}")
+        raise IdentityAcceptanceBlocked(f"identity preservation blocked publish at {path_id}: " + "; ".join(blocked), None)
+    return files
+
+
+@_identity_context_from_args(abbr="abbr")
 def regenerate_image_with_local_reference(
     prompt: str,
     image_path: Path,
@@ -1202,17 +1555,20 @@ def regenerate_image_with_local_reference(
             )
             archive_generated_promo_image(image_path, abbr, prompt, f"local-img2img-{index}")
             return f"local_stable_diffusion_img2img:{info.get('model', '')}"
-        except Exception:
-            pass
+        except Exception as exc:
+            _reraise_identity_block(exc)
     return create_prompt_fallback_image(prompt, image_path, index, abbr, allow_banked=False, fresh=fresh)
 
 
+@_identity_context_from_args(folder="folder")
 def regenerate_weak_images(folder: str, use_openai: bool = True) -> dict[str, Any]:
     target = Path(folder).resolve()
     metadata_path = target / "metadata.json"
     if not metadata_path.exists():
         raise RuntimeError("This folder does not contain a post pack.")
     metadata = read_metadata(target)
+    # R3: path is SCENE_BEARING_CHARACTER_IMAGE — governance applied when chapter context present
+    # (deep branch below; generic branch recomputes from metadata image_prompts + novel/title).
     if str(target).startswith(str(TIKTOK_OUTPUT_DIR.resolve())) and (
         str(metadata.get("kind") or "") == "deep_tiktok" or target.name.lower().endswith("-deep")
     ):
@@ -1244,6 +1600,17 @@ def regenerate_weak_images(folder: str, use_openai: bool = True) -> dict[str, An
                 f"Vertical 9:16 cinematic fantasy scene for {novel}, "
                 f"deep TikTok scene {len(prompts) + 1}, strong character action, clear chapter-specific fantasy details, no text."
             )
+        # R3 Phase 5/6: when structured chapter context exists, recompute scene authority;
+        # never infer solely from stale prompt prose.
+        _ch_txt = str(metadata.get("chapter_text") or metadata.get("chapterText") or metadata.get("text") or "")
+        _title = str(metadata.get("title") or title)
+        if _ch_txt.strip():
+            _gov = _r3_govern_scene_prompts(
+                entry="regenerate_weak_images", novel=novel, title=_title, chapter_text=_ch_txt,
+                phrases=list(prompts[:3]), existing_prompts=list(prompts[:3]),
+            )
+            if _gov:
+                prompts = list(_gov) + list(prompts[3:])
         quality_items = {
             str(Path(str(item.get("image") or "")).resolve()).lower(): item
             for item in (gate.get("imageQuality", {}) or {}).get("items", [])
@@ -3578,7 +3945,16 @@ def structured_chapter_package_fallback(
     text: str,
     recent_openings: list[str] | None = None,
 ) -> dict[str, Any]:
+    _abbr_in = abbr
     abbr = story_key(abbr)
+    if not abbr:
+        # SCENE_ENVIRONMENT_LIVE_PATH_REMEDIATION_R2 (Part A): canonical novel-id seam for full names that
+        # story_key does not map (e.g. 'Soul Forge Era' vs app_config 'Soulforge Era').
+        try:
+            from tools.novel_id import normalize_novel_id as _normalize_novel_id
+            abbr = (_normalize_novel_id(_abbr_in) or "").upper()
+        except Exception:  # noqa: BLE001
+            abbr = ""
     novel = NOVEL_NAMES.get(abbr, abbr or "Azure Inkblade")
     body = chapter_body_for_marketing(text)
     sentences = visual_sentences(body, 10, abbr)
@@ -3642,6 +4018,16 @@ def structured_chapter_package_fallback(
         "source": str(posts.get("_agent_source") or ""),
     }
     image_prompts = make_chapter_image_prompts(title, body, list(hook_map.values())[:3], novel)[:5]
+    _prov_extra: dict[str, Any] = {}
+    if _identity_flag_on():  # AIVSB_DURABLE_PROVENANCE_REMEDIATION_20261004
+        try:
+            _ps, _pr = _aivsb_prov_store_for_prompts(image_prompts, assets=[], source_text=f"{title} {body}", novel=abbr or novel,
+                                                     origin="app.structured_chapter_package_fallback",
+                                                     run_id=_aivsb_prov_run_id("chapterpkg"), known_non_aivsb=False)
+            if not _ps.is_empty():
+                _prov_extra["aivsb_prompt_provenance"] = _ps.to_block()
+        except Exception as _prov_exc:  # noqa: BLE001
+            print(f"[aivsb-provenance] chapter package provenance failed ({_prov_exc})")
     hooks = [
         {
             "type": hook_type,
@@ -3675,6 +4061,7 @@ def structured_chapter_package_fallback(
             for item in hooks[:5]
         ],
         "image_prompts": image_prompts,
+        **_prov_extra,
         "platform_posts": {
             "tiktok": [posts.get("caption", "")],
             "instagram": [posts.get("caption", "")],
@@ -6261,6 +6648,7 @@ def rebuild_deep_tiktok_video_from_metadata(target: Path, metadata: dict[str, An
     return build
 
 
+@_aivsb_prov_reader_from_args(folder="folder")
 def deep_tiktok_browser_prompt_sheet(folder: str) -> dict[str, Any]:
     target = Path(folder).resolve()
     if not str(target).startswith(str(TIKTOK_OUTPUT_DIR.resolve())) or not target.name.lower().endswith("-deep"):
@@ -6292,6 +6680,13 @@ def deep_tiktok_browser_prompt_sheet(folder: str) -> dict[str, Any]:
             "and not a generic landscape. Keep the character and setting consistent across the set."
         )
         prompts.append({"scene": index + 1, "overlay": overlay, "prompt": prompt})
+    if _identity_flag_on():  # AIVSB_DURABLE_PROVENANCE_REMEDIATION_20261004: derived records (flag ON only)
+        try:
+            _aivsb_prov_derive_into_metadata(
+                metadata, [(existing_prompts[i] if i < len(existing_prompts) else "", item["prompt"]) for i, item in enumerate(prompts)],
+                transform="deep_tiktok_browser_prompt_sheet", origin="app.deep_tiktok_browser_prompt_sheet")
+        except Exception as _prov_exc:  # noqa: BLE001 - absence of provenance -> review downstream
+            print(f"[aivsb-provenance] browser prompt sheet derivation failed ({_prov_exc})")
     sheet = [
         f"Deep TikTok browser image prompts",
         f"Pack: {target}",
@@ -6316,6 +6711,7 @@ def deep_tiktok_browser_prompt_sheet(folder: str) -> dict[str, Any]:
     return {"ok": True, "folder": str(target), "promptFile": str(output), "prompts": prompts, "message": f"Created {len(prompts)} browser image prompt(s)."}
 
 
+@_identity_context_from_args(folder="folder")
 def import_deep_tiktok_browser_images(
     folder: str,
     image_input: str,
@@ -6338,6 +6734,12 @@ def import_deep_tiktok_browser_images(
         reverse=True,
     )
     selected = scored[: max(1, min(12, int(max_images or 9)))]
+    # IDENTITY_PRODUCTION_COVERAGE_REMEDIATION: browser-imported pixels assigned to a governed
+    # pack pass the identity gate before banking / approval (flag OFF: no-op).
+    for _score, _source in selected:
+        _identity_enforce_fallback(_source, asset_class="BROWSER_IMPORTED_IMAGE",
+                                   fallback_source="browser_import_deep_tiktok",
+                                   path_id="BROWSER_IMPORT:import_deep_tiktok_browser_images", prompt=title)
     bank_dir = MANUAL_VIDEO_IMAGE_BANK_DIR / "deep-tiktok" / (abbr or "general")
     bank_dir.mkdir(parents=True, exist_ok=True)
     imported: list[dict[str, Any]] = []
@@ -7485,7 +7887,7 @@ def refund_google_ai_image_quota(quota: dict[str, Any]) -> None:
     _phase2_save_blob("googleAiImageUsage", GOOGLE_AI_IMAGE_USAGE_FILE, usage)
 
 
-def create_google_ai_image(prompt: str, target: Path, *, orientation: str = "vertical") -> dict[str, Any]:
+def create_google_ai_image(prompt: str, target: Path, *, orientation: str = "vertical", image_intent: Any = None) -> dict[str, Any]:
     if not google_ai_configured():
         raise RuntimeError("GOOGLE_AI_API_KEY is not configured.")
     quota = reserve_google_ai_image_quota(wait_for_slot=True)
@@ -7519,9 +7921,56 @@ def create_google_ai_image(prompt: str, target: Path, *, orientation: str = "ver
             target.write_bytes(raw_image)
     else:
         target.write_bytes(raw_image)
+    _v1_identity_acceptance_gate(target, "V1:google_ai", prompt, image_intent=image_intent)
     state = mark_image_used(target)
     save_promo_rotation_state(state)
     return {"provider": "google_ai", "model": payload["model"], "mimeType": mime_type or "image/jpeg", "quota": quota}
+
+
+def _v1_identity_acceptance_gate(target: Path, path_id: str, prompt: str, identity_context: Any = None,
+                                 image_intent: Any = None) -> None:
+    """IDENTITY_PRODUCTION_PLUMBING_20260929: V1 generator-primitive identity boundary.
+
+    Every V1 image generation (local SD / OpenAI / Google AI, including img2img
+    regeneration) passes here right after the image is written and before it is
+    marked used, archived or returned. ENABLE_IDENTITY_PRESERVATION OFF: BYPASS, no
+    side effects. ON: a governed character named in the prompt binds its identity
+    contract; REJECT_REVIEW / FAIL_CLOSED quarantine the image (bytes unchanged) and
+    raise IdentityAcceptanceBlocked (no auto-accept).
+
+    IDENTITY_PRODUCTION_COVERAGE_REMEDIATION_20260929: structured context (explicit
+    identity_context, else the ambient context bound by @_identity_context_from_args on the
+    production caller) dominates prompt parsing; prompt names/titles are only the fallback
+    for truly contextless legacy calls.
+
+    IDENTITY_FINAL_COVERAGE_HARDENING_20260930: structured ImageIntent evidence = explicit
+    image_intent, else the ambient intent (VD scene structure / path asset role); no structured
+    evidence -> safe default (potentially governed). Flag OFF: unused.
+    """
+    from tools.identity_preservation import enforce_identity_acceptance
+    enforce_identity_acceptance(Path(target), path_id=path_id, prompt=str(prompt or ""), identity_context=identity_context,
+                                image_intent=image_intent)
+
+
+def _v2_identity_intent(image_intent: Any, scene_text: Any) -> Any:
+    """IDENTITY_FINAL_COVERAGE_HARDENING_20260930: V2 intent = explicit image_intent (else None ->
+    ambient) with the chapter scene_text attached as forcing-only evidence. Flag OFF: None."""
+    if not _identity_flag_on():
+        return None
+    from tools.identity_preservation import ImageIntentRequest, coerce_image_intent_request
+    import dataclasses as _dc
+    req = coerce_image_intent_request(image_intent)
+    text = str(scene_text or "")
+    if req is None:
+        return ImageIntentRequest(scene_text=text) if text else None
+    return _dc.replace(req, scene_text=" ".join(t for t in (req.scene_text, text) if t))
+
+
+def _reraise_identity_block(exc: BaseException) -> None:
+    """Do not swallow an identity block into a provider fallback (flag ON only raises these)."""
+    from tools.identity_preservation import is_identity_block
+    if is_identity_block(exc):
+        raise exc
 
 
 def local_stable_diffusion_configured() -> bool:
@@ -7630,7 +8079,16 @@ def ensure_lora_training_layout() -> dict[str, Any]:
 
 
 def find_lora_weights_for_track(track: str) -> Path | None:
-    roots = [LORA_MODEL_DIR / track, LORA_TRAINING_DIR / track / "output"]
+    from tools.image_pipeline_v2_profiles import is_explicit_photorealistic_style
+
+    token = str(track or "").strip().lower()
+    if is_explicit_photorealistic_style(token):
+        return None
+    lookup = token
+    if token == "cinematic-promo":
+        # Canonical profile uses the existing file. Do not rename it.
+        lookup = "realistic_posts"
+    roots = [LORA_MODEL_DIR / lookup, LORA_TRAINING_DIR / track / "output"]
     suffixes = {".safetensors", ".pt", ".bin"}
     candidates: list[Path] = []
     for root in roots:
@@ -7643,10 +8101,20 @@ def find_lora_weights_for_track(track: str) -> Path | None:
 
 
 def lora_track_for_prompt(prompt: str, *, purpose: str = "", orientation: str = "vertical") -> str:
+    from tools.image_pipeline_v2_profiles import is_photorealistic_prompt_request
+    import re
+
     text = f"{prompt} {purpose} {orientation}".lower()
-    if any(term in text for term in ["realistic", "photoreal", "photo-real", "live action", "cinematic realism", "real world"]):
+    # Photorealistic words first. "photorealistic" contains "realistic".
+    if is_photorealistic_prompt_request(text):
+        return "photorealistic"
+    # Bare realistic and cinematic realism stay on the cinematic alias.
+    # "real world" is not a cinematic alias and is not a photorealistic token.
+    if "cinematic realism" in text or re.search(r"\brealistic\b", text):
         return "realistic-posts"
-    if any(term in text for term in ["comic", "manhwa", "manga", "webtoon", "panel", "deep tiktok", "story hook", "shorts", "reels"]):
+    # Explicit comic/manhwa requests stay on comic-style. Shorts/Reels/TikTok
+    # stills use main-posts (azink_main cinematic), not azink_comic.
+    if any(term in text for term in ["comic", "manhwa", "manga", "webtoon", "panel"]):
         return "comic-style"
     return "main-posts"
 
@@ -7660,18 +8128,29 @@ def enhance_local_sd_prompt(prompt: str, *, orientation: str = "vertical", lora_
         return prompt
     prompt = re.sub(r"\s+", " ", str(prompt or "")).strip()
     orientation_hint = "vertical 9:16" if orientation == "vertical" else "cinematic 16:9" if orientation == "horizontal" else "square"
+    from tools.image_pipeline_v2_profiles import is_explicit_photorealistic_style
+
+    if is_explicit_photorealistic_style(lora_track) or is_explicit_photorealistic_style(
+        lora_track_for_prompt(prompt, orientation=orientation) if not lora_track else ""
+    ):
+        return prompt
     track = lora_track if lora_track in LORA_STYLE_TRACKS else lora_track_for_prompt(prompt, orientation=orientation)
+    if is_explicit_photorealistic_style(track):
+        return prompt
     track_spec = LORA_STYLE_TRACKS.get(track, LORA_STYLE_TRACKS["main-posts"])
     quality_bits = [
         str(track_spec.get("trigger") or ""),
         str(track_spec.get("promptSuffix") or ""),
         f"{orientation_hint} web novel promotional illustration",
-        "modern manhwa and anime-influenced fantasy art",
         "clear focal character or story object",
         "dramatic lighting, readable composition, strong foreground and background separation",
         "chapter-specific scene, not a generic landscape",
         "high detail, polished digital painting",
     ]
+    if track == "comic-style":
+        quality_bits.insert(3, "modern manhwa and anime-influenced fantasy art")
+    elif track == "main-posts":
+        quality_bits.insert(3, "premium cinematic fantasy illustration, elegant painterly realism")
     lower = prompt.lower()
     missing_bits = [bit for bit in quality_bits if bit.lower() not in lower]
     if missing_bits:
@@ -7694,6 +8173,94 @@ def enhance_local_sd_prompt(prompt: str, *, orientation: str = "vertical", lora_
 #   - Does not restart the server, touch _LOCAL_SD_GPU_LOCK, or write state.
 #   - Structured log line records enabled / skipped / failed.
 # ============================================================================
+# SCENE_ENVIRONMENT_LIVE_PATH_REMEDIATION_R2 (Parts E/F/G): the composer emits the same visual body
+# and camera for every beat, so the only per-still difference used to be a trailing tag beyond CLIP
+# token 77 (the local SDXL text encoders keep BOS + 75 tokens + EOS). The composer camera slot is
+# replaced by a per-role camera followed by the scene lead (role, setting, beat), all inside the
+# retained prefix. The '<novel_id>, expressing <e>, <camera> shot' header used by the identity
+# signature backstop is preserved. A continuity 'location: <id>' survives only when the scene
+# itself evidences that location (no fixed character home location). Environment domain only.
+_AIVSB_CAMERA_SLOT_RX = re.compile(
+    r"(?P<pre>^.*?\bexpressing [^,]{1,120}, |^(?:en|ha|hp|sf), )(?P<cam>[A-Za-z0-9_]+ shot(?: with [^,]{1,40}? lens)?)(?=,|$)",
+    re.S)
+
+
+def _scene_env_restructure_aivsb(out: dict, novel: str, beat: str, *, input_novel: Any = None,
+                                 still_index: int | None = None, still_role: str | None = None,
+                                 composition_goal: str | None = None) -> dict:
+    from tools import scene_environment as _se
+    idx = 0 if still_index is None else int(still_index)
+    role = _se.role_for_index(idx, still_role)
+    goal = composition_goal if composition_goal is not None else beat
+    try:
+        from visual_director import load_locations as _vd_load_locations
+        _locs = _vd_load_locations()
+    except Exception:  # noqa: BLE001 - no Bible -> UNRESOLVED (never a borrowed location)
+        _locs = []
+    spec = _se.resolve_scene_environment(novel, beat, **_r21_scene_env_kwargs(idx, _locs, "AIVSB"), still_index=idx,
+                                         still_role=role, composition_goal=goal)
+    prompt = str(out.get("prompt") or "").strip()
+    cam = _se.role_camera(role)
+    lead = _se.aivsb_effective_scene_lead(spec, beat, still_index=idx, still_role=role)
+    cam_text = f"{cam['camera']} shot with {cam['lens']} lens, {cam['composition']}, {lead}"
+    composer_camera = ""
+    m = _AIVSB_CAMERA_SLOT_RX.search(prompt)
+    header = re.match(r"^(?:en|ha|hp|sf), ", prompt) is not None
+    if m and header:
+        composer_camera = m.group("cam")
+        prompt = prompt[: m.start("cam")] + cam_text + prompt[m.end("cam"):]
+        placement = "COMPOSER_CAMERA_SLOT"
+    elif m:
+        # character-shape output starts with the character attribute block, which would push a slot
+        # lead past the CLIP window: role camera stays in the slot, the scene lead is prepended.
+        composer_camera = m.group("cam")
+        prompt = (lead + ", " + prompt[: m.start("cam")] + f"{cam['camera']} shot with {cam['lens']} lens, "
+                  f"{cam['composition']}" + prompt[m.end("cam"):])
+        placement = "LEAD_PREPENDED_CHARACTER_SHAPE"
+    else:
+        head, sep, tail = prompt.partition(", ")
+        prompt = f"{head}, {cam_text}{sep}{tail}" if sep else f"{prompt}, {cam_text}"
+        placement = "AFTER_FIRST_SEGMENT"
+    removed_locations: list[str] = []
+
+    def _continuity_location(mm: "re.Match[str]") -> str:
+        if mm.group(1) == spec.location_id:
+            return mm.group(0)
+        removed_locations.append(mm.group(1))
+        return ""
+
+    prompt = re.sub(r";?\s*location: ([A-Za-z0-9_]+)", _continuity_location, prompt)
+    frag = _se.still_differentiation_fragment(
+        novel, beat, still_index=idx, still_role=role, composition_goal=goal,
+        location_name=None if spec.unknown_location else spec.location_name)
+    if frag and frag not in prompt:
+        prompt = (prompt + ", " + frag).strip(", ")
+    out["prompt"] = prompt
+    out["scene_environment"] = {
+        "still_index": idx,
+        "still_role": role,
+        "composition_goal": str(goal or "")[:200],
+        "beat": str(beat or "")[:200],
+        "input_novel": "" if input_novel is None else str(input_novel),
+        "normalized_novel_id": novel,
+        "camera": f"{cam['camera']} shot with {cam['lens']} lens",
+        "composer_camera_replaced": composer_camera,
+        "effective_lead": lead,
+        "lead_placement": placement,
+        "continuity_location_removed": removed_locations,
+        "location_id": spec.location_id,
+        "location_authority": spec.authority,
+        "observability": dict(spec.observability),
+        "domain": "scene_environment",
+    }
+    applied = list(out.get("applied_rule_ids") or [])
+    for tag in ("scene_environment.still_differentiation", "scene_environment.effective_prefix_lead"):
+        if tag not in applied:
+            applied.append(tag)
+    out["applied_rule_ids"] = applied
+    return out
+
+
 def compose_aivsb_scene_prompt(
     novel: str,
     beat: str,
@@ -7703,6 +8270,9 @@ def compose_aivsb_scene_prompt(
     asset_type: str = "chapter_still",
     orientation: str = "vertical",
     legacy_prompt: str = "",
+    still_index: int | None = None,
+    still_role: str | None = None,
+    composition_goal: str | None = None,
 ) -> dict | None:
     """Return a ComposedScenePrompt dict (or None) from the AIVSB reasoning layer.
 
@@ -7716,6 +8286,16 @@ def compose_aivsb_scene_prompt(
     if enabled in ("", "0", "false", "no", "off"):
         print("[aivsb-reasoning] skipped: AIVSB_REASONING_ENABLED is off (default)")
         return None
+
+    # SCENE_ENVIRONMENT_LIVE_PATH_REMEDIATION_R2 (Part A/G): canonical novel-id seam. Live callers pass
+    # full novel names ('Eternal Nexus'); the composer validates lowercase ids only, so full names used
+    # to be rejected -> legacy. Unknown values pass through unchanged (the composer still rejects them).
+    _input_novel = novel
+    try:
+        from tools.novel_id import normalize_novel_id as _normalize_novel_id
+        novel = _normalize_novel_id(novel) or novel
+    except Exception:  # noqa: BLE001
+        pass
 
     # Resolve the reasoning package (sibling of this app, NOT co-located).
     aivsb_reasoning = (
@@ -7763,7 +8343,16 @@ def compose_aivsb_scene_prompt(
             f"lora={result.lora_track} source={result.lora_source} "
             f"rules={len(result.applied_rule_ids)}"
         )
-        return result.to_dict()
+        # SCENE_ENVIRONMENT_CONSISTENCY_REMEDIATION (Parts F–G): substantive still
+        # differentiation via STILL_INDEX/ROLE/BEAT/COMPOSITION_GOAL. Deterministic
+        # bugfix (no new flag). Preserves durable provenance fields on the dict.
+        out = result.to_dict()
+        try:
+            out = _scene_env_restructure_aivsb(out, novel, beat, input_novel=_input_novel, still_index=still_index,
+                                               still_role=still_role, composition_goal=composition_goal)
+        except Exception as _se_exc:  # never break compose path
+            print(f"[aivsb-reasoning] scene_environment differentiation skipped ({_se_exc})")
+        return out
     except ComposerError as exc:
         print(f"[aivsb-reasoning] failed: composer rejected request ({exc})")
         return None
@@ -7888,7 +8477,9 @@ def create_local_stable_diffusion_image(
     input_image: Path | None = None,
     strength: float | None = None,
     quality_mode: str = "",
+    image_intent: Any = None,
 ) -> dict[str, Any]:
+    _identity_prompt = prompt  # IDENTITY_PRODUCTION_PLUMBING_20260929 (pre-enhancement caller prompt)
     status = local_stable_diffusion_status()
     if not status.get("ready"):
         missing = [name for name, ready in (status.get("dependencies") or {}).items() if not ready]
@@ -7904,6 +8495,10 @@ def create_local_stable_diffusion_image(
         height = int(os.environ.get("LOCAL_SD_VERTICAL_HEIGHT", "1344"))
     target.parent.mkdir(parents=True, exist_ok=True)
     lora_track = lora_track_for_prompt(prompt, orientation=orientation)
+    if lora_track == "photorealistic":
+        from tools.image_pipeline_v2_profiles import PhotorealisticProfileUnavailableError
+
+        raise PhotorealisticProfileUnavailableError()
     lora_path = find_lora_weights_for_track(lora_track) if os.environ.get("LOCAL_SD_LORA_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"} else None
     prompt = enhance_local_sd_prompt(prompt, orientation=orientation, lora_track=lora_track)
     metadata_path = target.with_suffix(target.suffix + ".local-sd.json")
@@ -7948,6 +8543,9 @@ def create_local_stable_diffusion_image(
     with _LOCAL_SD_GPU_LOCK:
         timeout = int(status.get("timeoutSeconds") or 360)
         gen_env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
+        # R3 Phase 0 hard barrier lives in tests.gpu_test_barrier (subprocess.Popen/run) and
+        # local_image_generator.py entry. Do not abort here on AT_SD_ENABLED alone: identity
+        # and production-path tests must reach in-function gates / mocked subprocess.run.
         with HeavyJobLimiter():
             completed = subprocess.run(command, cwd=str(ROOT), capture_output=True, text=True, timeout=timeout, env=gen_env)
         if completed.returncode != 0:
@@ -7959,6 +8557,7 @@ def create_local_stable_diffusion_image(
             metadata = json.loads(metadata_path.read_text(encoding="utf-8")) if metadata_path.exists() else {}
         except Exception:
             metadata = {}
+        _v1_identity_acceptance_gate(target, "V1:local_stable_diffusion", _identity_prompt, image_intent=image_intent)
         state = mark_image_used(target)
         save_promo_rotation_state(state)
         metadata.setdefault("provider", "local_stable_diffusion")
@@ -9662,9 +10261,28 @@ def resurfacing_and_repost_candidates() -> dict[str, Any]:
     }
 
 
-def build_resurfacing_post(abbr: str, chapter: int | str, reason: str = "back_catalog") -> dict[str, Any]:
+def build_resurfacing_post(
+    abbr: str,
+    chapter: int | str,
+    reason: str = "back_catalog",
+    *,
+    resurfacing_v2_enabled: bool | None = None,
+    publish_generated_media: bool = True,
+    promo_master_enabled: bool | None = None,
+) -> dict[str, Any]:
     abbr = story_key(abbr)
     chapter_number = int(chapter)
+    from tools.still_caller_activation import promo_master_generate_kwargs, resolve_still_caller_flags
+
+    _act = resolve_still_caller_flags(
+        v2_explicit=resurfacing_v2_enabled,
+        pm_explicit=promo_master_enabled,
+        novel=abbr,
+        seam="resurfacing",
+    )
+    resurfacing_v2_enabled = _act["v2_enabled"]
+    _pm_explicit = _act["pm_explicit"]
+    _pm_effective = _act["pm_enabled"]
     data = docs_chapter_text(abbr, chapter_number)
     title = str(data.get("title") or f"Chapter {chapter_number}")
     text = str(data.get("text") or data.get("raw_text") or "")
@@ -9700,15 +10318,48 @@ def build_resurfacing_post(abbr: str, chapter: int | str, reason: str = "back_ca
         )
         record_generated_social_posts(agent_meta, copy)
     image = folder / f"{abbr}_{chapter_number}_resurface.png"
-    image_source = create_fresh_social_image_from_caption(
-        image,
-        abbr=abbr,
-        novel=NOVEL_NAMES.get(abbr, abbr),
-        title=title,
-        caption=copy["caption"],
-        hook=hook,
-        index=chapter_number,
-    )
+    posting_image = image
+    if resurfacing_v2_enabled:
+        from tools.promo_master_production import posting_image_from_promo_master_out
+
+        _novel = NOVEL_NAMES.get(abbr, abbr)
+        _scene = str(copy.get("caption") or hook or "").strip()
+        _pm_out: dict[str, Any] = {}
+        image_source = generate_promo_image_v2(
+            "main-posts",
+            _scene,
+            image,
+            abbr=abbr,
+            index=chapter_number,
+            novel=_novel,
+            chapter=chapter_number,
+            scene_text=_scene or None,
+            promo_master_out=_pm_out,
+            **promo_master_generate_kwargs(_act),
+        )
+        if not image_source:
+            raise RuntimeError(
+                "resurfacing V2 generated no source; will not fall back to legacy image generation"
+            )
+        if not Path(image).is_file():
+            raise RuntimeError(
+                "resurfacing V2 missing generated artifact; will not fall back to legacy image generation"
+            )
+        posting_image = posting_image_from_promo_master_out(
+            promo_master_enabled=_pm_effective,
+            promo_master_out=_pm_out,
+            base_path=image,
+        )
+    else:
+        image_source = create_fresh_social_image_from_caption(
+            image,
+            abbr=abbr,
+            novel=NOVEL_NAMES.get(abbr, abbr),
+            title=title,
+            caption=copy["caption"],
+            hook=hook,
+            index=chapter_number,
+        )
     payload = {
         "kind": "resurfacing_post",
         "reason": reason,
@@ -9718,7 +10369,7 @@ def build_resurfacing_post(abbr: str, chapter: int | str, reason: str = "back_ca
         "title": title,
         "hook": hook,
         "folder": str(folder),
-        "image": str(image),
+        "image": str(posting_image),
         "image_source": image_source,
         "instagram": copy["caption"],
         "x": copy["x_post"],
@@ -9732,7 +10383,10 @@ def build_resurfacing_post(abbr: str, chapter: int | str, reason: str = "back_ca
     (folder / "x.txt").write_text(payload["x"] + "\n", encoding="utf-8")
     (folder / "facebook.txt").write_text(payload["facebook"] + "\n", encoding="utf-8")
     (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    published = auto_publish_generated_media(folder, payload)
+    if publish_generated_media:
+        published = auto_publish_generated_media(folder, payload)
+    else:
+        published = payload
     state = load_growth_automation_state()
     state.setdefault("resurfaced", {})[f"{abbr}-{chapter_number}"] = {
         "builtAt": payload["createdAt"],
@@ -9878,18 +10532,74 @@ def comment_content_ideas() -> list[dict[str, Any]]:
     return ideas[:20]
 
 
-def build_comment_content_post(comment_id: str) -> dict[str, Any]:
+def build_comment_content_post(
+    comment_id: str,
+    *,
+    comment_content_v2_enabled: bool | None = None,
+    publish_generated_media: bool = True,
+    promo_master_enabled: bool | None = None,
+) -> dict[str, Any]:
     comment = next((item for item in load_comment_assistant().get("comments", []) if str(item.get("commentId")) == str(comment_id)), None)
     if not comment:
         raise RuntimeError("Comment was not found.")
     abbr = story_key(str(comment.get("abbr") or ""))
+    from tools.still_caller_activation import promo_master_generate_kwargs, resolve_still_caller_flags
+
+    _act = resolve_still_caller_flags(
+        v2_explicit=comment_content_v2_enabled,
+        pm_explicit=promo_master_enabled,
+        novel=abbr,
+        seam="comment-content",
+    )
+    comment_content_v2_enabled = _act["v2_enabled"]
+    _pm_explicit = _act["pm_explicit"]
+    _pm_effective = _act["pm_enabled"]
     novel = NOVEL_NAMES.get(abbr, "Azure Inkblade")
     hook = clean_teaser_text(str(comment.get("text") or ""), 150, max_words=24)
     folder = SOCIAL_OUTPUT_DIR / f"comment-content-{(abbr or 'azureinkblade').lower()}-{str(comment_id)[:10]}"
     reset_generated_folder(folder)
     prompt = f"Reader question inspired social artwork for {novel}: {hook}. No text or typography."
     image = folder / f"{abbr or 'AzureInkblade'}_reader_question.png"
-    source = create_fresh_social_image_from_caption(image, abbr=abbr, novel=novel, title="Reader Question", caption=hook, hook=hook, visual_brief=prompt)
+    posting_image = image
+    if comment_content_v2_enabled:
+        from tools.promo_master_production import posting_image_from_promo_master_out
+
+        _scene = str(hook or "").strip()
+        _pm_out: dict[str, Any] = {}
+        source = generate_promo_image_v2(
+            "main-posts",
+            prompt,
+            image,
+            abbr=abbr,
+            index=1,
+            novel=novel,
+            scene_text=_scene or None,
+            promo_master_out=_pm_out,
+            **promo_master_generate_kwargs(_act),
+        )
+        if not source:
+            raise RuntimeError(
+                "comment-content V2 generated no source; will not fall back to legacy image generation"
+            )
+        if not Path(image).is_file():
+            raise RuntimeError(
+                "comment-content V2 missing generated artifact; will not fall back to legacy image generation"
+            )
+        posting_image = posting_image_from_promo_master_out(
+            promo_master_enabled=_pm_effective,
+            promo_master_out=_pm_out,
+            base_path=image,
+        )
+    else:
+        source = create_fresh_social_image_from_caption(
+            image,
+            abbr=abbr,
+            novel=novel,
+            title="Reader Question",
+            caption=hook,
+            hook=hook,
+            visual_brief=prompt,
+        )
     links = "Find the story and all reader links in bio."
     instagram = f"Reader question: {hook}\n\nWhat do you think?\n\n{links}\n\n{social_profile(abbr)['hashtags']}"
     x_destination = "Read now: link in bio."
@@ -9897,10 +10607,12 @@ def build_comment_content_post(comment_id: str) -> dict[str, Any]:
     if len(x_text) > 275:
         x_text = f"{hook[:100]}\n{x_destination}"
     facebook = f"Reader question about {novel}:\n\n{hook}\n\nWhat is your theory?\n\n{links}"
-    payload = {"kind": "comment_content", "commentId": comment_id, "abbr": abbr, "novel": novel, "folder": str(folder), "image": str(image), "image_source": source, "instagram": instagram, "x": x_text, "facebook": facebook, "createdAt": time.strftime("%Y-%m-%d %H:%M:%S")}
+    payload = {"kind": "comment_content", "commentId": comment_id, "abbr": abbr, "novel": novel, "folder": str(folder), "image": str(posting_image), "image_source": source, "instagram": instagram, "x": x_text, "facebook": facebook, "createdAt": time.strftime("%Y-%m-%d %H:%M:%S")}
     for name, value in [("instagram.txt", instagram), ("x.txt", x_text), ("facebook.txt", facebook)]:
         (folder / name).write_text(value + "\n", encoding="utf-8")
     (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    if not publish_generated_media:
+        return payload
     return auto_publish_generated_media(folder, payload)
 
 
@@ -9979,7 +10691,16 @@ def platform_pinned_candidates(platform: str) -> list[dict[str, Any]]:
     return candidates
 
 
-def arc_campaign_plans(build_drafts: bool = False, only_abbr: str = "") -> dict[str, Any]:
+def arc_campaign_plans(
+    build_drafts: bool = False,
+    only_abbr: str = "",
+    *,
+    arc_campaign_v2_enabled: bool | None = None,
+    publish_generated_media: bool = True,
+    promo_master_enabled: bool | None = None,
+) -> dict[str, Any]:
+    from tools.still_caller_activation import promo_master_generate_kwargs, resolve_still_caller_flags
+
     plans = []
     drafts = []
     for abbr, novel in NOVEL_NAMES.items():
@@ -9991,17 +10712,60 @@ def arc_campaign_plans(build_drafts: bool = False, only_abbr: str = "") -> dict[
         plan = {"abbr": abbr, "novel": novel, "arc": arc, "hook": clean_teaser_text(setup, 160, max_words=24), "destination": royal_road_url_for_story(abbr)}
         plans.append(plan)
         if build_drafts:
+            _act = resolve_still_caller_flags(
+                v2_explicit=arc_campaign_v2_enabled,
+                pm_explicit=promo_master_enabled,
+                novel=abbr,
+                seam="arc-campaign",
+            )
+            v2_on = _act["v2_enabled"]
+            _pm_explicit = _act["pm_explicit"]
+            _pm_effective = _act["pm_enabled"]
             folder = SOCIAL_OUTPUT_DIR / f"arc-{abbr.lower()}-{slugify(arc)[:35]}"
             reset_generated_folder(folder)
             image = folder / f"{abbr}_arc.png"
-            source = create_fresh_social_image_from_caption(image, abbr=abbr, novel=novel, title=arc, caption=plan["hook"], hook=plan["hook"])
+            posting_image = image
+            if v2_on:
+                from tools.promo_master_production import posting_image_from_promo_master_out
+
+                _scene = str(plan["hook"] or "").strip()
+                _pm_out: dict[str, Any] = {}
+                source = generate_promo_image_v2(
+                    "main-posts",
+                    _scene,
+                    image,
+                    abbr=abbr,
+                    index=1,
+                    novel=novel,
+                    scene_text=_scene or None,
+                    promo_master_out=_pm_out,
+                    **promo_master_generate_kwargs(_act),
+                )
+                if not source:
+                    raise RuntimeError(
+                        "arc-campaign V2 generated no source; will not fall back to legacy image generation"
+                    )
+                if not Path(image).is_file():
+                    raise RuntimeError(
+                        "arc-campaign V2 missing generated artifact; will not fall back to legacy image generation"
+                    )
+                posting_image = posting_image_from_promo_master_out(
+                    promo_master_enabled=_pm_effective,
+                    promo_master_out=_pm_out,
+                    base_path=image,
+                )
+            else:
+                source = create_fresh_social_image_from_caption(image, abbr=abbr, novel=novel, title=arc, caption=plan["hook"], hook=plan["hook"])
             links = "Start the arc through the link in bio."
             instagram = f"{novel}: {arc}\n\n{plan['hook']}\n\nStart the arc on Royal Road.\n\n{links}\n\n{social_profile(abbr)['hashtags']}"
-            payload = {**plan, "kind": "arc_campaign", "folder": str(folder), "image": str(image), "image_source": source, "instagram": instagram, "x": f"{novel}: {arc}\n{plan['hook']}\nRead now: link in bio.", "facebook": instagram, "createdAt": time.strftime("%Y-%m-%d %H:%M:%S")}
+            payload = {**plan, "kind": "arc_campaign", "folder": str(folder), "image": str(posting_image), "image_source": source, "instagram": instagram, "x": f"{novel}: {arc}\n{plan['hook']}\nRead now: link in bio.", "facebook": instagram, "createdAt": time.strftime("%Y-%m-%d %H:%M:%S")}
             for name, value in [("instagram.txt", payload["instagram"]), ("x.txt", payload["x"]), ("facebook.txt", payload["facebook"])]:
                 (folder / name).write_text(value + "\n", encoding="utf-8")
             (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-            drafts.append(auto_publish_generated_media(folder, payload))
+            if publish_generated_media:
+                drafts.append(auto_publish_generated_media(folder, payload))
+            else:
+                drafts.append(payload)
     result = {"generatedAt": time.strftime("%Y-%m-%d %H:%M:%S"), "plans": plans, "drafts": drafts, "file": str(ARC_CAMPAIGN_FILE)}
     _phase2_save_blob("arcCampaigns", ARC_CAMPAIGN_FILE, result)
     return result
@@ -12774,6 +13538,7 @@ def experiment_variant_visual_prompt(experiment: dict[str, Any], variant: dict[s
     return variant_visual_brief(experiment, variant, vertical=vertical)
 
 
+@_identity_context_from_args(abbr="abbr", novel="novel")
 def create_fresh_social_image_from_caption(
     target: Path,
     *,
@@ -12806,8 +13571,27 @@ def create_fresh_social_image_from_caption(
         return f"{source}; openai:{openai_exc}"
 
 
-def write_variant_social_pack(experiment: dict[str, Any], variant: dict[str, Any], index: int) -> dict[str, Any]:
+def write_variant_social_pack(
+    experiment: dict[str, Any],
+    variant: dict[str, Any],
+    index: int,
+    *,
+    variant_social_v2_enabled: bool | None = None,
+    publish_generated_media: bool = True,
+    promo_master_enabled: bool | None = None,
+) -> dict[str, Any]:
+    from tools.still_caller_activation import promo_master_generate_kwargs, resolve_still_caller_flags
+
     abbr = story_key(str(experiment.get("abbr") or ""))
+    _act = resolve_still_caller_flags(
+        v2_explicit=variant_social_v2_enabled,
+        pm_explicit=promo_master_enabled,
+        novel=abbr,
+        seam="experiment-social-pack",
+    )
+    variant_social_v2_enabled = _act["v2_enabled"]
+    _pm_explicit = _act["pm_explicit"]
+    _pm_effective = _act["pm_enabled"]
     chapter = str(experiment.get("chapter") or "")
     day = DAYS[(index - 1) % len(DAYS)]
     folder = EXPERIMENT_OUTPUT_DIR / f"{abbr.lower()}-{chapter}-{slugify(str(variant.get('hookType') or 'variant'))}-{content_hash(str(variant.get('variantId') or ''))[:8]}"
@@ -12817,16 +13601,48 @@ def write_variant_social_pack(experiment: dict[str, Any], variant: dict[str, Any
     title = str(experiment.get("title") or f"Chapter {chapter}")
     image_target = folder / f"{abbr}_{chapter}_variant_{index}.png"
     visual_brief = experiment_variant_visual_prompt(experiment, variant, vertical=False)
-    image_source = create_fresh_social_image_from_caption(
-        image_target,
-        abbr=abbr,
-        novel=novel,
-        title=title,
-        caption=str(variant.get("caption") or ""),
-        hook=str(variant.get("openingText") or ""),
-        visual_brief=visual_brief,
-        index=index,
-    )
+    posting_image = image_target
+    if variant_social_v2_enabled:
+        from tools.promo_master_production import posting_image_from_promo_master_out
+
+        _scene = str(variant.get("openingText") or variant.get("caption") or "").strip()
+        _pm_out: dict[str, Any] = {}
+        image_source = generate_promo_image_v2(
+            "main-posts",
+            _scene,
+            image_target,
+            abbr=abbr,
+            index=index,
+            novel=novel,
+            chapter=chapter or None,
+            scene_text=_scene or None,
+            promo_master_out=_pm_out,
+            **promo_master_generate_kwargs(_act),
+        )
+        if not image_source:
+            raise RuntimeError(
+                "variant-social V2 generated no source; will not fall back to legacy image generation"
+            )
+        if not Path(image_target).is_file():
+            raise RuntimeError(
+                "variant-social V2 missing generated artifact; will not fall back to legacy image generation"
+            )
+        posting_image = posting_image_from_promo_master_out(
+            promo_master_enabled=_pm_effective,
+            promo_master_out=_pm_out,
+            base_path=image_target,
+        )
+    else:
+        image_source = create_fresh_social_image_from_caption(
+            image_target,
+            abbr=abbr,
+            novel=novel,
+            title=title,
+            caption=str(variant.get("caption") or ""),
+            hook=str(variant.get("openingText") or ""),
+            visual_brief=visual_brief,
+            index=index,
+        )
     payload = {
         "kind": "experiment_social_pack",
         "experimentId": experiment.get("experimentId"),
@@ -12840,7 +13656,7 @@ def write_variant_social_pack(experiment: dict[str, Any], variant: dict[str, Any
         "title": experiment.get("title"),
         "day": day,
         "folder": str(folder),
-        "image": str(image_target),
+        "image": str(posting_image),
         "image_source": image_source,
         "visual_prompt": visual_brief,
         "visual_seed": variant_visual_seed(experiment, variant),
@@ -12851,9 +13667,12 @@ def write_variant_social_pack(experiment: dict[str, Any], variant: dict[str, Any
     (folder / "facebook.txt").write_text(copy["facebook"] + "\n", encoding="utf-8")
     (folder / "alt-text.txt").write_text(copy["alt_text"] + "\n", encoding="utf-8")
     (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    if not publish_generated_media:
+        return payload
     return payload
 
 
+@_identity_context_from_args(resolver=lambda vals: {"abbr": str((vals.get("experiment") or {}).get("abbr") or ""), "novel": str((vals.get("experiment") or {}).get("novel") or "")})
 def write_variant_short_pack(experiment: dict[str, Any], variant: dict[str, Any], index: int) -> dict[str, Any]:
     abbr = story_key(str(experiment.get("abbr") or ""))
     chapter = str(experiment.get("chapter") or "")
@@ -12865,6 +13684,24 @@ def write_variant_short_pack(experiment: dict[str, Any], variant: dict[str, Any]
         shutil.rmtree(target_folder)
     target_folder.mkdir(parents=True, exist_ok=True)
     copy = variant_platform_copy(experiment, variant)
+    variant_style = experiment.get("style") or experiment.get("loraTrack") or "comic-style"
+    from tools.image_pipeline_v2_profiles import PHOTOREALISTIC_PROFILE
+
+    if live_image_pack_track(variant_style) == PHOTOREALISTIC_PROFILE:
+        generate_promo_image_v2(
+            PHOTOREALISTIC_PROFILE,
+            visual_prompt,
+            Path("photorealistic-live-refused.png"),
+            abbr=abbr,
+            novel=novel,
+            chapter=chapter,
+            scene_text=opening,
+        )
+        raise V2ImageGenerationError(
+            "photorealistic profile selected RealVisXL_V5.0_fp16; "
+            "variant short generation will not fall through to fallback, "
+            "cinematic-promo, realistic-posts, main-posts, local SD, cloud, or stock."
+        )
     images: list[str] = []
     prompts = [
         f"{visual_prompt}. Scene variation {slot}: keep the same quoted moment, change camera angle and composition."
@@ -14176,6 +15013,52 @@ def read_json_body(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
     return json.loads(raw or "{}")
 
 
+def http_optional_json_bool(body: dict[str, Any], key: str) -> dict[str, bool]:
+    """HTTP-only. Absent key: empty kwargs. Non-bool: ValueError."""
+    if not isinstance(body, dict) or key not in body:
+        return {}
+    val = body[key]
+    if val is not True and val is not False:
+        raise ValueError(f"{key} must be a JSON boolean")
+    return {key: val}
+
+
+def http_publish_generated_media_arg(body: dict[str, Any]) -> dict[str, bool]:
+    """HTTP-only. Absent key: empty kwargs (builder default). Non-bool: ValueError."""
+    return http_optional_json_bool(body, "publish_generated_media")
+
+
+def apply_comment_content_http(body: dict[str, Any]) -> dict[str, Any]:
+    pub = http_publish_generated_media_arg(body)
+    return build_comment_content_post(str(body.get("commentId") or ""), **pub)
+
+
+def run_comment_content_http(body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """HTTP-only wrapper: structured 500, request_id, traceback on stderr only."""
+    request_id = uuid.uuid4().hex[:12]
+    try:
+        return 200, apply_comment_content_http(body)
+    except ValueError as exc:
+        return 400, {"error": str(exc), "request_id": request_id}
+    except Exception:
+        logging.exception("comment-content-post failed request_id=%s", request_id)
+        print(f"comment-content-post failed request_id={request_id}", file=sys.stderr, flush=True)
+        traceback.print_exc()
+        return 500, {"error": "comment-content generation failed", "request_id": request_id}
+
+
+def apply_growth_resurface_http(body: dict[str, Any]) -> dict[str, Any]:
+    kwargs = {}
+    kwargs.update(http_optional_json_bool(body, "publish_generated_media"))
+    kwargs.update(http_optional_json_bool(body, "promo_master_enabled"))
+    return build_resurfacing_post(
+        str(body.get("abbr") or ""),
+        str(body.get("chapter") or ""),
+        str(body.get("reason") or "back_catalog"),
+        **kwargs,
+    )
+
+
 def chapter_body_for_marketing(*args, **kwargs):
     return promo_copy.chapter_body_for_marketing(*args, **kwargs)
 def repair_text_encoding(*args, **kwargs):
@@ -14772,6 +15655,7 @@ def archive_generated_promo_image(source: Path, abbr: str = "", title: str = "",
         target = story_dir / f"{'-'.join(part for part in stem_parts if part)}-{counter}{source.suffix.lower()}"
         counter += 1
     shutil.copy2(source, target)
+    _identity_copy_reuse_sidecars(source, target)  # AIVSB_DURABLE_PROVENANCE_REMEDIATION_20261004 (flag ON only)
     state = mark_image_used(target)
     save_promo_rotation_state(state)
     return str(target)
@@ -15798,8 +16682,26 @@ def tiktok_chapter_teaser_overlays(
     return overlays[:4]
 
 
+def live_image_pack_track(style: str) -> str:
+    """Normalize a live image caller style.
+
+    Photographic aliases become photorealistic and are never coerced onto
+    main-posts or cinematic-promo. Legacy realistic-posts stays the cinematic
+    pack track when it is a known LoRA track.
+    """
+    from tools.image_pipeline_v2_profiles import public_style_pack_track
+
+    return public_style_pack_track(style, LORA_STYLE_TRACKS)
+
+
+@_identity_context_from_args(abbr="abbr", novel="novel")
 def prepare_tiktok_outro_image(folder: Path, abbr: str, novel: str, chapter: str | int, style: str = "main-posts") -> str:
-    pack_track = style if style in LORA_STYLE_TRACKS else "main-posts"
+    from tools.image_pipeline_v2_profiles import PHOTOREALISTIC_PROFILE
+
+    # Photographic aliases normalize to photorealistic. The V2 seam selects
+    # RealVisXL and fail-closes. A miss must not fall through to local SD,
+    # cloud, stock, or cinematic-promo.
+    pack_track = live_image_pack_track(style)
     target = folder / "novel-promo-card.png"
     # Only reuse a banked daily promo if its recorded track matches this pack's
     # track. Otherwise the outro card can mix a realistic/main promo into a
@@ -15809,7 +16711,10 @@ def prepare_tiktok_outro_image(folder: Path, abbr: str, novel: str, chapter: str
     if source and source.exists():
         sidecar = source.with_name(f"{source.name}.track")
         source_track = sidecar.read_text(encoding="utf-8").strip() if sidecar.exists() else ""
-        if source_track == pack_track:
+        if source_track == pack_track and _identity_fallback_allowed(
+            source, asset_class="DAILY_PROMO_IMAGE", fallback_source="tiktok_outro_daily_promo",
+            path_id="FALLBACK:prepare_tiktok_outro_image:daily_promo_reuse", tiktok_reuse=True,
+        ):
             shutil.copy2(source, target)
             target.with_name(f"{target.name}.track").write_text(pack_track, encoding="utf-8")
             return str(target)
@@ -15819,13 +16724,35 @@ def prepare_tiktok_outro_image(folder: Path, abbr: str, novel: str, chapter: str
     )
     # Keep the outro on the same single pack track as the rest of the video (E).
     prompt = enhance_local_sd_prompt(prompt, orientation="vertical", lora_track=pack_track)
-    create_prompt_fallback_image(prompt, target, 4, abbr, allow_banked=False, fresh=True)
+    # Enabled Main Posts / Realistic use the live V2 seam. Comic and disabled
+    # profiles return None and keep the existing fallback. An enabled V2 miss
+    # raises and must not be swallowed into local SD / cloud / stock.
+    v2_source = generate_promo_image_v2(
+        pack_track,
+        prompt,
+        target,
+        abbr=abbr,
+        index=4,
+        novel=novel,
+        chapter=chapter,
+        scene_text=None,
+    )
+    if not v2_source:
+        if pack_track == PHOTOREALISTIC_PROFILE:
+            raise V2ImageGenerationError(
+                "photorealistic profile is unavailable/unqualified: "
+                "photorealistic request returned no V2 image. Refusing generation. "
+                "Will not fall through to cinematic-promo, realistic-posts, main-posts, "
+                "local SD, cloud, or stock."
+            )
+        create_prompt_fallback_image(prompt, target, 4, abbr, allow_banked=False, fresh=True)
     target.with_name(f"{target.name}.track").write_text(pack_track, encoding="utf-8")
     return str(target)
 
 
 def make_tiktok_pack(*args, **kwargs):
     return promo_builder.make_tiktok_pack(*args, **kwargs)
+@_identity_context_from_args(abbr="abbr")
 def generate_tiktok_images(
     abbr: str,
     chapter: str,
@@ -15836,16 +16763,28 @@ def generate_tiktok_images(
     style: str = "main-posts",
 ) -> dict[str, Any]:
     # Single-style lock (Workstream E): every frame in a Shorts/Reels/TikTok pack must use
-    # ONE LoRA track end-to-end. Default main-posts; caller may pass realistic-posts/comic-style.
-    pack_track = style if style in LORA_STYLE_TRACKS else "main-posts"
+    # ONE track end-to-end. Photographic aliases normalize to photorealistic
+    # (RealVisXL, LoRA count 0) and must not reuse another profile's pack.
+    from tools.image_pipeline_v2_profiles import PHOTOREALISTIC_PROFILE
+
+    pack_track = live_image_pack_track(style)
     TIKTOK_ASSET_DIR.mkdir(parents=True, exist_ok=True)
     novel = NOVEL_NAMES.get(abbr, abbr)
-    existing_pack = [] if force_new_images else chapter_image_pack(abbr, chapter, f"{novel} Chapter {chapter}")
+    existing_pack = []
+    if not force_new_images and pack_track != PHOTOREALISTIC_PROFILE:
+        existing_pack = chapter_image_pack(abbr, chapter, f"{novel} Chapter {chapter}")
+    if len(existing_pack) >= 3 and not all(
+        _identity_fallback_allowed(p, asset_class="CHAPTER_PACK_IMAGE", fallback_source="tiktok_chapter_image_pack",
+                                   path_id="FALLBACK:generate_tiktok_images:chapter_image_pack", tiktok_reuse=True)
+        for p in existing_pack[:3]
+    ):
+        existing_pack = []
     if len(existing_pack) >= 3:
         copied: list[str] = []
         for index, source in enumerate(existing_pack[:3], start=1):
             target = TIKTOK_ASSET_DIR / f"{abbr}_{chapter}_{index}.png"
             shutil.copy2(source, target)
+            _identity_copy_reuse_sidecars(source, target)  # AIVSB_DURABLE_PROVENANCE_REMEDIATION_20261004
             copied.append(str(target))
         return {
             "created": copied,
@@ -15858,41 +16797,65 @@ def generate_tiktok_images(
         }
     prompt_base = visual_prompt.strip() or f"{novel} chapter {chapter}, cinematic web novel promo art"
     scene_prompts: list[str] = []
+    raw_scene_moments: list[str] = []
     if chapter_text.strip():
-        scene_prompts = short_chapter_visual_moments(
+        # R3 Phase 5/6: natural moments are SCENE_BEARING — govern generation prompts via the
+        # scene-authority seam, but keep the original moment text as V2 scene_text / structured
+        # source context (never infer authority from stale prompt prose alone).
+        moments = short_chapter_visual_moments(
             abbr,
             chapter,
             novel,
             chapter_text=chapter_text,
             fallback_text=visual_prompt or prompt_base,
         )
-        if len(scene_prompts) < 3:
-            phrases = fallback_phrases(chapter_text, abbr)
-            scene_prompts = make_chapter_image_prompts(chapter_title or f"Chapter {chapter}", chapter_text, phrases, novel)[:3]
+        phrases = list(moments[:3]) if len(moments) >= 3 else fallback_phrases(chapter_text, abbr)
+        raw_scene_moments = list(phrases[:3])
+        scene_prompts = _r3_govern_scene_prompts(
+            entry="generate_tiktok_images", novel=novel,
+            title=chapter_title or f"Chapter {chapter}", chapter_text=chapter_text,
+            phrases=phrases, existing_prompts=moments,
+        )
     elif str(chapter).isdigit():
         try:
             chapter_data = docs_chapter_text(abbr, int(chapter))
             chapter_title = str(chapter_data.get("title") or f"Chapter {chapter}")
             chapter_text = str(chapter_data.get("text") or chapter_data.get("raw_text") or "")
-            scene_prompts = short_chapter_visual_moments(
+            moments = short_chapter_visual_moments(
                 abbr,
                 chapter,
                 novel,
                 chapter_text=chapter_text,
                 fallback_text=visual_prompt or prompt_base,
             )
-            if len(scene_prompts) < 3:
-                phrases = fallback_phrases(chapter_text, abbr)
-                scene_prompts = make_chapter_image_prompts(chapter_title, chapter_text, phrases, novel)[:3]
+            phrases = list(moments[:3]) if len(moments) >= 3 else fallback_phrases(chapter_text, abbr)
+            raw_scene_moments = list(phrases[:3])
+            scene_prompts = _r3_govern_scene_prompts(
+                entry="generate_tiktok_images", novel=novel,
+                title=chapter_title, chapter_text=chapter_text,
+                phrases=phrases, existing_prompts=moments,
+            )
         except Exception:
             scene_prompts = []
+            raw_scene_moments = []
     created: list[str] = []
     image_sources: list[str] = []
     image_prompts: list[str] = []
     used_image_hashes: set[str] = set()
+    _tt_store = None  # AIVSB_DURABLE_PROVENANCE_REMEDIATION_20261004 (flag ON only)
+    _tt_run = ""
+    if _identity_flag_on():
+        try:
+            from tools import aivsb_prompt_provenance as _tt_prov
+            _tt_store = _tt_prov.ProvenanceStore(source="WRITER")
+            _tt_run = _aivsb_prov_run_id("tiktok")
+        except Exception as _prov_exc:  # noqa: BLE001
+            print(f"[aivsb-provenance] tiktok provenance unavailable ({_prov_exc})")
+            _tt_store = None
     for index in range(1, 4):
         target = TIKTOK_ASSET_DIR / f"{abbr}_{chapter}_{index}.png"
         scene_prompt = scene_prompts[index - 1] if index <= len(scene_prompts) else prompt_base
+        raw_moment = raw_scene_moments[index - 1] if index <= len(raw_scene_moments) else scene_prompt
         prompt = (
             f"Vertical TikTok promo image {index} for {novel} chapter {chapter}. "
             f"{scene_prompt}. Cinematic, dramatic, readable composition, no text, 9:16 poster art."
@@ -15900,46 +16863,99 @@ def generate_tiktok_images(
         # Bake the single pack_track into the prompt so generation stays on-style (E).
         prompt = enhance_local_sd_prompt(prompt, orientation="vertical", lora_track=pack_track)
         image_prompts.append(prompt)
-        image_source = "openai"
-        try:
-            create_openai_image(prompt, target)
-            if image_file_fingerprint(target) in used_image_hashes:
-                image_source = create_unique_prompt_fallback_image(
-                    prompt,
-                    target,
-                    index,
-                    abbr,
-                    used_hashes=used_image_hashes,
-                    allow_banked=not force_new_images,
-                    fresh=True,
-                )
-            else:
-                used_image_hashes.add(image_file_fingerprint(target))
-                state = mark_image_used(target)
-                save_promo_rotation_state(state)
-        except Exception:
+        _tt_derived = None
+        if _tt_store is not None:
             try:
-                image_source = create_unique_prompt_fallback_image(
-                    prompt,
-                    target,
-                    index,
-                    abbr,
-                    used_hashes=used_image_hashes,
-                    allow_banked=not force_new_images,
-                    fresh=force_new_images,
-                )
-            except Exception:
-                source = None if force_new_images else choose_rotating_daily_promo_image(abbr)
-                if not source:
-                    raise
-                shutil.copy2(source, target)
-                image_source = f"rotating:{source}"
-                fingerprint = image_file_fingerprint(target)
-                if fingerprint in used_image_hashes:
-                    raise RuntimeError("Fallback daily promo image matched an earlier generated image.")
+                _tt_known = (_tt_prov.detect_aivsb_format(scene_prompt)[0] == "NO_MATCH"
+                             and not (visual_prompt.strip() and visual_prompt.strip() in scene_prompt))
+                _ps, _pr = _aivsb_prov_store_for_prompts(
+                    [scene_prompt], assets=[target.name], source_text=f"{chapter_title} {chapter_text}", novel=abbr or novel,
+                    origin="app.generate_tiktok_images:scene_prompt", run_id=_tt_run, known_non_aivsb=_tt_known)
+                if _pr and _pr[0] is not None:
+                    _tt_derived = _tt_prov.derive_record(_pr[0], prompt, transform="tiktok_promo_wrap+enhance_local_sd_prompt",
+                                                         source_asset_id=target.name, origin="app.generate_tiktok_images",
+                                                         source_run_id=_tt_run)
+                    _tt_prov.register_record(_tt_derived)
+                    _tt_store.add(_pr[0])
+                    _tt_store.add(_tt_derived, asset=target.name)
+            except Exception as _prov_exc:  # noqa: BLE001 - absence of provenance -> review downstream
+                print(f"[aivsb-provenance] tiktok provenance failed for {target.name} ({_prov_exc})")
+                _tt_derived = None
+        # Enabled Main Posts / Realistic: live V2 seam. scene_text is the
+        # per-frame scene this caller already built (scene_prompt). Comic /
+        # disabled return None and keep the OpenAI / fallback / stock path.
+        # An enabled V2 miss raises here, outside the legacy swallow below.
+        v2_source = generate_promo_image_v2(
+            pack_track,
+            prompt,
+            target,
+            abbr=abbr,
+            index=index,
+            novel=novel,
+            chapter=chapter,
+            scene_text=raw_moment,
+        )
+        if pack_track == PHOTOREALISTIC_PROFILE and not v2_source:
+            raise V2ImageGenerationError(
+                "photorealistic profile is unavailable/unqualified: "
+                "photorealistic request returned no V2 image. Refusing generation. "
+                "Will not fall through to cinematic-promo, realistic-posts, main-posts, "
+                "local SD, cloud, or stock."
+            )
+        if v2_source:
+            image_source = v2_source
+            fingerprint = image_file_fingerprint(target)
+            if fingerprint:
                 used_image_hashes.add(fingerprint)
-                state = mark_image_used(target)
-                save_promo_rotation_state(state)
+            state = mark_image_used(target)
+            save_promo_rotation_state(state)
+        else:
+            image_source = "openai"
+            try:
+                create_openai_image(prompt, target)
+                if image_file_fingerprint(target) in used_image_hashes:
+                    image_source = create_unique_prompt_fallback_image(
+                        prompt,
+                        target,
+                        index,
+                        abbr,
+                        used_hashes=used_image_hashes,
+                        allow_banked=not force_new_images,
+                        fresh=True,
+                    )
+                else:
+                    used_image_hashes.add(image_file_fingerprint(target))
+                    state = mark_image_used(target)
+                    save_promo_rotation_state(state)
+            except Exception:
+                try:
+                    image_source = create_unique_prompt_fallback_image(
+                        prompt,
+                        target,
+                        index,
+                        abbr,
+                        used_hashes=used_image_hashes,
+                        allow_banked=not force_new_images,
+                        fresh=force_new_images,
+                    )
+                except Exception:
+                    source = None if force_new_images else choose_rotating_daily_promo_image(abbr)
+                    if not source:
+                        raise
+                    _identity_enforce_fallback(source, asset_class="DAILY_PROMO_IMAGE",
+                                               fallback_source="tiktok_rotating_daily_promo",
+                                               path_id="FALLBACK:generate_tiktok_images:rotating_daily_promo",
+                                               prompt=prompt)
+                    shutil.copy2(source, target)
+                    image_source = f"rotating:{source}"
+                    fingerprint = image_file_fingerprint(target)
+                    if fingerprint in used_image_hashes:
+                        raise RuntimeError("Fallback daily promo image matched an earlier generated image.")
+                    used_image_hashes.add(fingerprint)
+                    state = mark_image_used(target)
+                    save_promo_rotation_state(state)
+        if _tt_derived is not None:
+            _aivsb_prov_bind_images([target], [_tt_derived])
         created.append(str(target))
         image_sources.append(image_source)
         archive_generated_promo_image(target, abbr, f"{novel} Chapter {chapter}", f"tiktok-{index}")
@@ -15949,7 +16965,7 @@ def generate_tiktok_images(
             target.with_name(f"{target.name}.track").write_text(pack_track, encoding="utf-8")
         except Exception:
             pass
-    return {
+    _tt_result = {
         "created": created,
         "abbr": abbr,
         "chapter": chapter,
@@ -15957,6 +16973,9 @@ def generate_tiktok_images(
         "image_sources": image_sources,
         "image_prompts": image_prompts,
     }
+    if _tt_store is not None:  # flag ON only
+        _tt_result["aivsb_prompt_provenance"] = _tt_store.to_block()
+    return _tt_result
 
 
 def make_or_generate_tiktok_pack(
@@ -16039,6 +17058,20 @@ def make_or_generate_tiktok_pack(
         result["image_sources"] = generation.get("image_sources", [])
         result["image_prompts"] = generation.get("image_prompts", [])
         metadata_path = Path(str(result.get("folder") or "")) / "metadata.json"
+        if _identity_flag_on() and isinstance(generation.get("aivsb_prompt_provenance"), dict):
+            # AIVSB_DURABLE_PROVENANCE_REMEDIATION_20261004: persisted prompts carry their provenance.
+            result["aivsb_prompt_provenance"] = generation["aivsb_prompt_provenance"]
+            try:
+                from tools import aivsb_prompt_provenance as _prov
+                if metadata_path.parent.exists():
+                    _pk_prev = _prov.load_folder_store(metadata_path.parent)  # earlier records are never dropped
+                    _pk_prev.by_asset = {}
+                    _pk_store = _prov.merge_stores(_pk_prev, _prov.store_from_block(result["aivsb_prompt_provenance"], source="WRITER"),
+                                                   source="WRITER")
+                    result["aivsb_prompt_provenance"] = _pk_store.to_block()
+                    _prov.write_folder_sidecar(metadata_path.parent, _pk_store)
+            except Exception as _prov_exc:  # noqa: BLE001
+                print(f"[aivsb-provenance] pack sidecar write failed ({_prov_exc})")
         if metadata_path.parent.exists():
             metadata_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     return result
@@ -17175,8 +18208,11 @@ def make_random_deep_tiktok_pack(force_new_images: bool = True, style: str = "ma
         raise
 
 
+@_identity_context_from_args(abbr="abbr")
 def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True, style: str = "main-posts") -> dict[str, Any]:
-    pack_track = style if style in LORA_STYLE_TRACKS else "main-posts"
+    from tools.image_pipeline_v2_profiles import PHOTOREALISTIC_PROFILE
+
+    pack_track = live_image_pack_track(style)
     abbr = story_key(abbr)
     chapter = str(chapter or "").strip()
     if not abbr or not chapter:
@@ -17187,6 +18223,23 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
     if not chapter_text.strip():
         raise RuntimeError("The selected GitHub chapter is empty.")
     novel = NOVEL_NAMES.get(abbr, abbr)
+    if pack_track == PHOTOREALISTIC_PROFILE:
+        # Photographic alias: select RealVisXL, then refuse. Do not render
+        # OpenAI / cinematic / stock frames under this request.
+        generate_promo_image_v2(
+            pack_track,
+            f"photorealistic chapter still for {novel} chapter {chapter}",
+            Path("photorealistic-live-refused.png"),
+            abbr=abbr,
+            novel=novel,
+            chapter=chapter,
+            scene_text=chapter_text[:800] if chapter_text else None,
+        )
+        raise V2ImageGenerationError(
+            "photorealistic profile selected RealVisXL_V5.0_fp16; "
+            "deep TikTok scene generation will not fall through to OpenAI, "
+            "cinematic-promo, realistic-posts, main-posts, local SD, cloud, or stock."
+        )
     # Optional Hermes agent copy for the deep pack (caption/title). Default OFF.
     # Flip ENABLE_AGENT_POSTS=1. Any failure returns None -> the template caption
     # below is used unchanged (fail-soft). Resolved via the short-TTL per-chapter
@@ -17211,10 +18264,19 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
     folder = TIKTOK_OUTPUT_DIR / f"{abbr.lower()}-{slugify(chapter)}-deep"
     existing = reusable_pack_result(folder, expected_hash=source_hash, required_files=["caption.txt", "video-overlays.txt"])
     video = folder / "tiktok-video.mp4"
-    if not force_new_images and existing and video.exists() and 60 <= media_duration_seconds(video) <= 75:
+    if (not force_new_images and existing and video.exists() and 60 <= media_duration_seconds(video) <= 75
+            and _identity_pack_reuse_allowed(existing, folder, "deep_tiktok_reusable_pack",
+                                             "FALLBACK:make_deep_tiktok_pack:reusable_pack_result", tiktok_reuse=True)):
         return existing
     reset_generated_folder(folder)
     moments = deep_tiktok_chapter_moments(chapter_text, abbr, 8)
+    # R3 Phase 5/6: govern first 3 moments via scene authority; remaining keep moment text but
+    # inherit NORMALIZED_NOVEL_ID / LOCATION authority from the governed package when available.
+    _deep_gov = _r3_govern_scene_prompts(
+        entry="make_deep_tiktok_pack", novel=novel, title=title, chapter_text=chapter_text,
+        phrases=list(moments[:3]), existing_prompts=list(moments[:3]),
+    )
+    moments = list(_deep_gov) + list(moments[3:])
     keywords = ", ".join(chapter_keywords(title, chapter_text, 10))
     images: list[str] = []
     sources: list[str] = []
@@ -17347,6 +18409,7 @@ def make_deep_tiktok_pack(abbr: str, chapter: str, force_new_images: bool = True
     return auto_publish_generated_media(folder, payload)
 
 
+@_identity_context_from_args(abbr="abbr")
 def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: bool = True, style: str = "main-posts") -> dict[str, Any]:
     """Novel-only 60-75s TikTok builder (2026-07-20 redesign).
 
@@ -17357,7 +18420,9 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
     off/unavailable so the build never breaks. Rotation of prompt_index makes
     every run highlight a different theme and produce different files.
     """
-    pack_track = style if style in LORA_STYLE_TRACKS else "main-posts"
+    from tools.image_pipeline_v2_profiles import PHOTOREALISTIC_PROFILE
+
+    pack_track = live_image_pack_track(style)
     abbr = story_key(abbr)
     prompts = DEEP_TIKTOK_NOVEL_PROMPTS.get(abbr, [])
     if not prompts:
@@ -17365,6 +18430,22 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
     prompt_index = int(prompt_index) % len(prompts)
     prompt = prompts[prompt_index]
     novel = NOVEL_NAMES.get(abbr, abbr)
+    if pack_track == PHOTOREALISTIC_PROFILE:
+        # Photographic alias must not generate azink_real local-SD scenes.
+        generate_promo_image_v2(
+            pack_track,
+            f"photorealistic novel highlight for {novel}",
+            Path("photorealistic-live-refused.png"),
+            abbr=abbr,
+            novel=novel,
+            chapter=None,
+            scene_text=prompt,
+        )
+        raise V2ImageGenerationError(
+            "photorealistic profile selected RealVisXL_V5.0_fp16; "
+            "novel-highlight scene generation will not fall through to azink_real, "
+            "cinematic-promo, realistic-posts, main-posts, local SD, cloud, or stock."
+        )
     run_id = time.strftime("%Y%m%d-%H%M%S")
     folder = TIKTOK_OUTPUT_DIR / f"{abbr.lower()}-nh{prompt_index}-{run_id}-deep"
     reset_generated_folder(folder)
@@ -17379,12 +18460,19 @@ def make_deep_tiktok_novel_pack(abbr: str, prompt_index: int, force_new_images: 
     image_prompts: list[str] = []
     used_hashes: set[str] = set()
     scene_count = 8
+    # R3 Phase 5/6: novel highlight is SCENE_BEARING — attach scene authority from theme prompt
+    _nh_gov = _r3_govern_scene_prompts(
+        entry="make_deep_tiktok_novel_pack", novel=novel, title=novel,
+        chapter_text=str(prompt), phrases=[str(prompt), str(prompt), str(prompt)],
+        existing_prompts=[str(prompt)] * 3,
+    )
     for index in range(1, scene_count + 1):
         target = folder / f"deep-scene-{index}.png"
         sub = sub_themes[(index - 1) % len(sub_themes)]
+        _gov_bit = _nh_gov[(index - 1) % 3] if _nh_gov else prompt
         base_prompt = (
             f"Realistic cinematic fantasy promotional image for the web novel {novel}. "
-            f"Theme: {prompt}. Scene focus: {sub}. "
+            f"Theme: {prompt}. Scene focus: {sub}. Scene authority: {_gov_bit}. "
             f"Detailed setting, dramatic readable composition, strong lighting, photorealistic, "
             f"no text, no typography, no logo."
         )
@@ -18211,7 +19299,8 @@ def attach_post_audio(payload: dict[str, Any], abbr: str, text: str, folder: "Pa
         return pa.attach_audio_status(payload, {**status, "error": str(exc)})
 
 
-def make_weekend_social_post(abbr: str, day: str) -> dict[str, Any]:
+@_identity_context_from_args(abbr="abbr")
+def make_weekend_social_post(abbr: str, day: str, style: str | None = None, promo_master_enabled: bool = False, publish_generated_media: bool = True) -> dict[str, Any]:
     day = day if day in {"Saturday", "Sunday"} else "Saturday"
     matches = [
         item
@@ -18223,34 +19312,82 @@ def make_weekend_social_post(abbr: str, day: str) -> dict[str, Any]:
     item = matches[0]
     folder = SOCIAL_OUTPUT_DIR / f"weekend-{abbr.lower()}-{day.lower()}"
     reset_generated_folder(folder)
-    # Weekend posts use the realistic diffusers workflow (azink_real track) by default,
-    # matching vertical social orientation. Fail-soft: any generation failure falls back
-    # to the stock promo image so the weekend build never breaks.
+    # Weekend posts use the existing visual-track selector, then the live V2
+    # seam when that track is an enabled Main Posts / Realistic profile.
+    # This caller has novel (NOVEL_NAMES) but no chapter or scene_text.
+    # Enabled V2 failure is fail-closed and must not be hidden by stock.
+    # Comic / disabled / non-V2 still use local SD, then stock.
     _stock_source = Path(item["path"])
     image_source = _stock_source
     image_target = folder / _stock_source.name
-    try:
-        _gen_target = folder / f"{abbr}_{day}.png"
-        _real_prompt = (
-            f"realistic fantasy promotional image for the web novel {NOVEL_NAMES.get(abbr, abbr)}, "
-            f"weekend reading theme, cinematic realism, dramatic character moment"
+    _gen_target = folder / f"{abbr}_{day}.png"
+    _novel = NOVEL_NAMES.get(abbr, abbr)
+    _real_prompt = (
+        f"realistic fantasy promotional image for the web novel {_novel}, "
+        f"weekend reading theme, cinematic realism, dramatic character moment"
+    )
+    # Default weekend prompt is cinematic realism and stays on the cinematic
+    # route (azink_real). An explicit photographic style alias is the only
+    # way this caller selects RealVisXL. Never retarget the default prompt.
+    from tools.image_pipeline_v2_profiles import PHOTOREALISTIC_PROFILE, is_explicit_photorealistic_style
+
+    if style and is_explicit_photorealistic_style(style):
+        _track = PHOTOREALISTIC_PROFILE
+    else:
+        _track = lora_track_for_prompt(_real_prompt)
+        if is_explicit_photorealistic_style(_track):
+            _track = PHOTOREALISTIC_PROFILE
+    _pm_out: dict = {}
+    v2_source = generate_promo_image_v2(
+        _track,
+        _real_prompt,
+        _gen_target,
+        abbr=abbr,
+        index=0,
+        novel=_novel,
+        chapter=None,
+        scene_text=None,
+        promo_master_enabled=promo_master_enabled,
+        promo_master_out=_pm_out,
+    )
+    if v2_source:
+        from tools.promo_master_production import posting_image_from_promo_master_out
+        _posting = posting_image_from_promo_master_out(
+            promo_master_enabled=promo_master_enabled,
+            promo_master_out=_pm_out,
+            base_path=_gen_target,
         )
-        create_local_stable_diffusion_image(
-            _real_prompt,
-            _gen_target,
-            orientation="vertical",
-            seed=0,
+        image_source = _posting
+        image_target = _posting
+    elif _track == "photorealistic":
+        raise V2ImageGenerationError(
+            "photorealistic profile is unavailable/unqualified: "
+            "weekend photographic request returned no V2 image. Refusing generation. "
+            "Will not fall through to cinematic-promo, realistic-posts, main-posts, "
+            "local SD, cloud, or stock."
         )
-        if _gen_target.exists():
-            image_source = _gen_target
-            image_target = _gen_target
-    except Exception as _img_exc:
-        print(f"[weekend] realistic image gen failed for {abbr} {day}, using stock: {_img_exc}", file=sys.stderr)
+    else:
+        try:
+            create_local_stable_diffusion_image(
+                _real_prompt,
+                _gen_target,
+                orientation="vertical",
+                seed=0,
+            )
+            if _gen_target.exists():
+                image_source = _gen_target
+                image_target = _gen_target
+        except Exception as _img_exc:
+            print(f"[weekend] realistic image gen failed for {abbr} {day}, using stock: {_img_exc}", file=sys.stderr)
     # Only copy when falling back to the stock image. When generation succeeded,
     # image_source == image_target == _gen_target (the file the generator subprocess
     # just wrote); copying it onto itself on Windows raises WinError 32 because the
     # subprocess may still hold the file handle. So skip the copy in that case.
     if image_target != image_source:
+        # Reused daily-promo pixels in a governed slot are production output (flag OFF: no-op).
+        _identity_enforce_fallback(image_source, asset_class="DAILY_PROMO_IMAGE",
+                                   fallback_source="weekend_daily_promo",
+                                   path_id="FALLBACK:make_weekend_social_post:daily_promo", prompt=_real_prompt)
         shutil.copy2(image_source, image_target)
     copy = weekend_social_copy(abbr, day)
     # Optional Hermes agent post copy (dynamic, research-aware). Default OFF.
@@ -18316,6 +19453,8 @@ def make_weekend_social_post(abbr: str, day: str) -> dict[str, Any]:
     (folder / "facebook.txt").write_text(copy["facebook"].strip() + "\n", encoding="utf-8")
     (folder / "alt-text.txt").write_text(copy["alt_text"].strip() + "\n", encoding="utf-8")
     (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    if not publish_generated_media:
+        return payload
     return auto_publish_generated_media(folder, payload)
 
 
@@ -20564,6 +21703,7 @@ def parse_story_hook_output(raw_text: str, fallback: dict[str, Any]) -> dict[str
     }
 
 
+@_identity_context_from_args(abbr="abbr")
 def build_story_hook_video_files(title: str, story_text: str, abbr: str = "", angle: str = "", metadata_extra: dict[str, Any] | None = None) -> dict[str, Any]:
     abbr = story_key(abbr)
     if not story_text.strip():
@@ -20903,6 +22043,7 @@ def import_manual_written_chapter(
     raw_text: str,
     *,
     build_promo: bool = False,
+    schedule: bool = True,
 ) -> dict[str, Any]:
     abbr = story_key(abbr)
     if not abbr:
@@ -20910,6 +22051,25 @@ def import_manual_written_chapter(
     chapter_int = int(chapter_number or 0)
     if chapter_int <= 0:
         raise RuntimeError("Choose a valid chapter number.")
+    existing_numbers: list[int] = []
+    try:
+        index = docs_chapter_index(abbr)
+        for chapter in index.get("chapters", []) or []:
+            raw_number = str(chapter.get("number") or "")
+            if raw_number.isdigit():
+                existing_numbers.append(int(raw_number))
+    except Exception:
+        existing_numbers = []
+    from chapter_publish_workflow import chapter_number_already_exists
+    if chapter_number_already_exists(existing_numbers, chapter_int):
+        return {
+            "ok": False,
+            "duplicate": True,
+            "abbr": abbr,
+            "chapter": chapter_int,
+            "error": f"Chapter {chapter_int} already exists for {abbr}.",
+            "workflowStatus": "BLOCKED_DUPLICATE",
+        }
     title, chapter_text = parse_manual_chapter_output(raw_text, chapter_title or f"Chapter {chapter_int}")
     novel_name = NOVEL_NAMES.get(abbr, abbr)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -20978,6 +22138,10 @@ def import_manual_written_chapter(
     )
     record_chapter_tool_progress("write", abbr, chapter_int)
     data["next_chapter_context"] = {"createdChapter": chapter_int, "nextChapter": chapter_int + 1}
+    if schedule:
+        dates = chapter_release_dates(abbr, chapter_int)
+        data["releaseDates"] = dates
+        data["queueAssignment"] = append_chapter_release_assignment(abbr, chapter_int, title, dates)
     return data
 
 
@@ -20989,19 +22153,299 @@ def create_next_chapter_from_github(
     build_promo: bool = True,
 ) -> dict[str, Any]:
     result = manual_next_chapter_prompt(abbr, outline, continuity_notes, target_words)
+    plan = daily_chapter_workflow(abbr, dry_run=True)
     return {
         **result,
         "manual_required": True,
         "api_generation_disabled": True,
         "build_promo_after_import": bool(build_promo),
+        "chapter_publish_plan": plan,
+        "preview": plan.get("preview", ""),
         "next_chapter_context": {
             "latestChapter": result.get("latest_chapter"),
             "createdChapter": "",
             "targetChapter": result.get("chapter_number"),
             "nextChapter": result.get("chapter_number"),
             "recentChapters": result.get("recentChapters", []),
+            "previousChapterLoaded": plan.get("previousChapterLoaded"),
+            "previousChapterSource": plan.get("PREVIOUS_CHAPTER_SOURCE"),
         },
     }
+
+
+def append_chapter_release_assignment(abbr: str, chapter: int, title: str, dates: dict[str, Any]) -> dict[str, Any]:
+    abbr = story_key(abbr)
+    chapter_number = int(chapter)
+    queue = load_chapter_release_queue()
+    assignments = [item for item in queue.get("assignments", []) if isinstance(item, dict)]
+    existing = release_planner.existing_assignment_for_chapter(assignments, abbr, chapter_number)
+    if existing:
+        return existing
+    assignment = {
+        "key": f"{abbr}-{chapter_number}",
+        "abbr": abbr,
+        "novel": NOVEL_NAMES.get(abbr, abbr),
+        "chapter": chapter_number,
+        "title": title or f"Chapter {chapter_number}",
+        "innerDiscipleDate": str(dates.get("innerDiscipleDate") or ""),
+        "pathInitiateDate": str(dates.get("pathInitiateDate") or ""),
+        "royalRoadDate": str(dates.get("royalRoadDate") or ""),
+        "createdAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    assignments.append(assignment)
+    queue["assignments"] = assignments
+    save_chapter_release_queue(queue)
+    remember_release_dates(abbr, chapter_number, {
+        "innerDiscipleDate": assignment["innerDiscipleDate"],
+        "pathInitiateDate": assignment["pathInitiateDate"],
+        "royalRoadDate": assignment["royalRoadDate"],
+    }, "chapter-publish-workflow")
+    return assignment
+
+
+def daily_chapter_workflow(
+    abbr: str,
+    dry_run: bool = True,
+    chapter_text: str = "",
+    chapter_number: int | None = None,
+    live_patreon: bool = False,
+    live_royal_road: bool = False,
+) -> dict[str, Any]:
+    """Production chapter write+schedule+publish entry used by daily automation and API."""
+    from chapter_publish_workflow import (
+        PublishAdapters,
+        build_chapter_generation_prompt,
+        build_continue_draft_prompt,
+        live_patreon_allowed,
+        live_royal_road_allowed,
+        load_workflow_record,
+        next_missing_patreon_chapter,
+        run_chapter_workflow,
+        upload_confirmed,
+    )
+    from chapter_workflow_integration import _hermes_chat
+    abbr = story_key(abbr)
+    if not abbr:
+        raise RuntimeError("Choose a known novel.")
+    env = {k: v for k, v in os.environ.items()}
+    env["CHAPTER_LIVE_PATREON"] = "1" if live_patreon else "0"
+    env["CHAPTER_LIVE_ROYAL_ROAD"] = "1" if live_royal_road else "0"
+    queue = load_chapter_release_queue()
+    assignments = [
+        item for item in queue.get("assignments", [])
+        if isinstance(item, dict) and story_key(str(item.get("abbr") or "")) == abbr
+    ]
+    last_inner = None
+    last_ch = -1
+    inners = []
+    for item in assignments:
+        inner = release_planner.parse_date(item.get("innerDiscipleDate"))
+        ch = int(item.get("chapter") or 0)
+        if inner:
+            inners.append(inner)
+        if inner and ch >= last_ch:
+            last_ch = ch
+            last_inner = inner
+    existing_numbers = []
+    try:
+        index = docs_chapter_index(abbr)
+        for chapter in index.get("chapters", []) or []:
+            raw = str(chapter.get("number") or "")
+            if raw.isdigit():
+                existing_numbers.append(int(raw))
+    except Exception:
+        existing_numbers = []
+    if chapter_number:
+        latest = int(chapter_number) - 1
+    else:
+        latest = latest_docs_chapter_number(abbr)
+        if live_patreon:
+            complete_chapters: list[int] = []
+            for number in existing_numbers:
+                rec = load_workflow_record(ROOT / "chapter-workflow-state" / f"{abbr}-{number}.json")
+                ledger = chapter_ledger_entry(abbr, number)
+                if (
+                    upload_confirmed(rec, "innerDiscipleUploaded", "innerDisciplePostId")
+                    and upload_confirmed(rec, "pathInitiateUploaded", "pathInitiatePostId")
+                ) or (
+                    bool(ledger.get("patreonInnerDisciplePosted"))
+                    and bool(ledger.get("patreonPathInitiatePosted"))
+                ):
+                    complete_chapters.append(int(number))
+            missing = next_missing_patreon_chapter(existing_numbers, complete_chapters)
+            if missing is not None:
+                latest = int(missing) - 1
+    next_number = latest + 1
+    record_path = ROOT / "chapter-workflow-state" / f"{abbr}-{next_number}.json"
+    novel_name = NOVEL_NAMES.get(abbr, abbr)
+    try:
+        continuity = continuity_text_from_context(next_chapter_context(abbr))
+    except Exception:
+        continuity = ""
+
+    def load_previous(novel: str, number: int):
+        data = docs_chapter_text(novel, number)
+        text = str(data.get("text") or data.get("raw_text") or "")
+        if not text.strip():
+            return None
+        return {"text": text, "source": "github-docs"}
+
+    def generate(novel: str, chapter_number: int, previous_text: str):
+        prompt = build_chapter_generation_prompt(
+            novel=novel,
+            novel_name=novel_name,
+            chapter_number=chapter_number,
+            previous_number=latest,
+            previous_text=previous_text,
+            continuity=continuity,
+        )
+        text = _hermes_chat(
+            prompt,
+            skills=None,
+            max_turns=2,
+            timeout=600,
+        )
+        if not text:
+            raise RuntimeError("Hermes chapter generation returned empty output.")
+        return text
+
+    def continue_draft(novel: str, chapter_number: int, draft: str, previous_text: str):
+        prompt = build_continue_draft_prompt(
+            novel=novel,
+            novel_name=novel_name,
+            chapter_number=chapter_number,
+            draft=draft,
+            previous_text=previous_text,
+        )
+        text = _hermes_chat(
+            prompt,
+            skills=None,
+            max_turns=2,
+            timeout=300,
+        )
+        return text or draft
+
+    def save(novel: str, chapter: int, text: str):
+        return import_manual_written_chapter(
+            novel,
+            chapter,
+            "",
+            text,
+            build_promo=False,
+            schedule=False,
+        )
+
+    def schedule(novel: str, chapter: int, dates: dict[str, Any]):
+        return append_chapter_release_assignment(novel, chapter, f"Chapter {chapter}", dates)
+
+    def upload_inner(novel: str, chapter: int, date_text: str):
+        result = prepare_chapter_release_stage(f"{novel}-{chapter}", "inner_disciple")
+        if str(result.get("stage") or "") == "royal_road":
+            raise RuntimeError("Royal Road stage reached from Inner Disciple adapter")
+        draft = result.get("draft") if isinstance(result.get("draft"), dict) else {}
+        if draft.get("skipped"):
+            raise RuntimeError(str(draft.get("reason") or "Inner Disciple Patreon draft skipped"))
+        if not draft.get("playwright_launched"):
+            raise RuntimeError("Inner Disciple Patreon helper did not launch")
+        post_id = str(draft.get("post_id") or draft.get("id") or draft.get("patreonPostId") or "").strip()
+        if not post_id:
+            raise RuntimeError("Inner Disciple Patreon upload returned no durable post ID")
+        return {
+            "id": post_id,
+            "folder": result.get("folder", ""),
+            "publish_date": str(draft.get("publish_date") or date_text),
+        }
+
+    def upload_path(novel: str, chapter: int, date_text: str):
+        result = prepare_chapter_release_stage(f"{novel}-{chapter}", "path_initiate")
+        if str(result.get("stage") or "") == "royal_road":
+            raise RuntimeError("Royal Road stage reached from Path Initiate adapter")
+        draft = result.get("draft") if isinstance(result.get("draft"), dict) else {}
+        if draft.get("skipped"):
+            raise RuntimeError(str(draft.get("reason") or "Path Initiate Patreon draft skipped"))
+        if not draft.get("playwright_launched"):
+            raise RuntimeError("Path Initiate Patreon helper did not launch")
+        post_id = str(draft.get("post_id") or draft.get("id") or draft.get("patreonPostId") or "").strip()
+        if not post_id:
+            raise RuntimeError("Path Initiate Patreon upload returned no durable post ID")
+        return {
+            "id": post_id,
+            "folder": result.get("folder", ""),
+            "publish_date": str(draft.get("publish_date") or date_text),
+        }
+
+    def upload_royal(novel: str, chapter: int, date_text: str):
+        assignment_key = f"{novel}-{chapter}"
+        scheduled_for = str(date_text or "").strip()
+        job_spec = {
+            "abbr": novel,
+            "chapter": int(chapter),
+            "stage": "royal_road",
+            "scheduledFor": scheduled_for,
+            "date": scheduled_for,
+            "assignmentKey": assignment_key,
+            "key": assignment_key,
+        }
+        automation_db.enqueue_release_jobs(ROOT, [job_spec])
+        job_id = hashlib.sha256(
+            automation_db.release_job_key(novel, int(chapter), "royal_road", scheduled_for).encode("utf-8")
+        ).hexdigest()[:24]
+        job = next(
+            (
+                item
+                for item in automation_db.list_release_jobs(ROOT, limit=5000)
+                if str(item.get("jobId") or "") == job_id
+            ),
+            {**job_spec, "jobId": job_id},
+        )
+        outcome = run_release_automation_job(job) or {}
+        row = outcome.get("result") if isinstance(outcome.get("result"), dict) else {}
+        submit = row.get("submitResult") if isinstance(row.get("submitResult"), dict) else {}
+        dashboard = submit.get("dashboardVerification") if isinstance(submit.get("dashboardVerification"), dict) else {}
+        updated_job = outcome.get("job") if isinstance(outcome.get("job"), dict) else {}
+        remote_url = str(
+            dashboard.get("editUrl")
+            or submit.get("pageUrl")
+            or row.get("url")
+            or updated_job.get("remoteUrl")
+            or job.get("remoteUrl")
+            or ""
+        ).strip()
+        chapter_id = royal_road_durable_chapter_id(remote_url)
+        if not chapter_id:
+            raise RuntimeError("Royal Road upload returned no durable chapter ID")
+        return {"id": chapter_id, "url": remote_url}
+
+    adapters = PublishAdapters(
+        load_previous=load_previous,
+        generate=generate,
+        continue_draft=continue_draft,
+        save=save,
+        schedule=schedule,
+        upload_inner=upload_inner,
+        upload_path=upload_path,
+        upload_royal=upload_royal,
+    )
+    result = run_chapter_workflow(
+        novel=abbr,
+        today=iso_today(),
+        latest_valid_chapter=latest,
+        adapters=adapters,
+        record_path=record_path,
+        dry_run=dry_run,
+        env=env,
+        existing_future_inners=inners,
+        occupied_inner=set(inners),
+        previous_inner=last_inner,
+        existing_chapter_numbers=existing_numbers,
+        chapter_text=chapter_text,
+    )
+    result["livePublishAllowed"] = live_patreon_allowed(env) or live_royal_road_allowed(env)
+    result["livePatreonAllowed"] = live_patreon_allowed(env)
+    result["liveRoyalRoadAllowed"] = live_royal_road_allowed(env)
+    result["generatorBound"] = True
+    result["automatedRoute"] = "/api/daily-chapter-workflow"
+    return result
 
 
 def chapter_workflow_status(abbr: str = "") -> dict[str, Any]:
@@ -21269,19 +22713,28 @@ def novel_schedule_entry(abbr: str) -> dict[str, Any]:
 
 
 def chapter_release_dates(abbr: str, chapter: int) -> dict[str, str]:
-    novel = novel_schedule_entry(abbr)
-    current_rr = int(novel.get("currentRoyalRoadChapter", 0))
-    next_chapter = current_rr + 1
-    if chapter <= current_rr:
-        return {"royalRoadDate": "", "innerDiscipleDate": "", "pathInitiateDate": ""}
-    next_rr = datetime.fromisoformat(str(novel.get("nextRoyalRoadDate") or iso_today().isoformat())).date()
-    release_days = novel.get("releaseDays") or CHAPTER_RELEASE_DAYS
-    offset = max(0, chapter - next_chapter)
-    royal_date = next_dates(next_rr, release_days, offset + 1)[offset]
+    abbr = story_key(abbr)
+    chapter_number = int(chapter)
+    queue = load_chapter_release_queue()
+    assignments = [
+        item for item in queue.get("assignments", [])
+        if isinstance(item, dict) and story_key(str(item.get("abbr") or "")) == abbr
+    ]
+    existing = release_planner.existing_assignment_for_chapter(assignments, abbr, chapter_number)
+    if existing:
+        return {
+            "royalRoadDate": str(existing.get("royalRoadDate") or ""),
+            "innerDiscipleDate": str(existing.get("innerDiscipleDate") or ""),
+            "pathInitiateDate": str(existing.get("pathInitiateDate") or ""),
+        }
+    proposed = release_planner.dates_for_new_queue_chapter(
+        today=iso_today(),
+        existing_assignments=assignments,
+    )
     return {
-        "royalRoadDate": royal_date.isoformat(),
-        "innerDiscipleDate": (royal_date - timedelta(days=14)).isoformat(),
-        "pathInitiateDate": (royal_date - timedelta(days=7)).isoformat(),
+        "royalRoadDate": proposed.get("royalRoadDate") or "",
+        "innerDiscipleDate": proposed.get("innerDiscipleDate") or "",
+        "pathInitiateDate": proposed.get("pathInitiateDate") or "",
     }
 
 
@@ -21524,69 +22977,71 @@ def ensure_chapter_release_queue(days_ahead: int = 90) -> dict[str, Any]:
             available[abbr] = []
             errors.append({"abbr": abbr, "error": str(exc)})
 
-    rotation = list(NOVEL_NAMES)
-    cursor = queue_start
     end = max(queue_start, iso_today()) + timedelta(days=max(14, int(days_ahead)))
-    while cursor <= end:
-        date_text = cursor.isoformat()
-        year, week, _ = cursor.isocalendar()
-        week_key = f"{year}-W{week:02d}"
-        if cursor.weekday() < 5:
-            for abbr in rotation:
-                upload_start = upload_start_dates.get(abbr)
-                if upload_start and cursor < upload_start:
-                    continue
-                novel_week_key = f"{abbr}:{week_key}"
-                if (abbr, date_text) in occupied_slots or weekly_counts.get(novel_week_key, 0) >= 5 or not available.get(abbr):
-                    continue
-                chapter = available[abbr].pop(0)
-                number = int(chapter["number"])
-                key = f"{abbr}-{number}"
-                if key not in existing_keys:
-                    ledger = chapter_ledger_entry(abbr, number)
-                    existing_rr = bool(
-                        ledger.get("postedToRoyalRoad")
-                        or ledger.get("royalRoadReviewed")
-                        or ledger.get("royalRoadChapterUrl")
-                    )
-                    path_date = cursor + timedelta(days=7)
-                    rr_date = cursor + timedelta(days=14)
-                    assignment = {
-                        "key": key,
-                        "abbr": abbr,
-                        "novel": NOVEL_NAMES.get(abbr, abbr),
-                        "chapter": number,
-                        "title": chapter["title"],
-                        "innerDiscipleDate": cursor.isoformat(),
-                        "pathInitiateDate": path_date.isoformat(),
-                        "royalRoadDate": rr_date.isoformat(),
-                        "releaseWeek": week_key,
-                        "existingRoyalRoad": existing_rr,
-                        "royalRoadMode": "update_existing" if existing_rr else "create_new",
-                        "releaseAction": "review_existing_royal_road" if existing_rr else "new_release",
-                        "royalRoadChapterUrl": ledger.get("royalRoadChapterUrl") if existing_rr else "",
-                        "releaseNote": "Existing Royal Road chapter. Review and update from rewritten GitHub text." if existing_rr else "",
-                        "createdAt": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    }
-                    assignments.append(assignment)
-                    existing_keys.add(key)
-                    occupied_slots.add((abbr, date_text))
-                    weekly_counts[novel_week_key] = weekly_counts.get(novel_week_key, 0) + 1
-                    scheduled_by_novel[abbr].add(number)
-                    remember_release_dates(abbr, number, {
-                        "innerDiscipleDate": assignment["innerDiscipleDate"],
-                        "pathInitiateDate": assignment["pathInitiateDate"],
-                        "royalRoadDate": assignment["royalRoadDate"],
-                    }, "weekday-release-queue")
-                    update_chapter_ledger(abbr, number, {
-                        "innerDiscipleDate": assignment["innerDiscipleDate"],
-                        "pathInitiateDate": assignment["pathInitiateDate"],
-                        "royalRoadDate": assignment["royalRoadDate"],
-                        "releaseQueueDate": assignment["innerDiscipleDate"],
-                    })
-        cursor += timedelta(days=1)
-        if not any(available.values()):
-            break
+    for abbr in NOVEL_NAMES:
+        while available.get(abbr):
+            novel_assignments = [
+                item for item in assignments
+                if story_key(str(item.get("abbr") or "")) == abbr
+            ]
+            proposed = release_planner.dates_for_new_queue_chapter(
+                today=iso_today(),
+                existing_assignments=novel_assignments,
+            )
+            if not proposed.get("ok"):
+                errors.append({"abbr": abbr, "error": ",".join(proposed.get("conflicts") or ["schedule-conflict"])})
+                break
+            inner = release_planner.parse_date(proposed.get("innerDiscipleDate"))
+            if not inner or inner > end:
+                break
+            date_text = inner.isoformat()
+            year, week, _ = inner.isocalendar()
+            week_key = f"{year}-W{week:02d}"
+            if (abbr, date_text) in occupied_slots:
+                break
+            chapter = available[abbr].pop(0)
+            number = int(chapter["number"])
+            key = f"{abbr}-{number}"
+            if key in existing_keys:
+                continue
+            ledger = chapter_ledger_entry(abbr, number)
+            existing_rr = bool(
+                ledger.get("postedToRoyalRoad")
+                or ledger.get("royalRoadReviewed")
+                or ledger.get("royalRoadChapterUrl")
+            )
+            assignment = {
+                "key": key,
+                "abbr": abbr,
+                "novel": NOVEL_NAMES.get(abbr, abbr),
+                "chapter": number,
+                "title": chapter["title"],
+                "innerDiscipleDate": proposed["innerDiscipleDate"],
+                "pathInitiateDate": proposed["pathInitiateDate"],
+                "royalRoadDate": proposed["royalRoadDate"],
+                "releaseWeek": week_key,
+                "existingRoyalRoad": existing_rr,
+                "royalRoadMode": "update_existing" if existing_rr else "create_new",
+                "releaseAction": "review_existing_royal_road" if existing_rr else "new_release",
+                "royalRoadChapterUrl": ledger.get("royalRoadChapterUrl") if existing_rr else "",
+                "releaseNote": "Existing Royal Road chapter. Review and update from rewritten GitHub text." if existing_rr else "",
+                "createdAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            assignments.append(assignment)
+            existing_keys.add(key)
+            occupied_slots.add((abbr, date_text))
+            scheduled_by_novel[abbr].add(number)
+            remember_release_dates(abbr, number, {
+                "innerDiscipleDate": assignment["innerDiscipleDate"],
+                "pathInitiateDate": assignment["pathInitiateDate"],
+                "royalRoadDate": assignment["royalRoadDate"],
+            }, "weekday-release-queue")
+            update_chapter_ledger(abbr, number, {
+                "innerDiscipleDate": assignment["innerDiscipleDate"],
+                "pathInitiateDate": assignment["pathInitiateDate"],
+                "royalRoadDate": assignment["royalRoadDate"],
+                "releaseQueueDate": assignment["innerDiscipleDate"],
+            })
     novel_order = {abbr: index for index, abbr in enumerate(NOVEL_NAMES)}
     assignments.sort(key=lambda item: (
         str(item.get("innerDiscipleDate") or ""),
@@ -21838,23 +23293,71 @@ def make_release_chapter_pack(
     status: dict[str, Any],
     data: dict[str, Any] | None = None,
     revision: dict[str, Any] | None = None,
+    *,
+    chapter_release_v2_enabled: bool | None = None,
+    publish_generated_media: bool = True,
+    promo_master_enabled: bool | None = None,
 ) -> dict[str, Any]:
     data = data or docs_chapter_text(abbr, chapter)
     revision = revision or chapter_revision_info(abbr, chapter, data)
+    from tools.still_caller_activation import promo_master_generate_kwargs, resolve_still_caller_flags
+
+    _act = resolve_still_caller_flags(
+        v2_explicit=chapter_release_v2_enabled,
+        pm_explicit=promo_master_enabled,
+        novel=abbr,
+        seam="chapter-release",
+    )
+    chapter_release_v2_enabled = _act["v2_enabled"]
+    _pm_explicit = _act["pm_explicit"]
+    _pm_effective = _act["pm_enabled"]
     title = concise_release_title(data.get("title") or data.get("heading") or "", abbr, chapter)
     folder = SOCIAL_OUTPUT_DIR / f"release-{abbr.lower()}-{chapter}"
     reset_generated_folder(folder)
     copy = release_copy(abbr, chapter, title, decision)
     image_target_path = folder / f"{abbr}_{chapter}_release.png"
-    image_source = create_fresh_social_image_from_caption(
-        image_target_path,
-        abbr=abbr,
-        novel=NOVEL_NAMES.get(abbr, abbr),
-        title=title,
-        caption=copy["instagram"],
-        hook=copy.get("x", ""),
-        index=chapter,
-    )
+    posting_image = image_target_path
+    if chapter_release_v2_enabled:
+        from tools.promo_master_production import posting_image_from_promo_master_out
+
+        _novel = NOVEL_NAMES.get(abbr, abbr)
+        _scene = str(copy.get("instagram") or copy.get("x") or "").strip()
+        _pm_out: dict[str, Any] = {}
+        image_source = generate_promo_image_v2(
+            "main-posts",
+            _scene,
+            image_target_path,
+            abbr=abbr,
+            index=chapter,
+            novel=_novel,
+            chapter=chapter,
+            scene_text=_scene or None,
+            promo_master_out=_pm_out,
+            **promo_master_generate_kwargs(_act),
+        )
+        if not image_source:
+            raise RuntimeError(
+                "chapter-release V2 generated no source; will not fall back to legacy image generation"
+            )
+        if not Path(image_target_path).is_file():
+            raise RuntimeError(
+                "chapter-release V2 missing generated artifact; will not fall back to legacy image generation"
+            )
+        posting_image = posting_image_from_promo_master_out(
+            promo_master_enabled=_pm_effective,
+            promo_master_out=_pm_out,
+            base_path=image_target_path,
+        )
+    else:
+        image_source = create_fresh_social_image_from_caption(
+            image_target_path,
+            abbr=abbr,
+            novel=NOVEL_NAMES.get(abbr, abbr),
+            title=title,
+            caption=copy["instagram"],
+            hook=copy.get("x", ""),
+            index=chapter,
+        )
     payload = {
         **copy,
         "abbr": abbr,
@@ -21872,7 +23375,7 @@ def make_release_chapter_pack(
             "wordCount": revision.get("wordCount", 0),
         },
         "folder": str(folder),
-        "image": str(image_target_path),
+        "image": str(posting_image),
         "image_source": image_source,
     }
     remember_release_dates(abbr, chapter, status.get("dates", {}) if isinstance(status.get("dates"), dict) else {}, "master-release-build")
@@ -21891,6 +23394,8 @@ def make_release_chapter_pack(
         (folder / "patreon.txt").write_text(platform_text, encoding="utf-8")
     (folder / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     remember_chapter_revision(abbr, chapter, data, revision)
+    if not publish_generated_media:
+        return payload
     return auto_publish_generated_media(folder, payload)
 
 
@@ -24855,7 +26360,7 @@ def upload_folder_media_to_r2(folder: str) -> dict[str, Any]:
     allowed_roots = [SOCIAL_OUTPUT_DIR.resolve(), TIKTOK_OUTPUT_DIR.resolve(), EXPERIMENT_OUTPUT_DIR.resolve(), OUTPUT_DIR.resolve(), YOUTUBE_OUTPUT_DIR.resolve(), CHAPTER_OUTPUT_DIR.resolve()]
     if not any(str(target).startswith(str(root)) for root in allowed_roots):
         raise RuntimeError("Folder is not valid for media upload.")
-    uploaded = [upload_file_to_r2(path) for path in media_files_for_folder(target)]
+    uploaded = [upload_file_to_r2(path) for path in _identity_publish_eligible(media_files_for_folder(target), "PUBLISH:upload_folder_media_to_r2", folder=target)]
     metadata_path = target / "metadata.json"
     if metadata_path.exists():
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -24880,7 +26385,7 @@ def copy_folder_media_to_github(folder: str) -> dict[str, Any]:
         raise RuntimeError("Folder is not valid for GitHub media storage.")
     GITHUB_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
     copied: list[dict[str, str]] = []
-    for source in media_files_for_folder(target):
+    for source in _identity_publish_eligible(media_files_for_folder(target), "PUBLISH:copy_folder_media_to_github", folder=target):
         key = media_key_for_generated_file(source)
         destination = GITHUB_MEDIA_DIR / Path(key)
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -24998,7 +26503,7 @@ def publish_folder_media_to_github_git_repo(folder: str) -> dict[str, Any]:
     steps = ensure_github_media_repo_clone()
     branch = os.environ.get("GITHUB_BRANCH", "main").strip() or "main"
     copied: list[dict[str, str]] = []
-    for source in media_files_for_folder(target):
+    for source in _identity_publish_eligible(media_files_for_folder(target), "PUBLISH:publish_folder_media_to_github_git_repo", folder=target):
         key = media_key_for_generated_file(source)
         destination = GITHUB_MEDIA_REPO_DIR / "media" / Path(key)
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -26584,6 +28089,12 @@ def publish_instagram_image(folder: str) -> dict[str, Any]:
         raise RuntimeError("This folder does not contain social post metadata.")
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     image_path = Path(metadata["image"]).resolve()
+    _identity_publish_eligible(
+        [image_path],
+        "PUBLISH:publish_instagram_image",
+        folder=post_folder,
+        metadata=metadata,
+    )
     image_url = metadata.get("public_image_url") or public_social_image_url(post_folder, image_path)
     if not image_url:
         raise RuntimeError(
@@ -26921,6 +28432,7 @@ def daily_upload_step(name: str, status: str, message: str, **extra: Any) -> dic
     }
 
 
+@_identity_context_from_args(abbr="abbr")
 def social_image_for_manual_post(abbr: str) -> Path | None:
     abbr = story_key(abbr)
     candidates: list[Path] = []
@@ -26943,7 +28455,10 @@ def social_image_for_manual_post(abbr: str) -> Path | None:
             resolved = candidate.resolve()
         except Exception:
             continue
-        if resolved.exists() and resolved.is_file() and resolved.suffix.lower() in IMAGE_EXTENSIONS:
+        if resolved.exists() and resolved.is_file() and resolved.suffix.lower() in IMAGE_EXTENSIONS and _identity_fallback_allowed(
+            resolved, asset_class="PREVIOUS_RUN_IMAGE", fallback_source="manual_post_reused_image",
+            path_id="FALLBACK:social_image_for_manual_post:reuse",
+        ):
             return resolved
     return None
 
@@ -26964,6 +28479,17 @@ def royal_road_edit_url(chapter_url: str) -> str:
     if not match:
         return ""
     return f"https://www.royalroad.com/author-dashboard/chapters/edit/{match.group(1)}"
+
+
+def royal_road_durable_chapter_id(url: str) -> str:
+    text = str(url or "").strip()
+    match = re.search(r"/chapters/(?:editdraft|edit)/(\d+)", text)
+    if match:
+        return match.group(1)
+    match = re.search(r"/chapter/(\d+)", text)
+    if match:
+        return match.group(1)
+    return text if text.isdigit() else ""
 
 
 def royal_road_new_chapter_url(story: str) -> str:
@@ -30916,6 +32442,7 @@ def youtube_metadata_from_text(chapter_title: str, chapter_text: str, abbr: str 
     return {"title": fallback_title[:90], "description": description, "tags": "web novel, audiobook, serial fiction"}
 
 
+@_identity_context_from_args(abbr="abbr")
 def generate_youtube_generated_background(abbr: str, title: str, teaser: str) -> Path | None:
     """Generate realistic YT background keyframes via the local SDXL pipeline (azink_real)
     and Ken-Burns them into a single wide background clip. Fail-soft -> None.
@@ -30989,6 +32516,7 @@ def select_youtube_backgrounds(abbr: str, chapter_text: str, count: int | None =
     return choose_background_videos(count or background_video_count(), abbr, f"{novel} {teaser}")
 
 
+@_identity_context_from_args(abbr="abbr")
 def build_youtube_from_text(chapter_title: str, chapter_text: str, abbr: str = "", chapter_number: str | int = "") -> dict[str, Any]:
     if not chapter_text.strip():
         raise RuntimeError("Chapter text is required.")
@@ -31002,6 +32530,9 @@ def build_youtube_from_text(chapter_title: str, chapter_text: str, abbr: str = "
     hash_value = content_hash(chapter_text)
     folder = stable_chapter_folder(YOUTUBE_OUTPUT_DIR, "youtube", metadata["title"], abbr, chapter_id)
     reused = reusable_pack_result(folder, hash_value, ["chapter-text.txt", "build_youtube_video.py"])
+    if reused and not _identity_pack_reuse_allowed(reused, folder, "youtube_reusable_pack",
+                                                   "FALLBACK:build_youtube_from_text:reusable_pack_result"):
+        reused = None
     if reused:
         record_recovery_event(
             "youtube_build",
@@ -31986,10 +33517,181 @@ print(f"YouTube video target: {{output}}")
     )
 
 
+# SCENE_ENVIRONMENT_LIVE_PATH_REMEDIATION_R2 (Parts A/K/M): live callers of the chapter-still seam.
+_SCENE_ENV_LIVE_CALLERS = ("make_campaign", "structured_chapter_package_fallback", "generate_tiktok_images", "make_deep_tiktok_pack", "make_deep_tiktok_novel_pack", "regenerate_weak_images", "make_release_chapter_pack", "make_weekend_social_post", "write_variant_social_pack", "write_variant_short_pack", "build_resurfacing_post", "build_comment_content_post", "arc_campaign_plans", "build_story_hook_thumbnail_base", "image_lab_for_chapter")
+
+# SCENE_ENVIRONMENT_LIVE_PATH_REMEDIATION_R3 Phases 5/6 — production path inventory + governance
+R3_PRODUCTION_SCENE_PATH_INVENTORY = {
+    # entry -> (class, scene_bearing_bool, notes)
+    "generate_tiktok_images": ("SCENE_BEARING_CHARACTER_IMAGE", True, "natural moments + make_chapter_image_prompts seam"),
+    "make_campaign": ("SCENE_BEARING_CHARACTER_IMAGE", True, "LLM primary + fallback both governed"),
+    "make_deep_tiktok_pack": ("SCENE_BEARING_CHARACTER_IMAGE", True, "chapter moment scenes"),
+    "make_deep_tiktok_novel_pack": ("SCENE_BEARING_CHARACTER_IMAGE", True, "novel highlight scenes"),
+    "regenerate_weak_images": ("SCENE_BEARING_CHARACTER_IMAGE", True, "reuse/regen; recompute from metadata context when present"),
+    "make_release_chapter_pack": ("SCENE_BEARING_NONCHARACTER_IMAGE", True, "release promo from chapter caption"),
+    "make_weekend_social_post": ("SCENE_BEARING_NONCHARACTER_IMAGE", True, "weekend promo copy"),
+    "write_variant_social_pack": ("SCENE_BEARING_NONCHARACTER_IMAGE", True, "variant visual brief"),
+    "write_variant_short_pack": ("SCENE_BEARING_NONCHARACTER_IMAGE", True, "variant short brief"),
+    "build_resurfacing_post": ("SCENE_BEARING_NONCHARACTER_IMAGE", True, "resurfacing caption"),
+    "build_comment_content_post": ("SCENE_BEARING_NONCHARACTER_IMAGE", True, "comment-content caption"),
+    "arc_campaign_plans": ("SCENE_BEARING_NONCHARACTER_IMAGE", True, "arc caption"),
+    "generate_youtube_generated_background": ("ABSTRACT", False, "video background; not chapter still"),
+    "build_story_hook_thumbnail_base": ("SCENE_BEARING_NONCHARACTER_IMAGE", True, "story hook thumbnail"),
+    "prepare_tiktok_outro_image": ("PURE_GRAPHIC", False, "CTA outro card"),
+    "image_lab_for_chapter": ("SCENE_BEARING_CHARACTER_IMAGE", True, "manual lab; still scene-bearing"),
+}
+
+
+def _r3_scene_path_class(entry: str) -> str:
+    row = R3_PRODUCTION_SCENE_PATH_INVENTORY.get(entry)
+    return row[0] if row else "UNINVENTORIED"
+
+
+def _r3_scene_bearing(entry: str) -> bool:
+    row = R3_PRODUCTION_SCENE_PATH_INVENTORY.get(entry)
+    return bool(row[1]) if row else False
+
+
+def _r3_govern_scene_prompts(
+    *,
+    entry: str,
+    novel: str,
+    title: str,
+    chapter_text: str,
+    phrases: list[str] | None = None,
+    existing_prompts: list[str] | None = None,
+) -> list[str]:
+    """Apply scene authority before generation/reuse for SCENE_BEARING_* paths.
+
+    Prefer structured chapter context via make_chapter_image_prompts. Never invent
+    canon; never touch identity/wardrobe/held-prop/effects contracts.
+    """
+    path_class = _r3_scene_path_class(entry)
+    if not _r3_scene_bearing(entry):
+        return list(existing_prompts or [])[:3]
+    phrases = [str(p).strip() for p in (phrases or []) if str(p).strip()]
+    if len(phrases) < 3 and existing_prompts:
+        phrases = phrases + [str(p).strip() for p in existing_prompts if str(p).strip()]
+    while len(phrases) < 3:
+        phrases.append((title or novel or "chapter moment").strip() or "chapter moment")
+    phrases = phrases[:3]
+    try:
+        governed = make_chapter_image_prompts(title or novel, chapter_text or " ".join(phrases), phrases, novel)
+    except Exception as exc:  # noqa: BLE001 - never break generation; fall back to existing
+        print(f"[r3-scene-authority] {entry} governance failed ({exc}); using existing prompts")
+        governed = list(existing_prompts or phrases)[:3]
+    if not governed or len(governed) < 3:
+        governed = list(existing_prompts or phrases)[:3]
+    # Annotate recent observability with path class
+    try:
+        from tools import scene_environment as _se
+        recs = _se.recent_still_observability(clear=False)
+        for r in recs[-3:]:
+            r["SCENE_PATH_CLASS"] = path_class
+            r["SCENE_AUTHORITY_APPLIED"] = True
+            r["PATH"] = entry
+    except Exception:
+        pass
+    return [str(x).strip() for x in governed[:3]]
+
+
+
+
+def _r21_structured_location_on() -> bool:
+    """R21_CORE_STRUCTURED_LOCATION_CUTOVER: ENABLE_STRUCTURED_SCENE_LOCATION (default OFF, single flag)."""
+    return os.environ.get("ENABLE_STRUCTURED_SCENE_LOCATION", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _r21_scene_env_kwargs(still_index: int, legacy_locations: Any, lane: str = "") -> dict:
+    """Flag OFF: the exact legacy kwargs (R21 code is never imported). Flag ON: structured location only."""
+    if not _r21_structured_location_on():
+        return {"locations": legacy_locations}
+    from tools import structured_scene_location_r21_wiring as _r21w
+    return _r21w.scene_env_kwargs(still_index, legacy_locations, lane=lane)
+
+
+def _r21_structured_beat_scope(fn):
+    """Flag ON only: bind still index -> runtime visual_sentences(chapter, 3, novel or title) beat identity."""
+    import functools
+    @functools.wraps(fn)
+    def wrapper(title, chapter, phrases, novel=""):
+        if not _r21_structured_location_on():
+            return fn(title, chapter, phrases, novel)
+        from tools import structured_scene_location_r21_wiring as _r21w
+        try:
+            from tools.novel_id import normalize_novel_id as _n
+            nid = _n(novel) or _n(title) or ""
+        except Exception:  # noqa: BLE001
+            nid = ""
+        with _r21w.chapter_beat_scope(nid, visual_sentences(chapter, 3, novel or title)):
+            return fn(title, chapter, phrases, novel)
+    return wrapper
+
+
+def _scene_env_caller_path() -> str:
+    """Name of the live caller above make_chapter_image_prompts (observability only)."""
+    try:
+        frame = sys._getframe(1)
+        for _ in range(10):
+            if frame is None:
+                break
+            if frame.f_code.co_name in _SCENE_ENV_LIVE_CALLERS:
+                return frame.f_code.co_name
+            frame = frame.f_back
+    except Exception:  # noqa: BLE001
+        pass
+    return "direct"
+
+
+def _scene_env_record_chapter_stills(*, caller: str, lane: str, input_novel: Any, novel_id: str,
+                                     prompts: list[str], beats: list[str], scene_text: str = "",
+                                     legacy_used: list[bool] | None = None,
+                                     legacy_reasons: list[str] | None = None,
+                                     cameras: list[str] | None = None) -> list[dict]:
+    """Per-still observability (R2 Part M) for one chapter-still package. Never raises."""
+    try:
+        from tools import scene_environment as _se
+        try:
+            from visual_director import load_locations as _vd_load_locations
+            _locs = _vd_load_locations()
+        except Exception:  # noqa: BLE001
+            _locs = []
+        roles = [_se.role_for_index(i) for i in range(len(prompts))]
+        specs = []
+        for i in range(len(prompts)):
+            beat_i = beats[i] if i < len(beats) else ""
+            specs.append(_se.resolve_scene_environment(
+                novel_id or str(input_novel or ""), scene_text or beat_i, **_r21_scene_env_kwargs(i, _locs, lane), still_index=i,
+                still_role=roles[i], composition_goal=beat_i))
+        recs = _se.build_still_observability(
+            input_novel=input_novel, normalized_novel=novel_id, path=f"{caller}:{lane}", prompts=list(prompts),
+            specs=specs, beats=list(beats), roles=roles,
+            legacy_used=list(legacy_used or [False] * len(prompts)),
+            legacy_reasons=list(legacy_reasons or [""] * len(prompts)),
+            cameras=list(cameras or [""] * len(prompts)))
+        _se.record_still_observability(recs)
+        return recs
+    except Exception as _obs_exc:  # noqa: BLE001 - observability must never break image production
+        print(f"[scene-environment] observability skipped ({_obs_exc})")
+        return []
+
+
+@_identity_context_from_args(novel="novel")
+@_r21_structured_beat_scope
 def make_chapter_image_prompts(title: str, chapter: str, phrases: list[str], novel: str = "") -> list[str]:
     beats = visual_sentences(chapter, 3, novel or title)
     keywords = ", ".join(chapter_keywords(title, chapter, 8))
     prompts: list[str] = []
+    # SCENE_ENVIRONMENT_LIVE_PATH_REMEDIATION_R2 (Part A): one canonical novel-id seam for every live caller
+    # (make_campaign / structured_chapter_package_fallback / generate_tiktok_images pass full novel names).
+    # Applied before Visual Director, AIVSB, SceneEnvironmentSpec, location resolution and observability.
+    # The legacy prompt keeps the caller's display string; identity / provenance records are unchanged.
+    _scene_caller = _scene_env_caller_path()
+    try:
+        from tools.novel_id import normalize_novel_id as _normalize_novel_id
+        _scene_nid = _normalize_novel_id(novel) or _normalize_novel_id(title) or ""
+    except Exception:  # noqa: BLE001
+        _scene_nid = ""
 
     # --- Visual Director (Slice 1, env-gated, DEFAULT OFF) ---
     # When VISUAL_DIRECTOR_ENABLED is truthy, build a canon-locked
@@ -32002,13 +33704,14 @@ def make_chapter_image_prompts(title: str, chapter: str, phrases: list[str], nov
     # prompt path only.
     vd_enabled = os.environ.get("VISUAL_DIRECTOR_ENABLED", "").strip().lower() not in ("", "0", "false", "no", "off")
     vd_prompts: list[str] | None = None
+    _scene_cameras: list[str] | None = None
     if vd_enabled:
         try:
             from visual_director import BIBLE_DIR, build_visual_scene_package
             if not BIBLE_DIR.exists():
                 print(f"[visual-director] Bible path missing ({BIBLE_DIR}); falling back to legacy prompts")
             else:
-                novel_id = (novel or title).strip().lower()
+                novel_id = _scene_nid or (novel or title).strip().lower()
                 # Slice A: pass the per-image beats as shots_text so each
                 # generated prompt gets its OWN narrative objective instead of
                 # the whole scene_text repeated 3x (the A/B repetition defect).
@@ -32018,6 +33721,7 @@ def make_chapter_image_prompts(title: str, chapter: str, phrases: list[str], nov
                 out = pkg.get("image_prompts")
                 if isinstance(out, list) and len(out) >= 3 and all(isinstance(x, str) and x.strip() for x in out):
                     vd_prompts = [str(x).strip() for x in out[:3]]
+                    _scene_cameras = [str((s or {}).get("camera", "")) for s in (pkg.get("shots") or [])[:3]]
                     for _w in (pkg.get("canon_warnings", []) or []):
                         print(f"[visual-director] canon_warning: {_w}")
                     print(f"[visual-director] enabled: returned {len(vd_prompts)} canon-locked prompts for {novel or title}")
@@ -32027,6 +33731,12 @@ def make_chapter_image_prompts(title: str, chapter: str, phrases: list[str], nov
             print(f"[visual-director] failed: unexpected error ({_exc}); falling back to legacy")
             vd_prompts = None
     if vd_prompts is not None:
+        _scene_env_record_chapter_stills(
+            caller=_scene_caller, lane="VISUAL_DIRECTOR", input_novel=novel, novel_id=_scene_nid,
+            prompts=vd_prompts, beats=shots_text[:3] + [""] * (3 - len(shots_text[:3])), scene_text=scene_text,
+            legacy_used=[False] * len(vd_prompts),
+            legacy_reasons=["" if _scene_nid else "NOVEL_UNRESOLVED"] * len(vd_prompts),
+            cameras=_scene_cameras)
         return vd_prompts
 
     # Phase C (flag-gated): optionally compose each chapter still through the
@@ -32036,16 +33746,22 @@ def make_chapter_image_prompts(title: str, chapter: str, phrases: list[str], nov
     # behavior, server restart, or _LOCAL_SD_GPU_LOCK interaction here.
     aivsb_enabled = os.environ.get("AIVSB_REASONING_ENABLED", "0").strip().lower() not in ("", "0", "false", "no", "off")
     aivsb_meta: list[dict] = []  # populated only when a composed prompt is used
+    _prov_run = _aivsb_prov_run_id("chapterstill") if _identity_flag_on() else ""
+    _scene_beats: list[str] = []
+    _scene_legacy: list[bool] = []
+    _scene_reasons: list[str] = []
+    _scene_cameras_aivsb: list[str] = []
     for index in range(3):
         phrase = phrases[index] if index < len(phrases) else title
         beat = clean_teaser_text(beats[index], 140, max_words=24) if index < len(beats) else phrase
         composed: dict | None = None
         if aivsb_enabled:
             try:
-                # Call sites pass the novel abbreviation uppercased (EN/HA/SF/HP);
-                # the composer validates lowercase ids, so normalize only for the
-                # reasoning call. The legacy prompt below keeps the original case.
-                novel_id = (novel or title).strip().lower()
+                # Call sites pass the novel abbreviation uppercased (EN/HA/SF/HP) or the
+                # full novel name; the composer validates lowercase canonical ids, so the
+                # R2 seam normalizes only for the reasoning call. The legacy prompt below
+                # keeps the original case.
+                novel_id = _scene_nid or (novel or title).strip().lower()
                 composed = compose_aivsb_scene_prompt(
                     novel_id,
                     beat,
@@ -32054,11 +33770,46 @@ def make_chapter_image_prompts(title: str, chapter: str, phrases: list[str], nov
                     asset_type="chapter_still",
                     orientation="vertical",
                     legacy_prompt="",
+                    still_index=index,
+                    still_role=("establishing", "travel", "climax")[min(index, 2)],
+                    composition_goal=beat,
                 )
             except Exception as _exc:  # defensive: never break legacy image production
                 print(f"[aivsb-reasoning] failed: unexpected error in chapter path ({_exc})")
                 composed = None
+        if composed and isinstance(composed, dict) and composed.get("prompt") and _identity_flag_on():
+            # AIVSB_IDENTITY_PATH_REMEDIATION_20261004 (flag ON only): the composed prompt carries no
+            # character names, so register it with the governed names found in the SOURCE chapter text
+            # (title / chapter / phrases / beat) before they are lost. The identity gate then treats the
+            # image as POTENTIALLY_GOVERNED (review) and a caller scenery label cannot bypass. If the
+            # evidence cannot be registered, fail safe to the legacy prompt (whose OWN provenance record
+            # carries the source names; the legacy prompt text itself does NOT necessarily name them).
+            try:
+                from tools.identity_preservation import register_aivsb_composed_prompt
+                register_aivsb_composed_prompt(
+                    str(composed["prompt"]).strip(),
+                    source_text=" ".join(str(x or "") for x in [title, chapter, phrase, beat, *list(phrases or [])]),
+                    novel_id=(novel or title).strip().lower(),
+                    origin="app.make_chapter_image_prompts:aivsb",
+                )
+            except Exception as _reg_exc:  # never lose governed evidence silently
+                print(f"[aivsb-reasoning] identity evidence registration failed ({_reg_exc}); using legacy prompt")
+                composed = None
+        if composed and isinstance(composed, dict) and composed.get("prompt") and _identity_flag_on():
+            # AIVSB_DURABLE_PROVENANCE_REMEDIATION_20261004 (flag ON only): durable provenance record
+            # captured from the SOURCE text before composition; failure -> legacy prompt (fail safe).
+            try:
+                _aivsb_prov_chapter_record(str(composed["prompt"]).strip(), True, novel=novel, title=title, chapter=chapter,
+                                           phrase=phrase, beat=beat, phrases=list(phrases or []), keywords=keywords,
+                                           index=index, run_id=_prov_run)
+            except Exception as _prov_exc:  # noqa: BLE001
+                print(f"[aivsb-reasoning] durable provenance capture failed ({_prov_exc}); using legacy prompt")
+                composed = None
+        _scene_beats.append(beat)
         if composed and isinstance(composed, dict) and composed.get("prompt"):
+            _scene_legacy.append(False)
+            _scene_reasons.append("")
+            _scene_cameras_aivsb.append(str((composed.get("scene_environment") or {}).get("camera", "")))
             prompts.append(str(composed["prompt"]).strip())
             aivsb_meta.append({
                 "bible_version": composed.get("bible_version", ""),
@@ -32077,16 +33828,23 @@ def make_chapter_image_prompts(title: str, chapter: str, phrases: list[str], nov
         else:
             if aivsb_enabled:
                 print(f"[aivsb-reasoning] failed: fell back to legacy for chapter still {index}")
-            context = f"{novel}, {title}".strip(", ")
-            prompts.append(
-                "Vertical 9:16 cinematic fantasy web novel cover art, no text or typography. "
-                f"Story context: {context}. "
-                f"Teaser text to visually match: {phrase}. "
-                f"Scene must clearly depict the teaser with concrete visible elements: {beat}. "
-                f"Visual motifs: {keywords}. "
-                "Dramatic lighting, detailed environment, strong focal subject, social media promo composition. "
-                "Avoid generic landscapes unless the teaser explicitly calls for a landscape."
-            )
+            _scene_legacy.append(True)
+            _scene_cameras_aivsb.append("LEGACY_CHAPTER_STILL_PROMPT")
+            _scene_reasons.append("AIVSB_REASONING_DISABLED" if not aivsb_enabled else (
+                "NOVEL_UNRESOLVED" if not _scene_nid else "AIVSB_COMPOSE_OR_EVIDENCE_CAPTURE_FAILED"))
+            prompts.append(_legacy_chapter_still_prompt(novel, title, phrase, beat, keywords))
+            if _identity_flag_on():  # AIVSB_DURABLE_PROVENANCE_REMEDIATION_20261004 (flag ON only)
+                try:
+                    _aivsb_prov_chapter_record(prompts[-1], False, novel=novel, title=title, chapter=chapter, phrase=phrase,
+                                               beat=beat, phrases=list(phrases or []), keywords=keywords, index=index,
+                                               run_id=_prov_run)
+                except Exception as _prov_exc:  # noqa: BLE001 - no record -> absence -> review downstream
+                    print(f"[aivsb-reasoning] durable provenance capture failed for legacy prompt ({_prov_exc})")
+    _scene_env_record_chapter_stills(
+        caller=_scene_caller,
+        lane=("AIVSB" if not any(_scene_legacy) else ("LEGACY" if all(_scene_legacy) else "MIXED_AIVSB_LEGACY")),
+        input_novel=novel, novel_id=_scene_nid, prompts=prompts, beats=_scene_beats,
+        legacy_used=_scene_legacy, legacy_reasons=_scene_reasons, cameras=_scene_cameras_aivsb)
     return prompts
 
 
@@ -32105,7 +33863,8 @@ def download_url(url: str, target: Path) -> None:
         target.write_bytes(response.read())
 
 
-def create_openai_image(prompt: str, target: Path, size: str | None = None, quality: str | None = None) -> None:
+def create_openai_image(prompt: str, target: Path, size: str | None = None, quality: str | None = None,
+                        image_intent: Any = None) -> None:
     if not EXTERNAL_AI_ENABLED:
         raise RuntimeError("External AI disabled (ENABLE_EXTERNAL_AI not set); caller should use local image source.")
     primary_payload = {
@@ -32128,9 +33887,11 @@ def create_openai_image(prompt: str, target: Path, size: str | None = None, qual
     image = result["data"][0]
     if image.get("b64_json"):
         target.write_bytes(base64.b64decode(image["b64_json"]))
+        _v1_identity_acceptance_gate(target, "V1:openai", prompt, image_intent=image_intent)
         return
     if image.get("url"):
         download_url(image["url"], target)
+        _v1_identity_acceptance_gate(target, "V1:openai", prompt, image_intent=image_intent)
         return
     raise RuntimeError("Image response did not include image data.")
 
@@ -32581,6 +34342,347 @@ def read_image_provider_trace(image_path: str | Path) -> dict[str, Any]:
         return {}
 
 
+
+class V2ImageGenerationError(RuntimeError):
+    """Enabled V2 promo generation failed. Callers must not fall back to V1/stock."""
+
+
+class V2IdentityReviewRequired(V2ImageGenerationError):
+    """IDENTITY_PRODUCTION_PLUMBING_20260929: identity decision forbids auto-accept.
+
+    Raised only when ENABLE_IDENTITY_PRESERVATION is ON and the identity verifier
+    returns REJECT_REVIEW / FAIL_CLOSED. The generated image has been moved to a
+    sibling *.identity-review.<ext> quarantine path (bytes unchanged) and was not
+    archived, traced as accepted, provenance-persisted as accepted or mastered.
+    """
+
+
+# Public style labels used by TikTok / weekend callers. Comic is intentionally
+# absent: comic never enters V2. Profile ids are accepted as aliases only.
+_V2_STYLE_TO_PROFILE = {
+    "main-posts": "main_posts",
+    "main_posts": "main_posts",
+    "cinematic-promo": "cinematic-promo",
+    # Legacy aliases of the cinematic route. Not photorealistic.
+    "realistic-posts": "realistic",
+    "realistic": "realistic",
+}
+
+# None means "use the production materializer". Tests may inject a fake.
+V2_PROMO_MATERIALIZER = None
+
+
+def v2_profile_for_style(style: str) -> str | None:
+    """Map a caller style/track onto a V2 profile, or None if not a V2 profile.
+
+    photorealistic tokens map to photorealistic and must fail closed.
+    realistic / realistic-posts remain cinematic aliases.
+    """
+    from tools.image_pipeline_v2_profiles import (
+        PHOTOREALISTIC_PROFILE,
+        is_explicit_photorealistic_style,
+    )
+
+    token = str(style or "").strip().lower()
+    if is_explicit_photorealistic_style(token):
+        return PHOTOREALISTIC_PROFILE
+    return _V2_STYLE_TO_PROFILE.get(token)
+
+
+def _v2_profile_enabled(profile: str, enabled_override: bool | None = None) -> bool:
+    """Whether an enabled V2 profile may run.
+
+    Single gate: tools.image_pipeline_v2_activation.is_v2_profile_enabled.
+    That module reads STATE_ROOT/image_pipeline_v2_activation.json.
+    Comic and unknown profiles are never enabled.
+    """
+    from tools.image_pipeline_v2_activation import is_v2_profile_enabled
+    from tools.image_pipeline_v2_profiles import activation_storage_key
+
+    key = activation_storage_key(profile)
+    if key not in ("main_posts", "realistic"):
+        return False
+    return bool(is_v2_profile_enabled(key, override=enabled_override))
+
+
+def _v2_pipeline_class(profile: str):
+    if profile == "main_posts":
+        from tools.main_posts_pipeline_v2 import MainPostsPipelineV2
+        return MainPostsPipelineV2
+    if profile in ("realistic", "cinematic-promo"):
+        from tools.realistic_pipeline_v2 import RealisticPipelineV2
+        return RealisticPipelineV2
+    if profile == "photorealistic":
+        from tools.image_pipeline_v2_profiles import photorealistic_asset_status
+        status = photorealistic_asset_status()
+        if not status["ready"]:
+            raise V2ImageGenerationError(status["message"])
+        from tools.photorealistic_pipeline_v2 import PhotorealisticPipelineV2
+        return PhotorealisticPipelineV2
+    raise V2ImageGenerationError(f"V2 profile {profile!r} has no pipeline")
+
+
+def _resolve_default_v2_materializer():
+    """Real production materializer. Imported only when a V2 run is requested."""
+    from tools.v2_promo_materializer import materialize_v2_promo
+    return materialize_v2_promo
+
+
+def _resolve_v2_request(profile, pipeline, spec, *, replica=0, read_bytes=None, enabled_override=None):
+    """Resolve a built spec through an already-loaded router, else pipeline.resolve.
+
+    Does not import image_pipeline_v2_router here.
+    The activation gate is is_v2_profile_enabled.
+    """
+    router_mod = sys.modules.get("tools.image_pipeline_v2_router")
+    route = getattr(router_mod, "route_v2_image_generation", None) if router_mod is not None else None
+    if callable(route):
+        enabled = True if enabled_override is None else bool(enabled_override)
+        return route(profile, spec, enabled=enabled, replica=replica, read_bytes=read_bytes)
+    return pipeline.resolve(spec, replica=replica, read_bytes=read_bytes)
+
+
+def _invoke_v2_materializer(materializer, profile, resolution, target):
+    """1-arg test fakes receive resolution; production materializer is 3-arg."""
+    import inspect
+    try:
+        params = [
+            p for p in inspect.signature(materializer).parameters.values()
+            if p.kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+        ]
+    except (TypeError, ValueError):
+        params = None
+    if params is not None and len(params) <= 1:
+        return materializer(resolution)
+    return materializer(profile, resolution, target)
+
+
+def generate_promo_image_v2(
+    style: str,
+    prompt: str,
+    target: Path,
+    *,
+    abbr: str = "",
+    index: int = 0,
+    replica: int = 0,
+    read_bytes: "Any" = None,
+    materialize: "Any" = None,
+    enabled_override: "bool | None" = None,
+    novel: "str | None" = None,
+    chapter: "str | int | None" = None,
+    scene_text: "str | None" = None,
+    promo_master_enabled: "bool | None" = None,
+    promo_master_out: "dict | None" = None,
+    promo_master_activation_source: "str | None" = None,
+    image_intent: "Any" = None,
+) -> "str | None":
+    """Smallest live V2 promo seam.
+
+    Returns None when the style is not a V2 profile (comic/unknown) or the
+    profile is disabled: the caller keeps the legacy path.
+
+    Returns a source label when an enabled Main Posts / Realistic profile
+    materializes an image at target.
+
+    Raises V2ImageGenerationError (a RuntimeError) when an enabled profile
+    misses or errors. Callers must not fall back to local SD, OpenAI, Google,
+    stock, or the emergency image.
+    """
+    # R3 Phase 5/6: when a *canonical* novel + scene_text exist, stamp scene authority
+    # observability for SCENE_BEARING promo callers. Never disturb non-canon test novels.
+    if (novel or abbr) and scene_text:
+        try:
+            from tools import scene_environment as _se
+            from tools.novel_id import normalize_novel_id as _nid
+            _n = _nid(novel or abbr)
+            if _n in {"ha", "en", "hp", "sf"}:
+                _spec = _se.resolve_scene_environment(_n, str(scene_text)[:800])
+                _se.record_still_observability([{
+                    **_se.build_still_observability(
+                        input_novel=novel or abbr, normalized_novel=_n, path="generate_promo_image_v2",
+                        prompts=[prompt], specs=[_spec], beats=[str(scene_text)[:200]],
+                        roles=["promo"], legacy_used=[False], legacy_reasons=[""],
+                    )[0],
+                    "SCENE_PATH_CLASS": "SCENE_BEARING_NONCHARACTER_IMAGE",
+                    "SCENE_AUTHORITY_APPLIED": True,
+                    "LOCATION_AUTHORITY": _spec.authority,
+                    "SCENE_ID": f"{_n}:promo",
+                    "SCENE_ACTION": _spec.scene_action,
+                    "SCENE_SUBJECTS": [],
+                }])
+        except Exception as _r3_exc:  # noqa: BLE001
+            print(f"[r3-scene-authority] promo v2 stamp failed ({_r3_exc})")
+    from tools.image_pipeline_v2_profiles import (
+        PHOTOREALISTIC_PROFILE,
+        PHOTOREALISTIC_UNAVAILABLE_MESSAGE,
+        is_explicit_photorealistic_style,
+    )
+
+    if is_explicit_photorealistic_style(style) or v2_profile_for_style(style) == PHOTOREALISTIC_PROFILE:
+        from tools.image_pipeline_v2_profiles import photorealistic_asset_status
+        from tools.photorealistic_pipeline_v2 import PhotorealisticGpuQualificationRequired
+
+        status = photorealistic_asset_status()
+        if not status["ready"]:
+            raise V2ImageGenerationError(status["message"])
+        pipeline = _v2_pipeline_class(PHOTOREALISTIC_PROFILE)()
+        try:
+            pipeline.build_spec(
+                prompt=prompt,
+                novel=novel,
+                chapter=chapter,
+                scene_text=scene_text,
+            )
+        except Exception as _canon_exc:
+            from tools.studio_bible_adapter import CanonUnresolvedError
+            if isinstance(_canon_exc, CanonUnresolvedError):
+                raise V2ImageGenerationError(
+                    f"Studio Bible required canon unresolved ({_canon_exc.code}): {_canon_exc.detail or _canon_exc}"
+                ) from _canon_exc
+            raise
+        # CPU bind only. Do not call the production materializer or queue a KSampler.
+        raise V2ImageGenerationError(str(PhotorealisticGpuQualificationRequired(status["asset"])))
+    profile = v2_profile_for_style(style)
+    if profile is None:
+        return None
+    if not _v2_profile_enabled(profile, enabled_override):
+        return None
+
+    target = Path(target)
+    pipeline_cls = _v2_pipeline_class(profile)
+    pipeline = pipeline_cls()
+    try:
+        spec = pipeline.build_spec(
+            prompt=prompt,
+            novel=novel,
+            chapter=chapter,
+            scene_text=scene_text,
+        )
+    except Exception as _canon_exc:
+        # Fail closed on required Studio Bible canon: never fall through to
+        # V1 / cloud / stock / empty / default / cross-novel substitutes.
+        from tools.studio_bible_adapter import CanonUnresolvedError
+        if isinstance(_canon_exc, CanonUnresolvedError):
+            raise V2ImageGenerationError(
+                f"Studio Bible required canon unresolved ({_canon_exc.code}): {_canon_exc.detail or _canon_exc}"
+            ) from _canon_exc
+        raise
+    resolution = _resolve_v2_request(
+        profile,
+        pipeline,
+        spec,
+        replica=replica,
+        read_bytes=read_bytes,
+        enabled_override=enabled_override,
+    )
+    materializer = materialize if materialize is not None else V2_PROMO_MATERIALIZER
+    if materializer is None:
+        materializer = _resolve_default_v2_materializer()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    raw = _invoke_v2_materializer(materializer, profile, resolution, target)
+
+    from tools.image_pipeline_v2_execution import V2ExecutionResult
+
+    if isinstance(raw, V2ExecutionResult):
+        result = raw
+    else:
+        if not isinstance(raw, (bytes, bytearray)) or not raw:
+            raise V2ImageGenerationError("V2 image generation failed: materializer returned no image bytes")
+        target.write_bytes(raw)
+        result = V2ExecutionResult(
+            profile=profile,
+            execution_id=None,
+            prompt_id=None,
+            output_path=str(target),
+            output_sha256=hashlib.sha256(raw).hexdigest(),
+            status="success",
+            provenance=dict(getattr(resolution, "provenance", None) or {}),
+        )
+
+    if getattr(result, "status", None) != "success":
+        from tools.image_pipeline_v2_provenance import persist_v2_failure_provenance
+        persist_v2_failure_provenance(
+            target, result, caller="generate_promo_image_v2",
+            abbr=abbr, index=index, style=style,
+        )
+        raise V2ImageGenerationError(
+            f"V2 image generation failed ({getattr(result, 'error_type', None)}): "
+            f"{getattr(result, 'primary_error', None)}"
+        )
+
+    if not Path(str(getattr(result, "output_path", None) or target)).exists():
+        raise V2ImageGenerationError(
+            f"V2 execution reported success but output missing at {getattr(result, 'output_path', None)}"
+        )
+
+    # IDENTITY_PRODUCTION_PLUMBING_20260929: identity acceptance boundary
+    # (generation -> identity verification -> acceptance decision -> persistence /
+    # publish eligibility). ENABLE_IDENTITY_PRESERVATION OFF: BYPASS, no side effects.
+    # ON: PASS / UNSPECIFIED_OK continue; REJECT_REVIEW / FAIL_CLOSED quarantine the
+    # image (bytes unchanged) and raise before archive / trace / provenance / master.
+    from tools.identity_preservation import enforce_identity_acceptance as _enforce_identity
+    _id_prov = dict(getattr(resolution, "provenance", None) or {})
+    _enforce_identity(
+        Path(str(getattr(result, "output_path", None) or target)),
+        path_id=f"V2:{profile}:generate_promo_image_v2",
+        spec=spec,
+        prompt=str(prompt or ""),
+        novel=str(novel or ""),
+        milestone_conditioning_used=str(_id_prov.get("STYLE_REF_CONDITIONING_ACTIVE", "NO")).upper() == "YES",
+        error_cls=V2IdentityReviewRequired,
+        # IDENTITY_FINAL_COVERAGE_HARDENING_20260930: structured intent (explicit arg, else ambient).
+        # scene_text is forcing-only evidence (a governed name there can only upgrade to governed).
+        image_intent=_v2_identity_intent(image_intent, scene_text),
+    )
+
+    source = f"v2:{profile}"
+    archived = archive_generated_promo_image(target, abbr, prompt, f"v2-{profile}-{index}")
+    write_image_provider_trace(target, {
+        "prompt": str(prompt or "")[:800],
+        "target": str(target),
+        "selectedSource": source,
+        "v2": True,
+        "v2Profile": profile,
+        "v2Pipeline": getattr(resolution, "pipeline_implementation", None) or pipeline_cls.__name__,
+        "v2ExecutionId": getattr(result, "execution_id", None),
+        "v2PromptId": getattr(result, "prompt_id", None),
+        "v2OutputSha256": getattr(result, "output_sha256", None),
+        "v2Provenance": getattr(resolution, "provenance", None),
+        "v2RoutingProvenance": getattr(resolution, "routing_provenance", None),
+        "finishedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+    })
+    from tools.image_pipeline_v2_provenance import persist_v2_provenance
+    persist_v2_provenance(
+        target, result, caller="generate_promo_image_v2",
+        abbr=abbr, index=index, style=style, archive_destination=archived,
+    )
+    from tools.promo_master_production import apply_promo_master
+    _pm = apply_promo_master(
+        Path(str(getattr(result, "output_path", None) or target)),
+        explicit=promo_master_enabled,
+        activation_source=promo_master_activation_source,
+    )
+    if promo_master_out is not None:
+        promo_master_out.clear()
+        promo_master_out.update(
+            {
+                "status": _pm.status,
+                "enabled": _pm.enabled,
+                "activation_source": _pm.activation_source,
+                "base_path": _pm.base_path,
+                "base_sha256": _pm.base_sha256,
+                "master_path": _pm.master_path,
+                "master_sha256": _pm.master_sha256,
+                "error": _pm.error,
+            }
+        )
+    return source
+
+
+@_identity_context_from_args(abbr="abbr")
 def create_prompt_fallback_image(
     prompt: str,
     target: Path,
@@ -32640,6 +34742,7 @@ def create_prompt_fallback_image(
                 note_provider("openai", started, True, source, source)
                 return finish_provider_trace(source)
             except Exception as exc:
+                _reraise_identity_block(exc)
                 errors.append(f"openai: {exc}")
                 note_provider("openai", started if "started" in locals() else time.perf_counter(), False, exc)
                 continue
@@ -32652,6 +34755,7 @@ def create_prompt_fallback_image(
                 note_provider("google_ai", started, True, source, source)
                 return finish_provider_trace(source)
             except Exception as exc:
+                _reraise_identity_block(exc)
                 errors.append(f"google_ai: {exc}")
                 note_provider("google_ai", started if "started" in locals() else time.perf_counter(), False, exc)
                 continue
@@ -32664,6 +34768,7 @@ def create_prompt_fallback_image(
                 note_provider("local_stable_diffusion", started, True, source, source)
                 return finish_provider_trace(source)
             except Exception as exc:
+                _reraise_identity_block(exc)
                 errors.append(f"local_stable_diffusion: {exc}")
                 note_provider("local_stable_diffusion", started if "started" in locals() else time.perf_counter(), False, exc)
                 if not ALLOW_EXTERNAL_IMAGE_FALLBACK:
@@ -32694,6 +34799,9 @@ def create_prompt_fallback_image(
                 started = time.perf_counter()
                 banked = choose_banked_image(prompt, abbr)
                 if banked:
+                    _identity_enforce_fallback(banked, asset_class="BANKED_GENERATED_IMAGE",
+                                               fallback_source="prompt_fallback_banked",
+                                               path_id="FALLBACK:create_prompt_fallback_image:banked", prompt=prompt)
                     shutil.copy2(banked, target)
                     state = mark_image_used(target)
                     save_promo_rotation_state(state)
@@ -32702,6 +34810,7 @@ def create_prompt_fallback_image(
                     return finish_provider_trace(source)
                 note_provider("banked", started, False, "No banked image matched the prompt.")
             except Exception as exc:
+                _reraise_identity_block(exc)
                 errors.append(f"banked: {exc}")
                 note_provider("banked", started if "started" in locals() else time.perf_counter(), False, exc)
             continue
@@ -32712,11 +34821,15 @@ def create_prompt_fallback_image(
                 if fresh:
                     variant += random.randint(1, 1000)
                 info = create_pexels_image(prompt, target, abbr, variant, orientation=orientation)
+                _identity_enforce_fallback(target, asset_class="STOCK_IMAGE", fallback_source="prompt_fallback_pexels",
+                                           path_id="FALLBACK:create_prompt_fallback_image:pexels", prompt=prompt,
+                                           quarantine=True)
                 archive_generated_promo_image(target, abbr, prompt, f"pexels-{index}")
                 source = f"pexels:{info.get('query', '')}"
                 note_provider("pexels", started, True, source, source)
                 return finish_provider_trace(source)
             except Exception as exc:
+                _reraise_identity_block(exc)
                 errors.append(f"pexels: {exc}")
                 note_provider("pexels", started if "started" in locals() else time.perf_counter(), False, exc)
                 continue
@@ -32727,11 +34840,15 @@ def create_prompt_fallback_image(
                 if fresh:
                     variant += random.randint(1, 1000)
                 info = create_pixabay_image(prompt, target, abbr, variant, orientation=orientation)
+                _identity_enforce_fallback(target, asset_class="STOCK_IMAGE", fallback_source="prompt_fallback_pixabay",
+                                           path_id="FALLBACK:create_prompt_fallback_image:pixabay", prompt=prompt,
+                                           quarantine=True)
                 archive_generated_promo_image(target, abbr, prompt, f"pixabay-{index}")
                 source = f"pixabay:{info.get('query', '')}"
                 note_provider("pixabay", started, True, source, source)
                 return finish_provider_trace(source)
             except Exception as exc:
+                _reraise_identity_block(exc)
                 errors.append(f"pixabay: {exc}")
                 note_provider("pixabay", started if "started" in locals() else time.perf_counter(), False, exc)
                 continue
@@ -32770,6 +34887,7 @@ def create_prompt_fallback_image(
     return finish_provider_trace(f"generic:{'; '.join(errors)}{assist_note}")
 
 
+@_identity_context_from_args(abbr="abbr")
 def create_unique_prompt_fallback_image(
     prompt: str,
     target: Path,
@@ -32912,6 +35030,8 @@ def create_fallback_image(query: str, target: Path, index: int, size: tuple[int,
             draw.line((x, int(height * 0.25), x + int(offset * 0.18), ground_y), fill=(*accent, 54), width=5)
         draw.rectangle((0, 0, width, height), fill=(0, 0, 0, 30))
         image.save(target)
+        _identity_classify_procedural(target, path_id="PROCEDURAL:create_fallback_image",
+                                      fallback_source="procedural_emergency_art", prompt=query)
         return
     for i in range(18):
         x = int((digest[i % len(digest)] / 255) * width)
@@ -32925,6 +35045,8 @@ def create_fallback_image(query: str, target: Path, index: int, size: tuple[int,
         draw.line((80, y, width - 80, y + (digest[i + 9] % 140) - 70), fill=(*light, 45), width=4)
     draw.rectangle((0, 0, width, height), fill=(0, 0, 0, 26))
     image.save(target)
+    _identity_classify_procedural(target, path_id="PROCEDURAL:create_fallback_image",
+                                  fallback_source="procedural_emergency_art", prompt=query)
 
 
 SOCIAL_LINK_LABEL_RE = re.compile(r"(?im)^\s*(rr|royal road|patreon|youtube|tik\s*tok|tiktok|instagram|x|twitter)\b.*$")
@@ -33408,6 +35530,7 @@ def download_pixabay_background_videos(target_per_novel: int = BACKGROUND_VIDEO_
     }
 
 
+@_identity_context_from_args(abbr="abbr", novel="novel")
 def make_campaign(
     title: str,
     chapter: str,
@@ -33425,6 +35548,9 @@ def make_campaign(
     hash_value = content_hash(chapter)
     folder = stable_chapter_folder(OUTPUT_DIR, "campaign", title, abbr, chapter_id)
     reused = None if force_new_images else reusable_pack_result(folder, hash_value, ["metadata.json"])
+    if reused and not _identity_pack_reuse_allowed(reused, folder, "campaign_reusable_pack",
+                                                   "FALLBACK:make_campaign:reusable_pack_result"):
+        reused = None
     if reused and any(Path(image).exists() for image in reused.get("images", []) or []):
         record_recovery_event(
             "campaign_build",
@@ -33500,6 +35626,13 @@ def make_campaign(
                 },
             )
         return auto_publish_generated_media(folder, reused)
+    _camp_prev_prov = None
+    if _identity_flag_on():  # AIVSB_DURABLE_PROVENANCE_REMEDIATION_20261004: keep earlier provenance across a rebuild
+        try:
+            from tools import aivsb_prompt_provenance as _prov0
+            _camp_prev_prov = _prov0.load_folder_store(folder)
+        except Exception:  # noqa: BLE001
+            _camp_prev_prov = None
     reset_generated_folder(folder)
 
     source = "fallback"
@@ -33532,7 +35665,30 @@ def make_campaign(
     prompts = [str(prompt).strip() for prompt in material.get("image_prompts", []) if str(prompt).strip()]
     if len(prompts) < 3:
         prompts.extend(make_chapter_image_prompts(title, chapter, material["phrases"], novel)[len(prompts):])
-    material["image_prompts"] = prompts[:3]
+    # R3 Phase 5/6: LLM primary branch is SCENE_BEARING — recompute scene authority from chapter
+    # context rather than trusting stale LLM prompt prose alone when structured context exists.
+    material["image_prompts"] = _r3_govern_scene_prompts(
+        entry="make_campaign", novel=novel, title=title, chapter_text=chapter,
+        phrases=list(material["phrases"]), existing_prompts=prompts[:3],
+    )
+    _camp_prov_recs: list = []
+    if _identity_flag_on():  # AIVSB_DURABLE_PROVENANCE_REMEDIATION_20261004 (flag ON only)
+        try:
+            _camp_store, _camp_prov_recs = _aivsb_prov_store_for_prompts(
+                material["image_prompts"], assets=[f"promo-{i}.png" for i in range(1, len(material["image_prompts"]) + 1)],
+                source_text=f"{title} {chapter}", novel=novel or abbr, origin=f"app.make_campaign:{source}",
+                run_id=_aivsb_prov_run_id("campaign"), known_non_aivsb=(source in ("openai", "google_ai")))
+            from tools import aivsb_prompt_provenance as _prov
+            # Rebuild of an existing pack: earlier records are kept (never overwritten / dropped); asset
+            # mappings point at the records of the prompts persisted now.
+            _camp_prev = _prov.merge_stores(_camp_prev_prov, _prov.load_folder_store(folder), source="PREVIOUS")
+            _camp_prev.by_asset = {}
+            _camp_store = _prov.merge_stores(_camp_prev, _camp_store, source="WRITER")
+            material["aivsb_prompt_provenance"] = _camp_store.to_block()
+            _prov.write_folder_sidecar(folder, _camp_store)
+        except Exception as _prov_exc:  # noqa: BLE001 - absence of provenance -> review downstream
+            print(f"[aivsb-provenance] campaign provenance failed ({_prov_exc})")
+            material.pop("aivsb_prompt_provenance", None)
 
     material["title"] = title
     material["chapter"] = chapter_id
@@ -33596,6 +35752,12 @@ def make_campaign(
         )
 
     reusable_pack = [] if force_new_images else (chapter_image_pack(abbr, chapter_id, title) if abbr and chapter_id else [])
+    if reusable_pack and not all(
+        _identity_fallback_allowed(p, asset_class="CHAPTER_PACK_IMAGE", fallback_source="campaign_chapter_image_pack",
+                                   path_id="FALLBACK:make_campaign:chapter_image_pack")
+        for p in reusable_pack
+    ):
+        reusable_pack = []
     if reusable_pack:
         record_recovery_event(
             "campaign_images",
@@ -33613,6 +35775,7 @@ def make_campaign(
         try:
             if index <= len(reusable_pack):
                 shutil.copy2(reusable_pack[index - 1], target)
+                _identity_copy_reuse_sidecars(reusable_pack[index - 1], target)  # AIVSB_DURABLE_PROVENANCE_REMEDIATION_20261004
                 material.setdefault("image_sources", []).append(f"reused:{reusable_pack[index - 1]}")
             elif source == "openai":
                 create_openai_image(prompt, target)
@@ -33680,6 +35843,7 @@ def make_campaign(
                 )
                 material.setdefault("image_warnings", []).append(f"OpenAI image fallback used: {exc}")
             except Exception as fallback_exc:
+                _reraise_identity_block(fallback_exc)
                 placeholder = ASSET_DIR / "placeholder.svg"
                 target = folder / f"promo-{index}.svg"
                 text = placeholder.read_text(encoding="utf-8").replace("{{PHRASE}}", material["phrases"][index - 1])
@@ -33688,6 +35852,9 @@ def make_campaign(
         images.append(str(target))
 
     material["images"] = images
+    if _identity_flag_on() and _camp_prov_recs:  # AIVSB_DURABLE_PROVENANCE_REMEDIATION_20261004
+        _aivsb_prov_bind_images(images, _camp_prov_recs,
+                                {i: reusable_pack[i] for i in range(min(len(reusable_pack), len(images)))})
     archived_images = []
     image_sources = [str(source) for source in material.get("image_sources", [])]
     for index, image in enumerate(images, start=1):
@@ -33700,6 +35867,11 @@ def make_campaign(
     if archived_images:
         material["archived_images"] = archived_images
     outro_image = choose_rotating_daily_promo_image(abbr)
+    if outro_image and not _identity_fallback_allowed(
+        outro_image, asset_class="DAILY_PROMO_IMAGE", fallback_source="campaign_outro_daily_promo",
+        path_id="FALLBACK:make_campaign:outro_daily_promo",
+    ):
+        outro_image = None
     if outro_image:
         outro_target = folder / outro_image.name
         shutil.copy2(outro_image, outro_target)
@@ -34120,6 +36292,7 @@ def story_hook_thumbnail_prompt(title: str, story_text: str, abbr: str = "", ang
     ).strip()
 
 
+@_identity_context_from_args(abbr="abbr")
 def build_story_hook_thumbnail_base(
     post_folder: Path,
     title: str,
@@ -34135,7 +36308,10 @@ def build_story_hook_thumbnail_base(
     prompt_file = post_folder / "story-hook-thumbnail-prompt.txt"
     prompt = story_hook_thumbnail_prompt(title, story_text, abbr, angle)
     prompt_file.write_text(prompt + "\n", encoding="utf-8")
-    if target.exists() and target.stat().st_size > 1024 and not force:
+    if target.exists() and target.stat().st_size > 1024 and not force and _identity_fallback_allowed(
+        target, asset_class="PREVIOUS_RUN_IMAGE", fallback_source="story_hook_existing_thumbnail_base",
+        path_id="FALLBACK:build_story_hook_thumbnail_base:existing_reuse", prompt=prompt,
+    ):
         return {"created": False, "reused": True, "provider": "existing", "image": str(target), "prompt": prompt}
     rejected_hashes = rejected_hashes or set()
 
@@ -34197,12 +36373,18 @@ def build_story_hook_thumbnail_base(
                 return {"created": True, "reused": False, "provider": "local_stable_diffusion", "image": str(target), "prompt": prompt, "localStableDiffusion": info, "errors": errors}
             if provider == "pexels":
                 info = create_pexels_image(prompt, target, abbr, random.randint(0, 999), orientation="horizontal")
+                _identity_enforce_fallback(target, asset_class="STOCK_IMAGE", fallback_source="story_hook_pexels",
+                                           path_id="FALLBACK:build_story_hook_thumbnail_base:pexels", prompt=prompt,
+                                           quarantine=True)
                 if not generated_ok():
                     raise RuntimeError("generated thumbnail matched a rejected thumbnail")
                 archive_generated_promo_image(target, abbr, title, "story-hook-thumbnail-pexels")
                 return {"created": True, "reused": False, "provider": "pexels", "image": str(target), "prompt": prompt, "pexels": info, "errors": errors}
             if provider == "pixabay":
                 info = create_pixabay_image(prompt, target, abbr, random.randint(0, 999), orientation="horizontal")
+                _identity_enforce_fallback(target, asset_class="STOCK_IMAGE", fallback_source="story_hook_pixabay",
+                                           path_id="FALLBACK:build_story_hook_thumbnail_base:pixabay", prompt=prompt,
+                                           quarantine=True)
                 if not generated_ok():
                     raise RuntimeError("generated thumbnail matched a rejected thumbnail")
                 archive_generated_promo_image(target, abbr, title, "story-hook-thumbnail-pixabay")
@@ -34212,6 +36394,8 @@ def build_story_hook_thumbnail_base(
                 if not banked:
                     errors.append("banked: no eligible matching image")
                     continue
+                _identity_enforce_fallback(banked, asset_class="BANKED_GENERATED_IMAGE", fallback_source="story_hook_banked",
+                                           path_id="FALLBACK:build_story_hook_thumbnail_base:banked", prompt=prompt)
                 shutil.copy2(banked, target)
                 if not generated_ok():
                     raise RuntimeError("banked thumbnail matched a rejected thumbnail")
@@ -34244,6 +36428,7 @@ def build_story_hook_thumbnail_base(
                     "message": "Only emergency fallback art was available. Use the prompt in story-hook-thumbnail-prompt.txt with ChatGPT/Gemini, then import the image as the thumbnail base.",
                 }
         except Exception as exc:
+            _reraise_identity_block(exc)
             errors.append(f"{provider}: {exc}")
             continue
 
@@ -34343,6 +36528,7 @@ def rebuild_story_hook_thumbnail(folder_value: str, force: bool = True) -> dict[
     }
 
 
+@_identity_context_from_args(folder="folder_value")
 def import_story_hook_thumbnail(folder_value: str, image_input: str) -> dict[str, Any]:
     folder = Path(str(folder_value or "")).resolve()
     if not str(folder).startswith(str(STORY_HOOK_OUTPUT_DIR.resolve())):
@@ -34362,6 +36548,11 @@ def import_story_hook_thumbnail(folder_value: str, image_input: str) -> dict[str
         reverse=True,
     )
     score, source = scored[0]
+    # IDENTITY_PRODUCTION_COVERAGE_REMEDIATION: imported pixels are gated before banking /
+    # acceptance; being imported never auto-accepts a governed depiction (flag OFF: no-op).
+    _identity_enforce_fallback(source, asset_class="BROWSER_IMPORTED_IMAGE",
+                               fallback_source="browser_import_story_hook_thumbnail",
+                               path_id="BROWSER_IMPORT:import_story_hook_thumbnail", prompt=title)
     bank_dir = MANUAL_VIDEO_IMAGE_BANK_DIR / "story-hook-thumbnails" / (abbr or "general")
     bank_dir.mkdir(parents=True, exist_ok=True)
     digest = content_hash(str(source.resolve()) + str(source.stat().st_mtime) + str(source.stat().st_size))[:10]
@@ -34448,12 +36639,18 @@ def find_youtube_thumbnail_base(post_folder: Path, abbr: str = "") -> Path | Non
     return None
 
 
+@_identity_context_from_args(abbr="abbr")
 def build_youtube_thumbnail(post_folder: Path, title: str, abbr: str = "", preferred_base: str | Path | None = None, override_text: str = "") -> dict[str, Any]:
     post_folder = post_folder.resolve()
     preferred = Path(str(preferred_base)).resolve() if preferred_base else None
     base = preferred if preferred and preferred.exists() and preferred.is_file() and preferred.suffix.lower() in IMAGE_EXTENSIONS else find_youtube_thumbnail_base(post_folder, abbr)
     if not base:
         return {"created": False, "thumbnail": "", "reason": "No novel thumbnail base image was found."}
+    if base is not preferred and not _identity_fallback_allowed(
+        base, asset_class="PREVIOUS_RUN_IMAGE", fallback_source="youtube_thumbnail_discovered_base",
+        path_id="FALLBACK:build_youtube_thumbnail:discovered_base",
+    ):
+        return {"created": False, "thumbnail": "", "reason": "Discovered thumbnail base blocked by identity preservation (review required)."}
     output = post_folder / "youtube-thumbnail.png"
     source_copy = post_folder / f"novel_thumbnail{base.suffix.lower() if base.suffix else '.png'}"
     if base.resolve() != source_copy.resolve():
@@ -43323,6 +45520,17 @@ ${data.message || 'Builder finished.'}`;
 
 def app_health() -> dict[str, Any]:
     app_path = Path(__file__).resolve()
+    yaml_import = False
+    yaml_version = ""
+    yaml_module = ""
+    try:
+        import yaml as _yaml
+
+        yaml_import = True
+        yaml_version = str(getattr(_yaml, "__version__", "") or "")
+        yaml_module = str(getattr(_yaml, "__file__", "") or "")
+    except Exception:
+        yaml_import = False
     return {
         "ok": True,
         "pid": os.getpid(),
@@ -43333,6 +45541,11 @@ def app_health() -> dict[str, Any]:
         "sourceMtimeAtStart": APP_SOURCE_MTIME_AT_START,
         "appModifiedAt": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(app_path.stat().st_mtime)),
         "generatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "pythonPrefix": sys.prefix,
+        "pythonBasePrefix": sys.base_prefix,
+        "yamlImport": yaml_import,
+        "yamlVersion": yaml_version,
+        "yamlModulePath": yaml_module,
         "database": ensure_state_database(),
     }
 
@@ -43571,6 +45784,24 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/health":
             self.send_json(app_health())
+            return
+        if parsed.path == "/api/still-v2-rollout-status":
+            from tools.still_v2_activation import handle_rollout_http
+
+            code, payload = handle_rollout_http("GET", parsed.path, {}, self.client_address[0])
+            self.send_json(payload, code)
+            return
+        if parsed.path == "/api/promo-master-rollout-status":
+            from tools.promo_master_activation import handle_pm_rollout_http
+
+            code, payload = handle_pm_rollout_http("GET", parsed.path, {}, self.client_address[0])
+            self.send_json(payload, code)
+            return
+        if parsed.path == "/api/still-production-rollout-status":
+            from tools.still_production_rollout import handle_still_production_rollout_http
+
+            code, payload = handle_still_production_rollout_http("GET", parsed.path, {}, self.client_address[0])
+            self.send_json(payload, code)
             return
         if parsed.path == "/api/runtime-provenance":
             self.send_json(runtime_provenance())
@@ -43886,6 +46117,18 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self.send_json({"error": str(exc)}, 500)
             return
+        if parsed.path == "/api/daily-chapter-workflow":
+            try:
+                query = urllib.parse.parse_qs(parsed.query)
+                self.send_json(
+                    daily_chapter_workflow(
+                        query.get("abbr", [""])[0],
+                        dry_run=str(query.get("dryRun", ["1"])[0]).strip().lower() not in {"0", "false", "no"},
+                    )
+                )
+            except Exception as exc:
+                self.send_json({"error": str(exc)}, 500)
+            return
         if parsed.path == "/api/daily-youtube-status":
             try:
                 query = urllib.parse.parse_qs(parsed.query)
@@ -43951,6 +46194,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/campaign",
             "/api/write-chapter",
             "/api/create-next-chapter",
+            "/api/daily-chapter-workflow",
             "/api/chatgpt-chapter-start",
             "/api/story-hook-video-start",
             "/api/story-hook-thumbnail",
@@ -44098,11 +46342,48 @@ class Handler(BaseHTTPRequestHandler):
             "/api/settings",
             "/api/set-agent-posts",
             "/api/agent-posts-status",
+            "/api/still-v2-rollout-start",
+            "/api/still-v2-rollout-stop",
+            "/api/still-v2-rollout-decide",
+            "/api/promo-master-rollout-start",
+            "/api/promo-master-rollout-stop",
+            "/api/promo-master-rollout-decide",
+            "/api/still-production-rollout-start",
+            "/api/still-production-rollout-stop",
         }:
             self.send_error(404)
             return
         try:
             body = read_json_body(self)
+            if self.path in {
+                "/api/still-v2-rollout-start",
+                "/api/still-v2-rollout-stop",
+                "/api/still-v2-rollout-decide",
+            }:
+                from tools.still_v2_activation import handle_rollout_http
+
+                code, payload = handle_rollout_http("POST", self.path, body, self.client_address[0])
+                self.send_json(payload, code)
+                return
+            if self.path in {
+                "/api/promo-master-rollout-start",
+                "/api/promo-master-rollout-stop",
+                "/api/promo-master-rollout-decide",
+            }:
+                from tools.promo_master_activation import handle_pm_rollout_http
+
+                code, payload = handle_pm_rollout_http("POST", self.path, body, self.client_address[0])
+                self.send_json(payload, code)
+                return
+            if self.path in {
+                "/api/still-production-rollout-start",
+                "/api/still-production-rollout-stop",
+            }:
+                from tools.still_production_rollout import handle_still_production_rollout_http
+
+                code, payload = handle_still_production_rollout_http("POST", self.path, body, self.client_address[0])
+                self.send_json(payload, code)
+                return
             if self.path == "/api/r2-upload":
                 self.send_json(upload_folder_media_to_r2(str(body.get("folder") or "")))
                 return
@@ -44132,10 +46413,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(update_comment_status(str(body.get("commentId") or ""), str(body.get("status") or "pending")))
                 return
             if self.path == "/api/comment-content-post":
-                self.send_json(build_comment_content_post(str(body.get("commentId") or "")))
+                status, payload = run_comment_content_http(body)
+                self.send_json(payload, status)
                 return
             if self.path == "/api/growth-resurface":
-                self.send_json(build_resurfacing_post(str(body.get("abbr") or ""), str(body.get("chapter") or ""), str(body.get("reason") or "back_catalog")))
+                try:
+                    self.send_json(apply_growth_resurface_http(body))
+                except ValueError as exc:
+                    self.send_json({"error": str(exc)}, 400)
                 return
             if self.path == "/api/arc-campaigns":
                 self.send_json(arc_campaign_plans(bool(body.get("buildDrafts", False)), str(body.get("abbr") or "")))
@@ -44438,6 +46723,27 @@ class Handler(BaseHTTPRequestHandler):
                     bool(body.get("buildPromo", False)),
                 )
                 self.send_json(result)
+                return
+            if self.path == "/api/daily-chapter-workflow":
+                try:
+                    self.send_json(
+                        daily_chapter_workflow(
+                            str(body.get("abbr") or body.get("novel") or ""),
+                            dry_run=bool(body.get("dryRun", True)),
+                            chapter_text=str(body.get("chapterText") or body.get("text") or ""),
+                            chapter_number=int(body["chapterNumber"]) if str(body.get("chapterNumber") or "").strip().isdigit() else None,
+                            live_patreon=bool(body.get("livePatreon", False)),
+                            live_royal_road=bool(body.get("liveRoyalRoad", False)),
+                        )
+                    )
+                except Exception as exc:
+                    self.send_json(
+                        {
+                            "ok": False,
+                            "error": str(exc),
+                            "workflowStatus": "BLOCKED_GENERATION",
+                        }
+                    )
                 return
             if self.path == "/api/chatgpt-chapter-start":
                 self.send_json(

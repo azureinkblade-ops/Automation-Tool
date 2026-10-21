@@ -1,0 +1,6 @@
+﻿{
+  "RESOURCE": "BOUNDARY_DEVICE_ONTOLOGY_R18",
+  "MODE": "SUPPRESSION_ONLY",
+  "PURPOSE": "Objects operated at a building boundary. Membership may only classify an event as boundary interaction and suppress interior inference. It never creates CURRENT_SITE or SUCCESSFUL_DESTINATION and never proves entry.",
+  "BOUNDARY_DEVICE": ["bell", "doorbell", "buzzer", "knocker", "intercom", "bellpull"]
+}
