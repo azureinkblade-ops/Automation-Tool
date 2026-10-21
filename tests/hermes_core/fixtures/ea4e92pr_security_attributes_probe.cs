@@ -11,6 +11,17 @@ internal static class Ea4e92prSecurityAttributesProbe
     private static int Main(string[] args)
     {
         if (args.Length != 1) return 2;
+        if (args[0] == "layout")
+        {
+            Type type = typeof(Ea4eDirectory2SecurityAttributesCandidate.SecurityAttributes);
+            Console.WriteLine(IntPtr.Size + ":" +
+                Marshal.OffsetOf(type, "Length").ToInt32() + ":" +
+                Marshal.OffsetOf(type, "Descriptor").ToInt32() + ":" +
+                Marshal.OffsetOf(type, "InheritHandle").ToInt32() + ":" +
+                Marshal.SizeOf(type) + ":" +
+                Ea4eDirectory2SecurityAttributesCandidate.HasExpectedLayout());
+            return 0;
+        }
         string sddl = args[0] == "invalid" ? "D:(A;;GA;;;WD)" : Sddl;
         Func<IntPtr, string> observer = args[0] == "missing"
             ? null : new Func<IntPtr, string>(Observe);

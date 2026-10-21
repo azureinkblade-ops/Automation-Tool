@@ -45,6 +45,17 @@ def test_inert_attribute_marshalling(executable, mode, expected):
     assert result.stdout.splitlines() == [expected]
 
 
+def test_native_struct_layout_offsets(executable):
+    result = subprocess.run(
+        [str(executable), "layout"], capture_output=True, text=True,
+        timeout=10, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() in (
+        ["4:0:4:8:12:True"], ["8:0:8:16:24:True"],
+    )
+
+
 def test_candidate_has_no_native_create_call():
     source = (ROOT / "tools" / "Ea4eDirectory2SecurityAttributesCandidate.cs").read_text()
     for forbidden in ("DllImport", "CreateDirectory2W", "CreateFile", "DeleteFile"):

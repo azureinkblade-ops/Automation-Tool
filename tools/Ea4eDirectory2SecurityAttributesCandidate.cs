@@ -13,10 +13,22 @@ internal static class Ea4eDirectory2SecurityAttributesCandidate
         internal int InheritHandle;
     }
 
+    internal static bool HasExpectedLayout()
+    {
+        Type type = typeof(SecurityAttributes);
+        int pointer = IntPtr.Size;
+        return (pointer == 4 || pointer == 8) &&
+            Marshal.OffsetOf(type, "Length").ToInt32() == 0 &&
+            Marshal.OffsetOf(type, "Descriptor").ToInt32() == pointer &&
+            Marshal.OffsetOf(type, "InheritHandle").ToInt32() == 2 * pointer &&
+            Marshal.SizeOf(type) == (pointer == 8 ? 24 : 12);
+    }
+
     internal static string Inspect(string sddl, string appSid,
                                    Func<IntPtr, string> observer)
     {
         if (observer == null) return "DENY:OBSERVER_MISSING";
+        if (!HasExpectedLayout()) return "DENY:STRUCT_LAYOUT";
         if (Ea4eAnnouncementFileDescriptorCandidate.ScreenDirectorySddl(
                 sddl, appSid) !=
             "CANDIDATE:DIRECTORY_DESCRIPTOR_STRUCTURE_ONLY")
