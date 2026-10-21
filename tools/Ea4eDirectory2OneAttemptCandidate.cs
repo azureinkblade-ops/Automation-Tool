@@ -12,6 +12,14 @@ internal static class Ea4eDirectory2OneAttemptCandidate
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(IntPtr handle);
 
+    internal static string ClassifyUncertain(bool attempted,
+                                             bool rawCloseFailed)
+    {
+        if (rawCloseFailed) return "DENY:RAW_HANDLE_CLOSE_UNCERTAIN";
+        return attempted ? "DENY:POST_CALL_UNCERTAIN" :
+            "DENY:PRE_CALL_UNAVAILABLE";
+    }
+
     internal static string ScreenInputs(string resolvedProgramData,
         string pinnedManifestRoot, string path, string appSid, string sddl,
         uint access, uint share, uint flags)
@@ -55,11 +63,13 @@ internal static class Ea4eDirectory2OneAttemptCandidate
         SafeFileHandle owned = null;
         SafeFileHandle accepted = null;
         int observedError = 0;
+        bool attempted = false, rawCloseFailed = false;
         string observedVolume = null, observedId = null;
         try
         {
             string result = Ea4eDirectory2SecurityAttributesCandidate.Inspect(sddl, appSid,
                 attributes => {
+                    attempted = true;
                     IntPtr raw = Ea4eDirectory2NativeAbiCandidate.InvokeUnwired(
                         path, access, share, flags, attributes, out observedError);
                     if (raw == IntPtr.Zero || raw == new IntPtr(-1))
@@ -76,8 +86,11 @@ internal static class Ea4eDirectory2OneAttemptCandidate
                     finally
                     {
                         if (!transferred && !CloseHandle(raw))
+                        {
+                            rawCloseFailed = true;
                             throw new InvalidOperationException(
                                 "Raw directory handle close failed");
+                        }
                     }
                     string shape = Ea4eDirectory2RetainedShapeCandidate.Read(
                         owned, path, out observedVolume, out observedId);
@@ -91,7 +104,6 @@ internal static class Ea4eDirectory2OneAttemptCandidate
                     owned = null;
                     return "CANDIDATE:RETAINED_DIRECTORY_READBACK_ONLY";
                 });
-            lastError = observedError;
             if (result == "CANDIDATE:RETAINED_DIRECTORY_READBACK_ONLY")
             {
                 retained = accepted;
@@ -105,10 +117,11 @@ internal static class Ea4eDirectory2OneAttemptCandidate
         {
             if (error is OutOfMemoryException || error is StackOverflowException)
                 throw;
-            return "DENY:ATTEMPT_UNCERTAIN";
+            return ClassifyUncertain(attempted, rawCloseFailed);
         }
         finally
         {
+            lastError = observedError;
             if (owned != null) owned.Dispose();
             if (accepted != null) accepted.Dispose();
         }

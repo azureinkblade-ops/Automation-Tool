@@ -36,6 +36,9 @@ def executable(tmp_path_factory):
     ("wrong-child", "DENY:FIRST_CHILD_PATH"),
     ("wrong-manifest", "DENY:MANIFEST_MISMATCH"),
     ("different-descriptor", "DENY:DESCRIPTOR_MISMATCH"),
+    ("pre-call", "DENY:PRE_CALL_UNAVAILABLE"),
+    ("post-call", "DENY:POST_CALL_UNCERTAIN"),
+    ("raw-close", "DENY:RAW_HANDLE_CLOSE_UNCERTAIN"),
 ])
 def test_pre_call_screen_only(executable, mode, expected):
     result = subprocess.run(
@@ -60,3 +63,4 @@ def test_raw_handle_has_pre_wrapper_cleanup_edge():
     assert "bool transferred = false;" in source
     assert "owned = new SafeFileHandle(raw, true);" in source
     assert "if (!transferred && !CloseHandle(raw))" in source
+    assert "lastError = observedError;" in source

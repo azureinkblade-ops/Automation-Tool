@@ -31,6 +31,12 @@ internal static class Ea4e92pwOneAttemptScreen
             result = Ea4eDirectory2OneAttemptCandidate.ScreenInputs(
                 parent, manifest, first, sid,
                 sddl.Replace("O:BA", "O:SY"), 0x012200a1, 3, 1);
+        else if (args[0] == "pre-call")
+            result = Ea4eDirectory2OneAttemptCandidate.ClassifyUncertain(false, false);
+        else if (args[0] == "post-call")
+            result = Ea4eDirectory2OneAttemptCandidate.ClassifyUncertain(true, false);
+        else if (args[0] == "raw-close")
+            result = Ea4eDirectory2OneAttemptCandidate.ClassifyUncertain(true, true);
         else return 2;
         Console.WriteLine(result ?? "CANDIDATE:INPUTS_ONLY");
         return 0;
