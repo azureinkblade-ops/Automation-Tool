@@ -7,8 +7,9 @@ internal static class Ea4eDirectory2OneAttemptCandidate
     private const string ShapeCandidate = "CANDIDATE:RETAINED_DIRECTORY_SHAPE_ONLY";
     private const string DescriptorCandidate = "CANDIDATE:DIRECTORY_DESCRIPTOR_STRUCTURE_ONLY";
 
-    internal static string ScreenInputs(string path, string appSid, string sddl,
-                                        uint access, uint share, uint flags)
+    internal static string ScreenInputs(string resolvedProgramData,
+        string pinnedManifestRoot, string path, string appSid, string sddl,
+        uint access, uint share, uint flags)
     {
         if (String.IsNullOrEmpty(path) || String.IsNullOrEmpty(appSid) ||
             String.IsNullOrEmpty(sddl)) return "DENY:INPUT";
@@ -16,15 +17,25 @@ internal static class Ea4eDirectory2OneAttemptCandidate
             share != Ea4eDirectoryInstallPlanCandidate.ShareReadWriteNoDelete ||
             flags != Ea4eDirectoryInstallPlanCandidate.DisallowPathRedirects)
             return "DENY:NATIVE_POLICY";
-        if (Ea4eAnnouncementFileDescriptorCandidate.ScreenDirectorySddl(
-                sddl, appSid) != DescriptorCandidate)
-            return "DENY:DESCRIPTOR";
+        string[] components;
+        string plannedSddl;
+        string plan = Ea4eDirectoryInstallPlanCandidate.Build(
+            resolvedProgramData, pinnedManifestRoot, appSid,
+            out components, out plannedSddl);
+        if (plan != null) return plan;
+        if (components == null || components.Length != 4 ||
+            !String.Equals(path, components[0],
+                           StringComparison.OrdinalIgnoreCase))
+            return "DENY:FIRST_CHILD_PATH";
+        if (!String.Equals(sddl, plannedSddl, StringComparison.Ordinal))
+            return "DENY:DESCRIPTOR_MISMATCH";
         return null;
     }
 
     // The caller must separately authenticate the parent, manifest, SID,
     // volume, privilege, and absence. A candidate result is not installation.
-    internal static string AttemptUnwired(string path, string appSid, string sddl,
+    internal static string AttemptUnwired(string resolvedProgramData,
+        string pinnedManifestRoot, string path, string appSid, string sddl,
         uint access, uint share, uint flags, out SafeFileHandle retained,
         out int lastError, out string volumeHex, out string fileIdHex)
     {
@@ -32,7 +43,8 @@ internal static class Ea4eDirectory2OneAttemptCandidate
         lastError = 0;
         volumeHex = null;
         fileIdHex = null;
-        string denial = ScreenInputs(path, appSid, sddl, access, share, flags);
+        string denial = ScreenInputs(resolvedProgramData, pinnedManifestRoot,
+            path, appSid, sddl, access, share, flags);
         if (denial != null) return denial;
 
         SafeFileHandle owned = null;

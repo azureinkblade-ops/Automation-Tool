@@ -33,6 +33,9 @@ def executable(tmp_path_factory):
     ("valid", "CANDIDATE:INPUTS_ONLY"),
     ("share-delete", "DENY:NATIVE_POLICY"),
     ("missing-sid", "DENY:INPUT"),
+    ("wrong-child", "DENY:FIRST_CHILD_PATH"),
+    ("wrong-manifest", "DENY:MANIFEST_MISMATCH"),
+    ("different-descriptor", "DENY:DESCRIPTOR_MISMATCH"),
 ])
 def test_pre_call_screen_only(executable, mode, expected):
     result = subprocess.run(
