@@ -3,7 +3,6 @@ using System;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
-using Microsoft.Win32.SafeHandles;
 
 internal static class Ea4eAnnouncementFileDescriptorCandidate
 {
@@ -15,7 +14,7 @@ internal static class Ea4eAnnouncementFileDescriptorCandidate
 
     [DllImport("advapi32.dll", ExactSpelling = true)]
     private static extern uint GetSecurityInfo(
-        SafeFileHandle handle, int objectType, uint securityInformation,
+        SafeHandle handle, int objectType, uint securityInformation,
         IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl,
         out IntPtr descriptor);
 
@@ -165,19 +164,19 @@ internal static class Ea4eAnnouncementFileDescriptorCandidate
     }
 
     // Caller retains this exact handle and scopes enabled SeSecurityPrivilege.
-    internal static string Read(SafeFileHandle handle, string appSidText,
+    internal static string Read(SafeHandle handle, string appSidText,
                                 out byte[] bytes)
     {
         return ReadCore(handle, appSidText, false, out bytes);
     }
 
-    internal static string ReadDirectory(SafeFileHandle handle,
+    internal static string ReadDirectory(SafeHandle handle,
                                          string appSidText, out byte[] bytes)
     {
         return ReadCore(handle, appSidText, true, out bytes);
     }
 
-    private static string ReadCore(SafeFileHandle handle, string appSidText,
+    private static string ReadCore(SafeHandle handle, string appSidText,
                                    bool directory, out byte[] bytes)
     {
         bytes = null;

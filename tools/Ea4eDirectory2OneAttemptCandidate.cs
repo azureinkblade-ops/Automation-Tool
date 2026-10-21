@@ -1,7 +1,6 @@
 // Unwired source candidate. No production entry point invokes this owner.
 using System;
 using System.Runtime.InteropServices;
-using Microsoft.Win32.SafeHandles;
 
 internal static class Ea4eDirectory2OneAttemptCandidate
 {
@@ -18,6 +17,11 @@ internal static class Ea4eDirectory2OneAttemptCandidate
         if (rawCloseFailed) return "DENY:RAW_HANDLE_CLOSE_UNCERTAIN";
         return attempted ? "DENY:POST_CALL_UNCERTAIN" :
             "DENY:PRE_CALL_UNAVAILABLE";
+    }
+
+    internal static string ClassifyRelease(bool observed)
+    {
+        return observed ? null : "DENY:WRAPPER_CLOSE_UNCERTAIN";
     }
 
     internal static string ScreenInputs(string resolvedProgramData,
@@ -49,25 +53,31 @@ internal static class Ea4eDirectory2OneAttemptCandidate
     // volume, privilege, and absence. A candidate result is not installation.
     internal static string AttemptUnwired(string resolvedProgramData,
         string pinnedManifestRoot, string path, string appSid, string sddl,
-        uint access, uint share, uint flags, out SafeFileHandle retained,
-        out int lastError, out string volumeHex, out string fileIdHex)
+        uint access, uint share, uint flags,
+        out Ea4eDirectoryObservedHandleCandidate retained,
+        out int lastError, out int releaseError,
+        out string volumeHex, out string fileIdHex)
     {
         retained = null;
         lastError = 0;
+        releaseError = 0;
         volumeHex = null;
         fileIdHex = null;
         string denial = ScreenInputs(resolvedProgramData, pinnedManifestRoot,
             path, appSid, sddl, access, share, flags);
         if (denial != null) return denial;
 
-        SafeFileHandle owned = null;
-        SafeFileHandle accepted = null;
+        Ea4eDirectoryObservedHandleCandidate owned = null;
+        Ea4eDirectoryObservedHandleCandidate accepted = null;
         int observedError = 0;
+        int observedReleaseError = 0;
         bool attempted = false, rawCloseFailed = false;
+        bool wrapperCloseUncertain = false;
         string observedVolume = null, observedId = null;
+        string result = null;
         try
         {
-            string result = Ea4eDirectory2SecurityAttributesCandidate.Inspect(sddl, appSid,
+            result = Ea4eDirectory2SecurityAttributesCandidate.Inspect(sddl, appSid,
                 attributes => {
                     attempted = true;
                     IntPtr raw = Ea4eDirectory2NativeAbiCandidate.InvokeUnwired(
@@ -80,7 +90,7 @@ internal static class Ea4eDirectory2OneAttemptCandidate
                         if (Ea4eDirectory2HandleResultCandidate.Screen(raw) !=
                             "CANDIDATE:NON_SENTINEL_ONLY")
                             return "DENY:NATIVE_RESULT_UNCERTAIN";
-                        owned = new SafeFileHandle(raw, true);
+                        owned = new Ea4eDirectoryObservedHandleCandidate(raw);
                         transferred = true;
                     }
                     finally
@@ -111,19 +121,32 @@ internal static class Ea4eDirectory2OneAttemptCandidate
                 fileIdHex = observedId;
                 accepted = null;
             }
-            return result;
         }
         catch (Exception error)
         {
             if (error is OutOfMemoryException || error is StackOverflowException)
                 throw;
-            return ClassifyUncertain(attempted, rawCloseFailed);
+            result = ClassifyUncertain(attempted, rawCloseFailed);
         }
         finally
         {
             lastError = observedError;
-            if (owned != null) owned.Dispose();
-            if (accepted != null) accepted.Dispose();
+            if (owned != null)
+            {
+                owned.Dispose();
+                wrapperCloseUncertain |= !owned.ReleaseObserved;
+                if (!owned.ReleaseObserved)
+                    observedReleaseError = owned.ReleaseError;
+            }
+            if (accepted != null)
+            {
+                accepted.Dispose();
+                wrapperCloseUncertain |= !accepted.ReleaseObserved;
+                if (!accepted.ReleaseObserved)
+                    observedReleaseError = accepted.ReleaseError;
+            }
+            releaseError = observedReleaseError;
         }
+        return wrapperCloseUncertain ? ClassifyRelease(false) : result;
     }
 }

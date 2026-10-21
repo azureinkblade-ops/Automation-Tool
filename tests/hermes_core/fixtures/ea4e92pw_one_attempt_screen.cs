@@ -37,6 +37,10 @@ internal static class Ea4e92pwOneAttemptScreen
             result = Ea4eDirectory2OneAttemptCandidate.ClassifyUncertain(true, false);
         else if (args[0] == "raw-close")
             result = Ea4eDirectory2OneAttemptCandidate.ClassifyUncertain(true, true);
+        else if (args[0] == "wrapper-close-observed")
+            result = Ea4eDirectory2OneAttemptCandidate.ClassifyRelease(true);
+        else if (args[0] == "wrapper-close-unobserved")
+            result = Ea4eDirectory2OneAttemptCandidate.ClassifyRelease(false);
         else return 2;
         Console.WriteLine(result ?? "CANDIDATE:INPUTS_ONLY");
         return 0;

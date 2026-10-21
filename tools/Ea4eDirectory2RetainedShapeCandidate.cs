@@ -2,7 +2,6 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
-using Microsoft.Win32.SafeHandles;
 
 internal static class Ea4eDirectory2RetainedShapeCandidate
 {
@@ -40,23 +39,23 @@ internal static class Ea4eDirectory2RetainedShapeCandidate
     }
 
     [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern uint GetFileType(SafeFileHandle handle);
+    private static extern uint GetFileType(SafeHandle handle);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileInformationByHandle(
-        SafeFileHandle handle, out ByHandleFileInformation info);
+        SafeHandle handle, out ByHandleFileInformation info);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileInformationByHandleEx(
-        SafeFileHandle handle, int infoClass, out FileAttributeTagInfo info,
+        SafeHandle handle, int infoClass, out FileAttributeTagInfo info,
         uint size);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode,
         EntryPoint = "GetFinalPathNameByHandleW", SetLastError = true)]
     private static extern uint GetFinalPathNameByHandle(
-        SafeFileHandle handle, StringBuilder path, uint capacity, uint flags);
+        SafeHandle handle, StringBuilder path, uint capacity, uint flags);
 
     internal static string Screen(uint fileType, uint attributes,
                                   uint tagAttributes, uint links,
@@ -95,7 +94,7 @@ internal static class Ea4eDirectory2RetainedShapeCandidate
             a.WriteTime.Low == b.WriteTime.Low;
     }
 
-    private static string FinalPath(SafeFileHandle handle)
+    private static string FinalPath(SafeHandle handle)
     {
         var path = new StringBuilder(32768);
         uint length = GetFinalPathNameByHandle(
@@ -104,7 +103,7 @@ internal static class Ea4eDirectory2RetainedShapeCandidate
     }
 
     // This never opens or closes the supplied handle. The caller owns it.
-    internal static string Read(SafeFileHandle handle, string expectedPath,
+    internal static string Read(SafeHandle handle, string expectedPath,
                                 out string volumeHex, out string fileIdHex)
     {
         volumeHex = null;

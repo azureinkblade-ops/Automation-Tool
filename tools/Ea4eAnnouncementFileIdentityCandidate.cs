@@ -1,7 +1,6 @@
 // Source-only FILE_ID_INFO observation on a caller-owned retained file handle.
 using System;
 using System.Runtime.InteropServices;
-using Microsoft.Win32.SafeHandles;
 
 internal static class Ea4eAnnouncementFileIdentityCandidate
 {
@@ -18,7 +17,7 @@ internal static class Ea4eAnnouncementFileIdentityCandidate
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileInformationByHandleEx(
-        SafeFileHandle handle, int infoClass, out FileIdentityInfo info,
+        SafeHandle handle, int infoClass, out FileIdentityInfo info,
         uint size);
 
     internal static int RequestedInfoClass() { return FileIdInfo; }
@@ -47,7 +46,7 @@ internal static class Ea4eAnnouncementFileIdentityCandidate
     }
 
     // Caller owns the handle and must bind this observation to the ceremony.
-    internal static string Read(SafeFileHandle handle,
+    internal static string Read(SafeHandle handle,
                                 out string volumeHex, out string fileIdHex)
     {
         volumeHex = null;
