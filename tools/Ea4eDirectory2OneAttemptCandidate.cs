@@ -56,7 +56,7 @@ internal static class Ea4eDirectory2OneAttemptCandidate
     }
 
     // The caller must separately authenticate the parent, manifest, SID,
-    // volume, privilege, and absence. A candidate result is not installation.
+    // volume, privilege, and absence. Close success does not reconcile a path.
     internal static string AttemptUnwired(string resolvedProgramData,
         string pinnedManifestRoot, string path, string appSid, string sddl,
         uint access, uint share, uint flags,
@@ -111,16 +111,18 @@ internal static class Ea4eDirectory2OneAttemptCandidate
                     {
                         if (!transferred)
                         {
+                            rawCloseFailed = true;
+                            observedCloseStatus = "DENY:RAW_HANDLE_CLOSE_UNCERTAIN";
                             bool closed = CloseHandle(raw);
                             observedCloseError = closed ? 0 : Marshal.GetLastWin32Error();
-                            observedCloseStatus = closed ? "CANDIDATE:RAW_CLOSED" :
-                                "DENY:RAW_HANDLE_CLOSE_UNCERTAIN";
-                            if (!closed)
+                            if (closed)
                             {
-                                rawCloseFailed = true;
+                                rawCloseFailed = false;
+                                observedCloseStatus = "CANDIDATE:RAW_CLOSED";
+                            }
+                            if (!closed)
                                 throw new InvalidOperationException(
                                     "Raw directory handle close failed");
-                            }
                         }
                     }
                     string shape = Ea4eDirectory2RetainedShapeCandidate.Read(
@@ -155,20 +157,36 @@ internal static class Ea4eDirectory2OneAttemptCandidate
             lastError = observedError;
             if (owned != null)
             {
-                owned.Dispose();
-                wrapperCloseUncertain |= !owned.ReleaseObserved;
-                observedCloseStatus = owned.ReleaseObserved ?
-                    "CANDIDATE:WRAPPER_CLOSED" : ClassifyRelease(false);
-                if (!owned.ReleaseObserved)
+                bool closeThrew = false;
+                try { owned.Dispose(); }
+                catch (Exception error)
+                {
+                    if (error is OutOfMemoryException || error is StackOverflowException)
+                        throw;
+                    closeThrew = true;
+                }
+                bool closed = !closeThrew && owned.ReleaseObserved;
+                wrapperCloseUncertain |= !closed;
+                observedCloseStatus = wrapperCloseUncertain ?
+                    ClassifyRelease(false) : "CANDIDATE:WRAPPER_CLOSED";
+                if (!closed)
                     observedCloseError = owned.ReleaseError;
             }
             if (accepted != null)
             {
-                accepted.Dispose();
-                wrapperCloseUncertain |= !accepted.ReleaseObserved;
-                observedCloseStatus = accepted.ReleaseObserved ?
-                    "CANDIDATE:WRAPPER_CLOSED" : ClassifyRelease(false);
-                if (!accepted.ReleaseObserved)
+                bool closeThrew = false;
+                try { accepted.Dispose(); }
+                catch (Exception error)
+                {
+                    if (error is OutOfMemoryException || error is StackOverflowException)
+                        throw;
+                    closeThrew = true;
+                }
+                bool closed = !closeThrew && accepted.ReleaseObserved;
+                wrapperCloseUncertain |= !closed;
+                observedCloseStatus = wrapperCloseUncertain ?
+                    ClassifyRelease(false) : "CANDIDATE:WRAPPER_CLOSED";
+                if (!closed)
                     observedCloseError = accepted.ReleaseError;
             }
             closeError = observedCloseError;

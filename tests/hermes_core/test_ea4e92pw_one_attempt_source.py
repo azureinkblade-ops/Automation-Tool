@@ -75,8 +75,12 @@ def test_raw_handle_has_pre_wrapper_cleanup_edge():
 def test_transferred_handle_has_one_observable_release_edge():
     owner = (ROOT / "tools" / "Ea4eDirectory2OneAttemptCandidate.cs").read_text()
     handle = (ROOT / "tools" / "Ea4eDirectoryObservedHandleCandidate.cs").read_text()
-    assert "wrapperCloseUncertain |= !owned.ReleaseObserved;" in owner
-    assert "wrapperCloseUncertain |= !accepted.ReleaseObserved;" in owner
+    assert "try { owned.Dispose(); }" in owner
+    assert "try { accepted.Dispose(); }" in owner
+    assert owner.count("closeThrew = true;") == 2
+    assert "bool closed = !closeThrew && owned.ReleaseObserved;" in owner
+    assert "bool closed = !closeThrew && accepted.ReleaseObserved;" in owner
+    assert owner.count("wrapperCloseUncertain |= !closed;") == 2
     assert "closeError = observedCloseError;" in owner
     assert "ClassifyDisposition(attempted, acceptedResult)" in owner
     assert "observationStatus = result;" in owner
