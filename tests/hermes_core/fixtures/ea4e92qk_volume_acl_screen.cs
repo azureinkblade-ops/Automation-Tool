@@ -1,11 +1,59 @@
 using System;
 using System.Reflection;
+using Microsoft.Win32.SafeHandles;
 
 internal static class Ea4e92qkVolumeAclScreen
 {
     private static int Main(string[] args)
     {
         if (args.Length != 1) return 2;
+        if (args[0].StartsWith("injected-", StringComparison.Ordinal) ||
+            args[0] == "reader-missing")
+        {
+            using (var fake = new SafeFileHandle(new IntPtr(123), false))
+            {
+                Ea4eDirectoryVolumeAclCandidate.VolumeInformationReader reader =
+                    delegate(SafeFileHandle handle, out uint flags, out int error) {
+                        flags = 0;
+                        error = 0;
+                        if (args[0] == "injected-success")
+                        {
+                            flags = 8;
+                            error = 99;
+                            return true;
+                        }
+                        if (args[0] == "injected-unsupported")
+                        {
+                            flags = 1;
+                            return true;
+                        }
+                        if (args[0] == "injected-failed-bit")
+                        {
+                            flags = 8;
+                            error = 5;
+                            return false;
+                        }
+                        if (args[0] == "injected-disposed")
+                        {
+                            handle.Dispose();
+                            throw new ObjectDisposedException("inert handle");
+                        }
+                        if (args[0] == "injected-dll-missing")
+                            throw new DllNotFoundException("inert library");
+                        if (args[0] == "injected-entry-missing")
+                            throw new EntryPointNotFoundException("inert export");
+                        throw new InvalidOperationException("Unknown inert mode");
+                    };
+                uint observedFlags;
+                int observedError;
+                string observed = Ea4eDirectoryVolumeAclCandidate.ReadWith(
+                    fake, args[0] == "reader-missing" ? null : reader,
+                    out observedFlags, out observedError);
+                Console.WriteLine(observed + "|" + observedFlags + "|" +
+                    observedError);
+                return 0;
+            }
+        }
         string result;
         if (args[0] == "supported")
             result = Ea4eDirectoryVolumeAclCandidate.Classify(true, 0x00000008);

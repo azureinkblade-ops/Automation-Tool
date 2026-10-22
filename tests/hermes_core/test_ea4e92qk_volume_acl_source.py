@@ -46,6 +46,24 @@ def test_inert_volume_acl_screen(executable, mode, expected):
     assert result.stdout.splitlines() == [expected]
 
 
+@pytest.mark.parametrize("mode,expected", [
+    ("injected-success", "CANDIDATE:PERSISTENT_ACLS_FLAG_ONLY|8|0"),
+    ("injected-unsupported", "DENY:VOLUME_ACLS_UNSUPPORTED|0|0"),
+    ("injected-failed-bit", "DENY:VOLUME_INFORMATION_UNAVAILABLE|0|5"),
+    ("injected-disposed", "DENY:VOLUME_INFORMATION_UNAVAILABLE|0|0"),
+    ("injected-dll-missing", "DENY:VOLUME_INFORMATION_UNAVAILABLE|0|0"),
+    ("injected-entry-missing", "DENY:VOLUME_INFORMATION_UNAVAILABLE|0|0"),
+    ("reader-missing", "DENY:VOLUME_READER_MISSING|0|0"),
+])
+def test_injected_reader_failure_is_not_admission(executable, mode, expected):
+    result = subprocess.run(
+        [str(executable), mode], capture_output=True, text=True,
+        timeout=10, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == [expected]
+
+
 def test_volume_reader_is_unwired():
     source = SOURCE.read_text()
     assert source.count("GetVolumeInformationByHandleW(") == 2
