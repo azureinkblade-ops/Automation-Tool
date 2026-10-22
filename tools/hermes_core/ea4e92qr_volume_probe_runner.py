@@ -42,7 +42,7 @@ class BoundedVolumeProbeRunner:
         self._lock = threading.Lock()
         self._attempted = False
 
-    def _screen(self) -> float:
+    def _screen(self) -> datetime:
         if (not self.executable.is_absolute() or self.executable.is_symlink()
                 or not self.executable.is_file()
                 or type(self.executable_sha256) is not str
@@ -78,14 +78,14 @@ class BoundedVolumeProbeRunner:
         remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
         if remaining <= 0:
             raise DelegationIntegrityError("volume probe deadline denied")
-        return min(5.0, remaining)
+        return deadline
 
     def __call__(self) -> VolumeProbeOutcome:
         with self._lock:
             if self._attempted:
                 raise DelegationIntegrityError("volume probe attempt consumed")
             self._attempted = True
-        timeout = self._screen()
+        deadline = self._screen()
         argv = [str(self.executable), "--native-volume",
                 self.expected_programdata, self.operator_sid,
                 self.ceremony, self.deadline_utc]
@@ -94,6 +94,8 @@ class BoundedVolumeProbeRunner:
             if key in os.environ
         }
         environment["PATH"] = str(self.executable.parent)
+        if (deadline - datetime.now(timezone.utc)).total_seconds() <= 0:
+            raise DelegationIntegrityError("volume probe deadline denied")
         try:
             proc = self.popen_factory(
                 argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -103,13 +105,11 @@ class BoundedVolumeProbeRunner:
             )
         except OSError as exc:
             raise DelegationIntegrityError("volume probe spawn unavailable") from exc
-        if proc.stdout is None or proc.stderr is None:
-            self._kill_and_wait(proc)
-            raise DelegationIntegrityError("volume probe pipes unavailable")
-
         buffers = {"stdout": bytearray(), "stderr": bytearray()}
         overflow = threading.Event()
         errors = []
+        readers = []
+        outcome = None
 
         def read_stream(stream, name):
             try:
@@ -127,38 +127,75 @@ class BoundedVolumeProbeRunner:
                 except OSError:
                     pass
 
-        readers = [
-            threading.Thread(target=read_stream, args=(proc.stdout, "stdout"),
-                             daemon=True),
-            threading.Thread(target=read_stream, args=(proc.stderr, "stderr"),
-                             daemon=True),
-        ]
-        for reader in readers:
-            reader.start()
         try:
-            proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired as exc:
-            self._kill_and_wait(proc)
-            raise DelegationIntegrityError("volume probe timeout") from exc
-        except Exception as exc:
-            self._kill_and_wait(proc)
-            raise DelegationIntegrityError("volume probe wait uncertain") from exc
-        for reader in readers:
-            reader.join(timeout=1)
-        if any(reader.is_alive() for reader in readers) or overflow.is_set() or errors:
-            self._kill_and_wait(proc)
-            raise DelegationIntegrityError("volume probe output uncertain")
-        proc.stdout.close()
-        proc.stderr.close()
-        if type(proc.returncode) is not int:
-            raise DelegationIntegrityError("volume probe exit uncertain")
-        return VolumeProbeOutcome(proc.returncode, bytes(buffers["stdout"]),
-                                  bytes(buffers["stderr"]))
+            if proc.stdout is None or proc.stderr is None:
+                raise DelegationIntegrityError("volume probe pipes unavailable")
+            for stream, name in ((proc.stdout, "stdout"), (proc.stderr, "stderr")):
+                reader = threading.Thread(target=read_stream, args=(stream, name),
+                                          daemon=True)
+                reader.start()
+                readers.append(reader)
+            remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
+            if remaining <= 0:
+                raise DelegationIntegrityError("volume probe deadline denied")
+            try:
+                proc.wait(timeout=min(5.0, remaining))
+            except subprocess.TimeoutExpired as exc:
+                raise DelegationIntegrityError("volume probe timeout") from exc
+            except Exception as exc:
+                raise DelegationIntegrityError("volume probe wait uncertain") from exc
+            for reader in readers:
+                remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
+                if remaining <= 0:
+                    raise DelegationIntegrityError("volume probe deadline denied")
+                reader.join(timeout=min(1.0, remaining))
+            if any(reader.is_alive() for reader in readers) or overflow.is_set() or errors:
+                raise DelegationIntegrityError("volume probe output uncertain")
+            if type(proc.returncode) is not int:
+                raise DelegationIntegrityError("volume probe exit uncertain")
+            if (deadline - datetime.now(timezone.utc)).total_seconds() <= 0:
+                raise DelegationIntegrityError("volume probe deadline denied")
+            outcome = VolumeProbeOutcome(proc.returncode, bytes(buffers["stdout"]),
+                                         bytes(buffers["stderr"]))
+        finally:
+            cleanup_error = None
+            if outcome is None:
+                try:
+                    self._kill_and_wait(proc)
+                except Exception as exc:
+                    cleanup_error = exc
+            for reader in readers:
+                try:
+                    reader.join(timeout=1)
+                except Exception as exc:
+                    cleanup_error = exc
+            if any(reader.is_alive() for reader in readers):
+                cleanup_error = DelegationIntegrityError("volume probe readers alive")
+            else:
+                for stream in (proc.stdout, proc.stderr):
+                    if stream is None:
+                        continue
+                    try:
+                        stream.close()
+                    except Exception as exc:
+                        cleanup_error = exc
+            if cleanup_error is not None:
+                raise DelegationIntegrityError("volume probe cleanup uncertain") from cleanup_error
+        if (deadline - datetime.now(timezone.utc)).total_seconds() <= 0:
+            raise DelegationIntegrityError("volume probe deadline denied")
+        return outcome
 
     @staticmethod
     def _kill_and_wait(proc):
+        error = None
         try:
-            proc.kill()
+            if proc.returncode is None:
+                proc.kill()
+        except Exception as exc:
+            error = exc
+        try:
             proc.wait(timeout=1)
         except Exception as exc:
-            raise DelegationIntegrityError("volume probe cleanup uncertain") from exc
+            error = exc
+        if error is not None:
+            raise DelegationIntegrityError("volume probe cleanup uncertain") from error

@@ -23,13 +23,17 @@ class FakeProcess:
                  stderr=b"", *, timeout=False):
         self.stdout = io.BytesIO(stdout)
         self.stderr = io.BytesIO(stderr)
-        self.returncode = 0
+        self.returncode = None
         self.timeout = timeout
         self.killed = False
+        self.wait_count = 0
 
     def wait(self, timeout):
+        self.wait_count += 1
         if self.timeout and not self.killed:
             raise subprocess.TimeoutExpired("fake volume probe", timeout)
+        if self.returncode is None:
+            self.returncode = 0
         return self.returncode
 
     def kill(self):
@@ -136,3 +140,57 @@ def test_hashing_cannot_extend_expired_deadline(tmp_path, monkeypatch):
     with pytest.raises(DelegationIntegrityError, match="deadline denied"):
         runner()
     assert calls == []
+
+
+def test_expiry_after_process_exit_denies_result(tmp_path, monkeypatch):
+    _, runner, calls, process = fixture(tmp_path)
+    real_datetime = datetime
+    first = real_datetime.now(timezone.utc)
+    observations = iter([first, first, first, first,
+                         first + timedelta(minutes=3)])
+
+    class FakeDateTime:
+        strptime = staticmethod(real_datetime.strptime)
+
+        @staticmethod
+        def now(_timezone):
+            return next(observations)
+
+    monkeypatch.setattr(runner_module, "datetime", FakeDateTime)
+    with pytest.raises(DelegationIntegrityError, match="deadline denied"):
+        runner()
+    assert len(calls) == 1
+    assert process.wait_count >= 1
+    assert process.stdout.closed and process.stderr.closed
+
+
+def test_reader_start_failure_cleans_up_child(tmp_path, monkeypatch):
+    _, runner, calls, process = fixture(tmp_path)
+
+    class BrokenThread:
+        def __init__(self, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("fake start failure")
+
+    monkeypatch.setattr(runner_module.threading, "Thread", BrokenThread)
+    with pytest.raises(RuntimeError, match="fake start failure"):
+        runner()
+    assert len(calls) == 1
+    assert process.killed and process.wait_count == 1
+    assert process.stdout.closed and process.stderr.closed
+
+
+def test_kill_failure_still_waits_and_denies_cleanup(tmp_path):
+    class BrokenKillProcess(FakeProcess):
+        def kill(self):
+            raise OSError("fake kill failure")
+
+    process = BrokenKillProcess(timeout=True)
+    _, runner, calls, _ = fixture(tmp_path, process=process)
+    with pytest.raises(DelegationIntegrityError, match="cleanup uncertain"):
+        runner()
+    assert len(calls) == 1
+    assert process.wait_count == 2
+    assert process.stdout.closed and process.stderr.closed
