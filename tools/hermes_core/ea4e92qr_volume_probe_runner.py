@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import threading
+import time
 
 from tools.hermes_core.delegated_task import DelegationIntegrityError
 
@@ -31,7 +32,7 @@ class BoundedVolumeProbeRunner:
     def __init__(self, executable: str, executable_sha256: str,
                  expected_programdata: str, operator_sid: str,
                  ceremony: str, deadline_utc: str, *,
-                 popen_factory=subprocess.Popen):
+                 popen_factory=subprocess.Popen, monotonic=time.monotonic):
         self.executable = Path(executable)
         self.expected_programdata = expected_programdata
         self.operator_sid = operator_sid
@@ -39,10 +40,15 @@ class BoundedVolumeProbeRunner:
         self.deadline_utc = deadline_utc
         self.executable_sha256 = executable_sha256
         self.popen_factory = popen_factory
+        self.monotonic = monotonic
         self._lock = threading.Lock()
         self._attempted = False
 
-    def _screen(self) -> datetime:
+    def _remaining(self, deadline: datetime, elapsed_deadline: float) -> float:
+        return min((deadline - datetime.now(timezone.utc)).total_seconds(),
+                   elapsed_deadline - self.monotonic())
+
+    def _screen(self, elapsed_deadline: float) -> datetime:
         if (not self.executable.is_absolute() or self.executable.is_symlink()
                 or not self.executable.is_file()
                 or type(self.executable_sha256) is not str
@@ -55,7 +61,8 @@ class BoundedVolumeProbeRunner:
                 or not _CEREMONY.fullmatch(self.ceremony)
                 or type(self.deadline_utc) is not str
                 or not _DEADLINE.fullmatch(self.deadline_utc)
-                or not callable(self.popen_factory)):
+                or not callable(self.popen_factory)
+                or not callable(self.monotonic)):
             raise DelegationIntegrityError("volume probe binding denied")
         try:
             deadline = datetime.strptime(
@@ -75,8 +82,7 @@ class BoundedVolumeProbeRunner:
             raise DelegationIntegrityError("volume probe executable unavailable") from exc
         if digest.hexdigest() != self.executable_sha256:
             raise DelegationIntegrityError("volume probe executable changed")
-        remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
-        if remaining <= 0:
+        if self._remaining(deadline, elapsed_deadline) <= 0:
             raise DelegationIntegrityError("volume probe deadline denied")
         return deadline
 
@@ -85,7 +91,8 @@ class BoundedVolumeProbeRunner:
             if self._attempted:
                 raise DelegationIntegrityError("volume probe attempt consumed")
             self._attempted = True
-        deadline = self._screen()
+        elapsed_deadline = self.monotonic() + 5.0
+        deadline = self._screen(elapsed_deadline)
         argv = [str(self.executable), "--native-volume",
                 self.expected_programdata, self.operator_sid,
                 self.ceremony, self.deadline_utc]
@@ -94,7 +101,7 @@ class BoundedVolumeProbeRunner:
             if key in os.environ
         }
         environment["PATH"] = str(self.executable.parent)
-        if (deadline - datetime.now(timezone.utc)).total_seconds() <= 0:
+        if self._remaining(deadline, elapsed_deadline) <= 0:
             raise DelegationIntegrityError("volume probe deadline denied")
         try:
             proc = self.popen_factory(
@@ -135,7 +142,7 @@ class BoundedVolumeProbeRunner:
                                           daemon=True)
                 readers.append(reader)
                 reader.start()
-            remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
+            remaining = self._remaining(deadline, elapsed_deadline)
             if remaining <= 0:
                 raise DelegationIntegrityError("volume probe deadline denied")
             try:
@@ -145,7 +152,7 @@ class BoundedVolumeProbeRunner:
             except Exception as exc:
                 raise DelegationIntegrityError("volume probe wait uncertain") from exc
             for reader in readers:
-                remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
+                remaining = self._remaining(deadline, elapsed_deadline)
                 if remaining <= 0:
                     raise DelegationIntegrityError("volume probe deadline denied")
                 reader.join(timeout=min(1.0, remaining))
@@ -153,7 +160,7 @@ class BoundedVolumeProbeRunner:
                 raise DelegationIntegrityError("volume probe output uncertain")
             if type(proc.returncode) is not int:
                 raise DelegationIntegrityError("volume probe exit uncertain")
-            if (deadline - datetime.now(timezone.utc)).total_seconds() <= 0:
+            if self._remaining(deadline, elapsed_deadline) <= 0:
                 raise DelegationIntegrityError("volume probe deadline denied")
             outcome = VolumeProbeOutcome(proc.returncode, bytes(buffers["stdout"]),
                                          bytes(buffers["stderr"]))
@@ -189,7 +196,7 @@ class BoundedVolumeProbeRunner:
                         cleanup_error = exc
             if cleanup_error is not None:
                 raise DelegationIntegrityError("volume probe cleanup uncertain") from cleanup_error
-        if (deadline - datetime.now(timezone.utc)).total_seconds() <= 0:
+        if self._remaining(deadline, elapsed_deadline) <= 0:
             raise DelegationIntegrityError("volume probe deadline denied")
         return outcome
 

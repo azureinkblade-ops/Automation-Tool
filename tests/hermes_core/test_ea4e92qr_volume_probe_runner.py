@@ -42,7 +42,7 @@ class FakeProcess:
 
 
 def fixture(tmp_path, *, process=None, digest=None, deadline=None,
-            operator_sid=SID):
+            operator_sid=SID, monotonic=None):
     executable = tmp_path / "inert.exe"
     executable.write_bytes(b"inert fake binary")
     calls = []
@@ -57,6 +57,7 @@ def fixture(tmp_path, *, process=None, digest=None, deadline=None,
         str(executable), digest or hashlib.sha256(executable.read_bytes()).hexdigest(),
         r"C:\ProgramData", operator_sid, CEREMONY,
         deadline.strftime("%Y-%m-%dT%H:%M:%SZ"), popen_factory=spawn,
+        **({"monotonic": monotonic} if monotonic is not None else {}),
     )
     return executable, runner, calls, process
 
@@ -216,4 +217,22 @@ def test_kill_failure_still_waits_and_denies_cleanup(tmp_path):
         runner()
     assert len(calls) == 1
     assert process.wait_count == 2
+    assert process.stdout.closed and process.stderr.closed
+
+
+def test_hashing_elapsed_budget_denies_before_spawn(tmp_path):
+    ticks = iter([0.0, 5.1])
+    _, runner, calls, _ = fixture(tmp_path, monotonic=lambda: next(ticks))
+    with pytest.raises(DelegationIntegrityError, match="deadline denied"):
+        runner()
+    assert calls == []
+
+
+def test_monotonic_expiry_denies_result_despite_wall_clock(tmp_path):
+    ticks = iter([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 5.1])
+    _, runner, calls, process = fixture(tmp_path,
+                                         monotonic=lambda: next(ticks))
+    with pytest.raises(DelegationIntegrityError, match="deadline denied"):
+        runner()
+    assert len(calls) == 1
     assert process.stdout.closed and process.stderr.closed
