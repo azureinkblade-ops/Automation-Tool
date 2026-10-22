@@ -133,8 +133,8 @@ class BoundedVolumeProbeRunner:
             for stream, name in ((proc.stdout, "stdout"), (proc.stderr, "stderr")):
                 reader = threading.Thread(target=read_stream, args=(stream, name),
                                           daemon=True)
-                reader.start()
                 readers.append(reader)
+                reader.start()
             remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
             if remaining <= 0:
                 raise DelegationIntegrityError("volume probe deadline denied")
@@ -166,10 +166,18 @@ class BoundedVolumeProbeRunner:
                     cleanup_error = exc
             for reader in readers:
                 try:
-                    reader.join(timeout=1)
+                    if reader.is_alive():
+                        reader.join(timeout=1)
                 except Exception as exc:
                     cleanup_error = exc
-            if any(reader.is_alive() for reader in readers):
+            readers_alive = False
+            for reader in readers:
+                try:
+                    readers_alive = reader.is_alive() or readers_alive
+                except Exception as exc:
+                    cleanup_error = exc
+                    readers_alive = True
+            if readers_alive:
                 cleanup_error = DelegationIntegrityError("volume probe readers alive")
             else:
                 for stream in (proc.stdout, proc.stderr):

@@ -174,10 +174,33 @@ def test_reader_start_failure_cleans_up_child(tmp_path, monkeypatch):
         def start(self):
             raise RuntimeError("fake start failure")
 
+        def is_alive(self):
+            return False
+
     monkeypatch.setattr(runner_module.threading, "Thread", BrokenThread)
     with pytest.raises(RuntimeError, match="fake start failure"):
         runner()
     assert len(calls) == 1
+    assert process.killed and process.wait_count == 1
+    assert process.stdout.closed and process.stderr.closed
+
+
+def test_reader_start_after_launch_failure_tracks_reader(tmp_path, monkeypatch):
+    _, runner, calls, process = fixture(tmp_path)
+    real_thread = runner_module.threading.Thread
+    launched = []
+
+    class LaunchThenRaise(real_thread):
+        def start(self):
+            super().start()
+            launched.append(self)
+            raise RuntimeError("fake post-launch failure")
+
+    monkeypatch.setattr(runner_module.threading, "Thread", LaunchThenRaise)
+    with pytest.raises(RuntimeError, match="fake post-launch failure"):
+        runner()
+    assert len(calls) == 1
+    assert len(launched) == 1 and not launched[0].is_alive()
     assert process.killed and process.wait_count == 1
     assert process.stdout.closed and process.stderr.closed
 
