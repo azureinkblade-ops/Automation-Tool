@@ -236,3 +236,12 @@ def test_monotonic_expiry_denies_result_despite_wall_clock(tmp_path):
         runner()
     assert len(calls) == 1
     assert process.stdout.closed and process.stderr.closed
+
+
+def test_oversized_executable_denied_before_spawn(tmp_path):
+    executable, runner, calls, _ = fixture(tmp_path)
+    with executable.open("r+b") as handle:
+        handle.truncate(runner_module.MAX_EXECUTABLE_BYTES + 1)
+    with pytest.raises(DelegationIntegrityError, match="executable size denied"):
+        runner()
+    assert calls == []

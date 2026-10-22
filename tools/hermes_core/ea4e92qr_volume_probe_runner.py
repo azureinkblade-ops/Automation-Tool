@@ -17,6 +17,7 @@ _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _SID = re.compile(r"S-1-5-21-(?:\d+-){3}\d+\Z")
 _CEREMONY = re.compile(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\Z")
 _DEADLINE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
+MAX_EXECUTABLE_BYTES = 16 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -76,7 +77,14 @@ class BoundedVolumeProbeRunner:
         digest = hashlib.sha256()
         try:
             with self.executable.open("rb") as handle:
+                size = os.fstat(handle.fileno()).st_size
+                if not 0 < size <= MAX_EXECUTABLE_BYTES:
+                    raise DelegationIntegrityError("volume probe executable size denied")
+                total = 0
                 for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    total += len(chunk)
+                    if total > MAX_EXECUTABLE_BYTES:
+                        raise DelegationIntegrityError("volume probe executable size denied")
                     digest.update(chunk)
         except OSError as exc:
             raise DelegationIntegrityError("volume probe executable unavailable") from exc
