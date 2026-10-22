@@ -2,6 +2,7 @@
 
 import subprocess
 import sys
+import re
 from pathlib import Path
 
 import pytest
@@ -53,6 +54,10 @@ def test_inert_volume_acl_screen(executable, mode, expected):
     ("injected-disposed", "DENY:VOLUME_INFORMATION_UNAVAILABLE|0|0"),
     ("injected-dll-missing", "DENY:VOLUME_INFORMATION_UNAVAILABLE|0|0"),
     ("injected-entry-missing", "DENY:VOLUME_INFORMATION_UNAVAILABLE|0|0"),
+    ("injected-throw-after-output", "DENY:VOLUME_INFORMATION_UNAVAILABLE|0|0"),
+    ("injected-failed-zero", "DENY:VOLUME_INFORMATION_UNAVAILABLE|0|0"),
+    ("closed-handle", "DENY:RETAINED_HANDLE_UNAVAILABLE|0|0"),
+    ("invalid-handle-nonnull", "DENY:RETAINED_HANDLE_UNAVAILABLE|0|0"),
     ("reader-missing", "DENY:VOLUME_READER_MISSING|0|0"),
 ])
 def test_injected_reader_failure_is_not_admission(executable, mode, expected):
@@ -67,7 +72,15 @@ def test_injected_reader_failure_is_not_admission(executable, mode, expected):
 def test_volume_reader_is_unwired():
     source = SOURCE.read_text()
     assert source.count("GetVolumeInformationByHandleW(") == 2
-    callers = [path.name for path in (ROOT / "tools").glob("Ea4e*.cs")
-               if path.name != SOURCE.name and
-               "Ea4eDirectoryVolumeAclCandidate.Read(" in path.read_text()]
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z", "--", "*.cs"], cwd=ROOT,
+        capture_output=True, check=True,
+    ).stdout
+    direct_call = re.compile(
+        r"\bEa4eDirectoryVolumeAclCandidate\s*\.\s*Read(?:With)?\s*\("
+    )
+    callers = [name for name in tracked.decode().split("\0") if name
+               and not name.startswith("tests/")
+               and name != "tools/Ea4eDirectoryVolumeAclCandidate.cs"
+               and direct_call.search((ROOT / name).read_text())]
     assert callers == []

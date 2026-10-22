@@ -8,10 +8,14 @@ internal static class Ea4e92qkVolumeAclScreen
     {
         if (args.Length != 1) return 2;
         if (args[0].StartsWith("injected-", StringComparison.Ordinal) ||
-            args[0] == "reader-missing")
+            args[0] == "reader-missing" || args[0] == "closed-handle" ||
+            args[0] == "invalid-handle-nonnull")
         {
-            using (var fake = new SafeFileHandle(new IntPtr(123), false))
+            IntPtr value = args[0] == "invalid-handle-nonnull"
+                ? IntPtr.Zero : new IntPtr(123);
+            using (var fake = new SafeFileHandle(value, false))
             {
+                if (args[0] == "closed-handle") fake.Dispose();
                 Ea4eDirectoryVolumeAclCandidate.VolumeInformationReader reader =
                     delegate(SafeFileHandle handle, out uint flags, out int error) {
                         flags = 0;
@@ -33,6 +37,11 @@ internal static class Ea4e92qkVolumeAclScreen
                             error = 5;
                             return false;
                         }
+                        if (args[0] == "injected-failed-zero")
+                        {
+                            flags = 8;
+                            return false;
+                        }
                         if (args[0] == "injected-disposed")
                         {
                             handle.Dispose();
@@ -42,6 +51,12 @@ internal static class Ea4e92qkVolumeAclScreen
                             throw new DllNotFoundException("inert library");
                         if (args[0] == "injected-entry-missing")
                             throw new EntryPointNotFoundException("inert export");
+                        if (args[0] == "injected-throw-after-output")
+                        {
+                            flags = 8;
+                            error = 5;
+                            throw new InvalidOperationException("inert partial output");
+                        }
                         throw new InvalidOperationException("Unknown inert mode");
                     };
                 uint observedFlags;
