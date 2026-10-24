@@ -624,6 +624,35 @@ class BindingResolution:
     spec_only_character: bool = False
 
 
+LOCAL_SDXL_PATH_ID = "V1:local_stable_diffusion"
+
+
+def prebinding_upstream_character_assigned(
+    *,
+    spec: Any = None,
+    character_id: Any = "",
+    context: Optional[IdentityProductionContext] = None,
+    depicted_characters: Sequence[Any] = (),
+) -> bool:
+    """Authoritative UPSTREAM_CHARACTER_ASSIGNED from structured character evidence only.
+
+    Novel membership alone does NOT set YES. Supporting YES signals: GenerationSpec identity,
+    explicit / context character id, and ImageIntent depicted / character-claim subjects.
+    Used to gate novel-only protagonist fallback on PATH_ID V1:local_stable_diffusion (Stage-1).
+    """
+    ctx = context if context is not None else IdentityProductionContext()
+    ident = getattr(spec, "identity", None) if spec is not None else None
+    spec_cid = str(getattr(ident, "character_id", "") or "") if ident is not None else ""
+    explicit = str(character_id or "").strip()
+    ctx_cid = str(ctx.character_id or ctx.character_name or "").strip()
+    if spec_cid or explicit or ctx_cid:
+        return True
+    for d in depicted_characters or ():
+        if str(d or "").strip():
+            return True
+    return False
+
+
 def resolve_governed_binding(
     *,
     spec: Any = None,
@@ -632,12 +661,15 @@ def resolve_governed_binding(
     character_id: Any = "",
     context: Optional[IdentityProductionContext] = None,
     depicted_characters: Sequence[Any] = (),
+    apply_novel_protagonist_fallback_restriction: bool = False,
+    upstream_character_assigned: Optional[bool] = None,
 ) -> BindingResolution:
     """Binding precedence (Part B/D):
       1. structured character (spec.identity.character_id, explicit character_id, context
          character_id / character_name);
       2. structured novel id (explicit novel, context novel_id) + that novel's single governed
-         character;
+         character (NOVEL_PROTAGONIST_FALLBACK; restricted on PATH_ID V1:local_stable_diffusion
+         when UPSTREAM_CHARACTER_ASSIGNED is NO or UNKNOWN — Stage-1);
       3. structured novel abbreviation uniquely mapped by PRODUCTION_NOVEL_ALIASES;
       4. prompt fallback (governed names, then novel titles) only when NO structured context.
     Governed names in the prompt are always added as supplemental bindings (never removed).
@@ -727,8 +759,25 @@ def resolve_governed_binding(
     elif req_novel:
         cand = governed_character_keys_for_novel(req_novel)
         if len(cand) == 1:
-            primary = cand[0]
-            primary_src = "STRUCTURED_NOVEL_ID" if novel_from_id else "STRUCTURED_NOVEL_ALIAS"
+            if apply_novel_protagonist_fallback_restriction:
+                # LOCAL_SDXL_RESTRICT_PROTAGONIST_FALLBACK_IMPLEMENTATION (Stage-1):
+                # On PATH_ID V1:local_stable_diffusion only, novel-only protagonist fallback is
+                # gated on UPSTREAM_CHARACTER_ASSIGNED (structured character evidence).
+                # INTENT_NO -> do not assign; INTENT_UNKNOWN/missing -> fail closed; INTENT_YES
+                # preserves explicit / depicted binding via other branches (no silent novel-only).
+                if upstream_character_assigned is None:
+                    return fail(
+                        "FAIL_CLOSED_NO_NEW_PROTAGONIST_FALLBACK:UPSTREAM_CHARACTER_ASSIGNED_UNKNOWN")
+                res.no_governed_reason = (
+                    "NOVEL_PROTAGONIST_FALLBACK_RESTRICTED:UPSTREAM_CHARACTER_ASSIGNED="
+                    + ("YES" if upstream_character_assigned else "NO"))
+                if (not upstream_character_assigned and not char_key and not depicted_raw
+                        and not ctx.identity_contract_id):
+                    # Novel membership alone is not governed depiction context on this lane.
+                    res.governed_context_present = False
+            else:
+                primary = cand[0]
+                primary_src = "STRUCTURED_NOVEL_ID" if novel_from_id else "STRUCTURED_NOVEL_ALIAS"
         elif len(cand) > 1:
             return fail(f"AMBIGUOUS_GOVERNED_CHARACTER_FOR_NOVEL:{req_novel}:{','.join(cand)}")
         else:
@@ -2298,9 +2347,19 @@ def run_identity_acceptance_gate(
         if intent_req is not None and _vocab_key(intent_req.scene_subject) and \
                 _vocab_key(intent_req.scene_subject) not in SCENE_SUBJECT_CLASSES:
             subj_claims = (intent_req.scene_subject,)  # a character claim: validated like a character id
+        depicted_for_binding = (
+            tuple(intent_req.depicted_characters if intent_req is not None else ()) + subj_claims)
+        restrict_novel_fb = (path_id == LOCAL_SDXL_PATH_ID)
+        upstream_pre: Optional[bool] = None
+        if restrict_novel_fb:
+            upstream_pre = prebinding_upstream_character_assigned(
+                spec=spec, character_id=character_id, context=ctx,
+                depicted_characters=depicted_for_binding)
         binding = resolve_governed_binding(
             spec=spec, prompt=prompt, novel=novel, character_id=character_id, context=ctx,
-            depicted_characters=tuple(intent_req.depicted_characters if intent_req is not None else ()) + subj_claims)
+            depicted_characters=depicted_for_binding,
+            apply_novel_protagonist_fallback_restriction=restrict_novel_fb,
+            upstream_character_assigned=upstream_pre)
         request_novel = binding.request_novel
         if not request_novel and novel:
             try:
@@ -2342,7 +2401,9 @@ def run_identity_acceptance_gate(
                 ctx = merge_identity_context(ctx, build_identity_context(novel=pa.novel_ids[0], source="AIVSB_PROMPT_PROVENANCE"))
                 binding = resolve_governed_binding(
                     spec=spec, prompt=prompt, novel=novel, character_id=character_id, context=ctx,
-                    depicted_characters=tuple(intent_req.depicted_characters if intent_req is not None else ()) + subj_claims)
+                    depicted_characters=depicted_for_binding,
+                    apply_novel_protagonist_fallback_restriction=restrict_novel_fb,
+                    upstream_character_assigned=upstream_pre)
                 request_novel = binding.request_novel or request_novel
                 prov_effect = "REBOUND_FROM_PROVENANCE_NOVEL"
             names = tuple(pa.depicted_character_ids)

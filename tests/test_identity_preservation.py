@@ -650,5 +650,153 @@ class TestRollback(_GateCase):
             self.assertEqual(self.gate(img, spec=off_spec, novel="sf").decision, "BYPASS")
 
 
+
+# ---------------------------------------------------------------------------
+# LOCAL_SDXL_RESTRICT_PROTAGONIST_FALLBACK_IMPLEMENTATION (Stage-1) — 9 cases
+# Portable CPU fixtures: sealed governed novel/character IDs only (structural
+# fields; no Studio Bible profile/canon prose). Linux-CI safe without private trees.
+# ---------------------------------------------------------------------------
+
+# Structural INTENT_YES fixture (character_id / novel_id / path_id only).
+SYNTHETIC_INTENT_YES_FIXTURE = {
+    "novel_id": "ha",
+    "character_id": "kai",
+    "path_id": "V1:local_stable_diffusion",
+}
+
+
+class TestLocalSdxlRestrictProtagonistFallback(_GateCase):
+    """PATH_ID V1:local_stable_diffusion: restrict novel-only protagonist fallback."""
+
+    LOCAL = "V1:local_stable_diffusion"
+
+    def gate_local(self, img, **kw):
+        kw.setdefault("log_path", self.log)
+        kw.setdefault("use_ambient_context", False)
+        return ip.run_identity_acceptance_gate(img, path_id=self.LOCAL, **kw)
+
+    def test_01_intent_no_skips_novel_protagonist_fallback(self):
+        with flag(True):
+            img = self.img("intent_no.png")
+            ctx = ip.IdentityProductionContext(novel_id="ha")
+            res = self.gate_local(img, novel="ha", identity_context=ctx)
+            self.assertEqual(res.decision, ip.NOT_APPLICABLE_DECISION)
+            self.assertTrue(img.exists())
+            r = res.records[0]
+            self.assertEqual(r.get("CHARACTER") or "", "")
+            self.assertNotEqual(r.get("BINDING_METHOD"), "NOVEL_PROTAGONIST_FALLBACK")
+            self.assertEqual(r["UPSTREAM_CHARACTER_ASSIGNED"], "NO")
+            self.assertEqual(r["IDENTITY_GATE_REQUIRED"], "NO")
+            self.assertIn(
+                "NOVEL_PROTAGONIST_FALLBACK_RESTRICTED:UPSTREAM_CHARACTER_ASSIGNED=NO",
+                r.get("NO_GOVERNED_CHARACTER_REASON") or "",
+            )
+
+    def test_02_intent_yes_explicit_character_preserved(self):
+        with flag(True):
+            img = self.img("intent_yes_explicit.png")
+            fx = SYNTHETIC_INTENT_YES_FIXTURE
+            ctx = ip.IdentityProductionContext(novel_id=fx["novel_id"])
+            res = self.gate_local(
+                img, novel=fx["novel_id"], character_id=fx["character_id"], identity_context=ctx)
+            self.assertEqual(res.decision, "REJECT_REVIEW")
+            r = res.records[0]
+            self.assertEqual(r["CHARACTER"], fx["character_id"])
+            self.assertEqual(r["UPSTREAM_CHARACTER_ASSIGNED"], "YES")
+            self.assertEqual(r["CHARACTER_BINDING_SOURCE"], "STRUCTURED_CHARACTER_ID")
+            self.assertNotEqual(r.get("BINDING_METHOD"), "NOVEL_PROTAGONIST_FALLBACK")
+            self.assertEqual(r["IDENTITY_GATE_REQUIRED"], "YES")
+
+    def test_03_intent_unknown_fail_closed_no_new_fallback(self):
+        # Gate always supplies bool when restrict is on; UNKNOWN is the resolve seam
+        # when upstream_character_assigned is missing/None under restriction.
+        ctx = ip.IdentityProductionContext(novel_id="hp")
+        br = ip.resolve_governed_binding(
+            novel="hp",
+            context=ctx,
+            apply_novel_protagonist_fallback_restriction=True,
+            upstream_character_assigned=None,
+        )
+        self.assertEqual(br.result, "FAILED")
+        self.assertIn(
+            "FAIL_CLOSED_NO_NEW_PROTAGONIST_FALLBACK:UPSTREAM_CHARACTER_ASSIGNED_UNKNOWN",
+            br.fail_reason or "",
+        )
+        self.assertEqual(br.keys, [])
+
+    def test_04_intent_yes_depicted_characters_preserved(self):
+        with flag(True):
+            img = self.img("intent_yes_depicted.png")
+            ctx = ip.IdentityProductionContext(novel_id="hp")
+            intent = ip.ImageIntentRequest(depicted_characters=("liang",))
+            res = self.gate_local(
+                img, novel="hp", identity_context=ctx, image_intent=intent)
+            self.assertEqual(res.decision, "REJECT_REVIEW")
+            r = res.records[0]
+            self.assertEqual(r["CHARACTER"], "liang")
+            self.assertEqual(r["UPSTREAM_CHARACTER_ASSIGNED"], "YES")
+            self.assertNotEqual(r.get("BINDING_METHOD"), "NOVEL_PROTAGONIST_FALLBACK")
+
+    def test_05_test_path_keeps_novel_protagonist_fallback(self):
+        with flag(True):
+            img = self.img("test_path_legacy.png")
+            ctx = ip.IdentityProductionContext(novel_id="ha")
+            res = self.gate(img, novel="ha", identity_context=ctx, use_ambient_context=False)
+            self.assertEqual(res.decision, "REJECT_REVIEW")
+            r = res.records[0]
+            self.assertEqual(r["CHARACTER"], "kai")
+            self.assertEqual(r["BINDING_METHOD"], "NOVEL_PROTAGONIST_FALLBACK")
+
+    def test_06_v2_path_keeps_novel_protagonist_fallback(self):
+        with flag(True):
+            img = self.img("v2_path.png")
+            ctx = ip.IdentityProductionContext(novel_id="ha")
+            res = ip.run_identity_acceptance_gate(
+                img, path_id="V2:realistic:generate_promo_image_v2", novel="ha",
+                identity_context=ctx, log_path=self.log, use_ambient_context=False)
+            self.assertEqual(res.decision, "REJECT_REVIEW")
+            r = res.records[0]
+            self.assertEqual(r["CHARACTER"], "kai")
+            self.assertEqual(r["BINDING_METHOD"], "NOVEL_PROTAGONIST_FALLBACK")
+
+    def test_07_openai_path_keeps_novel_protagonist_fallback(self):
+        with flag(True):
+            img = self.img("openai_path.png")
+            ctx = ip.IdentityProductionContext(novel_id="en")
+            res = ip.run_identity_acceptance_gate(
+                img, path_id="V1:openai", novel="en",
+                identity_context=ctx, log_path=self.log, use_ambient_context=False)
+            self.assertEqual(res.decision, "REJECT_REVIEW")
+            r = res.records[0]
+            self.assertEqual(r["CHARACTER"], "kael_veyra")
+            self.assertEqual(r["BINDING_METHOD"], "NOVEL_PROTAGONIST_FALLBACK")
+
+    def test_08_intent_yes_via_context_character_id(self):
+        with flag(True):
+            img = self.img("intent_yes_ctx.png")
+            ctx = ip.IdentityProductionContext(novel_id="sf", character_id="jarek")
+            res = self.gate_local(img, novel="sf", identity_context=ctx)
+            self.assertEqual(res.decision, "REJECT_REVIEW")
+            r = res.records[0]
+            self.assertEqual(r["CHARACTER"], "jarek")
+            self.assertEqual(r["UPSTREAM_CHARACTER_ASSIGNED"], "YES")
+            self.assertEqual(r["CHARACTER_BINDING_SOURCE"], "STRUCTURED_CHARACTER_ID")
+
+    def test_09_intent_no_alias_only_no_false_identity_review(self):
+        with flag(True):
+            img = self.img("intent_no_alias.png")
+            ctx = ip.IdentityProductionContext(novel_abbreviation="HP")
+            res = self.gate_local(img, identity_context=ctx)
+            self.assertEqual(res.decision, ip.NOT_APPLICABLE_DECISION)
+            self.assertTrue(img.exists())
+            r = res.records[0]
+            self.assertEqual(r.get("CHARACTER") or "", "")
+            self.assertEqual(r["UPSTREAM_CHARACTER_ASSIGNED"], "NO")
+            self.assertEqual(r["IDENTITY_GATE_REQUIRED"], "NO")
+            self.assertEqual(r["AUTO_ACCEPT_ALLOWED"], "YES")
+            self.assertIn("NOVEL_PROTAGONIST_FALLBACK_RESTRICTED", r.get("NO_GOVERNED_CHARACTER_REASON") or "")
+
+
+
 if __name__ == "__main__":
     unittest.main()
