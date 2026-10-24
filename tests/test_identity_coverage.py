@@ -199,22 +199,28 @@ class _Base(unittest.TestCase):
 # ATTRIBUTION (1-6)
 # ---------------------------------------------------------------------------
 class TestAttribution(_Base):
-    def test_01_governed_kai_context_name_removed_binds_kai(self):
+    def test_01_governed_kai_context_name_removed_skips_novel_protagonist_fallback(self):
+        # Stage-1 LOCAL_SDXL_RESTRICT_PROTAGONIST_FALLBACK: novel/abbr-only on
+        # V1:local_stable_diffusion is INTENT_NO — do not novel-only bind kai.
         self.local_sd()
         abbr, novel, nameless = NAMELESS["kai"]
         self.assertNotRegex(nameless.lower(), r"\bkai\b|heavenly ascension")
         tgt = self.tmp / "social" / "ha.png"
         tgt.parent.mkdir()
         with identity_flag(True, self.log):
-            with self.assertRaises(Exception) as cm:
-                app.create_fresh_social_image_from_caption(tgt, abbr=abbr, novel=novel, title="Chapter 1",
-                                                           caption="He looked up.", visual_brief=nameless)
-        self.assertTrue(ip.is_identity_block(cm.exception))
-        r = self.assert_governed_block(self.records(), "kai")[0]
-        self.assertIn(r["CHARACTER_BINDING_SOURCE"], ("STRUCTURED_NOVEL_ID", "STRUCTURED_NOVEL_ALIAS"))
-        self.assertEqual(r["PROMPT_FALLBACK_USED"], "NO")
-        self.assertFalse(tgt.exists())
-        self.assertEqual(self.calls["archive"], 0)
+            app.create_fresh_social_image_from_caption(tgt, abbr=abbr, novel=novel, title="Chapter 1",
+                                                       caption="He looked up.", visual_brief=nameless)
+        self.assertTrue(tgt.exists())
+        recs = self.records()
+        self.assertTrue(recs)
+        r = recs[-1]
+        self.assertEqual(r.get("PATH_ID"), "V1:local_stable_diffusion")
+        self.assertEqual(r.get("CHARACTER") or "", "")
+        self.assertEqual(r["UPSTREAM_CHARACTER_ASSIGNED"], "NO")
+        self.assertEqual(r["IDENTITY_GATE_REQUIRED"], "NO")
+        self.assertEqual(r["VERIFIER_DECISION"], ip.NOT_APPLICABLE_DECISION)
+        self.assertIn("NOVEL_PROTAGONIST_FALLBACK_RESTRICTED", r.get("NO_GOVERNED_CHARACTER_REASON") or "")
+        self.assertGreaterEqual(self.calls["generate"], 1)
 
     def test_02_governed_kael_context_title_removed_binds_kael(self):
         self.openai()
@@ -229,20 +235,26 @@ class TestAttribution(_Base):
         self.assertEqual(r["CHARACTER_BINDING_SOURCE"], "STRUCTURED_CHARACTER_ID")
         self.assertEqual(r["STRUCTURED_CHARACTER_ID"], "kael_veyra")
 
-    def test_03_governed_liang_no_name_no_title_binds_liang(self):
+    def test_03_governed_liang_no_name_no_title_skips_novel_protagonist_fallback(self):
+        # Stage-1: HP alias alone on local SDXL is INTENT_NO — no novel-only liang bind.
         self.local_sd()
         self.strategy(["local_stable_diffusion", "local_fallback"])
         abbr, _novel, nameless = NAMELESS["liang"]
         tgt = self.tmp / "l.png"
         with identity_flag(True, self.log):
-            with self.assertRaises(Exception) as cm:
-                app.create_prompt_fallback_image(nameless, tgt, 1, abbr)
-        self.assertTrue(ip.is_identity_block(cm.exception))
-        r = self.assert_governed_block(self.records(), "liang")[0]
-        self.assertEqual(r["STRUCTURED_NOVEL_ALIAS"], "HP")
-        self.assertEqual(r["PROMPT_FALLBACK_USED"], "NO")
+            app.create_prompt_fallback_image(nameless, tgt, 1, abbr)
+        self.assertTrue(tgt.exists())
+        recs = self.records()
+        self.assertTrue(recs)
+        r = recs[-1]
+        self.assertEqual(r.get("PATH_ID"), "V1:local_stable_diffusion")
+        self.assertEqual(r.get("CHARACTER") or "", "")
+        self.assertEqual(r["UPSTREAM_CHARACTER_ASSIGNED"], "NO")
+        self.assertEqual(r["VERIFIER_DECISION"], ip.NOT_APPLICABLE_DECISION)
+        self.assertIn("NOVEL_PROTAGONIST_FALLBACK_RESTRICTED", r.get("NO_GOVERNED_CHARACTER_REASON") or "")
 
-    def test_04_governed_jarek_via_production_alias_binds_jarek(self):
+    def test_04_governed_jarek_via_production_alias_skips_novel_protagonist_fallback(self):
+        # Stage-1: SF production alias alone on local SDXL is INTENT_NO — no novel-only jarek bind.
         self.assertEqual(ip.resolve_production_novel_alias("SF"), "sf")
         self.assertEqual(ip.resolve_production_novel_alias("Soulforge Era"), "sf")
         self.assertIsNone(ip.resolve_production_novel_alias("SFE"))  # not a production alias (not invented)
@@ -250,10 +262,16 @@ class TestAttribution(_Base):
         self.strategy(["local_stable_diffusion", "local_fallback"])
         tgt = self.tmp / "j.png"
         with identity_flag(True, self.log):
-            with self.assertRaises(Exception):
-                app.create_unique_prompt_fallback_image(NAMELESS["jarek"][2], tgt, 1, "SF")
-        r = self.assert_governed_block(self.records(), "jarek")[0]
-        self.assertEqual(r["CHARACTER_BINDING_SOURCE"], "STRUCTURED_NOVEL_ALIAS")
+            app.create_unique_prompt_fallback_image(NAMELESS["jarek"][2], tgt, 1, "SF")
+        self.assertTrue(tgt.exists())
+        recs = self.records()
+        self.assertTrue(recs)
+        r = recs[-1]
+        self.assertEqual(r.get("PATH_ID"), "V1:local_stable_diffusion")
+        self.assertEqual(r.get("CHARACTER") or "", "")
+        self.assertEqual(r["UPSTREAM_CHARACTER_ASSIGNED"], "NO")
+        self.assertEqual(r["VERIFIER_DECISION"], ip.NOT_APPLICABLE_DECISION)
+        self.assertIn("NOVEL_PROTAGONIST_FALLBACK_RESTRICTED", r.get("NO_GOVERNED_CHARACTER_REASON") or "")
 
     def test_05_known_governed_context_failed_binding_fail_closed(self):
         img = self.old_image("x.png", FAKE)
