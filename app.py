@@ -8478,6 +8478,7 @@ def create_local_stable_diffusion_image(
     strength: float | None = None,
     quality_mode: str = "",
     image_intent: Any = None,
+    compact_slots: Any = None,
 ) -> dict[str, Any]:
     _identity_prompt = prompt  # IDENTITY_PRODUCTION_PLUMBING_20260929 (pre-enhancement caller prompt)
     status = local_stable_diffusion_status()
@@ -8501,6 +8502,13 @@ def create_local_stable_diffusion_image(
         raise PhotorealisticProfileUnavailableError()
     lora_path = find_lora_weights_for_track(lora_track) if os.environ.get("LOCAL_SD_LORA_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"} else None
     prompt = enhance_local_sd_prompt(prompt, orientation=orientation, lora_track=lora_track)
+    # LOCAL_SDXL_COMPACT_IDENTITY_PROMPT_CONDITIONING: opt-in rewrite via compact_slots only.
+    # Absent compact_slots => legacy freeform prompt unchanged (generic-scene behavior preserved).
+    if compact_slots:
+        from tools.local_sdxl_compact_prompt import try_rewrite_prompt_with_compact_slots
+        _compact = try_rewrite_prompt_with_compact_slots(prompt, compact_slots=compact_slots)
+        if _compact is not None:
+            prompt = _compact
     metadata_path = target.with_suffix(target.suffix + ".local-sd.json")
     negative = os.environ.get(
         "LOCAL_SD_NEGATIVE_PROMPT",

@@ -286,6 +286,10 @@ except Exception as _rt_exc:  # noqa: BLE001
 
 
 def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "requires_sdxl_tokenizer: needs CLIP-L/G tokenizer-only folders (never silent pass)",
+    )
     if not config.pluginmanager.has_plugin("tests.live_side_effect_hooks"):
         config.pluginmanager.import_plugin("tests.live_side_effect_hooks")
     if not ISOLATION_OK:
@@ -312,3 +316,4 @@ def pytest_sessionstart(session):
 def pytest_collection_modifyitems(config, items):
     if not ISOLATION_OK:
         _abort("isolation failed before collection completed")
+
