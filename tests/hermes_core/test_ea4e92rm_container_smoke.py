@@ -184,6 +184,16 @@ def test_one_synthetic_request_and_owned_stop(tmp_path, monkeypatch):
     assert not docker.created
 
 
+def test_tags_only_never_requests_inference_and_cleans_up(tmp_path, monkeypatch):
+    plan = plan_for(tmp_path, monkeypatch)
+    docker = FakeDocker(plan)
+    assert run_smoke(plan, docker, tags_only=True) == "EA4E_LOCAL_TAGS_OK"
+    assert not any("/api/generate" in args for args, _ in docker.calls)
+    assert sum("/api/tags" in args for args, _ in docker.calls) == 1
+    assert not docker.created
+    assert not docker.running
+
+
 @pytest.mark.parametrize("failure", ["network", "interfaces", "cpu"])
 def test_denial_still_stops_exact_container(tmp_path, monkeypatch, failure):
     plan = plan_for(tmp_path, monkeypatch)

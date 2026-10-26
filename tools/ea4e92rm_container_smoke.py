@@ -425,7 +425,8 @@ def _create_args(plan: SmokePlan, root: Path, owner_token: str) -> tuple[str, ..
     )
 
 
-def run_smoke(plan: SmokePlan, client: DockerBoundary, *, clock=time.monotonic) -> str:
+def run_smoke(plan: SmokePlan, client: DockerBoundary, *, tags_only=False,
+              clock=time.monotonic) -> str:
     """Run one synthetic request, then stop only its exact owned container.
 
     Do not call without a new exact authorization for this container envelope.
@@ -479,6 +480,9 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, clock=time.monotonic) 
                 and model.get("digest") == MODEL_MANIFEST_DIGEST
                 for model in models)):
             raise SmokeDenied("pinned local model absent")
+        if tags_only:
+            validate_plan(plan, deadline=work_deadline, clock=clock)
+            return "EA4E_LOCAL_TAGS_OK"
         prompt = ("Reply only as JSON with exactly one key, marker, whose value "
                   "is EA4E_LOCAL_SMOKE_OK.")
         request = json.dumps({
