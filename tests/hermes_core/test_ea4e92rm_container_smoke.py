@@ -301,6 +301,17 @@ def test_post_start_exit_suppresses_untrusted_state_values(tmp_path, monkeypatch
     assert "secret-from-daemon" not in "".join(traceback.format_exception(error.value))
 
 
+@pytest.mark.parametrize("code,oom,expected", [
+    (0, True, "exit_code=0 oom=true"),
+    (255, False, "exit_code=255 oom=false"),
+    (-1, True, "exit_code=unknown oom=true"),
+    (256, False, "exit_code=unknown oom=false"),
+    (True, False, "exit_code=unknown oom=false"),
+])
+def test_stopped_state_metadata_is_bounded(code, oom, expected):
+    assert smoke._stopped_state_summary({"ExitCode": code, "OOMKilled": oom}) == expected
+
+
 def test_absent_local_model_denied_before_inference(tmp_path, monkeypatch):
     plan = plan_for(tmp_path, monkeypatch)
     docker = FakeDocker(plan, fail_on="absent-model")
