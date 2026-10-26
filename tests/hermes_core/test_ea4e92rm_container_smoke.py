@@ -130,24 +130,45 @@ class FakeDocker:
                 if self.interfaces != "lo":
                     lines += "eth0: 0 0 0 0\n"
                 return lines.encode()
-            assert args[3:9] == (
-                "/bin/ollama", "run", "--format=json", "--think=false",
-                "--keepalive=0", "--nowordwrap")
-            assert args[9] == "qwen3:14b"
-            assert args[10] == ("Reply only as JSON with exactly one key, marker, "
-                                "whose value is EA4E_LOCAL_SMOKE_OK.")
-            assert not stdin
+            assert args[2:6] == ("--interactive", CONTAINER_ID, "/bin/bash", "-c")
+            assert args[7] == "bash"
+            assert args[8] in ("GET", "POST")
+            assert args[9] in ("/api/tags", "/api/generate")
+            assert args[10] == str(len(stdin))
+            assert "127.0.0.1/11434" in args[6]
+            if args[8] == "GET":
+                assert not stdin
+                digest = ("wrong" if self.fail_on == "absent-model"
+                          else smoke.MODEL_MANIFEST_DIGEST)
+                body = json.dumps({"models": [{"name": "qwen3:14b",
+                                                "digest": digest}]}).encode()
+                return self._http(body)
+            request = json.loads(stdin)
+            assert request["model"] == "qwen3:14b"
+            assert request["stream"] is False
+            assert request["keep_alive"] == 0
+            assert request["options"] == {"num_predict": 32}
             if self.fail_on == "model-drift":
                 (self.plan.models_root / "blobs" / "sha256-synthetic-1").write_bytes(b"changed")
             marker = ("not the requested marker" if self.fail_on == "wrong-answer"
                       else "EA4E_LOCAL_SMOKE_OK")
             answer = {"marker": marker}
             if self.fail_on == "duplicate-key":
-                return b'{"marker":"wrong","marker":"EA4E_LOCAL_SMOKE_OK"}'
-            if self.fail_on == "extra-field":
-                answer["extra"] = "unexpected"
-            return json.dumps(answer).encode()
+                response = '{"marker":"wrong","marker":"EA4E_LOCAL_SMOKE_OK"}'
+            else:
+                if self.fail_on == "extra-field":
+                    answer["extra"] = "unexpected"
+                response = json.dumps(answer)
+            body = json.dumps({"model": "qwen3:14b", "done": True,
+                               "response": response}).encode()
+            return self._http(body)
         raise AssertionError(args)
+
+    @staticmethod
+    def _http(body):
+        return (b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
+                + body)
 
 
 def test_one_synthetic_request_and_owned_stop(tmp_path, monkeypatch):
@@ -156,7 +177,7 @@ def test_one_synthetic_request_and_owned_stop(tmp_path, monkeypatch):
     assert run_smoke(plan, docker) == "EA4E_LOCAL_SMOKE_OK"
     assert not docker.running
     requests = [args for args, _ in docker.calls if args[:2] == ("container", "exec")
-                and "/bin/ollama" in args]
+                and "/api/generate" in args]
     assert len(requests) == 1
     assert ("container", "kill", CONTAINER_ID) in [args for args, _ in docker.calls]
     assert docker.calls[-2][0] == ("container", "rm", CONTAINER_ID)
@@ -171,8 +192,17 @@ def test_denial_still_stops_exact_container(tmp_path, monkeypatch, failure):
     with pytest.raises(SmokeDenied):
         run_smoke(plan, docker)
     assert not docker.running
-    assert not any(args[:2] == ("container", "exec") and "/bin/ollama" in args
+    assert not any(args[:2] == ("container", "exec") and "/api/generate" in args
                    for args, _ in docker.calls)
+
+
+def test_absent_local_model_denied_before_inference(tmp_path, monkeypatch):
+    plan = plan_for(tmp_path, monkeypatch)
+    docker = FakeDocker(plan, fail_on="absent-model")
+    with pytest.raises(SmokeDenied, match="pinned local model absent"):
+        run_smoke(plan, docker)
+    assert not any("/api/generate" in args for args, _ in docker.calls)
+    assert not docker.created
 
 
 def test_model_file_drift_denied_before_docker(tmp_path, monkeypatch):
@@ -225,6 +255,30 @@ def test_unpinned_image_denied(tmp_path, monkeypatch):
                         plan.ceremony_id)
     with pytest.raises(SmokeDenied, match="digest-pinned"):
         validate_plan(invalid)
+
+
+@pytest.mark.parametrize("payload", [
+    b'[{"Id":"first","Id":"second"}]',
+    b'[{"HostConfig":{"NetworkMode":"bridge","NetworkMode":"none"}}]',
+    b'[{"Config":{"Labels":{"ea4e92rm.owner":"other",'
+    b'"ea4e92rm.owner":"claimed"}}}]',
+])
+def test_docker_inspect_duplicate_keys_denied(payload):
+    with pytest.raises(SmokeDenied, match="response contract"):
+        smoke._json_object(payload)
+
+
+@pytest.mark.parametrize("response", [
+    b"HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\n"
+    b"Content-Length: 2\r\n\r\n{}",
+    b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n"
+    b"Content-Length: 2\r\n\r\n{}",
+    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+    b"Content-Length: 13\r\n\r\n{\"x\":1,\"x\":2}",
+])
+def test_local_http_response_fail_closed(response):
+    with pytest.raises(SmokeDenied):
+        smoke._http_json(response)
 
 
 def test_create_failure_is_unknown(tmp_path, monkeypatch):

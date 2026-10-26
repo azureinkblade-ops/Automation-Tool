@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+from http.client import HTTPResponse
+from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -26,6 +28,7 @@ CONTAINER_RE = re.compile(r"^[0-9a-f]{64}$")
 LOCAL_DOCKER_HOST = "npipe:////./pipe/dockerDesktopLinuxEngine"
 MAX_CLI_OUTPUT = 1024 * 1024
 MAX_RESPONSE = 64 * 1024
+MODEL_MANIFEST_DIGEST = "bdbd181c33f2ed1b31c972991882db3cf4d192569092138a7d29e973cd9debe8"
 WALL_SECONDS = 120
 WORK_SECONDS = 90
 EXPECTED_MODEL_FILES = (
@@ -229,12 +232,61 @@ def validate_plan(plan: SmokePlan, *, deadline: float | None = None,
 
 def _json_object(raw: bytes) -> dict:
     try:
-        value = json.loads(raw)
+        value = json.loads(raw, object_pairs_hook=_unique_json_object)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise SmokeDenied("Docker JSON invalid") from error
     if type(value) is not list or len(value) != 1 or type(value[0]) is not dict:
         raise SmokeDenied("Docker inspect shape invalid")
     return value[0]
+
+
+class _ResponseBytes:
+    def __init__(self, raw: bytes):
+        self.raw = raw
+
+    def makefile(self, mode: str):
+        if mode != "rb":
+            raise SmokeDenied("HTTP response mode invalid")
+        return BytesIO(self.raw)
+
+
+def _http_json(raw: bytes) -> dict:
+    try:
+        response = HTTPResponse(_ResponseBytes(raw))
+        response.begin()
+        body = response.read(MAX_RESPONSE + 1)
+        if (response.status != 200 or len(body) > MAX_RESPONSE
+                or response.getheader("Content-Type", "").split(";", 1)[0]
+                != "application/json"):
+            raise SmokeDenied("local Ollama HTTP response invalid")
+        value = json.loads(body, object_pairs_hook=_unique_json_object)
+    except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise SmokeDenied("local Ollama HTTP response invalid") from error
+    if type(value) is not dict:
+        raise SmokeDenied("local Ollama HTTP JSON shape invalid")
+    return value
+
+
+_LOCAL_HTTP_SCRIPT = (
+    "set -eu\n"
+    "exec 3<>/dev/tcp/127.0.0.1/11434\n"
+    "printf '%s %s HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n"
+    "Content-Type: application/json\\r\\nContent-Length: %s\\r\\n\\r\\n' "
+    '"$1" "$2" "$3" >&3\n'
+    "cat >&3\n"
+    "cat <&3\n"
+)
+
+
+def _local_http(client: DockerBoundary, container_id: str, method: str,
+                path: str, body: bytes, deadline: float, clock) -> dict:
+    if (method, path) not in {("GET", "/api/tags"), ("POST", "/api/generate")}:
+        raise SmokeDenied("unreviewed local Ollama path")
+    raw = client.invoke(
+        ("container", "exec", "--interactive", container_id, "/bin/bash", "-c",
+         _LOCAL_HTTP_SCRIPT, "bash", method, path, str(len(body))),
+        timeout=_remaining(deadline, clock), stdin=body, output_limit=MAX_RESPONSE)
+    return _http_json(raw)
 
 
 def _remaining(deadline: float, clock) -> float:
@@ -373,17 +425,28 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, clock=time.monotonic) 
         if names != {"lo"}:
             raise SmokeDenied("container has non-loopback interface")
 
-        raw = client.invoke(
-            ("container", "exec", container_id, "/bin/ollama", "run",
-             "--format=json", "--think=false", "--keepalive=0",
-             "--nowordwrap", plan.model,
-             "Reply only as JSON with exactly one key, marker, whose value "
-             "is EA4E_LOCAL_SMOKE_OK."),
-            timeout=_remaining(work_deadline, clock),
-            output_limit=MAX_RESPONSE)
+        tags = _local_http(client, container_id, "GET", "/api/tags", b"",
+                           work_deadline, clock)
+        models = tags.get("models")
+        if (type(models) is not list or not any(
+                type(model) is dict and model.get("name") == plan.model
+                and model.get("digest") == MODEL_MANIFEST_DIGEST
+                for model in models)):
+            raise SmokeDenied("pinned local model absent")
+        prompt = ("Reply only as JSON with exactly one key, marker, whose value "
+                  "is EA4E_LOCAL_SMOKE_OK.")
+        request = json.dumps({
+            "model": plan.model, "prompt": prompt, "format": "json",
+            "stream": False, "think": False, "keep_alive": 0,
+            "options": {"num_predict": 32},
+        }, separators=(",", ":")).encode("ascii")
+        result = _local_http(client, container_id, "POST", "/api/generate",
+                             request, work_deadline, clock)
+        if result.get("model") != plan.model or result.get("done") is not True:
+            raise SmokeDenied("model response contract mismatch")
         try:
-            answer = json.loads(raw, object_pairs_hook=_unique_json_object)
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            answer = json.loads(result["response"], object_pairs_hook=_unique_json_object)
+        except (KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as error:
             raise SmokeDenied("model response invalid") from error
         if answer != {"marker": "EA4E_LOCAL_SMOKE_OK"}:
             raise SmokeDenied("model response contract mismatch")
