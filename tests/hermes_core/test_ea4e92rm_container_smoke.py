@@ -3,6 +3,7 @@
 import hashlib
 import json
 import traceback
+from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -64,7 +65,10 @@ class FakeDocker:
                 "Devices": [], "DeviceRequests": [],
                 "SecurityOpt": ["no-new-privileges"],
                 "RestartPolicy": {"Name": "no"}, "PortBindings": None,
-                "LogConfig": {"Type": "none"},
+                "LogConfig": ({"Type": "local", "Config": {"max-size": "16k",
+                                                       "max-file": "1"}}
+                              if self.plan.startup_log_diagnostic
+                              else {"Type": "none"}),
                 "Tmpfs": {"/tmp": "rw,nosuid,nodev,size=2147483648"},
             },
             "Mounts": [{"Type": "bind", "Source": str(self.plan.models_root),
@@ -88,6 +92,12 @@ class FakeDocker:
             assert "--restart=no" in args
             assert "--gpus" not in args
             assert "--publish" not in args
+            if self.plan.startup_log_diagnostic:
+                assert "--log-driver=local" in args
+                assert args.count("--log-opt") == 2
+                assert "max-size=16k" in args and "max-file=1" in args
+            else:
+                assert "--log-driver=none" in args
             self.owner_token = args[args.index("--label") + 1].split("=", 1)[1]
             self.created = True
             if self.fail_on == "collision":
@@ -126,6 +136,12 @@ class FakeDocker:
         if args[:2] == ("container", "ls"):
             assert args[-1] == f"id={CONTAINER_ID}"
             return b"" if not self.created else (CONTAINER_ID + "\n").encode()
+        if args[:2] == ("container", "logs"):
+            assert self.plan.startup_log_diagnostic
+            assert args == ("container", "logs", "--tail", "20", CONTAINER_ID)
+            assert output_limit == 4096
+            return (b"startup failed: read-only file system; secret-from-daemon"
+                    if self.fail_on == "interface-exit" else b"private unclassified text")
         if args[:2] == ("container", "exec"):
             if self.fail_on in ("interface-exit", "interface-reject") and "/proc/net/dev" in args:
                 if self.fail_on == "interface-exit":
@@ -332,6 +348,44 @@ def test_failed_interface_exec_rechecks_owned_state_before_cleanup(
     assert not docker.running
     assert not any("/api/tags" in args or "/api/generate" in args
                    for args, _ in docker.calls)
+
+
+def test_startup_diagnostic_classifies_only_fixed_category(tmp_path, monkeypatch):
+    plan = replace(plan_for(tmp_path, monkeypatch), startup_log_diagnostic=True)
+    docker = FakeDocker(plan, fail_on="interface-exit")
+    with pytest.raises(SmokeDenied) as error:
+        run_smoke(plan, docker, tags_only=True)
+    rendered = "".join(traceback.format_exception(error.value))
+    assert str(error.value) == (
+        "effective container containment mismatch: running "
+        "exit_code=127 oom=false startup_category=read_only_filesystem")
+    assert "secret-from-daemon" not in rendered
+    assert sum(args[:2] == ("container", "logs") for args, _ in docker.calls) == 1
+    assert not docker.created
+
+
+def test_startup_diagnostic_cannot_request_inference(tmp_path, monkeypatch):
+    plan = replace(plan_for(tmp_path, monkeypatch), startup_log_diagnostic=True)
+    docker = FakeDocker(plan)
+    with pytest.raises(SmokeDenied, match="requires tags-only mode"):
+        run_smoke(plan, docker)
+    assert not docker.calls
+
+
+@pytest.mark.parametrize("raw,category", [
+    (b"permission denied", "permission_denied"),
+    (b"no such file or directory", "missing_path"),
+    (b"no space left on device", "storage_full"),
+    (b"private unclassified text", "unclassified"),
+])
+def test_startup_log_classification_never_echoes_raw_text(raw, category):
+    class LogClient:
+        def invoke(self, args, *, timeout, output_limit):
+            assert args == ("container", "logs", "--tail", "20", CONTAINER_ID)
+            assert output_limit == 4096
+            return raw
+
+    assert smoke._startup_category(LogClient(), CONTAINER_ID, 10, lambda: 0) == category
 
 
 def test_absent_local_model_denied_before_inference(tmp_path, monkeypatch):

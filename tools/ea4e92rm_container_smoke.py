@@ -70,6 +70,7 @@ class SmokePlan:
     model: str = "qwen3:14b"
     memory_bytes: int = 20 * 1024**3
     pids_limit: int = 64
+    startup_log_diagnostic: bool = False
 
     @property
     def name(self) -> str:
@@ -176,7 +177,7 @@ class DockerCli:
             raise SmokeDenied("Docker CLI output bound failed")
         if process.returncode != 0:
             raise SmokeDenied("Docker CLI command failed")
-        return bytes(output)
+        return bytes(output + errors) if args[:2] == ("container", "logs") else bytes(output)
 
 
 def _hash_file(path: Path, *, deadline: float | None = None,
@@ -231,7 +232,8 @@ def validate_plan(plan: SmokePlan, *, deadline: float | None = None,
     except (ValueError, TypeError):
         raise SmokeDenied("fresh ceremony UUID required") from None
     if (plan.model != "qwen3:14b" or plan.memory_bytes != 20 * 1024**3
-            or plan.pids_limit != 64):
+            or plan.pids_limit != 64
+            or type(plan.startup_log_diagnostic) is not bool):
         raise SmokeDenied("unreviewed model or resource budget")
     root = plan.models_root.resolve(strict=True)
     if root != plan.models_root or root.is_symlink() or not root.is_dir():
@@ -388,6 +390,25 @@ def _stopped_state_summary(state: object) -> str:
     return f"exit_code={exit_code} oom={oom_label}"
 
 
+def _startup_category(client: DockerBoundary, container_id: str,
+                      deadline: float, clock) -> str:
+    try:
+        raw = client.invoke(("container", "logs", "--tail", "20", container_id),
+                            timeout=_remaining(deadline, clock), output_limit=4096)
+    except Exception:
+        return "unavailable"
+    lower = raw.lower()
+    for marker, category in (
+        (b"read-only file system", "read_only_filesystem"),
+        (b"permission denied", "permission_denied"),
+        (b"no such file or directory", "missing_path"),
+        (b"no space left on device", "storage_full"),
+    ):
+        if marker in lower:
+            return category
+    return "unclassified"
+
+
 def _verify_container(observed: dict, plan: SmokePlan, container_id: str,
                       owner_token: str, *, running: bool) -> None:
     host = observed.get("HostConfig") or {}
@@ -421,7 +442,11 @@ def _verify_container(observed: dict, plan: SmokePlan, container_id: str,
             option in ("no-new-privileges", "no-new-privileges:true")
             for option in (host.get("SecurityOpt") or []))),
         ("restart", lambda: (host.get("RestartPolicy") or {}).get("Name") == "no"),
-        ("logging", lambda: (host.get("LogConfig") or {}).get("Type") == "none"),
+        ("logging", lambda: (
+            (host.get("LogConfig") or {}) ==
+            {"Type": "local", "Config": {"max-size": "16k", "max-file": "1"}}
+            if plan.startup_log_diagnostic else
+            (host.get("LogConfig") or {}).get("Type") == "none")),
         ("tmpfs", lambda: host.get("Tmpfs") == {"/tmp": "rw,nosuid,nodev,size=2147483648"}),
         ("port_bindings", lambda: not host.get("PortBindings")),
         ("ports", lambda: all(not value for value in (network.get("Ports") or {}).values())),
@@ -453,14 +478,32 @@ def _verify_container(observed: dict, plan: SmokePlan, container_id: str,
             raise SmokeDenied(f"effective container containment mismatch: {field}")
 
 
+def _verify_expected_running(observed: dict, plan: SmokePlan,
+                             container_id: str, owner_token: str,
+                             client: DockerBoundary, deadline: float, clock) -> None:
+    state = observed.get("State") or {}
+    if (plan.startup_log_diagnostic and type(state) is dict
+            and state.get("Running") is False):
+        _verify_container(observed, plan, container_id, owner_token, running=False)
+        summary = _stopped_state_summary(state)
+        category = _startup_category(client, container_id, deadline, clock)
+        raise SmokeDenied(
+            "effective container containment mismatch: running "
+            + summary + " startup_category=" + category)
+    _verify_container(observed, plan, container_id, owner_token, running=True)
+
+
 def _create_args(plan: SmokePlan, root: Path, owner_token: str) -> tuple[str, ...]:
+    logging = (("--log-driver=local", "--log-opt", "max-size=16k",
+                "--log-opt", "max-file=1") if plan.startup_log_diagnostic
+               else ("--log-driver=none",))
     return (
         "container", "create", "--pull=never", "--name", plan.name,
         "--label", "ea4e92rm.owner=" + owner_token,
         "--network=none", "--read-only", "--cap-drop=ALL",
         "--security-opt=no-new-privileges", "--pids-limit=64",
         f"--memory={plan.memory_bytes}", f"--memory-swap={plan.memory_bytes}",
-        "--cpus=4", "--restart=no", "--log-driver=none",
+        "--cpus=4", "--restart=no", *logging,
         "--mount", f"type=bind,source={root},target=/models,readonly",
         "--tmpfs", "/tmp:rw,nosuid,nodev,size=2147483648",
         "--env", "HOME=/tmp", "--env", "OLLAMA_MODELS=/models",
@@ -477,6 +520,8 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, tags_only=False,
     Do not call without a new exact authorization for this container envelope.
     No retry follows an uncertain create or cleanup outcome.
     """
+    if plan.startup_log_diagnostic and not tags_only:
+        raise SmokeDenied("startup diagnostic requires tags-only mode")
     deadline = clock() + WALL_SECONDS
     work_deadline = deadline - (WALL_SECONDS - WORK_SECONDS)
     root = validate_plan(plan, deadline=work_deadline, clock=clock)
@@ -509,16 +554,18 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, tags_only=False,
         _verify_container(observed, plan, container_id, owner_token, running=False)
         client.invoke(("container", "start", container_id),
                       timeout=_remaining(work_deadline, clock))
-        _verify_container(_inspect(client, container_id, work_deadline, clock),
-                          plan, container_id, owner_token, running=True)
+        _verify_expected_running(
+            _inspect(client, container_id, work_deadline, clock), plan,
+            container_id, owner_token, client, work_deadline, clock)
 
         try:
             interfaces = client.invoke(
                 ("container", "exec", container_id, "/bin/cat", "/proc/net/dev"),
                 timeout=_remaining(work_deadline, clock))
         except SmokeDenied:
-            _verify_container(_inspect(client, container_id, work_deadline, clock),
-                              plan, container_id, owner_token, running=True)
+            _verify_expected_running(
+                _inspect(client, container_id, work_deadline, clock), plan,
+                container_id, owner_token, client, work_deadline, clock)
             raise SmokeDenied("container interface inspection failed") from None
         try:
             lines = interfaces.decode("ascii", "strict").splitlines()[2:]
