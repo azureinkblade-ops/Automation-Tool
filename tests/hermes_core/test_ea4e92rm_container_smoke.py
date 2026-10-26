@@ -138,6 +138,12 @@ class FakeDocker:
             assert "127.0.0.1/11434" in args[6]
             if args[8] == "GET":
                 assert not stdin
+                if self.fail_on == "tags-http":
+                    body = b'{"secret":"hidden"}'
+                    return (b"HTTP/1.1 503 Service Unavailable\r\n"
+                            b"Content-Type: application/json\r\n"
+                            + f"Content-Length: {len(body)}\r\n\r\n".encode()
+                            + body)
                 digest = ("wrong" if self.fail_on == "absent-model"
                           else smoke.MODEL_MANIFEST_DIGEST)
                 body = json.dumps({"models": [{"name": "qwen3:14b",
@@ -190,6 +196,18 @@ def test_tags_only_never_requests_inference_and_cleans_up(tmp_path, monkeypatch)
     assert run_smoke(plan, docker, tags_only=True) == "EA4E_LOCAL_TAGS_OK"
     assert not any("/api/generate" in args for args, _ in docker.calls)
     assert sum("/api/tags" in args for args, _ in docker.calls) == 1
+    assert not docker.created
+    assert not docker.running
+
+
+def test_tags_only_http_failure_reports_no_body_and_cleans_up(tmp_path, monkeypatch):
+    plan = plan_for(tmp_path, monkeypatch)
+    docker = FakeDocker(plan, fail_on="tags-http")
+    with pytest.raises(SmokeDenied) as failure:
+        run_smoke(plan, docker, tags_only=True)
+    assert "status=503" in str(failure.value)
+    assert "hidden" not in str(failure.value)
+    assert not any("/api/generate" in args for args, _ in docker.calls)
     assert not docker.created
     assert not docker.running
 
