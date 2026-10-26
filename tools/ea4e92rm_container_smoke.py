@@ -154,13 +154,13 @@ class DockerCli:
             if writer.is_alive() or write_errors:
                 raise SmokeDenied("Docker CLI stdin bound failed")
             process.wait(timeout=max(0, deadline - time.monotonic()))
-        except (OSError, subprocess.TimeoutExpired) as error:
+        except (OSError, subprocess.TimeoutExpired):
             try:
                 process.kill()
             except OSError:
                 pass
             process.wait(timeout=3)
-            raise SmokeDenied("Docker CLI write or deadline failed") from error
+            raise SmokeDenied("Docker CLI write or deadline failed") from None
         finally:
             if process.poll() is None:
                 try:
@@ -215,7 +215,7 @@ def _plain_directory(path: Path, root: Path) -> bool:
 
 
 def _walk_error(error):
-    raise SmokeDenied("model inventory traversal failed") from error
+    raise SmokeDenied("model inventory traversal failed") from None
 
 
 def validate_plan(plan: SmokePlan, *, deadline: float | None = None,
@@ -228,8 +228,8 @@ def validate_plan(plan: SmokePlan, *, deadline: float | None = None,
         raise SmokeDenied("exact image ID required")
     try:
         UUID(plan.ceremony_id)
-    except (ValueError, TypeError) as error:
-        raise SmokeDenied("fresh ceremony UUID required") from error
+    except (ValueError, TypeError):
+        raise SmokeDenied("fresh ceremony UUID required") from None
     if (plan.model != "qwen3:14b" or plan.memory_bytes != 20 * 1024**3
             or plan.pids_limit != 64):
         raise SmokeDenied("unreviewed model or resource budget")
@@ -266,8 +266,8 @@ def validate_plan(plan: SmokePlan, *, deadline: float | None = None,
 def _json_object(raw: bytes) -> dict:
     try:
         value = json.loads(raw, object_pairs_hook=_unique_json_object)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise SmokeDenied("Docker JSON invalid") from error
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise SmokeDenied("Docker JSON invalid") from None
     if type(value) is not list or len(value) != 1 or type(value[0]) is not dict:
         raise SmokeDenied("Docker inspect shape invalid")
     return value[0]
@@ -480,7 +480,10 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, tags_only=False,
         creation_attempted = True
         created = client.invoke(_create_args(plan, root, owner_token),
                                 timeout=_remaining(work_deadline, clock))
-        candidate = created.decode("ascii", "strict").strip()
+        try:
+            candidate = created.decode("ascii", "strict").strip()
+        except UnicodeDecodeError:
+            raise UnknownContainerOutcome("container creation identity unknown") from None
         if not CONTAINER_RE.fullmatch(candidate):
             raise UnknownContainerOutcome("container creation identity unknown")
         container_id = candidate
@@ -497,8 +500,11 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, tags_only=False,
         interfaces = client.invoke(
             ("container", "exec", container_id, "/bin/cat", "/proc/net/dev"),
             timeout=_remaining(work_deadline, clock))
-        names = {line.split(":", 1)[0].strip() for line in
-                 interfaces.decode("ascii", "strict").splitlines()[2:] if ":" in line}
+        try:
+            lines = interfaces.decode("ascii", "strict").splitlines()[2:]
+        except UnicodeDecodeError:
+            raise SmokeDenied("container interface response invalid") from None
+        names = {line.split(":", 1)[0].strip() for line in lines if ":" in line}
         if names != {"lo"}:
             raise SmokeDenied("container has non-loopback interface")
 
@@ -526,13 +532,13 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, tags_only=False,
             raise SmokeDenied("model response contract mismatch")
         try:
             answer = json.loads(result["response"], object_pairs_hook=_unique_json_object)
-        except (KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise SmokeDenied("model response invalid") from error
+        except (KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+            raise SmokeDenied("model response invalid") from None
         if answer != {"marker": "EA4E_LOCAL_SMOKE_OK"}:
             raise SmokeDenied("model response contract mismatch")
         validate_plan(plan, deadline=work_deadline, clock=clock)
         return answer["marker"]
-    except BaseException as error:
+    except BaseException:
         if creation_attempted and container_id is None:
             try:
                 observed = _json_object(client.invoke(
@@ -547,9 +553,9 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, tags_only=False,
                 verified_owner = True
             except BaseException:
                 raise UnknownContainerOutcome(
-                    "container creation requires reconciliation") from error
+                    "container creation requires reconciliation") from None
             raise UnknownContainerOutcome(
-                "container creation failed after owned resource appeared") from error
+                "container creation failed after owned resource appeared") from None
         raise
     finally:
         if container_id is not None:
@@ -577,6 +583,6 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, tags_only=False,
                     timeout=min(5, _remaining(deadline, clock)))
                 if remaining.strip():
                     raise UnknownContainerOutcome("owned container removal unconfirmed")
-            except Exception as error:
+            except Exception:
                 raise UnknownContainerOutcome(
-                    "owned container cleanup requires reconciliation") from error
+                    "owned container cleanup requires reconciliation") from None

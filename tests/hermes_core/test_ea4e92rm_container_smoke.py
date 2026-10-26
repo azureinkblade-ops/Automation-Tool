@@ -353,6 +353,38 @@ def test_docker_inspect_duplicate_keys_denied(payload):
         smoke._json_object(payload)
 
 
+def test_invalid_docker_json_traceback_does_not_echo_bytes():
+    payload = b"\xffsecret-from-daemon"
+    with pytest.raises(SmokeDenied) as failure:
+        smoke._json_object(payload)
+    rendered = "".join(traceback.format_exception(failure.value))
+    assert "Docker JSON invalid" in rendered
+    assert "secret-from-daemon" not in rendered
+
+
+@pytest.mark.parametrize("corrupt_command", ["create", "interfaces"])
+def test_invalid_docker_bytes_traceback_is_redacted_and_owned_cleanup_runs(
+        tmp_path, monkeypatch, corrupt_command):
+    plan = plan_for(tmp_path, monkeypatch)
+
+    class InvalidBytesDocker(FakeDocker):
+        def invoke(self, args, **kwargs):
+            output = super().invoke(args, **kwargs)
+            if (corrupt_command == "create" and args[:2] == ("container", "create")
+                    or corrupt_command == "interfaces" and "/proc/net/dev" in args):
+                return b"\xffsecret-from-daemon"
+            return output
+
+    docker = InvalidBytesDocker(plan)
+    with pytest.raises((SmokeDenied, UnknownContainerOutcome)) as failure:
+        run_smoke(plan, docker, tags_only=True)
+    rendered = "".join(traceback.format_exception(failure.value))
+    assert "secret-from-daemon" not in rendered
+    assert not docker.created
+    assert not docker.running
+    assert not any("/api/tags" in args for args, _ in docker.calls)
+
+
 @pytest.mark.parametrize("response", [
     b"HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\n"
     b"Content-Length: 2\r\n\r\n{}",
