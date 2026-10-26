@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-from http.client import HTTPResponse
+from http.client import HTTPException, HTTPResponse
 from io import BytesIO
 import json
 import os
@@ -252,6 +252,15 @@ class _ResponseBytes:
 
 def _http_json(raw: bytes) -> dict:
     try:
+        headers, separator, payload = raw.partition(b"\r\n\r\n")
+        if not separator:
+            raise SmokeDenied("local Ollama HTTP framing invalid")
+        lengths = [line.split(b":", 1)[1].strip() for line in headers.split(b"\r\n")[1:]
+                   if line.lower().startswith(b"content-length:")]
+        if (b"transfer-encoding:" in headers.lower()
+                or len(lengths) != 1 or not lengths[0].isdigit()
+                or int(lengths[0]) != len(payload)):
+            raise SmokeDenied("local Ollama HTTP framing invalid")
         response = HTTPResponse(_ResponseBytes(raw))
         response.begin()
         body = response.read(MAX_RESPONSE + 1)
@@ -260,7 +269,8 @@ def _http_json(raw: bytes) -> dict:
                 != "application/json"):
             raise SmokeDenied("local Ollama HTTP response invalid")
         value = json.loads(body, object_pairs_hook=_unique_json_object)
-    except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError,
+            HTTPException) as error:
         raise SmokeDenied("local Ollama HTTP response invalid") from error
     if type(value) is not dict:
         raise SmokeDenied("local Ollama HTTP JSON shape invalid")

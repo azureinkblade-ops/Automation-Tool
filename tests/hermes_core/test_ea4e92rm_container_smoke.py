@@ -275,6 +275,12 @@ def test_docker_inspect_duplicate_keys_denied(payload):
     b"Content-Length: 2\r\n\r\n{}",
     b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
     b"Content-Length: 13\r\n\r\n{\"x\":1,\"x\":2}",
+    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+    b"Content-Length: 2\r\n\r\n{}trailing",
+    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+    b"Content-Length: 2\r\nContent-Length: 2\r\n\r\n{}",
+    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+    b"Transfer-Encoding: chunked\r\nContent-Length: 2\r\n\r\n{}",
 ])
 def test_local_http_response_fail_closed(response):
     with pytest.raises(SmokeDenied):
