@@ -127,8 +127,10 @@ class FakeDocker:
             assert json.loads(stdin)["prompt"] == "Reply with exactly EA4E_LOCAL_SMOKE_OK."
             if self.fail_on == "model-drift":
                 (self.plan.models_root / "blobs" / "sha256-synthetic-1").write_bytes(b"changed")
+            response = ("not the requested marker" if self.fail_on == "wrong-answer"
+                        else "EA4E_LOCAL_SMOKE_OK")
             return json.dumps({"model": "qwen3:14b", "done": True,
-                               "response": "EA4E_LOCAL_SMOKE_OK"}).encode()
+                               "response": response}).encode()
         raise AssertionError(args)
 
 
@@ -172,6 +174,14 @@ def test_model_drift_during_request_denies_and_stops(tmp_path, monkeypatch):
     plan = plan_for(tmp_path, monkeypatch)
     docker = FakeDocker(plan, fail_on="model-drift")
     with pytest.raises(SmokeDenied, match="model file identity"):
+        run_smoke(plan, docker)
+    assert not docker.running
+
+
+def test_wrong_model_answer_denies_and_stops(tmp_path, monkeypatch):
+    plan = plan_for(tmp_path, monkeypatch)
+    docker = FakeDocker(plan, fail_on="wrong-answer")
+    with pytest.raises(SmokeDenied, match="response contract"):
         run_smoke(plan, docker)
     assert not docker.running
 

@@ -387,7 +387,7 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, clock=time.monotonic) 
             raise SmokeDenied("model response invalid") from error
         if (type(answer) is not dict or answer.get("model") != plan.model
                 or answer.get("done") is not True
-                or type(answer.get("response")) is not str):
+                or answer.get("response") != "EA4E_LOCAL_SMOKE_OK"):
             raise SmokeDenied("model response contract mismatch")
         validate_plan(plan, deadline=work_deadline, clock=clock)
         return answer["response"]
