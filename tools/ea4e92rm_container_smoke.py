@@ -49,6 +49,15 @@ class UnknownContainerOutcome(RuntimeError):
     """The exact container's creation or cleanup needs reconciliation."""
 
 
+def _unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise SmokeDenied("model response contract mismatch")
+        result[key] = value
+    return result
+
+
 @dataclass(frozen=True)
 class SmokePlan:
     image: str
@@ -373,7 +382,7 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, clock=time.monotonic) 
             timeout=_remaining(work_deadline, clock),
             output_limit=MAX_RESPONSE)
         try:
-            answer = json.loads(raw)
+            answer = json.loads(raw, object_pairs_hook=_unique_json_object)
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise SmokeDenied("model response invalid") from error
         if answer != {"marker": "EA4E_LOCAL_SMOKE_OK"}:
@@ -417,6 +426,14 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, clock=time.monotonic) 
                 if (not _owned(observed, plan, container_id, owner_token)
                         or (observed.get("State") or {}).get("Running") is not False):
                     raise UnknownContainerOutcome("owned container did not stop")
+                client.invoke(("container", "rm", container_id),
+                              timeout=min(5, _remaining(deadline, clock)))
+                remaining = client.invoke(
+                    ("container", "ls", "-a", "--no-trunc", "--quiet",
+                     "--filter", f"id={container_id}"),
+                    timeout=min(5, _remaining(deadline, clock)))
+                if remaining.strip():
+                    raise UnknownContainerOutcome("owned container removal unconfirmed")
             except Exception as error:
                 raise UnknownContainerOutcome(
                     "owned container cleanup requires reconciliation") from error

@@ -113,6 +113,15 @@ class FakeDocker:
                 raise SmokeDenied("not running")
             self.running = False
             return CONTAINER_ID.encode()
+        if args[:2] == ("container", "rm"):
+            assert args[2] == CONTAINER_ID and self.created and not self.running
+            if self.fail_on == "remove":
+                raise SmokeDenied("fake removal failure")
+            self.created = False
+            return CONTAINER_ID.encode()
+        if args[:2] == ("container", "ls"):
+            assert args[-1] == f"id={CONTAINER_ID}"
+            return b"" if not self.created else (CONTAINER_ID + "\n").encode()
         if args[:2] == ("container", "exec"):
             assert self.running
             if "/proc/net/dev" in args:
@@ -133,6 +142,8 @@ class FakeDocker:
             marker = ("not the requested marker" if self.fail_on == "wrong-answer"
                       else "EA4E_LOCAL_SMOKE_OK")
             answer = {"marker": marker}
+            if self.fail_on == "duplicate-key":
+                return b'{"marker":"wrong","marker":"EA4E_LOCAL_SMOKE_OK"}'
             if self.fail_on == "extra-field":
                 answer["extra"] = "unexpected"
             return json.dumps(answer).encode()
@@ -147,7 +158,9 @@ def test_one_synthetic_request_and_owned_stop(tmp_path, monkeypatch):
     requests = [args for args, _ in docker.calls if args[:2] == ("container", "exec")
                 and "/bin/ollama" in args]
     assert len(requests) == 1
-    assert docker.calls[-2][0] == ("container", "kill", CONTAINER_ID)
+    assert ("container", "kill", CONTAINER_ID) in [args for args, _ in docker.calls]
+    assert docker.calls[-2][0] == ("container", "rm", CONTAINER_ID)
+    assert not docker.created
 
 
 @pytest.mark.parametrize("failure", ["network", "interfaces", "cpu"])
@@ -184,13 +197,14 @@ def test_model_drift_during_request_denies_and_stops(tmp_path, monkeypatch):
     assert not docker.running
 
 
-@pytest.mark.parametrize("failure", ["wrong-answer", "extra-field"])
+@pytest.mark.parametrize("failure", ["wrong-answer", "extra-field", "duplicate-key"])
 def test_wrong_model_answer_denies_and_stops(tmp_path, monkeypatch, failure):
     plan = plan_for(tmp_path, monkeypatch)
     docker = FakeDocker(plan, fail_on=failure)
     with pytest.raises(SmokeDenied, match="response contract"):
         run_smoke(plan, docker)
     assert not docker.running
+    assert not docker.created
 
 
 def test_unreadable_model_directory_denied_before_docker(tmp_path, monkeypatch):
@@ -227,6 +241,15 @@ def test_name_collision_never_kills_other_container(tmp_path, monkeypatch):
     with pytest.raises(UnknownContainerOutcome):
         run_smoke(plan, docker)
     assert not any(args[:2] == ("container", "kill") for args, _ in docker.calls)
+
+
+def test_failed_removal_is_not_reported_as_success(tmp_path, monkeypatch):
+    plan = plan_for(tmp_path, monkeypatch)
+    docker = FakeDocker(plan, fail_on="remove")
+    with pytest.raises(UnknownContainerOutcome, match="cleanup requires reconciliation"):
+        run_smoke(plan, docker)
+    assert not docker.running
+    assert docker.created
 
 
 def test_unverified_returned_id_never_kills_container(tmp_path, monkeypatch):
