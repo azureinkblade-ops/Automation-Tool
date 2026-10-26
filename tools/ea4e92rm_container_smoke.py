@@ -327,8 +327,8 @@ def _http_json(raw: bytes) -> dict:
             )
         value = json.loads(body, object_pairs_hook=_unique_json_object)
     except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError,
-            HTTPException) as error:
-        raise SmokeDenied("local Ollama HTTP response invalid") from error
+            HTTPException):
+        raise SmokeDenied("local Ollama HTTP response invalid") from None
     if type(value) is not dict:
         raise SmokeDenied("local Ollama HTTP JSON shape invalid")
     return value

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import traceback
 from pathlib import Path
 from uuid import uuid4
 
@@ -331,6 +332,16 @@ def test_local_http_failure_reports_safe_metadata_only():
     assert "status=503" in str(failure.value)
     assert "json_type=True" in str(failure.value)
     assert "hidden" not in str(failure.value)
+
+
+def test_malformed_status_line_does_not_leak_into_traceback():
+    response = (b"SECRET-STATUS-LINE\r\nContent-Type: application/json\r\n"
+                b"Content-Length: 2\r\n\r\n{}")
+    with pytest.raises(SmokeDenied) as failure:
+        smoke._http_json(response)
+    rendered = "".join(traceback.format_exception(failure.value))
+    assert "SECRET-STATUS-LINE" not in rendered
+    assert "local Ollama HTTP response invalid" in rendered
 
 
 @pytest.mark.parametrize(("detail", "category"), [
