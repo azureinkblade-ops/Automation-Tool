@@ -127,6 +127,10 @@ class FakeDocker:
             assert args[-1] == f"id={CONTAINER_ID}"
             return b"" if not self.created else (CONTAINER_ID + "\n").encode()
         if args[:2] == ("container", "exec"):
+            if self.fail_on in ("interface-exit", "interface-reject") and "/proc/net/dev" in args:
+                if self.fail_on == "interface-exit":
+                    self.running = False
+                raise SmokeDenied("fake Docker command failed")
             assert self.running
             if "/proc/net/dev" in args:
                 lines = "Inter-| Receive\n face | bytes\n"
@@ -310,6 +314,24 @@ def test_post_start_exit_suppresses_untrusted_state_values(tmp_path, monkeypatch
 ])
 def test_stopped_state_metadata_is_bounded(code, oom, expected):
     assert smoke._stopped_state_summary({"ExitCode": code, "OOMKilled": oom}) == expected
+
+
+@pytest.mark.parametrize("failure,expected", [
+    ("interface-exit", "effective container containment mismatch: running "
+                       "exit_code=127 oom=false"),
+    ("interface-reject", "container interface inspection failed"),
+])
+def test_failed_interface_exec_rechecks_owned_state_before_cleanup(
+        tmp_path, monkeypatch, failure, expected):
+    plan = plan_for(tmp_path, monkeypatch)
+    docker = FakeDocker(plan, fail_on=failure)
+    with pytest.raises(SmokeDenied) as error:
+        run_smoke(plan, docker, tags_only=True)
+    assert str(error.value) == expected
+    assert not docker.created
+    assert not docker.running
+    assert not any("/api/tags" in args or "/api/generate" in args
+                   for args, _ in docker.calls)
 
 
 def test_absent_local_model_denied_before_inference(tmp_path, monkeypatch):

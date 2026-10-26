@@ -512,9 +512,14 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, tags_only=False,
         _verify_container(_inspect(client, container_id, work_deadline, clock),
                           plan, container_id, owner_token, running=True)
 
-        interfaces = client.invoke(
-            ("container", "exec", container_id, "/bin/cat", "/proc/net/dev"),
-            timeout=_remaining(work_deadline, clock))
+        try:
+            interfaces = client.invoke(
+                ("container", "exec", container_id, "/bin/cat", "/proc/net/dev"),
+                timeout=_remaining(work_deadline, clock))
+        except SmokeDenied:
+            _verify_container(_inspect(client, container_id, work_deadline, clock),
+                              plan, container_id, owner_token, running=True)
+            raise SmokeDenied("container interface inspection failed") from None
         try:
             lines = interfaces.decode("ascii", "strict").splitlines()[2:]
         except UnicodeDecodeError:
