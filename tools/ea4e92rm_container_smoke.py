@@ -386,47 +386,54 @@ def _verify_container(observed: dict, plan: SmokePlan, container_id: str,
     mounts = observed.get("Mounts") or []
     network = observed.get("NetworkSettings") or {}
     expected_mount = str(plan.models_root)
-    environment = set(config.get("Env") or [])
+    try:
+        environment = set(config.get("Env") or [])
+    except (AttributeError, TypeError):
+        environment = set()
     checks = (
-        ("owner", _owned(observed, plan, container_id, owner_token)),
-        ("image_id", observed.get("Image") == plan.image_id),
-        ("image_ref", config.get("Image") == plan.image),
-        ("command", config.get("Cmd") == ["serve"]),
-        ("entrypoint", config.get("Entrypoint") == ["/bin/ollama"]),
-        ("network_mode", host.get("NetworkMode") == "none"),
-        ("readonly_root", host.get("ReadonlyRootfs") is True),
-        ("privileged", host.get("Privileged") is False),
-        ("memory", host.get("Memory") == plan.memory_bytes),
-        ("memory_swap", host.get("MemorySwap") == plan.memory_bytes),
-        ("pid_limit", host.get("PidsLimit") == plan.pids_limit),
-        ("cpu_limit", host.get("NanoCpus") == 4_000_000_000),
-        ("cap_drop", host.get("CapDrop") == ["ALL"]),
-        ("cap_add", not host.get("CapAdd")),
-        ("devices", not host.get("Devices")),
-        ("device_requests", not host.get("DeviceRequests")),
-        ("no_new_privileges", any(
+        ("owner", lambda: _owned(observed, plan, container_id, owner_token)),
+        ("image_id", lambda: observed.get("Image") == plan.image_id),
+        ("image_ref", lambda: config.get("Image") == plan.image),
+        ("command", lambda: config.get("Cmd") == ["serve"]),
+        ("entrypoint", lambda: config.get("Entrypoint") == ["/bin/ollama"]),
+        ("network_mode", lambda: host.get("NetworkMode") == "none"),
+        ("readonly_root", lambda: host.get("ReadonlyRootfs") is True),
+        ("privileged", lambda: host.get("Privileged") is False),
+        ("memory", lambda: host.get("Memory") == plan.memory_bytes),
+        ("memory_swap", lambda: host.get("MemorySwap") == plan.memory_bytes),
+        ("pid_limit", lambda: host.get("PidsLimit") == plan.pids_limit),
+        ("cpu_limit", lambda: host.get("NanoCpus") == 4_000_000_000),
+        ("cap_drop", lambda: host.get("CapDrop") == ["ALL"]),
+        ("cap_add", lambda: not host.get("CapAdd")),
+        ("devices", lambda: not host.get("Devices")),
+        ("device_requests", lambda: not host.get("DeviceRequests")),
+        ("no_new_privileges", lambda: any(
             option in ("no-new-privileges", "no-new-privileges:true")
             for option in (host.get("SecurityOpt") or []))),
-        ("restart", (host.get("RestartPolicy") or {}).get("Name") == "no"),
-        ("logging", (host.get("LogConfig") or {}).get("Type") == "none"),
-        ("tmpfs", host.get("Tmpfs") == {"/tmp": "rw,nosuid,nodev,size=2147483648"}),
-        ("port_bindings", not host.get("PortBindings")),
-        ("ports", all(not value for value in (network.get("Ports") or {}).values())),
-        ("networks", set((network.get("Networks") or {}).keys()) == {"none"}),
-        ("environment", {"HOME=/tmp", "OLLAMA_MODELS=/models",
+        ("restart", lambda: (host.get("RestartPolicy") or {}).get("Name") == "no"),
+        ("logging", lambda: (host.get("LogConfig") or {}).get("Type") == "none"),
+        ("tmpfs", lambda: host.get("Tmpfs") == {"/tmp": "rw,nosuid,nodev,size=2147483648"}),
+        ("port_bindings", lambda: not host.get("PortBindings")),
+        ("ports", lambda: all(not value for value in (network.get("Ports") or {}).values())),
+        ("networks", lambda: set((network.get("Networks") or {}).keys()) == {"none"}),
+        ("environment", lambda: {"HOME=/tmp", "OLLAMA_MODELS=/models",
                          "OLLAMA_HOST=127.0.0.1:11434", "OLLAMA_KEEP_ALIVE=0"}
          <= environment),
-        ("proxy_environment", not any(entry.upper().startswith((
+        ("proxy_environment", lambda: not any(entry.upper().startswith((
             "HTTP_PROXY=", "HTTPS_PROXY=", "ALL_PROXY=", "NO_PROXY="))
             for entry in environment)),
-        ("mount_count", len(mounts) == 1),
-        ("mount_type", len(mounts) == 1 and mounts[0].get("Type") == "bind"),
-        ("mount_source", len(mounts) == 1 and mounts[0].get("Source") == expected_mount),
-        ("mount_destination", len(mounts) == 1 and mounts[0].get("Destination") == "/models"),
-        ("mount_readonly", len(mounts) == 1 and mounts[0].get("RW") is False),
-        ("running", state.get("Running") is running),
+        ("mount_count", lambda: len(mounts) == 1),
+        ("mount_type", lambda: mounts[0].get("Type") == "bind"),
+        ("mount_source", lambda: mounts[0].get("Source") == expected_mount),
+        ("mount_destination", lambda: mounts[0].get("Destination") == "/models"),
+        ("mount_readonly", lambda: mounts[0].get("RW") is False),
+        ("running", lambda: state.get("Running") is running),
     )
-    for field, valid in checks:
+    for field, check in checks:
+        try:
+            valid = check()
+        except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+            valid = False
         if not valid:
             raise SmokeDenied(f"effective container containment mismatch: {field}")
 

@@ -253,6 +253,27 @@ def test_containment_field_never_echoes_docker_value(tmp_path, monkeypatch):
     assert "secret-from-daemon" not in str(error.value)
 
 
+def test_first_containment_failure_precedes_malformed_later_field(tmp_path, monkeypatch):
+    plan = plan_for(tmp_path, monkeypatch)
+    observed = FakeDocker(plan)._inspection()[0]
+    observed["HostConfig"]["NetworkMode"] = "bridge"
+    observed["NetworkSettings"]["Ports"] = ["secret-from-daemon"]
+    with pytest.raises(SmokeDenied) as error:
+        smoke._verify_container(observed, plan, CONTAINER_ID, None, running=False)
+    assert str(error.value) == "effective container containment mismatch: network_mode"
+    assert "secret-from-daemon" not in str(error.value)
+
+
+def test_malformed_inspect_field_is_fixed_denial(tmp_path, monkeypatch):
+    plan = plan_for(tmp_path, monkeypatch)
+    observed = FakeDocker(plan)._inspection()[0]
+    observed["NetworkSettings"]["Ports"] = ["secret-from-daemon"]
+    with pytest.raises(SmokeDenied) as error:
+        smoke._verify_container(observed, plan, CONTAINER_ID, None, running=False)
+    assert str(error.value) == "effective container containment mismatch: ports"
+    assert "secret-from-daemon" not in str(error.value)
+
+
 def test_absent_local_model_denied_before_inference(tmp_path, monkeypatch):
     plan = plan_for(tmp_path, monkeypatch)
     docker = FakeDocker(plan, fail_on="absent-model")
