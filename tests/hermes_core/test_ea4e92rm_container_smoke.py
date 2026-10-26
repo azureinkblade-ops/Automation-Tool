@@ -141,11 +141,15 @@ class FakeDocker:
             assert args == ("container", "logs", "--tail", "20", CONTAINER_ID)
             assert output_limit == 4096
             return (b"startup failed: read-only file system; secret-from-daemon"
-                    if self.fail_on == "interface-exit" else b"private unclassified text")
+                    if self.fail_on in ("interface-exit", "tags-exit")
+                    else b"private unclassified text")
         if args[:2] == ("container", "exec"):
             if self.fail_on in ("interface-exit", "interface-reject") and "/proc/net/dev" in args:
                 if self.fail_on == "interface-exit":
                     self.running = False
+                raise SmokeDenied("fake Docker command failed")
+            if self.fail_on == "tags-exit" and "/api/tags" in args:
+                self.running = False
                 raise SmokeDenied("fake Docker command failed")
             assert self.running
             if "/proc/net/dev" in args:
@@ -361,6 +365,20 @@ def test_startup_diagnostic_classifies_only_fixed_category(tmp_path, monkeypatch
         "exit_code=127 oom=false startup_category=read_only_filesystem")
     assert "secret-from-daemon" not in rendered
     assert sum(args[:2] == ("container", "logs") for args, _ in docker.calls) == 1
+    assert not docker.created
+
+
+def test_startup_diagnostic_classifies_exit_during_tags(tmp_path, monkeypatch):
+    plan = replace(plan_for(tmp_path, monkeypatch), startup_log_diagnostic=True)
+    docker = FakeDocker(plan, fail_on="tags-exit")
+    with pytest.raises(SmokeDenied) as error:
+        run_smoke(plan, docker, tags_only=True)
+    assert str(error.value) == (
+        "effective container containment mismatch: running "
+        "exit_code=127 oom=false startup_category=read_only_filesystem")
+    assert sum("/api/tags" in args for args, _ in docker.calls) == 1
+    assert sum(args[:2] == ("container", "logs") for args, _ in docker.calls) == 1
+    assert not any("/api/generate" in args for args, _ in docker.calls)
     assert not docker.created
 
 

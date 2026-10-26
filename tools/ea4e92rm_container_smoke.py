@@ -575,8 +575,15 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, tags_only=False,
         if names != {"lo"}:
             raise SmokeDenied("container has non-loopback interface")
 
-        tags = _local_http(client, container_id, "GET", "/api/tags", b"",
-                           work_deadline, clock)
+        try:
+            tags = _local_http(client, container_id, "GET", "/api/tags", b"",
+                               work_deadline, clock)
+        except SmokeDenied:
+            if plan.startup_log_diagnostic:
+                _verify_expected_running(
+                    _inspect(client, container_id, work_deadline, clock), plan,
+                    container_id, owner_token, client, work_deadline, clock)
+            raise
         models = tags.get("models")
         if (type(models) is not list or not any(
                 type(model) is dict and model.get("name") == plan.model
