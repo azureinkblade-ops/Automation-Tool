@@ -12,14 +12,13 @@ import secrets
 import time
 from uuid import uuid4
 
-from tools.ea4e92rm_container_smoke import DockerCli, SmokeDenied
+from tools.ea4e92rm_container_smoke import DockerCli, SmokeDenied, _json_object
 
 
 IMAGE = "ollama/ollama@sha256:459985308d740b99071719baec2740a60f5b2b2d9b835c171991ae25690203da"
 IMAGE_ID = "sha256:459985308d740b99071719baec2740a60f5b2b2d9b835c171991ae25690203da"
 DOCKER = Path(r"C:\Program Files\Docker\Docker\resources\bin\docker.exe")
 DOCKER_SHA256 = "c11b843b727ea76e6c63b393bccb73d957b6fcc12ba871c8265699e3a12e933c"
-LABEL = "ea4e92rq.owner"
 CONTAINER_ID = re.compile(r"[0-9a-f]{64}")
 MEMORY = 256 * 1024 * 1024
 SHELL_CHECK = (
@@ -29,20 +28,31 @@ SHELL_CHECK = (
     'while IFS= read -r line; do printf "net:%s\\n" "$line"; '
     'done < /proc/net/dev'
 )
+BASH_CHECK = (
+    'if test -x /bin/bash; then '
+    'printf "tool:/bin/bash:yes\\n"; '
+    "LC_ALL=C /bin/bash -c 'exec 3<>/dev/tcp/127.0.0.1/1' 2>&1 || :; "
+    'else printf "tool:/bin/bash:no\\n"; fi; '
+    'if test -x /bin/cat; then printf "tool:/bin/cat:yes\\n"; '
+    'else printf "tool:/bin/cat:no\\n"; fi; '
+    'while IFS= read -r line; do printf "net:%s\\n" "$line"; '
+    'done < /proc/net/dev'
+)
 
 
 def _object(raw: bytes) -> dict:
-    value = json.loads(raw)
-    if isinstance(value, list) and len(value) == 1 and isinstance(value[0], dict):
-        return value[0]
-    raise SmokeDenied("unexpected Docker inspection response")
+    return _json_object(raw)
 
 
-def run() -> dict:
+def run(mode: str = "tools") -> dict:
+    if mode not in ("tools", "bash"):
+        raise SmokeDenied("unreviewed non-model probe mode")
     deadline = time.monotonic() + 120
     work_deadline = deadline - 25
     client = DockerCli(DOCKER, DOCKER_SHA256)
-    name = "ea4e92rq-" + uuid4().hex
+    prefix = "ea4e92rq" if mode == "tools" else "ea4e92ry"
+    label = prefix + ".owner"
+    name = prefix + "-" + uuid4().hex
     owner = secrets.token_hex(16)
     container_id = None
     create_attempted = False
@@ -60,7 +70,7 @@ def run() -> dict:
     def owned(observed: dict) -> bool:
         return (
             observed.get("Name") == "/" + name
-            and (observed.get("Config") or {}).get("Labels", {}).get(LABEL) == owner
+            and (observed.get("Config") or {}).get("Labels", {}).get(label) == owner
             and bool(CONTAINER_ID.fullmatch(observed.get("Id") or ""))
         )
 
@@ -73,7 +83,7 @@ def run() -> dict:
         create_attempted = True
         raw_id = call(
             "container", "create", "--pull=never", "--name", name,
-            "--label", f"{LABEL}={owner}", "--network=none", "--read-only",
+            "--label", f"{label}={owner}", "--network=none", "--read-only",
             "--cap-drop=ALL", "--security-opt=no-new-privileges",
             "--pids-limit=16", f"--memory={MEMORY}", f"--memory-swap={MEMORY}",
             "--cpus=1", "--restart=no", "--log-driver=none",
@@ -118,13 +128,19 @@ def run() -> dict:
         observed = inspect(container_id)
         if not owned(observed) or (observed.get("State") or {}).get("Running") is not True:
             raise SmokeDenied("started container identity/state mismatch")
-        raw = call("container", "exec", container_id, "/bin/sh", "-c", SHELL_CHECK)
+        raw = call("container", "exec", container_id, "/bin/sh", "-c",
+                   SHELL_CHECK if mode == "tools" else BASH_CHECK)
         lines = raw.decode("ascii", "strict").splitlines()
         tools = {line for line in lines if line.startswith("tool:")}
         interfaces = {line[4:].split(":", 1)[0].strip()
                       for line in lines if line.startswith("net:") and ":" in line[4:]}
         if interfaces != {"lo"}:
             raise SmokeDenied("non-loopback interface or missing network observation")
+        if mode == "bash" and (
+                "tool:/bin/bash:yes" not in tools
+                or "tool:/bin/cat:yes" not in tools
+                or "Connection refused" not in raw.decode("ascii", "strict")):
+            raise SmokeDenied("Bash local TCP transport unproven")
         return {"image": IMAGE_ID, "tools": sorted(tools), "interfaces": sorted(interfaces)}
     finally:
         if create_attempted:
