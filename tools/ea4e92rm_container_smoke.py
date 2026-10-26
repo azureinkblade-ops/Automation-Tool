@@ -364,33 +364,22 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, clock=time.monotonic) 
         if names != {"lo"}:
             raise SmokeDenied("container has non-loopback interface")
 
-        client.invoke(("container", "exec", container_id, "/usr/bin/curl",
-                       "--noproxy", "*", "--fail", "--silent", "--show-error",
-                       "--max-time", "5", "http://127.0.0.1:11434/api/version"),
-                      timeout=min(7, _remaining(work_deadline, clock)))
-
-        request = json.dumps({
-            "model": plan.model, "prompt": "Reply with exactly EA4E_LOCAL_SMOKE_OK.",
-            "stream": False, "options": {"num_predict": 32},
-        }, separators=(",", ":")).encode("ascii")
         raw = client.invoke(
-            ("container", "exec", "--interactive", container_id,
-             "/usr/bin/curl", "--noproxy", "*", "--fail", "--silent",
-             "--show-error", "--max-time", "100", "--request", "POST",
-             "--header", "Content-Type: application/json", "--data-binary", "@-",
-             "http://127.0.0.1:11434/api/generate"),
-            timeout=_remaining(work_deadline, clock), stdin=request,
+            ("container", "exec", container_id, "/bin/ollama", "run",
+             "--format=json", "--think=false", "--keepalive=0",
+             "--nowordwrap", plan.model,
+             "Reply only as JSON with exactly one key, marker, whose value "
+             "is EA4E_LOCAL_SMOKE_OK."),
+            timeout=_remaining(work_deadline, clock),
             output_limit=MAX_RESPONSE)
         try:
             answer = json.loads(raw)
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise SmokeDenied("model response invalid") from error
-        if (type(answer) is not dict or answer.get("model") != plan.model
-                or answer.get("done") is not True
-                or answer.get("response") != "EA4E_LOCAL_SMOKE_OK"):
+        if answer != {"marker": "EA4E_LOCAL_SMOKE_OK"}:
             raise SmokeDenied("model response contract mismatch")
         validate_plan(plan, deadline=work_deadline, clock=clock)
-        return answer["response"]
+        return answer["marker"]
     except BaseException as error:
         if creation_attempted and container_id is None:
             try:

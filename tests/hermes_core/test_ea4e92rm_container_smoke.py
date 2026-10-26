@@ -121,16 +121,21 @@ class FakeDocker:
                 if self.interfaces != "lo":
                     lines += "eth0: 0 0 0 0\n"
                 return lines.encode()
-            if "/api/version" in args[-1]:
-                return b'{"version":"synthetic"}'
-            assert args[-1] == "http://127.0.0.1:11434/api/generate"
-            assert json.loads(stdin)["prompt"] == "Reply with exactly EA4E_LOCAL_SMOKE_OK."
+            assert args[3:9] == (
+                "/bin/ollama", "run", "--format=json", "--think=false",
+                "--keepalive=0", "--nowordwrap")
+            assert args[9] == "qwen3:14b"
+            assert args[10] == ("Reply only as JSON with exactly one key, marker, "
+                                "whose value is EA4E_LOCAL_SMOKE_OK.")
+            assert not stdin
             if self.fail_on == "model-drift":
                 (self.plan.models_root / "blobs" / "sha256-synthetic-1").write_bytes(b"changed")
-            response = ("not the requested marker" if self.fail_on == "wrong-answer"
-                        else "EA4E_LOCAL_SMOKE_OK")
-            return json.dumps({"model": "qwen3:14b", "done": True,
-                               "response": response}).encode()
+            marker = ("not the requested marker" if self.fail_on == "wrong-answer"
+                      else "EA4E_LOCAL_SMOKE_OK")
+            answer = {"marker": marker}
+            if self.fail_on == "extra-field":
+                answer["extra"] = "unexpected"
+            return json.dumps(answer).encode()
         raise AssertionError(args)
 
 
@@ -140,7 +145,7 @@ def test_one_synthetic_request_and_owned_stop(tmp_path, monkeypatch):
     assert run_smoke(plan, docker) == "EA4E_LOCAL_SMOKE_OK"
     assert not docker.running
     requests = [args for args, _ in docker.calls if args[:2] == ("container", "exec")
-                and args[-1].endswith("/api/generate")]
+                and "/bin/ollama" in args]
     assert len(requests) == 1
     assert docker.calls[-2][0] == ("container", "kill", CONTAINER_ID)
 
@@ -153,7 +158,8 @@ def test_denial_still_stops_exact_container(tmp_path, monkeypatch, failure):
     with pytest.raises(SmokeDenied):
         run_smoke(plan, docker)
     assert not docker.running
-    assert not any(args[-1].endswith("/api/generate") for args, _ in docker.calls)
+    assert not any(args[:2] == ("container", "exec") and "/bin/ollama" in args
+                   for args, _ in docker.calls)
 
 
 def test_model_file_drift_denied_before_docker(tmp_path, monkeypatch):
@@ -178,9 +184,10 @@ def test_model_drift_during_request_denies_and_stops(tmp_path, monkeypatch):
     assert not docker.running
 
 
-def test_wrong_model_answer_denies_and_stops(tmp_path, monkeypatch):
+@pytest.mark.parametrize("failure", ["wrong-answer", "extra-field"])
+def test_wrong_model_answer_denies_and_stops(tmp_path, monkeypatch, failure):
     plan = plan_for(tmp_path, monkeypatch)
-    docker = FakeDocker(plan, fail_on="wrong-answer")
+    docker = FakeDocker(plan, fail_on=failure)
     with pytest.raises(SmokeDenied, match="response contract"):
         run_smoke(plan, docker)
     assert not docker.running
