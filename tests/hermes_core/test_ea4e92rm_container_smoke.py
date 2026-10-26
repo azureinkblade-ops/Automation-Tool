@@ -212,6 +212,13 @@ def test_model_file_drift_denied_before_docker(tmp_path, monkeypatch):
         run_smoke(plan, FakeDocker(plan))
 
 
+def test_inventory_deadline_checked_during_walk(tmp_path, monkeypatch):
+    plan = plan_for(tmp_path, monkeypatch)
+    ticks = iter([0.0, 2.0])
+    with pytest.raises(SmokeDenied, match="deadline"):
+        validate_plan(plan, deadline=1.0, clock=lambda: next(ticks))
+
+
 def test_unrelated_model_file_denied_before_docker(tmp_path, monkeypatch):
     plan = plan_for(tmp_path, monkeypatch)
     (plan.models_root / "blobs" / "unrelated").write_bytes(b"private")

@@ -94,6 +94,7 @@ class DockerCli:
                stdin: bytes = b"", output_limit: int = MAX_CLI_OUTPUT) -> bytes:
         if not 0 < timeout <= WALL_SECONDS or not 0 < output_limit <= MAX_CLI_OUTPUT:
             raise ValueError("invalid Docker CLI bound")
+        deadline = time.monotonic() + timeout
         process = subprocess.Popen(
             (self.binary, "--host", LOCAL_DOCKER_HOST, *args), stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False,
@@ -132,11 +133,27 @@ class DockerCli:
         )
         for reader in readers:
             reader.start()
+        write_errors = []
+
+        def write_input():
+            try:
+                if stdin:
+                    process.stdin.write(stdin)
+            except OSError as error:
+                write_errors.append(error)
+            finally:
+                try:
+                    process.stdin.close()
+                except OSError as error:
+                    write_errors.append(error)
+
+        writer = threading.Thread(target=write_input, daemon=True)
+        writer.start()
         try:
-            if stdin:
-                process.stdin.write(stdin)
-            process.stdin.close()
-            process.wait(timeout=timeout)
+            writer.join(timeout=max(0, deadline - time.monotonic()))
+            if writer.is_alive() or write_errors:
+                raise SmokeDenied("Docker CLI stdin bound failed")
+            process.wait(timeout=max(0, deadline - time.monotonic()))
         except (OSError, subprocess.TimeoutExpired) as error:
             try:
                 process.kill()
@@ -145,9 +162,17 @@ class DockerCli:
             process.wait(timeout=3)
             raise SmokeDenied("Docker CLI write or deadline failed") from error
         finally:
+            if process.poll() is None:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+                process.wait(timeout=3)
+            writer.join(timeout=2)
             for reader in readers:
                 reader.join(timeout=2)
-        if any(reader.is_alive() for reader in readers) or exceeded.is_set():
+        if (writer.is_alive() or any(reader.is_alive() for reader in readers)
+                or exceeded.is_set()):
             raise SmokeDenied("Docker CLI output bound failed")
         if process.returncode != 0:
             raise SmokeDenied("Docker CLI command failed")
@@ -195,6 +220,8 @@ def _walk_error(error):
 
 def validate_plan(plan: SmokePlan, *, deadline: float | None = None,
                   clock=time.monotonic) -> Path:
+    if deadline is not None:
+        _remaining(deadline, clock)
     if type(plan) is not SmokePlan or not IMAGE_RE.fullmatch(plan.image):
         raise SmokeDenied("digest-pinned image required")
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", plan.image_id):
@@ -215,10 +242,16 @@ def validate_plan(plan: SmokePlan, *, deadline: float | None = None,
     observed_names = set()
     for current_root, directories, files in os.walk(
             root, followlinks=False, onerror=_walk_error):
+        if deadline is not None:
+            _remaining(deadline, clock)
         for directory in directories:
+            if deadline is not None:
+                _remaining(deadline, clock)
             if not _plain_directory(Path(current_root) / directory, root):
                 raise SmokeDenied("model directory reparse point")
         for file_name in files:
+            if deadline is not None:
+                _remaining(deadline, clock)
             observed_names.add((Path(current_root) / file_name).relative_to(root).as_posix())
     if observed_names != names:
         raise SmokeDenied("model root contains missing or unrelated files")
