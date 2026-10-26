@@ -333,6 +333,24 @@ def test_local_http_failure_reports_safe_metadata_only():
     assert "hidden" not in str(failure.value)
 
 
+@pytest.mark.parametrize(("detail", "category"), [
+    ("open /models/file: permission denied", "permission_denied"),
+    ("mkdir /models: read-only file system", "read_only_filesystem"),
+    ("open /models/file: no such file or directory", "missing_path"),
+    ("invalid model manifest", "invalid_data"),
+    ("private arbitrary server message", "other_server_error"),
+])
+def test_local_http_error_category_never_discloses_body(detail, category):
+    body = json.dumps({"error": detail}).encode()
+    response = (b"HTTP/1.1 500 Internal Server Error\r\n"
+                b"Content-Type: application/json\r\n"
+                + f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
+    with pytest.raises(SmokeDenied) as failure:
+        smoke._http_json(response)
+    assert f"error_kind={category}" in str(failure.value)
+    assert detail not in str(failure.value)
+
+
 def test_create_failure_is_unknown(tmp_path, monkeypatch):
     plan = plan_for(tmp_path, monkeypatch)
     docker = FakeDocker(plan, fail_on="create")

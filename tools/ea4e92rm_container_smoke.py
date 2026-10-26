@@ -300,9 +300,30 @@ def _http_json(raw: bytes) -> dict:
         json_type = (response.getheader("Content-Type", "").split(";", 1)[0]
                      == "application/json")
         if response.status != 200 or len(body) > MAX_RESPONSE or not json_type:
+            error_kind = "unclassified"
+            if json_type and len(body) <= MAX_RESPONSE:
+                try:
+                    error_doc = json.loads(body, object_pairs_hook=_unique_json_object)
+                    detail = error_doc.get("error") if type(error_doc) is dict else None
+                    if type(detail) is str:
+                        lowered = detail.lower()
+                        if "permission denied" in lowered:
+                            error_kind = "permission_denied"
+                        elif "read-only file system" in lowered:
+                            error_kind = "read_only_filesystem"
+                        elif "no such file or directory" in lowered:
+                            error_kind = "missing_path"
+                        elif "invalid" in lowered or "malformed" in lowered:
+                            error_kind = "invalid_data"
+                        else:
+                            error_kind = "other_server_error"
+                except (ValueError, UnicodeDecodeError, json.JSONDecodeError,
+                        SmokeDenied):
+                    pass
             raise SmokeDenied(
                 "local Ollama HTTP response invalid "
-                f"(status={response.status}, json_type={json_type}, bytes={len(body)})"
+                f"(status={response.status}, json_type={json_type}, "
+                f"bytes={len(body)}, error_kind={error_kind})"
             )
         value = json.loads(body, object_pairs_hook=_unique_json_object)
     except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError,
