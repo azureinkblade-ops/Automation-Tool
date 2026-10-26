@@ -221,8 +221,36 @@ def test_denial_still_stops_exact_container(tmp_path, monkeypatch, failure):
     with pytest.raises(SmokeDenied):
         run_smoke(plan, docker)
     assert not docker.running
+    if failure in ("network", "cpu"):
+        assert not any(args[:2] == ("container", "start") for args, _ in docker.calls)
     assert not any(args[:2] == ("container", "exec") and "/api/generate" in args
                    for args, _ in docker.calls)
+
+
+@pytest.mark.parametrize("failure,field", [
+    ("network", "network_mode"), ("cpu", "cpu_limit"),
+])
+def test_containment_failure_reports_only_fixed_field(tmp_path, monkeypatch,
+                                                      failure, field):
+    plan = plan_for(tmp_path, monkeypatch)
+    docker = FakeDocker(plan, fail_on=failure)
+    with pytest.raises(SmokeDenied) as error:
+        run_smoke(plan, docker, tags_only=True)
+    assert str(error.value) == f"effective container containment mismatch: {field}"
+    assert not any("/api/tags" in args or "/api/generate" in args
+                   for args, _ in docker.calls)
+    assert not docker.created
+
+
+def test_containment_field_never_echoes_docker_value(tmp_path, monkeypatch):
+    plan = plan_for(tmp_path, monkeypatch)
+    docker = FakeDocker(plan)
+    observed = docker._inspection()[0]
+    observed["HostConfig"]["Tmpfs"] = {"/tmp": "secret-from-daemon"}
+    with pytest.raises(SmokeDenied) as error:
+        smoke._verify_container(observed, plan, CONTAINER_ID, None, running=False)
+    assert str(error.value) == "effective container containment mismatch: tmpfs"
+    assert "secret-from-daemon" not in str(error.value)
 
 
 def test_absent_local_model_denied_before_inference(tmp_path, monkeypatch):

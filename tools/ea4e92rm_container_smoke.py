@@ -387,46 +387,48 @@ def _verify_container(observed: dict, plan: SmokePlan, container_id: str,
     network = observed.get("NetworkSettings") or {}
     expected_mount = str(plan.models_root)
     environment = set(config.get("Env") or [])
-    valid = (
-        _owned(observed, plan, container_id, owner_token)
-        and observed.get("Image") == plan.image_id
-        and config.get("Image") == plan.image
-        and config.get("Cmd") == ["serve"]
-        and config.get("Entrypoint") == ["/bin/ollama"]
-        and host.get("NetworkMode") == "none"
-        and host.get("ReadonlyRootfs") is True
-        and host.get("Privileged") is False
-        and host.get("Memory") == plan.memory_bytes
-        and host.get("MemorySwap") == plan.memory_bytes
-        and host.get("PidsLimit") == plan.pids_limit
-        and host.get("NanoCpus") == 4_000_000_000
-        and host.get("CapDrop") == ["ALL"]
-        and not host.get("CapAdd")
-        and not host.get("Devices")
-        and not host.get("DeviceRequests")
-        and any(option in ("no-new-privileges", "no-new-privileges:true")
-                for option in (host.get("SecurityOpt") or []))
-        and (host.get("RestartPolicy") or {}).get("Name") == "no"
-        and (host.get("LogConfig") or {}).get("Type") == "none"
-        and host.get("Tmpfs") == {"/tmp": "rw,nosuid,nodev,size=2147483648"}
-        and not host.get("PortBindings")
-        and all(not value for value in (network.get("Ports") or {}).values())
-        and set((network.get("Networks") or {}).keys()) == {"none"}
-        and {"HOME=/tmp", "OLLAMA_MODELS=/models",
-             "OLLAMA_HOST=127.0.0.1:11434", "OLLAMA_KEEP_ALIVE=0"}
-        <= environment
-        and not any(entry.upper().startswith(("HTTP_PROXY=", "HTTPS_PROXY=",
-                                              "ALL_PROXY=", "NO_PROXY="))
-                    for entry in environment)
-        and len(mounts) == 1
-        and mounts[0].get("Type") == "bind"
-        and mounts[0].get("Source") == expected_mount
-        and mounts[0].get("Destination") == "/models"
-        and mounts[0].get("RW") is False
-        and state.get("Running") is running
+    checks = (
+        ("owner", _owned(observed, plan, container_id, owner_token)),
+        ("image_id", observed.get("Image") == plan.image_id),
+        ("image_ref", config.get("Image") == plan.image),
+        ("command", config.get("Cmd") == ["serve"]),
+        ("entrypoint", config.get("Entrypoint") == ["/bin/ollama"]),
+        ("network_mode", host.get("NetworkMode") == "none"),
+        ("readonly_root", host.get("ReadonlyRootfs") is True),
+        ("privileged", host.get("Privileged") is False),
+        ("memory", host.get("Memory") == plan.memory_bytes),
+        ("memory_swap", host.get("MemorySwap") == plan.memory_bytes),
+        ("pid_limit", host.get("PidsLimit") == plan.pids_limit),
+        ("cpu_limit", host.get("NanoCpus") == 4_000_000_000),
+        ("cap_drop", host.get("CapDrop") == ["ALL"]),
+        ("cap_add", not host.get("CapAdd")),
+        ("devices", not host.get("Devices")),
+        ("device_requests", not host.get("DeviceRequests")),
+        ("no_new_privileges", any(
+            option in ("no-new-privileges", "no-new-privileges:true")
+            for option in (host.get("SecurityOpt") or []))),
+        ("restart", (host.get("RestartPolicy") or {}).get("Name") == "no"),
+        ("logging", (host.get("LogConfig") or {}).get("Type") == "none"),
+        ("tmpfs", host.get("Tmpfs") == {"/tmp": "rw,nosuid,nodev,size=2147483648"}),
+        ("port_bindings", not host.get("PortBindings")),
+        ("ports", all(not value for value in (network.get("Ports") or {}).values())),
+        ("networks", set((network.get("Networks") or {}).keys()) == {"none"}),
+        ("environment", {"HOME=/tmp", "OLLAMA_MODELS=/models",
+                         "OLLAMA_HOST=127.0.0.1:11434", "OLLAMA_KEEP_ALIVE=0"}
+         <= environment),
+        ("proxy_environment", not any(entry.upper().startswith((
+            "HTTP_PROXY=", "HTTPS_PROXY=", "ALL_PROXY=", "NO_PROXY="))
+            for entry in environment)),
+        ("mount_count", len(mounts) == 1),
+        ("mount_type", len(mounts) == 1 and mounts[0].get("Type") == "bind"),
+        ("mount_source", len(mounts) == 1 and mounts[0].get("Source") == expected_mount),
+        ("mount_destination", len(mounts) == 1 and mounts[0].get("Destination") == "/models"),
+        ("mount_readonly", len(mounts) == 1 and mounts[0].get("RW") is False),
+        ("running", state.get("Running") is running),
     )
-    if not valid:
-        raise SmokeDenied("effective container containment mismatch")
+    for field, valid in checks:
+        if not valid:
+            raise SmokeDenied(f"effective container containment mismatch: {field}")
 
 
 def _create_args(plan: SmokePlan, root: Path, owner_token: str) -> tuple[str, ...]:
