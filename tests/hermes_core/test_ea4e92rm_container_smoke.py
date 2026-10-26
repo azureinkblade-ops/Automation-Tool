@@ -43,6 +43,7 @@ class FakeDocker:
         self.calls = []
         self.created = False
         self.running = False
+        self.started = False
         self.owner_token = None
 
     def _inspection(self):
@@ -69,7 +70,8 @@ class FakeDocker:
             "Mounts": [{"Type": "bind", "Source": str(self.plan.models_root),
                         "Destination": "/models", "RW": False}],
             "NetworkSettings": {"Ports": None, "Networks": {"none": {}}},
-            "State": {"Running": self.running},
+            "State": {"Running": self.running, "ExitCode": 127,
+                      "OOMKilled": False},
         }]
 
     def invoke(self, args, *, timeout, stdin=b"", output_limit=1024 * 1024):
@@ -106,7 +108,8 @@ class FakeDocker:
             return json.dumps(observation).encode()
         if args[:2] == ("container", "start"):
             assert self.created and not self.running
-            self.running = True
+            self.started = True
+            self.running = self.fail_on != "post-start-exit"
             return CONTAINER_ID.encode()
         if args[:2] == ("container", "kill"):
             assert args[2] == CONTAINER_ID
@@ -272,6 +275,30 @@ def test_malformed_inspect_field_is_fixed_denial(tmp_path, monkeypatch):
         smoke._verify_container(observed, plan, CONTAINER_ID, None, running=False)
     assert str(error.value) == "effective container containment mismatch: ports"
     assert "secret-from-daemon" not in str(error.value)
+
+
+def test_post_start_exit_reports_bounded_metadata_and_cleans_up(tmp_path, monkeypatch):
+    plan = plan_for(tmp_path, monkeypatch)
+    docker = FakeDocker(plan, fail_on="post-start-exit")
+    with pytest.raises(SmokeDenied) as error:
+        run_smoke(plan, docker, tags_only=True)
+    assert str(error.value) == (
+        "effective container containment mismatch: running exit_code=127 oom=false")
+    assert docker.started
+    assert not docker.created
+    assert not any("/api/tags" in args for args, _ in docker.calls)
+
+
+def test_post_start_exit_suppresses_untrusted_state_values(tmp_path, monkeypatch):
+    plan = plan_for(tmp_path, monkeypatch)
+    observed = FakeDocker(plan)._inspection()[0]
+    observed["State"] = {"Running": False, "ExitCode": "secret-from-daemon",
+                         "OOMKilled": "secret-from-daemon"}
+    with pytest.raises(SmokeDenied) as error:
+        smoke._verify_container(observed, plan, CONTAINER_ID, None, running=True)
+    assert str(error.value) == (
+        "effective container containment mismatch: running exit_code=unknown oom=unknown")
+    assert "secret-from-daemon" not in "".join(traceback.format_exception(error.value))
 
 
 def test_absent_local_model_denied_before_inference(tmp_path, monkeypatch):

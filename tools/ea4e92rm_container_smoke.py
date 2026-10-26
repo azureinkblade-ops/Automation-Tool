@@ -378,6 +378,16 @@ def _owned(observed: dict, plan: SmokePlan, container_id: str,
     )
 
 
+def _stopped_state_summary(state: object) -> str:
+    if type(state) is not dict:
+        return "exit_code=unknown oom=unknown"
+    code = state.get("ExitCode")
+    exit_code = str(code) if type(code) is int and 0 <= code <= 255 else "unknown"
+    oom = state.get("OOMKilled")
+    oom_label = str(oom).lower() if type(oom) is bool else "unknown"
+    return f"exit_code={exit_code} oom={oom_label}"
+
+
 def _verify_container(observed: dict, plan: SmokePlan, container_id: str,
                       owner_token: str, *, running: bool) -> None:
     host = observed.get("HostConfig") or {}
@@ -435,6 +445,11 @@ def _verify_container(observed: dict, plan: SmokePlan, container_id: str,
         except (AttributeError, IndexError, KeyError, TypeError, ValueError):
             valid = False
         if not valid:
+            if (field == "running" and running and type(state) is dict
+                    and state.get("Running") is False):
+                raise SmokeDenied(
+                    "effective container containment mismatch: running "
+                    + _stopped_state_summary(state))
             raise SmokeDenied(f"effective container containment mismatch: {field}")
 
 
