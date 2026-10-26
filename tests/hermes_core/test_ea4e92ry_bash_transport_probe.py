@@ -12,8 +12,9 @@ CONTAINER_ID = "c" * 64
 
 
 class FakeDocker:
-    def __init__(self, *, shell_result="Connection refused"):
+    def __init__(self, *, shell_result="Connection refused", fail_on=None):
         self.shell_result = shell_result
+        self.fail_on = fail_on
         self.name = None
         self.label = None
         self.created = False
@@ -36,10 +37,12 @@ class FakeDocker:
             self.name = args[args.index("--name") + 1]
             self.label = args[args.index("--label") + 1]
             self.created = True
+            if self.fail_on in ("create", "collision"):
+                raise SmokeDenied("fake create outcome")
             return (CONTAINER_ID + "\n").encode()
         if args[:2] == ("container", "inspect"):
             assert self.created
-            return json.dumps([{
+            observed = {
                 "Id": CONTAINER_ID, "Name": "/" + self.name,
                 "Image": probe.IMAGE_ID,
                 "Config": {
@@ -62,7 +65,12 @@ class FakeDocker:
                 },
                 "NetworkSettings": {"Ports": None, "Networks": {"none": {}}},
                 "Mounts": [], "State": {"Running": self.running},
-            }]).encode()
+            }
+            if self.fail_on == "network":
+                observed["HostConfig"]["NetworkMode"] = "bridge"
+            if self.fail_on == "collision":
+                observed["Config"]["Labels"][self.label.split("=", 1)[0]] = "other"
+            return json.dumps([observed]).encode()
         if args[:2] == ("container", "start"):
             self.running = True
             return CONTAINER_ID.encode()
@@ -73,6 +81,8 @@ class FakeDocker:
                     "tool:/bin/cat:yes\nnet:lo: 0 0 0 0\n").encode()
         if args[:2] == ("container", "rm"):
             assert args[2:] == ("--force", CONTAINER_ID)
+            if self.fail_on == "remove":
+                raise SmokeDenied("fake remove failure")
             self.created = self.running = False
             return CONTAINER_ID.encode()
         if args[:2] == ("container", "ls"):
@@ -102,3 +112,46 @@ def test_unreviewed_mode_denied_before_docker(monkeypatch):
     monkeypatch.setattr(probe, "DockerCli", lambda *_: pytest.fail("Docker reached"))
     with pytest.raises(SmokeDenied, match="unreviewed"):
         probe.run(mode="model")
+
+
+def test_restriction_mismatch_denied_before_start_and_cleaned(monkeypatch):
+    docker = FakeDocker(fail_on="network")
+    monkeypatch.setattr(probe, "DockerCli", lambda *_: docker)
+    with pytest.raises(SmokeDenied, match="prestart restrictions"):
+        probe.run(mode="bash")
+    assert not any(args[:2] == ("container", "start") for args in docker.calls)
+    assert not docker.created
+
+
+def test_name_collision_never_removes_unowned_container(monkeypatch):
+    docker = FakeDocker(fail_on="collision")
+    monkeypatch.setattr(probe, "DockerCli", lambda *_: docker)
+    with pytest.raises(SmokeDenied, match="cleanup unconfirmed"):
+        probe.run(mode="bash")
+    assert not any(args[:2] == ("container", "rm") for args in docker.calls)
+
+
+def test_uncertain_create_is_reconciled_by_owner(monkeypatch):
+    docker = FakeDocker(fail_on="create")
+    monkeypatch.setattr(probe, "DockerCli", lambda *_: docker)
+    with pytest.raises(SmokeDenied, match="fake create outcome"):
+        probe.run(mode="bash")
+    assert not docker.created
+
+
+def test_failed_removal_is_not_a_pass(monkeypatch):
+    docker = FakeDocker(fail_on="remove")
+    monkeypatch.setattr(probe, "DockerCli", lambda *_: docker)
+    with pytest.raises(SmokeDenied, match="cleanup unconfirmed"):
+        probe.run(mode="bash")
+    assert docker.created
+
+
+def test_expired_deadline_denied_before_docker_call(monkeypatch):
+    docker = FakeDocker()
+    ticks = iter([0.0, 96.0])
+    monkeypatch.setattr(probe, "DockerCli", lambda *_: docker)
+    monkeypatch.setattr(probe.time, "monotonic", lambda: next(ticks))
+    with pytest.raises(SmokeDenied, match="deadline"):
+        probe.run(mode="bash")
+    assert not docker.calls
