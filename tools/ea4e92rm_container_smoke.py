@@ -297,10 +297,13 @@ def _http_json(raw: bytes) -> dict:
         response = HTTPResponse(_ResponseBytes(raw))
         response.begin()
         body = response.read(MAX_RESPONSE + 1)
-        if (response.status != 200 or len(body) > MAX_RESPONSE
-                or response.getheader("Content-Type", "").split(";", 1)[0]
-                != "application/json"):
-            raise SmokeDenied("local Ollama HTTP response invalid")
+        json_type = (response.getheader("Content-Type", "").split(";", 1)[0]
+                     == "application/json")
+        if response.status != 200 or len(body) > MAX_RESPONSE or not json_type:
+            raise SmokeDenied(
+                "local Ollama HTTP response invalid "
+                f"(status={response.status}, json_type={json_type}, bytes={len(body)})"
+            )
         value = json.loads(body, object_pairs_hook=_unique_json_object)
     except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError,
             HTTPException) as error:

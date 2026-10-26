@@ -294,6 +294,17 @@ def test_local_http_response_fail_closed(response):
         smoke._http_json(response)
 
 
+def test_local_http_failure_reports_safe_metadata_only():
+    response = (b"HTTP/1.1 503 Service Unavailable\r\n"
+                b"Content-Type: application/json\r\nContent-Length: 19\r\n\r\n"
+                b'{"secret":"hidden"}')
+    with pytest.raises(SmokeDenied) as failure:
+        smoke._http_json(response)
+    assert "status=503" in str(failure.value)
+    assert "json_type=True" in str(failure.value)
+    assert "hidden" not in str(failure.value)
+
+
 def test_create_failure_is_unknown(tmp_path, monkeypatch):
     plan = plan_for(tmp_path, monkeypatch)
     docker = FakeDocker(plan, fail_on="create")
