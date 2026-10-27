@@ -21,6 +21,7 @@ class FakeDocker:
         self.running = False
         self.calls = []
         self.local_log = False
+        self.json_file_log = False
 
     def invoke(self, args, *, timeout, stdin=b"", output_limit=1024 * 1024):
         self.calls.append(args)
@@ -36,7 +37,8 @@ class FakeDocker:
             assert "--gpus" not in args and "--publish" not in args
             assert "--mount" not in args
             self.local_log = "--log-driver=local" in args
-            if self.local_log:
+            self.json_file_log = "--log-driver=json-file" in args
+            if self.local_log or self.json_file_log:
                 assert "--log-driver=none" not in args
                 assert args.count("--log-opt") == 2
                 assert "max-size=16k" in args and "max-file=1" in args
@@ -67,9 +69,11 @@ class FakeDocker:
                     "CapAdd": None, "Devices": [], "DeviceRequests": [],
                     "SecurityOpt": ["no-new-privileges"],
                     "RestartPolicy": {"Name": "no"},
-                    "LogConfig": ({"Type": "local", "Config": {
-                        "max-size": "16k", "max-file": "1"}}
-                                  if self.local_log else {"Type": "none"}),
+                    "LogConfig": ({"Type": "json-file" if self.json_file_log
+                                   else "local", "Config": {
+                                       "max-size": "16k", "max-file": "1"}}
+                                  if self.local_log or self.json_file_log
+                                  else {"Type": "none"}),
                     "Tmpfs": {"/tmp": "rw,nosuid,nodev,size=16777216"},
                     "PortBindings": None,
                 },
@@ -125,11 +129,31 @@ def test_local_log_only_variant_keeps_control_and_exact_cleanup(monkeypatch):
     assert sum(args[:2] == ("container", "start") for args in docker.calls) == 1
 
 
+def test_json_file_log_only_variant_keeps_control_and_exact_cleanup(monkeypatch):
+    docker = FakeDocker()
+    monkeypatch.setattr(probe, "DockerCli", lambda *_: docker)
+    result = probe.run(mode="bash", json_file_log=True)
+    assert result["interfaces"] == ["lo"]
+    assert docker.json_file_log and not docker.local_log
+    assert docker.name.startswith("ea4e92ud-")
+    assert not docker.created
+    assert sum(args[:2] == ("container", "start") for args in docker.calls) == 1
+
+
 def test_local_log_mismatch_denied_before_start_and_cleaned(monkeypatch):
     docker = FakeDocker(fail_on="logging")
     monkeypatch.setattr(probe, "DockerCli", lambda *_: docker)
     with pytest.raises(SmokeDenied, match="prestart restrictions"):
         probe.run(mode="bash", local_log=True)
+    assert not any(args[:2] == ("container", "start") for args in docker.calls)
+    assert not docker.created
+
+
+def test_json_file_log_mismatch_denied_before_start_and_cleaned(monkeypatch):
+    docker = FakeDocker(fail_on="logging")
+    monkeypatch.setattr(probe, "DockerCli", lambda *_: docker)
+    with pytest.raises(SmokeDenied, match="prestart restrictions"):
+        probe.run(mode="bash", json_file_log=True)
     assert not any(args[:2] == ("container", "start") for args in docker.calls)
     assert not docker.created
 
@@ -143,11 +167,24 @@ def test_local_log_start_failure_is_one_attempt_and_cleaned(monkeypatch):
     assert not docker.created
 
 
-@pytest.mark.parametrize("mode,local_log", [("tools", True), ("bash", 1)])
-def test_local_log_unreviewed_mode_denied_before_docker(monkeypatch, mode, local_log):
+def test_json_file_log_start_failure_is_one_attempt_and_cleaned(monkeypatch):
+    docker = FakeDocker(fail_on="start")
+    monkeypatch.setattr(probe, "DockerCli", lambda *_: docker)
+    with pytest.raises(SmokeDenied, match="fixed start denial"):
+        probe.run(mode="bash", json_file_log=True)
+    assert sum(args[:2] == ("container", "start") for args in docker.calls) == 1
+    assert not docker.created
+
+
+@pytest.mark.parametrize("mode,local_log,json_file_log", [
+    ("tools", True, False), ("bash", 1, False),
+    ("tools", False, True), ("bash", False, 1), ("bash", True, True),
+])
+def test_log_unreviewed_mode_denied_before_docker(
+        monkeypatch, mode, local_log, json_file_log):
     monkeypatch.setattr(probe, "DockerCli", lambda *_: pytest.fail("Docker reached"))
     with pytest.raises(SmokeDenied, match="unreviewed"):
-        probe.run(mode=mode, local_log=local_log)
+        probe.run(mode=mode, local_log=local_log, json_file_log=json_file_log)
 
 
 def test_missing_bash_tcp_denied_and_cleaned(monkeypatch):
