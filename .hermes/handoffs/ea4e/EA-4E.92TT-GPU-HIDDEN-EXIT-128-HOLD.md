@@ -25,3 +25,16 @@ informed. A separately governed, bounded diagnostic of Docker's start-error
 evidence is the next meaningful boundary. Do not run another container,
 model, receiver, GPU, or production activation under this authorization.
 Production remains HOLD.
+
+## Bounded host-record check
+
+With separate read-only approval, the 15-minute local window ending at the
+checkpoint commit time (`2026-10-27 08:12:12-08:27:12 -07:00`) was inspected.
+Docker Desktop log locations had no file modified in the window. Windows
+Application and System logs had no matching Docker, WSL, Hyper-V, or compute
+provider event; no matching dedicated event channel was available. Only
+bounded metadata and fixed redacted categories were returned. No container,
+Docker daemon request, model, GPU, receiver, or production action occurred.
+The failed-start cause remains unknown. Do not infer a cause or retry the
+consumed probe authorization; the next native diagnostic needs its own
+reviewed and bounded authorization.
