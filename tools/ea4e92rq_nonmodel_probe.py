@@ -21,6 +21,7 @@ DOCKER = Path(r"C:\Program Files\Docker\Docker\resources\bin\docker.exe")
 DOCKER_SHA256 = "c11b843b727ea76e6c63b393bccb73d957b6fcc12ba871c8265699e3a12e933c"
 CONTAINER_ID = re.compile(r"[0-9a-f]{64}")
 MEMORY = 256 * 1024 * 1024
+LARGE_MEMORY = 8 * 1024 * 1024 * 1024
 SHELL_CHECK = (
     'for p in /bin/cat /usr/bin/curl; do '
     'if test -x "$p"; then printf "tool:%s:yes\\n" "$p"; '
@@ -45,16 +46,20 @@ def _object(raw: bytes) -> dict:
 
 
 def run(mode: str = "tools", *, local_log: bool = False,
-        json_file_log: bool = False) -> dict:
+        json_file_log: bool = False, large_memory: bool = False) -> dict:
     if (mode not in ("tools", "bash") or type(local_log) is not bool
             or type(json_file_log) is not bool
+            or type(large_memory) is not bool
             or (local_log and json_file_log)
-            or ((local_log or json_file_log) and mode != "bash")):
+            or ((local_log or json_file_log) and mode != "bash")
+            or (large_memory and not json_file_log)):
         raise SmokeDenied("unreviewed non-model probe mode")
     deadline = time.monotonic() + 120
     work_deadline = deadline - 25
     client = DockerCli(DOCKER, DOCKER_SHA256)
-    if json_file_log:
+    if large_memory:
+        prefix = "ea4e92ug"
+    elif json_file_log:
         prefix = "ea4e92ud"
     elif local_log:
         prefix = "ea4e92tz"
@@ -72,6 +77,7 @@ def run(mode: str = "tools", *, local_log: bool = False,
     expected_log = {"Type": log_driver}
     if log_driver != "none":
         expected_log["Config"] = {"max-size": "16k", "max-file": "1"}
+    memory = LARGE_MEMORY if large_memory else MEMORY
     label = prefix + ".owner"
     name = prefix + "-" + uuid4().hex
     owner = secrets.token_hex(16)
@@ -106,7 +112,7 @@ def run(mode: str = "tools", *, local_log: bool = False,
             "container", "create", "--pull=never", "--name", name,
             "--label", f"{label}={owner}", "--network=none", "--read-only",
             "--cap-drop=ALL", "--security-opt=no-new-privileges",
-            "--pids-limit=16", f"--memory={MEMORY}", f"--memory-swap={MEMORY}",
+            "--pids-limit=16", f"--memory={memory}", f"--memory-swap={memory}",
             "--cpus=1", "--restart=no", *log_args,
             "--tmpfs", "/tmp:rw,nosuid,nodev,size=16777216",
             "--env", "NVIDIA_VISIBLE_DEVICES=void", "--entrypoint", "/bin/sh",
@@ -128,7 +134,7 @@ def run(mode: str = "tools", *, local_log: bool = False,
             and host.get("NetworkMode") == "none"
             and host.get("ReadonlyRootfs") is True
             and host.get("Privileged") is False
-            and host.get("Memory") == MEMORY and host.get("MemorySwap") == MEMORY
+            and host.get("Memory") == memory and host.get("MemorySwap") == memory
             and host.get("PidsLimit") == 16 and host.get("NanoCpus") == 1_000_000_000
             and host.get("CapDrop") == ["ALL"] and not host.get("CapAdd")
             and not host.get("Devices") and not host.get("DeviceRequests")

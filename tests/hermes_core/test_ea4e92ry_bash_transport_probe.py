@@ -22,6 +22,7 @@ class FakeDocker:
         self.calls = []
         self.local_log = False
         self.json_file_log = False
+        self.large_memory = False
 
     def invoke(self, args, *, timeout, stdin=b"", output_limit=1024 * 1024):
         self.calls.append(args)
@@ -38,6 +39,10 @@ class FakeDocker:
             assert "--mount" not in args
             self.local_log = "--log-driver=local" in args
             self.json_file_log = "--log-driver=json-file" in args
+            self.large_memory = f"--memory={probe.LARGE_MEMORY}" in args
+            memory = probe.LARGE_MEMORY if self.large_memory else probe.MEMORY
+            assert f"--memory={memory}" in args
+            assert f"--memory-swap={memory}" in args
             if self.local_log or self.json_file_log:
                 assert "--log-driver=none" not in args
                 assert args.count("--log-opt") == 2
@@ -63,8 +68,11 @@ class FakeDocker:
                 },
                 "HostConfig": {
                     "NetworkMode": "none", "ReadonlyRootfs": True,
-                    "Privileged": False, "Memory": probe.MEMORY,
-                    "MemorySwap": probe.MEMORY, "PidsLimit": 16,
+                    "Privileged": False,
+                    "Memory": (probe.LARGE_MEMORY if self.large_memory
+                               else probe.MEMORY),
+                    "MemorySwap": (probe.LARGE_MEMORY if self.large_memory
+                                   else probe.MEMORY), "PidsLimit": 16,
                     "NanoCpus": 1_000_000_000, "CapDrop": ["ALL"],
                     "CapAdd": None, "Devices": [], "DeviceRequests": [],
                     "SecurityOpt": ["no-new-privileges"],
@@ -84,6 +92,8 @@ class FakeDocker:
                 observed["HostConfig"]["NetworkMode"] = "bridge"
             if self.fail_on == "logging":
                 observed["HostConfig"]["LogConfig"] = {"Type": "none"}
+            if self.fail_on == "memory":
+                observed["HostConfig"]["Memory"] = probe.MEMORY
             if self.fail_on == "collision":
                 observed["Config"]["Labels"][self.label.split("=", 1)[0]] = "other"
             return json.dumps([observed]).encode()
@@ -140,6 +150,17 @@ def test_json_file_log_only_variant_keeps_control_and_exact_cleanup(monkeypatch)
     assert sum(args[:2] == ("container", "start") for args in docker.calls) == 1
 
 
+def test_large_memory_only_variant_keeps_control_and_exact_cleanup(monkeypatch):
+    docker = FakeDocker()
+    monkeypatch.setattr(probe, "DockerCli", lambda *_: docker)
+    result = probe.run(mode="bash", json_file_log=True, large_memory=True)
+    assert result["interfaces"] == ["lo"]
+    assert docker.json_file_log and docker.large_memory
+    assert docker.name.startswith("ea4e92ug-")
+    assert not docker.created
+    assert sum(args[:2] == ("container", "start") for args in docker.calls) == 1
+
+
 def test_local_log_mismatch_denied_before_start_and_cleaned(monkeypatch):
     docker = FakeDocker(fail_on="logging")
     monkeypatch.setattr(probe, "DockerCli", lambda *_: docker)
@@ -154,6 +175,15 @@ def test_json_file_log_mismatch_denied_before_start_and_cleaned(monkeypatch):
     monkeypatch.setattr(probe, "DockerCli", lambda *_: docker)
     with pytest.raises(SmokeDenied, match="prestart restrictions"):
         probe.run(mode="bash", json_file_log=True)
+    assert not any(args[:2] == ("container", "start") for args in docker.calls)
+    assert not docker.created
+
+
+def test_large_memory_mismatch_denied_before_start_and_cleaned(monkeypatch):
+    docker = FakeDocker(fail_on="memory")
+    monkeypatch.setattr(probe, "DockerCli", lambda *_: docker)
+    with pytest.raises(SmokeDenied, match="prestart restrictions"):
+        probe.run(mode="bash", json_file_log=True, large_memory=True)
     assert not any(args[:2] == ("container", "start") for args in docker.calls)
     assert not docker.created
 
@@ -176,6 +206,15 @@ def test_json_file_log_start_failure_is_one_attempt_and_cleaned(monkeypatch):
     assert not docker.created
 
 
+def test_large_memory_start_failure_is_one_attempt_and_cleaned(monkeypatch):
+    docker = FakeDocker(fail_on="start")
+    monkeypatch.setattr(probe, "DockerCli", lambda *_: docker)
+    with pytest.raises(SmokeDenied, match="fixed start denial"):
+        probe.run(mode="bash", json_file_log=True, large_memory=True)
+    assert sum(args[:2] == ("container", "start") for args in docker.calls) == 1
+    assert not docker.created
+
+
 @pytest.mark.parametrize("mode,local_log,json_file_log", [
     ("tools", True, False), ("bash", 1, False),
     ("tools", False, True), ("bash", False, 1), ("bash", True, True),
@@ -185,6 +224,18 @@ def test_log_unreviewed_mode_denied_before_docker(
     monkeypatch.setattr(probe, "DockerCli", lambda *_: pytest.fail("Docker reached"))
     with pytest.raises(SmokeDenied, match="unreviewed"):
         probe.run(mode=mode, local_log=local_log, json_file_log=json_file_log)
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"large_memory": 1},
+    {"large_memory": True},
+    {"mode": "tools", "json_file_log": True, "large_memory": True},
+    {"mode": "bash", "local_log": True, "large_memory": True},
+])
+def test_large_memory_unreviewed_mode_denied_before_docker(monkeypatch, kwargs):
+    monkeypatch.setattr(probe, "DockerCli", lambda *_: pytest.fail("Docker reached"))
+    with pytest.raises(SmokeDenied, match="unreviewed"):
+        probe.run(**kwargs)
 
 
 def test_missing_bash_tcp_denied_and_cleaned(monkeypatch):
