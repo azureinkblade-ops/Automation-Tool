@@ -54,8 +54,12 @@ class FakeDocker:
         return [{
             "Id": CONTAINER_ID, "Name": "/" + self.plan.name,
             "Image": IMAGE_ID,
-            "Config": {"Image": IMAGE, "Cmd": ["serve"],
-                       "Entrypoint": ["/bin/ollama"], "ExposedPorts": None,
+            "Config": {"Image": IMAGE,
+                       "Cmd": (["-c", "sleep 60"] if self.plan.mount_only_probe
+                               else ["serve"]),
+                       "Entrypoint": (["/bin/bash"] if self.plan.mount_only_probe
+                                      else ["/bin/ollama"]),
+                       "ExposedPorts": None,
                        "Labels": {"ea4e92rm.owner": self.owner_token},
                        "Env": ["HOME=/tmp", "OLLAMA_MODELS=/models",
                                "OLLAMA_HOST=127.0.0.1:11434", "OLLAMA_KEEP_ALIVE=0"]},
@@ -101,6 +105,9 @@ class FakeDocker:
                 assert "max-size=16k" in args and "max-file=1" in args
             else:
                 assert "--log-driver=none" in args
+            if self.plan.mount_only_probe:
+                assert args[-3:] == (IMAGE, "-c", "sleep 60")
+                assert args[args.index("--entrypoint") + 1] == "/bin/bash"
             self.owner_token = args[args.index("--label") + 1].split("=", 1)[1]
             self.created = True
             if self.fail_on == "collision":
@@ -479,6 +486,38 @@ def test_start_failure_running_state_keeps_fixed_denial(tmp_path, monkeypatch):
         run_smoke(plan, docker, tags_only=True)
     assert error.value.category == "permission_denied"
     assert not any(args[:2] == ("container", "logs") for args, _ in docker.calls)
+    assert not docker.created
+
+
+def test_mount_start_probe_never_requests_model_or_http(tmp_path, monkeypatch):
+    plan = replace(plan_for(tmp_path, monkeypatch), startup_log_diagnostic=True,
+                   mount_only_probe=True)
+    docker = FakeDocker(plan)
+    assert run_smoke(plan, docker, tags_only=True) == "EA4E_MOUNT_START_OK"
+    assert plan.name.startswith("ea4e92tg-")
+    assert not any("/api/tags" in args or "/api/generate" in args
+                   for args, _ in docker.calls)
+    assert not docker.created
+
+
+def test_mount_start_probe_refuses_inference_before_docker(tmp_path, monkeypatch):
+    plan = replace(plan_for(tmp_path, monkeypatch), startup_log_diagnostic=True,
+                   mount_only_probe=True)
+    docker = FakeDocker(plan)
+    with pytest.raises(SmokeDenied, match="requires tags-only mode"):
+        run_smoke(plan, docker)
+    assert not docker.calls
+
+
+def test_mount_start_probe_classifies_failed_start_without_http(tmp_path, monkeypatch):
+    plan = replace(plan_for(tmp_path, monkeypatch), startup_log_diagnostic=True,
+                   mount_only_probe=True)
+    docker = FakeDocker(plan, fail_on="start-reject-cli")
+    with pytest.raises(SmokeDenied) as error:
+        run_smoke(plan, docker, tags_only=True)
+    assert "exit_code=127 oom=false startup_category=permission_denied" in str(error.value)
+    assert not any("/api/tags" in args or "/api/generate" in args
+                   for args, _ in docker.calls)
     assert not docker.created
 
 

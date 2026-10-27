@@ -1,8 +1,8 @@
 """Single-shot, non-default Docker-local Ollama smoke candidate.
 
 This module has no CLI entry point. Calling ``run_smoke`` starts a real
-container and model; it requires a separately reviewed, exact authorization.
-Fake tests of this module do not qualify Docker, the image, or the model.
+container and may start a model server; each mode requires a separately
+reviewed, exact authorization. Fake tests do not qualify native behavior.
 """
 
 from __future__ import annotations
@@ -79,10 +79,12 @@ class SmokePlan:
     memory_bytes: int = 20 * 1024**3
     pids_limit: int = 64
     startup_log_diagnostic: bool = False
+    mount_only_probe: bool = False
 
     @property
     def name(self) -> str:
-        return "ea4e92rm-" + UUID(self.ceremony_id).hex
+        prefix = "ea4e92tg-" if self.mount_only_probe else "ea4e92rm-"
+        return prefix + UUID(self.ceremony_id).hex
 
 
 class DockerBoundary(Protocol):
@@ -248,7 +250,9 @@ def validate_plan(plan: SmokePlan, *, deadline: float | None = None,
         raise SmokeDenied("fresh ceremony UUID required") from None
     if (plan.model != "qwen3:14b" or plan.memory_bytes != 20 * 1024**3
             or plan.pids_limit != 64
-            or type(plan.startup_log_diagnostic) is not bool):
+            or type(plan.startup_log_diagnostic) is not bool
+            or type(plan.mount_only_probe) is not bool
+            or (plan.mount_only_probe and not plan.startup_log_diagnostic)):
         raise SmokeDenied("unreviewed model or resource budget")
     root = plan.models_root.resolve(strict=True)
     if root != plan.models_root or root.is_symlink() or not root.is_dir():
@@ -445,8 +449,10 @@ def _verify_container(observed: dict, plan: SmokePlan, container_id: str,
         ("owner", lambda: _owned(observed, plan, container_id, owner_token)),
         ("image_id", lambda: observed.get("Image") == plan.image_id),
         ("image_ref", lambda: config.get("Image") == plan.image),
-        ("command", lambda: config.get("Cmd") == ["serve"]),
-        ("entrypoint", lambda: config.get("Entrypoint") == ["/bin/ollama"]),
+        ("command", lambda: config.get("Cmd") == (
+            ["-c", "sleep 60"] if plan.mount_only_probe else ["serve"])),
+        ("entrypoint", lambda: config.get("Entrypoint") == (
+            ["/bin/bash"] if plan.mount_only_probe else ["/bin/ollama"])),
         ("network_mode", lambda: host.get("NetworkMode") == "none"),
         ("readonly_root", lambda: host.get("ReadonlyRootfs") is True),
         ("privileged", lambda: host.get("Privileged") is False),
@@ -531,8 +537,9 @@ def _create_args(plan: SmokePlan, root: Path, owner_token: str) -> tuple[str, ..
         "--tmpfs", "/tmp:rw,nosuid,nodev,size=2147483648",
         "--env", "HOME=/tmp", "--env", "OLLAMA_MODELS=/models",
         "--env", "OLLAMA_HOST=127.0.0.1:11434",
-        "--env", "OLLAMA_KEEP_ALIVE=0", "--entrypoint", "/bin/ollama",
-        plan.image, "serve",
+        "--env", "OLLAMA_KEEP_ALIVE=0", "--entrypoint",
+        "/bin/bash" if plan.mount_only_probe else "/bin/ollama",
+        plan.image, *(("-c", "sleep 60") if plan.mount_only_probe else ("serve",)),
     )
 
 
@@ -545,6 +552,8 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, tags_only=False,
     """
     if plan.startup_log_diagnostic and not tags_only:
         raise SmokeDenied("startup diagnostic requires tags-only mode")
+    if plan.mount_only_probe and not tags_only:
+        raise SmokeDenied("mount probe requires non-inference mode")
     deadline = clock() + WALL_SECONDS
     work_deadline = deadline - (WALL_SECONDS - WORK_SECONDS)
     root = validate_plan(plan, deadline=work_deadline, clock=clock)
@@ -604,6 +613,10 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, tags_only=False,
         names = {line.split(":", 1)[0].strip() for line in lines if ":" in line}
         if names != {"lo"}:
             raise SmokeDenied("container has non-loopback interface")
+
+        if plan.mount_only_probe:
+            validate_plan(plan, deadline=work_deadline, clock=clock)
+            return "EA4E_MOUNT_START_OK"
 
         try:
             tags = _local_http(client, container_id, "GET", "/api/tags", b"",
