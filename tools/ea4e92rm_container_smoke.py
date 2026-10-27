@@ -82,10 +82,12 @@ class SmokePlan:
     mount_only_probe: bool = False
     reduced_memory_probe: bool = False
     no_mount_probe: bool = False
+    gpu_hidden_probe: bool = False
 
     @property
     def name(self) -> str:
-        prefix = ("ea4e92tm-" if self.no_mount_probe else
+        prefix = ("ea4e92tq-" if self.gpu_hidden_probe else
+                  "ea4e92tm-" if self.no_mount_probe else
                   "ea4e92tj-" if self.reduced_memory_probe else
                   "ea4e92tg-" if self.mount_only_probe else "ea4e92rm-")
         return prefix + UUID(self.ceremony_id).hex
@@ -253,7 +255,8 @@ def validate_plan(plan: SmokePlan, *, deadline: float | None = None,
     except (ValueError, TypeError):
         raise SmokeDenied("fresh ceremony UUID required") from None
     if (type(plan.reduced_memory_probe) is not bool
-            or type(plan.no_mount_probe) is not bool):
+            or type(plan.no_mount_probe) is not bool
+            or type(plan.gpu_hidden_probe) is not bool):
         raise SmokeDenied("unreviewed model or resource budget")
     expected_memory = (8 if plan.reduced_memory_probe else 20) * 1024**3
     if (plan.model != "qwen3:14b" or plan.memory_bytes != expected_memory
@@ -262,7 +265,8 @@ def validate_plan(plan: SmokePlan, *, deadline: float | None = None,
             or type(plan.mount_only_probe) is not bool
             or (plan.mount_only_probe and not plan.startup_log_diagnostic)
             or (plan.reduced_memory_probe and not plan.mount_only_probe)
-            or (plan.no_mount_probe and not plan.reduced_memory_probe)):
+            or (plan.no_mount_probe and not plan.reduced_memory_probe)
+            or (plan.gpu_hidden_probe and not plan.no_mount_probe)):
         raise SmokeDenied("unreviewed model or resource budget")
     root = plan.models_root.resolve(strict=True)
     if root != plan.models_root or root.is_symlink() or not root.is_dir():
@@ -490,6 +494,9 @@ def _verify_container(observed: dict, plan: SmokePlan, container_id: str,
         ("environment", lambda: {"HOME=/tmp", "OLLAMA_MODELS=/models",
                          "OLLAMA_HOST=127.0.0.1:11434", "OLLAMA_KEEP_ALIVE=0"}
          <= environment),
+        ("gpu_hidden", lambda: not plan.gpu_hidden_probe or (
+            "NVIDIA_VISIBLE_DEVICES=void" in environment
+            and "NVIDIA_VISIBLE_DEVICES=all" not in environment)),
         ("proxy_environment", lambda: not any(entry.upper().startswith((
             "HTTP_PROXY=", "HTTPS_PROXY=", "ALL_PROXY=", "NO_PROXY="))
             for entry in environment)),
@@ -549,7 +556,10 @@ def _create_args(plan: SmokePlan, root: Path, owner_token: str) -> tuple[str, ..
         "--tmpfs", "/tmp:rw,nosuid,nodev,size=2147483648",
         "--env", "HOME=/tmp", "--env", "OLLAMA_MODELS=/models",
         "--env", "OLLAMA_HOST=127.0.0.1:11434",
-        "--env", "OLLAMA_KEEP_ALIVE=0", "--entrypoint",
+        "--env", "OLLAMA_KEEP_ALIVE=0",
+        *(("--env", "NVIDIA_VISIBLE_DEVICES=void") if plan.gpu_hidden_probe
+          else ()),
+        "--entrypoint",
         "/bin/bash" if plan.mount_only_probe else "/bin/ollama",
         plan.image, *(("-c", "sleep 60") if plan.mount_only_probe else ("serve",)),
     )

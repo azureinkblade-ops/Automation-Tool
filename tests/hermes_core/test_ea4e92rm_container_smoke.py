@@ -62,7 +62,9 @@ class FakeDocker:
                        "ExposedPorts": None,
                        "Labels": {"ea4e92rm.owner": self.owner_token},
                        "Env": ["HOME=/tmp", "OLLAMA_MODELS=/models",
-                               "OLLAMA_HOST=127.0.0.1:11434", "OLLAMA_KEEP_ALIVE=0"]},
+                               "OLLAMA_HOST=127.0.0.1:11434", "OLLAMA_KEEP_ALIVE=0"]
+                              + (["NVIDIA_VISIBLE_DEVICES=void"]
+                                 if self.plan.gpu_hidden_probe else [])},
             "HostConfig": {
                 "NetworkMode": "none", "ReadonlyRootfs": True,
                 "Privileged": False, "Memory": self.plan.memory_bytes,
@@ -136,6 +138,10 @@ class FakeDocker:
                 observation[0]["Mounts"] = None
             if self.fail_on == "malformed-mount-field":
                 observation[0]["Mounts"] = {}
+            if self.fail_on == "gpu-visible":
+                observation[0]["Config"]["Env"].append("NVIDIA_VISIBLE_DEVICES=all")
+            if self.fail_on == "gpu-hidden-missing":
+                observation[0]["Config"]["Env"].remove("NVIDIA_VISIBLE_DEVICES=void")
             if self.fail_on == "cpu":
                 observation[0]["HostConfig"]["NanoCpus"] = 0
             if self.fail_on == "owner":
