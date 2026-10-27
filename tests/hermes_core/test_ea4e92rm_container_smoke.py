@@ -140,6 +140,10 @@ class FakeDocker:
                 observation[0]["Mounts"] = {}
             if self.fail_on == "gpu-visible":
                 observation[0]["Config"]["Env"].append("NVIDIA_VISIBLE_DEVICES=all")
+            if self.fail_on == "gpu-visible-device":
+                observation[0]["Config"]["Env"].append("NVIDIA_VISIBLE_DEVICES=0")
+            if self.fail_on == "gpu-hidden-duplicate":
+                observation[0]["Config"]["Env"].append("NVIDIA_VISIBLE_DEVICES=void")
             if self.fail_on == "gpu-hidden-missing":
                 observation[0]["Config"]["Env"].remove("NVIDIA_VISIBLE_DEVICES=void")
             if self.fail_on == "cpu":

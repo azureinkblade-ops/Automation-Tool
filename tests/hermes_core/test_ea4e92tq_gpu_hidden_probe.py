@@ -60,7 +60,10 @@ def test_gpu_hidden_failed_start_still_cleans_up(tmp_path, monkeypatch):
     assert not docker.created
 
 
-@pytest.mark.parametrize("failure", ["gpu-visible", "gpu-hidden-missing"])
+@pytest.mark.parametrize("failure", [
+    "gpu-visible", "gpu-visible-device", "gpu-hidden-duplicate",
+    "gpu-hidden-missing",
+])
 def test_gpu_hidden_requires_effective_void(tmp_path, monkeypatch, failure):
     plan = hidden_plan(tmp_path, monkeypatch)
     docker = FakeDocker(plan, fail_on=failure)

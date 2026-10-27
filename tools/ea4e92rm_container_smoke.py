@@ -495,8 +495,11 @@ def _verify_container(observed: dict, plan: SmokePlan, container_id: str,
                          "OLLAMA_HOST=127.0.0.1:11434", "OLLAMA_KEEP_ALIVE=0"}
          <= environment),
         ("gpu_hidden", lambda: not plan.gpu_hidden_probe or (
-            "NVIDIA_VISIBLE_DEVICES=void" in environment
-            and "NVIDIA_VISIBLE_DEVICES=all" not in environment)),
+            type(config.get("Env")) is list
+            and all(type(entry) is str for entry in config["Env"])
+            and [entry for entry in config["Env"]
+                 if entry.startswith("NVIDIA_VISIBLE_DEVICES=")]
+            == ["NVIDIA_VISIBLE_DEVICES=void"])),
         ("proxy_environment", lambda: not any(entry.upper().startswith((
             "HTTP_PROXY=", "HTTPS_PROXY=", "ALL_PROXY=", "NO_PROXY="))
             for entry in environment)),
