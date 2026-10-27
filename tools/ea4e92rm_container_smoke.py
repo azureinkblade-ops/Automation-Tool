@@ -448,7 +448,7 @@ def _verify_container(observed: dict, plan: SmokePlan, container_id: str,
     host = observed.get("HostConfig") or {}
     config = observed.get("Config") or {}
     state = observed.get("State") or {}
-    mounts = observed.get("Mounts") or []
+    mounts = observed.get("Mounts")
     network = observed.get("NetworkSettings") or {}
     expected_mount = str(plan.models_root)
     try:
@@ -493,7 +493,8 @@ def _verify_container(observed: dict, plan: SmokePlan, container_id: str,
         ("proxy_environment", lambda: not any(entry.upper().startswith((
             "HTTP_PROXY=", "HTTPS_PROXY=", "ALL_PROXY=", "NO_PROXY="))
             for entry in environment)),
-        ("mount_count", lambda: len(mounts) == (0 if plan.no_mount_probe else 1)),
+        ("mount_count", lambda: type(mounts) is list
+         and len(mounts) == (0 if plan.no_mount_probe else 1)),
         ("mount_type", lambda: plan.no_mount_probe or mounts[0].get("Type") == "bind"),
         ("mount_source", lambda: plan.no_mount_probe or mounts[0].get("Source") == expected_mount),
         ("mount_destination", lambda: plan.no_mount_probe or mounts[0].get("Destination") == "/models"),

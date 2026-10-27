@@ -130,6 +130,12 @@ class FakeDocker:
             if self.fail_on == "unexpected-mount":
                 observation[0]["Mounts"] = [{"Type": "bind", "Source": "other",
                                              "Destination": "/models", "RW": False}]
+            if self.fail_on == "missing-mount-field":
+                del observation[0]["Mounts"]
+            if self.fail_on == "null-mount-field":
+                observation[0]["Mounts"] = None
+            if self.fail_on == "malformed-mount-field":
+                observation[0]["Mounts"] = {}
             if self.fail_on == "cpu":
                 observation[0]["HostConfig"]["NanoCpus"] = 0
             if self.fail_on == "owner":

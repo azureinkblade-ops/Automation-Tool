@@ -72,6 +72,18 @@ def test_no_mount_rejects_unexpected_mount(tmp_path, monkeypatch):
     assert not docker.created
 
 
+@pytest.mark.parametrize("failure", [
+    "missing-mount-field", "null-mount-field", "malformed-mount-field",
+])
+def test_no_mount_requires_explicit_empty_mount_list(tmp_path, monkeypatch, failure):
+    plan = no_mount_plan(tmp_path, monkeypatch)
+    docker = FakeDocker(plan, fail_on=failure)
+    with pytest.raises(SmokeDenied, match="mount_count"):
+        run_smoke(plan, docker, tags_only=True)
+    assert not docker.started
+    assert not docker.created
+
+
 def test_no_mount_denied_without_reduced_memory(tmp_path, monkeypatch):
     plan = replace(no_mount_plan(tmp_path, monkeypatch),
                    reduced_memory_probe=False, memory_bytes=20 * 1024**3)
