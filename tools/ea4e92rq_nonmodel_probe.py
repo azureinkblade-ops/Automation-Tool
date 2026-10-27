@@ -44,13 +44,14 @@ def _object(raw: bytes) -> dict:
     return _json_object(raw)
 
 
-def run(mode: str = "tools") -> dict:
-    if mode not in ("tools", "bash"):
+def run(mode: str = "tools", *, local_log: bool = False) -> dict:
+    if (mode not in ("tools", "bash") or type(local_log) is not bool
+            or local_log and mode != "bash"):
         raise SmokeDenied("unreviewed non-model probe mode")
     deadline = time.monotonic() + 120
     work_deadline = deadline - 25
     client = DockerCli(DOCKER, DOCKER_SHA256)
-    prefix = "ea4e92rq" if mode == "tools" else "ea4e92ry"
+    prefix = "ea4e92tz" if local_log else ("ea4e92rq" if mode == "tools" else "ea4e92ry")
     label = prefix + ".owner"
     name = prefix + "-" + uuid4().hex
     owner = secrets.token_hex(16)
@@ -86,7 +87,9 @@ def run(mode: str = "tools") -> dict:
             "--label", f"{label}={owner}", "--network=none", "--read-only",
             "--cap-drop=ALL", "--security-opt=no-new-privileges",
             "--pids-limit=16", f"--memory={MEMORY}", f"--memory-swap={MEMORY}",
-            "--cpus=1", "--restart=no", "--log-driver=none",
+            "--cpus=1", "--restart=no",
+            *(("--log-driver=local", "--log-opt", "max-size=16k", "--log-opt",
+               "max-file=1") if local_log else ("--log-driver=none",)),
             "--tmpfs", "/tmp:rw,nosuid,nodev,size=16777216",
             "--env", "NVIDIA_VISIBLE_DEVICES=void", "--entrypoint", "/bin/sh",
             IMAGE, "-c", "sleep 45",
@@ -114,7 +117,9 @@ def run(mode: str = "tools") -> dict:
             and any(x in ("no-new-privileges", "no-new-privileges:true")
                     for x in (host.get("SecurityOpt") or []))
             and (host.get("RestartPolicy") or {}).get("Name") == "no"
-            and (host.get("LogConfig") or {}).get("Type") == "none"
+            and (host.get("LogConfig") == {
+                "Type": "local", "Config": {"max-size": "16k", "max-file": "1"}}
+                if local_log else (host.get("LogConfig") or {}).get("Type") == "none")
             and host.get("Tmpfs") == {"/tmp": "rw,nosuid,nodev,size=16777216"}
             and not host.get("PortBindings")
             and all(not x for x in (network.get("Ports") or {}).values())

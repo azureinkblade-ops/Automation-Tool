@@ -20,6 +20,7 @@ class FakeDocker:
         self.created = False
         self.running = False
         self.calls = []
+        self.local_log = False
 
     def invoke(self, args, *, timeout, stdin=b"", output_limit=1024 * 1024):
         self.calls.append(args)
@@ -34,6 +35,13 @@ class FakeDocker:
             assert "--read-only" in args and "--cap-drop=ALL" in args
             assert "--gpus" not in args and "--publish" not in args
             assert "--mount" not in args
+            self.local_log = "--log-driver=local" in args
+            if self.local_log:
+                assert "--log-driver=none" not in args
+                assert args.count("--log-opt") == 2
+                assert "max-size=16k" in args and "max-file=1" in args
+            else:
+                assert "--log-driver=none" in args
             self.name = args[args.index("--name") + 1]
             self.label = args[args.index("--label") + 1]
             self.created = True
@@ -59,7 +67,9 @@ class FakeDocker:
                     "CapAdd": None, "Devices": [], "DeviceRequests": [],
                     "SecurityOpt": ["no-new-privileges"],
                     "RestartPolicy": {"Name": "no"},
-                    "LogConfig": {"Type": "none"},
+                    "LogConfig": ({"Type": "local", "Config": {
+                        "max-size": "16k", "max-file": "1"}}
+                                  if self.local_log else {"Type": "none"}),
                     "Tmpfs": {"/tmp": "rw,nosuid,nodev,size=16777216"},
                     "PortBindings": None,
                 },
@@ -68,10 +78,14 @@ class FakeDocker:
             }
             if self.fail_on == "network":
                 observed["HostConfig"]["NetworkMode"] = "bridge"
+            if self.fail_on == "logging":
+                observed["HostConfig"]["LogConfig"] = {"Type": "none"}
             if self.fail_on == "collision":
                 observed["Config"]["Labels"][self.label.split("=", 1)[0]] = "other"
             return json.dumps([observed]).encode()
         if args[:2] == ("container", "start"):
+            if self.fail_on == "start":
+                raise SmokeDenied("fixed start denial")
             self.running = True
             return CONTAINER_ID.encode()
         if args[:2] == ("container", "exec"):
@@ -98,6 +112,42 @@ def test_one_bash_probe_and_exact_cleanup(monkeypatch):
     assert result["tools"] == ["tool:/bin/bash:yes", "tool:/bin/cat:yes"]
     assert not docker.created
     assert sum(args[:2] == ("container", "exec") for args in docker.calls) == 1
+
+
+def test_local_log_only_variant_keeps_control_and_exact_cleanup(monkeypatch):
+    docker = FakeDocker()
+    monkeypatch.setattr(probe, "DockerCli", lambda *_: docker)
+    result = probe.run(mode="bash", local_log=True)
+    assert result["interfaces"] == ["lo"]
+    assert docker.local_log
+    assert docker.name.startswith("ea4e92tz-")
+    assert not docker.created
+    assert sum(args[:2] == ("container", "start") for args in docker.calls) == 1
+
+
+def test_local_log_mismatch_denied_before_start_and_cleaned(monkeypatch):
+    docker = FakeDocker(fail_on="logging")
+    monkeypatch.setattr(probe, "DockerCli", lambda *_: docker)
+    with pytest.raises(SmokeDenied, match="prestart restrictions"):
+        probe.run(mode="bash", local_log=True)
+    assert not any(args[:2] == ("container", "start") for args in docker.calls)
+    assert not docker.created
+
+
+def test_local_log_start_failure_is_one_attempt_and_cleaned(monkeypatch):
+    docker = FakeDocker(fail_on="start")
+    monkeypatch.setattr(probe, "DockerCli", lambda *_: docker)
+    with pytest.raises(SmokeDenied, match="fixed start denial"):
+        probe.run(mode="bash", local_log=True)
+    assert sum(args[:2] == ("container", "start") for args in docker.calls) == 1
+    assert not docker.created
+
+
+@pytest.mark.parametrize("mode,local_log", [("tools", True), ("bash", 1)])
+def test_local_log_unreviewed_mode_denied_before_docker(monkeypatch, mode, local_log):
+    monkeypatch.setattr(probe, "DockerCli", lambda *_: pytest.fail("Docker reached"))
+    with pytest.raises(SmokeDenied, match="unreviewed"):
+        probe.run(mode=mode, local_log=local_log)
 
 
 def test_missing_bash_tcp_denied_and_cleaned(monkeypatch):
