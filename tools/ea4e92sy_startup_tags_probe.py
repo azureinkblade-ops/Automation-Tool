@@ -12,7 +12,9 @@ from tools.ea4e92sb_local_model_smoke import (
 def main() -> str:
     plan = SmokePlan(IMAGE, IMAGE_ID, MODELS_ROOT, str(uuid4()),
                      startup_log_diagnostic=True)
-    return run_smoke(plan, DockerCli(DOCKER, DOCKER_SHA256), tags_only=True)
+    return run_smoke(
+        plan, DockerCli(DOCKER, DOCKER_SHA256, classify_start_failure=True),
+        tags_only=True)
 
 
 if __name__ == "__main__":

@@ -7,9 +7,10 @@ def test_startup_diagnostic_entrypoint_is_tags_only(monkeypatch):
     calls = []
     client = object()
 
-    def fake_client(binary, digest):
+    def fake_client(binary, digest, *, classify_start_failure):
         assert binary == entry.DOCKER
         assert digest == entry.DOCKER_SHA256
+        assert classify_start_failure is True
         return client
 
     def fake_smoke(plan, observed_client, *, tags_only):

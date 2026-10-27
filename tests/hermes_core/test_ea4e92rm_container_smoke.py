@@ -1,6 +1,7 @@
 """Fake-only contract tests; no Docker daemon or model is invoked."""
 
 import hashlib
+import io
 import json
 import traceback
 from dataclasses import replace
@@ -11,7 +12,8 @@ import pytest
 import tools.ea4e92rm_container_smoke as smoke
 
 from tools.ea4e92rm_container_smoke import (
-    SmokeDenied, SmokePlan, UnknownContainerOutcome, run_smoke, validate_plan,
+    SmokeDenied, SmokePlan, StartupCommandDenied, UnknownContainerOutcome,
+    run_smoke, validate_plan,
 )
 
 
@@ -46,6 +48,7 @@ class FakeDocker:
         self.running = False
         self.started = False
         self.owner_token = None
+        self.inspect_count = 0
 
     def _inspection(self):
         return [{
@@ -108,7 +111,10 @@ class FakeDocker:
             return (CONTAINER_ID + "\n").encode()
         if args[:2] == ("container", "inspect"):
             assert self.created and args[2] in (CONTAINER_ID, self.plan.name)
+            self.inspect_count += 1
             observation = self._inspection()
+            if self.fail_on == "start-reject-owner" and self.inspect_count == 2:
+                observation[0]["Config"]["Labels"]["ea4e92rm.owner"] = "other"
             if self.fail_on == "network":
                 observation[0]["HostConfig"]["NetworkMode"] = "bridge"
             if self.fail_on == "cpu":
@@ -119,6 +125,15 @@ class FakeDocker:
         if args[:2] == ("container", "start"):
             assert self.created and not self.running
             self.started = True
+            if self.fail_on == "start-reject":
+                raise SmokeDenied("Docker CLI start failed: startup_category=unclassified")
+            if self.fail_on == "start-reject-cli":
+                raise StartupCommandDenied("permission_denied")
+            if self.fail_on == "start-reject-owner":
+                raise StartupCommandDenied("permission_denied")
+            if self.fail_on == "start-reject-running":
+                self.running = True
+                raise StartupCommandDenied("permission_denied")
             self.running = self.fail_on != "post-start-exit"
             return CONTAINER_ID.encode()
         if args[:2] == ("container", "kill"):
@@ -141,7 +156,7 @@ class FakeDocker:
             assert args == ("container", "logs", "--tail", "20", CONTAINER_ID)
             assert output_limit == 4096
             return (b"startup failed: read-only file system; secret-from-daemon"
-                    if self.fail_on in ("interface-exit", "tags-exit")
+                    if self.fail_on in ("start-reject", "interface-exit", "tags-exit")
                     else b"private unclassified text")
         if args[:2] == ("container", "exec"):
             if self.fail_on in ("interface-exit", "interface-reject") and "/proc/net/dev" in args:
@@ -379,6 +394,77 @@ def test_startup_diagnostic_classifies_exit_during_tags(tmp_path, monkeypatch):
     assert sum("/api/tags" in args for args, _ in docker.calls) == 1
     assert sum(args[:2] == ("container", "logs") for args, _ in docker.calls) == 1
     assert not any("/api/generate" in args for args, _ in docker.calls)
+    assert not docker.created
+
+
+def test_startup_diagnostic_classifies_rejected_start(tmp_path, monkeypatch):
+    plan = replace(plan_for(tmp_path, monkeypatch), startup_log_diagnostic=True)
+    docker = FakeDocker(plan, fail_on="start-reject")
+    with pytest.raises(SmokeDenied) as error:
+        run_smoke(plan, docker, tags_only=True)
+    assert str(error.value) == (
+        "effective container containment mismatch: running "
+        "exit_code=127 oom=false startup_category=read_only_filesystem")
+    assert docker.started
+    assert sum(args[:2] == ("container", "logs") for args, _ in docker.calls) == 1
+    assert not any("/api/tags" in args or "/api/generate" in args
+                   for args, _ in docker.calls)
+    assert not docker.created
+
+
+def test_startup_diagnostic_uses_fixed_cli_category_when_log_unclassified(
+        tmp_path, monkeypatch):
+    plan = replace(plan_for(tmp_path, monkeypatch), startup_log_diagnostic=True)
+    docker = FakeDocker(plan, fail_on="start-reject-cli")
+    with pytest.raises(SmokeDenied) as error:
+        run_smoke(plan, docker, tags_only=True)
+    assert str(error.value) == (
+        "effective container containment mismatch: running "
+        "exit_code=127 oom=false startup_category=permission_denied")
+    assert sum(args[:2] == ("container", "logs") for args, _ in docker.calls) == 1
+    assert not docker.created
+
+
+def test_docker_cli_classifies_only_fixed_start_error(monkeypatch):
+    class FailedProcess:
+        def __init__(self):
+            self.stdin = io.BytesIO()
+            self.stdout = io.BytesIO()
+            self.stderr = io.BytesIO(b"operation not permitted; private host path")
+            self.returncode = 1
+
+        def wait(self, timeout):
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+    monkeypatch.setattr(smoke, "_hash_file", lambda path: "a" * 64)
+    monkeypatch.setattr(smoke.subprocess, "Popen", lambda *args, **kwargs: FailedProcess())
+    client = smoke.DockerCli(Path(__file__), "a" * 64,
+                             classify_start_failure=True)
+    with pytest.raises(StartupCommandDenied) as error:
+        client.invoke(("container", "start", CONTAINER_ID), timeout=1)
+    assert error.value.category == "permission_denied"
+    assert "private host path" not in str(error.value)
+
+
+def test_start_failure_rechecks_containment_before_log_read(tmp_path, monkeypatch):
+    plan = replace(plan_for(tmp_path, monkeypatch), startup_log_diagnostic=True)
+    docker = FakeDocker(plan, fail_on="start-reject-owner")
+    with pytest.raises(SmokeDenied, match="containment mismatch: owner"):
+        run_smoke(plan, docker, tags_only=True)
+    assert not any(args[:2] == ("container", "logs") for args, _ in docker.calls)
+    assert not docker.created
+
+
+def test_start_failure_running_state_keeps_fixed_denial(tmp_path, monkeypatch):
+    plan = replace(plan_for(tmp_path, monkeypatch), startup_log_diagnostic=True)
+    docker = FakeDocker(plan, fail_on="start-reject-running")
+    with pytest.raises(StartupCommandDenied) as error:
+        run_smoke(plan, docker, tags_only=True)
+    assert error.value.category == "permission_denied"
+    assert not any(args[:2] == ("container", "logs") for args, _ in docker.calls)
     assert not docker.created
 
 

@@ -48,6 +48,14 @@ class SmokeDenied(RuntimeError):
     """The preflight or bounded smoke did not establish a pass."""
 
 
+class StartupCommandDenied(SmokeDenied):
+    """A start failure with only a fixed, bounded stderr category."""
+
+    def __init__(self, category: str):
+        self.category = category
+        super().__init__("Docker CLI start failed: startup_category=" + category)
+
+
 class UnknownContainerOutcome(RuntimeError):
     """The exact container's creation or cleanup needs reconciliation."""
 
@@ -85,7 +93,11 @@ class DockerBoundary(Protocol):
 class DockerCli:
     """Bounded CLI transport. The Docker daemon remains a separate trust boundary."""
 
-    def __init__(self, binary: Path, expected_sha256: str):
+    def __init__(self, binary: Path, expected_sha256: str, *,
+                 classify_start_failure: bool = False):
+        if type(classify_start_failure) is not bool:
+            raise SmokeDenied("invalid startup diagnostic mode")
+        self.classify_start_failure = classify_start_failure
         self.binary = str(binary.resolve(strict=True))
         if (_hash_file(Path(self.binary)) != expected_sha256
                 or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256)):
@@ -176,6 +188,9 @@ class DockerCli:
                 or exceeded.is_set()):
             raise SmokeDenied("Docker CLI output bound failed")
         if process.returncode != 0:
+            if (self.classify_start_failure
+                    and args[:2] == ("container", "start")):
+                raise StartupCommandDenied(_fixed_startup_category(bytes(errors)))
             raise SmokeDenied("Docker CLI command failed")
         return bytes(output + errors) if args[:2] == ("container", "logs") else bytes(output)
 
@@ -390,6 +405,20 @@ def _stopped_state_summary(state: object) -> str:
     return f"exit_code={exit_code} oom={oom_label}"
 
 
+def _fixed_startup_category(raw: bytes) -> str:
+    lower = raw.lower()
+    for marker, category in (
+        (b"read-only file system", "read_only_filesystem"),
+        (b"permission denied", "permission_denied"),
+        (b"operation not permitted", "permission_denied"),
+        (b"no such file or directory", "missing_path"),
+        (b"no space left on device", "storage_full"),
+    ):
+        if marker in lower:
+            return category
+    return "unclassified"
+
+
 def _startup_category(client: DockerBoundary, container_id: str,
                       deadline: float, clock) -> str:
     try:
@@ -397,16 +426,7 @@ def _startup_category(client: DockerBoundary, container_id: str,
                             timeout=_remaining(deadline, clock), output_limit=4096)
     except Exception:
         return "unavailable"
-    lower = raw.lower()
-    for marker, category in (
-        (b"read-only file system", "read_only_filesystem"),
-        (b"permission denied", "permission_denied"),
-        (b"no such file or directory", "missing_path"),
-        (b"no space left on device", "storage_full"),
-    ):
-        if marker in lower:
-            return category
-    return "unclassified"
+    return _fixed_startup_category(raw)
 
 
 def _verify_container(observed: dict, plan: SmokePlan, container_id: str,
@@ -480,13 +500,16 @@ def _verify_container(observed: dict, plan: SmokePlan, container_id: str,
 
 def _verify_expected_running(observed: dict, plan: SmokePlan,
                              container_id: str, owner_token: str,
-                             client: DockerBoundary, deadline: float, clock) -> None:
+                             client: DockerBoundary, deadline: float, clock,
+                             fallback_category: str | None = None) -> None:
     state = observed.get("State") or {}
     if (plan.startup_log_diagnostic and type(state) is dict
             and state.get("Running") is False):
         _verify_container(observed, plan, container_id, owner_token, running=False)
         summary = _stopped_state_summary(state)
         category = _startup_category(client, container_id, deadline, clock)
+        if category in ("unavailable", "unclassified") and fallback_category:
+            category = fallback_category
         raise SmokeDenied(
             "effective container containment mismatch: running "
             + summary + " startup_category=" + category)
@@ -552,8 +575,17 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, tags_only=False,
             raise UnknownContainerOutcome("created container ownership unproven")
         verified_owner = True
         _verify_container(observed, plan, container_id, owner_token, running=False)
-        client.invoke(("container", "start", container_id),
-                      timeout=_remaining(work_deadline, clock))
+        try:
+            client.invoke(("container", "start", container_id),
+                          timeout=_remaining(work_deadline, clock))
+        except SmokeDenied as error:
+            if plan.startup_log_diagnostic:
+                _verify_expected_running(
+                    _inspect(client, container_id, work_deadline, clock), plan,
+                    container_id, owner_token, client, work_deadline, clock,
+                    fallback_category=(error.category if isinstance(
+                        error, StartupCommandDenied) else None))
+            raise
         _verify_expected_running(
             _inspect(client, container_id, work_deadline, clock), plan,
             container_id, owner_token, client, work_deadline, clock)
