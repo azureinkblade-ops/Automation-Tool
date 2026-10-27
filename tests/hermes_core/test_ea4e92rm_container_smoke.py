@@ -113,7 +113,9 @@ class FakeDocker:
             assert self.created and args[2] in (CONTAINER_ID, self.plan.name)
             self.inspect_count += 1
             observation = self._inspection()
-            if self.fail_on == "start-reject-owner" and self.inspect_count == 2:
+            if (self.fail_on == "start-reject-owner" and self.inspect_count == 2
+                    or self.fail_on == "start-reject-owner-persistent"
+                    and self.inspect_count >= 2):
                 observation[0]["Config"]["Labels"]["ea4e92rm.owner"] = "other"
             if self.fail_on == "network":
                 observation[0]["HostConfig"]["NetworkMode"] = "bridge"
@@ -129,7 +131,8 @@ class FakeDocker:
                 raise SmokeDenied("Docker CLI start failed: startup_category=unclassified")
             if self.fail_on == "start-reject-cli":
                 raise StartupCommandDenied("permission_denied")
-            if self.fail_on == "start-reject-owner":
+            if self.fail_on in ("start-reject-owner",
+                                "start-reject-owner-persistent"):
                 raise StartupCommandDenied("permission_denied")
             if self.fail_on == "start-reject-running":
                 self.running = True
@@ -456,6 +459,17 @@ def test_start_failure_rechecks_containment_before_log_read(tmp_path, monkeypatc
         run_smoke(plan, docker, tags_only=True)
     assert not any(args[:2] == ("container", "logs") for args, _ in docker.calls)
     assert not docker.created
+
+
+def test_persistent_owner_mismatch_never_stops_or_removes(tmp_path, monkeypatch):
+    plan = replace(plan_for(tmp_path, monkeypatch), startup_log_diagnostic=True)
+    docker = FakeDocker(plan, fail_on="start-reject-owner-persistent")
+    with pytest.raises(UnknownContainerOutcome,
+                       match="owned container cleanup requires reconciliation"):
+        run_smoke(plan, docker, tags_only=True)
+    assert not any(args[:2] in (("container", "kill"), ("container", "rm"),
+                                ("container", "logs")) for args, _ in docker.calls)
+    assert docker.created
 
 
 def test_start_failure_running_state_keeps_fixed_denial(tmp_path, monkeypatch):

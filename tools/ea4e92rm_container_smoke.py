@@ -557,7 +557,6 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, tags_only=False,
         raise SmokeDenied("local image identity mismatch")
 
     container_id = None
-    verified_owner = False
     creation_attempted = False
     try:
         creation_attempted = True
@@ -573,7 +572,6 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, tags_only=False,
         observed = _inspect(client, container_id, work_deadline, clock)
         if not _owned(observed, plan, container_id, owner_token):
             raise UnknownContainerOutcome("created container ownership unproven")
-        verified_owner = True
         _verify_container(observed, plan, container_id, owner_token, running=False)
         try:
             client.invoke(("container", "start", container_id),
@@ -656,7 +654,6 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, tags_only=False,
                         or not _owned(observed, plan, candidate, owner_token)):
                     raise UnknownContainerOutcome("creation ownership unproven")
                 container_id = candidate
-                verified_owner = True
             except BaseException:
                 raise UnknownContainerOutcome(
                     "container creation requires reconciliation") from None
@@ -666,10 +663,9 @@ def run_smoke(plan: SmokePlan, client: DockerBoundary, *, tags_only=False,
     finally:
         if container_id is not None:
             try:
-                if not verified_owner:
-                    observed = _inspect(client, container_id, deadline, clock)
-                    if not _owned(observed, plan, container_id, owner_token):
-                        raise UnknownContainerOutcome("cleanup ownership unproven")
+                observed = _inspect(client, container_id, deadline, clock)
+                if not _owned(observed, plan, container_id, owner_token):
+                    raise UnknownContainerOutcome("cleanup ownership unproven")
                 try:
                     client.invoke(("container", "kill", container_id),
                                   timeout=min(5, _remaining(deadline, clock)))
