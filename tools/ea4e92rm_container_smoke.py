@@ -426,15 +426,28 @@ def _stopped_state_summary(state: object) -> str:
 def _fixed_startup_category(raw: bytes) -> str:
     lower = raw.lower()
     for marker, category in (
+        (b"nvidia-container-cli", "gpu_runtime"),
+        (b"nvidia runtime", "gpu_runtime"),
         (b"read-only file system", "read_only_filesystem"),
         (b"permission denied", "permission_denied"),
         (b"operation not permitted", "permission_denied"),
         (b"no such file or directory", "missing_path"),
         (b"no space left on device", "storage_full"),
+        (b"cgroup", "resource_control"),
+        (b"failed to create shim task", "container_runtime"),
     ):
         if marker in lower:
             return category
     return "unclassified"
+
+
+def _state_startup_category(state: object) -> str:
+    if type(state) is not dict:
+        return "unclassified"
+    error = state.get("Error")
+    if type(error) is not str or len(error) > 4096:
+        return "unclassified"
+    return _fixed_startup_category(error.encode("utf-8", "replace"))
 
 
 def _startup_category(client: DockerBoundary, container_id: str,
@@ -534,7 +547,9 @@ def _verify_expected_running(observed: dict, plan: SmokePlan,
             and state.get("Running") is False):
         _verify_container(observed, plan, container_id, owner_token, running=False)
         summary = _stopped_state_summary(state)
-        category = _startup_category(client, container_id, deadline, clock)
+        category = _state_startup_category(state)
+        if category == "unclassified":
+            category = _startup_category(client, container_id, deadline, clock)
         if category in ("unavailable", "unclassified") and fallback_category:
             category = fallback_category
         raise SmokeDenied(

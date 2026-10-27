@@ -148,13 +148,16 @@ class FakeDocker:
                 observation[0]["Config"]["Env"].remove("NVIDIA_VISIBLE_DEVICES=void")
             if self.fail_on == "cpu":
                 observation[0]["HostConfig"]["NanoCpus"] = 0
+            if self.fail_on == "start-reject-state":
+                observation[0]["State"]["Error"] = (
+                    "nvidia-container-cli: private host details")
             if self.fail_on == "owner":
                 observation[0]["Config"]["Labels"]["ea4e92rm.owner"] = "other"
             return json.dumps(observation).encode()
         if args[:2] == ("container", "start"):
             assert self.created and not self.running
             self.started = True
-            if self.fail_on == "start-reject":
+            if self.fail_on in ("start-reject", "start-reject-state"):
                 raise SmokeDenied("Docker CLI start failed: startup_category=unclassified")
             if self.fail_on == "start-reject-cli":
                 raise StartupCommandDenied("permission_denied")
@@ -442,6 +445,29 @@ def test_startup_diagnostic_classifies_rejected_start(tmp_path, monkeypatch):
     assert not docker.created
 
 
+def test_startup_diagnostic_classifies_owned_stopped_state_without_log_read(
+        tmp_path, monkeypatch):
+    plan = replace(plan_for(tmp_path, monkeypatch), startup_log_diagnostic=True)
+    docker = FakeDocker(plan, fail_on="start-reject-state")
+    with pytest.raises(SmokeDenied) as error:
+        run_smoke(plan, docker, tags_only=True)
+    rendered = "".join(traceback.format_exception(error.value))
+    assert str(error.value) == (
+        "effective container containment mismatch: running "
+        "exit_code=127 oom=false startup_category=gpu_runtime")
+    assert "private host details" not in rendered
+    assert not any(args[:2] == ("container", "logs") for args, _ in docker.calls)
+    assert not docker.created
+
+
+@pytest.mark.parametrize("state", [
+    None, {}, {"Error": 42}, {"Error": "x" * 4097},
+    {"Error": "private host details"},
+])
+def test_state_startup_category_denies_untrusted_or_oversize_values(state):
+    assert smoke._state_startup_category(state) == "unclassified"
+
+
 def test_startup_diagnostic_uses_fixed_cli_category_when_log_unclassified(
         tmp_path, monkeypatch):
     plan = replace(plan_for(tmp_path, monkeypatch), startup_log_diagnostic=True)
@@ -553,6 +579,8 @@ def test_startup_diagnostic_cannot_request_inference(tmp_path, monkeypatch):
     (b"permission denied", "permission_denied"),
     (b"no such file or directory", "missing_path"),
     (b"no space left on device", "storage_full"),
+    (b"failed to create shim task: cgroup error", "resource_control"),
+    (b"failed to create shim task: private detail", "container_runtime"),
     (b"private unclassified text", "unclassified"),
 ])
 def test_startup_log_classification_never_echoes_raw_text(raw, category):
