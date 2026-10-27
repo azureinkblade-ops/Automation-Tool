@@ -78,8 +78,9 @@ class FakeDocker:
                               else {"Type": "none"}),
                 "Tmpfs": {"/tmp": "rw,nosuid,nodev,size=2147483648"},
             },
-            "Mounts": [{"Type": "bind", "Source": str(self.plan.models_root),
-                        "Destination": "/models", "RW": False}],
+            "Mounts": ([] if self.plan.no_mount_probe else
+                       [{"Type": "bind", "Source": str(self.plan.models_root),
+                         "Destination": "/models", "RW": False}]),
             "NetworkSettings": {"Ports": None, "Networks": {"none": {}}},
             "State": {"Running": self.running, "ExitCode": 127,
                       "OOMKilled": False},
@@ -126,6 +127,9 @@ class FakeDocker:
                 observation[0]["Config"]["Labels"]["ea4e92rm.owner"] = "other"
             if self.fail_on == "network":
                 observation[0]["HostConfig"]["NetworkMode"] = "bridge"
+            if self.fail_on == "unexpected-mount":
+                observation[0]["Mounts"] = [{"Type": "bind", "Source": "other",
+                                             "Destination": "/models", "RW": False}]
             if self.fail_on == "cpu":
                 observation[0]["HostConfig"]["NanoCpus"] = 0
             if self.fail_on == "owner":

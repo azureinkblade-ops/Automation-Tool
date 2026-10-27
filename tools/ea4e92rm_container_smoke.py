@@ -81,10 +81,12 @@ class SmokePlan:
     startup_log_diagnostic: bool = False
     mount_only_probe: bool = False
     reduced_memory_probe: bool = False
+    no_mount_probe: bool = False
 
     @property
     def name(self) -> str:
-        prefix = ("ea4e92tj-" if self.reduced_memory_probe else
+        prefix = ("ea4e92tm-" if self.no_mount_probe else
+                  "ea4e92tj-" if self.reduced_memory_probe else
                   "ea4e92tg-" if self.mount_only_probe else "ea4e92rm-")
         return prefix + UUID(self.ceremony_id).hex
 
@@ -250,7 +252,8 @@ def validate_plan(plan: SmokePlan, *, deadline: float | None = None,
         UUID(plan.ceremony_id)
     except (ValueError, TypeError):
         raise SmokeDenied("fresh ceremony UUID required") from None
-    if type(plan.reduced_memory_probe) is not bool:
+    if (type(plan.reduced_memory_probe) is not bool
+            or type(plan.no_mount_probe) is not bool):
         raise SmokeDenied("unreviewed model or resource budget")
     expected_memory = (8 if plan.reduced_memory_probe else 20) * 1024**3
     if (plan.model != "qwen3:14b" or plan.memory_bytes != expected_memory
@@ -258,7 +261,8 @@ def validate_plan(plan: SmokePlan, *, deadline: float | None = None,
             or type(plan.startup_log_diagnostic) is not bool
             or type(plan.mount_only_probe) is not bool
             or (plan.mount_only_probe and not plan.startup_log_diagnostic)
-            or (plan.reduced_memory_probe and not plan.mount_only_probe)):
+            or (plan.reduced_memory_probe and not plan.mount_only_probe)
+            or (plan.no_mount_probe and not plan.reduced_memory_probe)):
         raise SmokeDenied("unreviewed model or resource budget")
     root = plan.models_root.resolve(strict=True)
     if root != plan.models_root or root.is_symlink() or not root.is_dir():
@@ -489,11 +493,11 @@ def _verify_container(observed: dict, plan: SmokePlan, container_id: str,
         ("proxy_environment", lambda: not any(entry.upper().startswith((
             "HTTP_PROXY=", "HTTPS_PROXY=", "ALL_PROXY=", "NO_PROXY="))
             for entry in environment)),
-        ("mount_count", lambda: len(mounts) == 1),
-        ("mount_type", lambda: mounts[0].get("Type") == "bind"),
-        ("mount_source", lambda: mounts[0].get("Source") == expected_mount),
-        ("mount_destination", lambda: mounts[0].get("Destination") == "/models"),
-        ("mount_readonly", lambda: mounts[0].get("RW") is False),
+        ("mount_count", lambda: len(mounts) == (0 if plan.no_mount_probe else 1)),
+        ("mount_type", lambda: plan.no_mount_probe or mounts[0].get("Type") == "bind"),
+        ("mount_source", lambda: plan.no_mount_probe or mounts[0].get("Source") == expected_mount),
+        ("mount_destination", lambda: plan.no_mount_probe or mounts[0].get("Destination") == "/models"),
+        ("mount_readonly", lambda: plan.no_mount_probe or mounts[0].get("RW") is False),
         ("running", lambda: state.get("Running") is running),
     )
     for field, check in checks:
@@ -539,7 +543,8 @@ def _create_args(plan: SmokePlan, root: Path, owner_token: str) -> tuple[str, ..
         "--security-opt=no-new-privileges", "--pids-limit=64",
         f"--memory={plan.memory_bytes}", f"--memory-swap={plan.memory_bytes}",
         "--cpus=4", "--restart=no", *logging,
-        "--mount", f"type=bind,source={root},target=/models,readonly",
+        *(("--mount", f"type=bind,source={root},target=/models,readonly")
+          if not plan.no_mount_probe else ()),
         "--tmpfs", "/tmp:rw,nosuid,nodev,size=2147483648",
         "--env", "HOME=/tmp", "--env", "OLLAMA_MODELS=/models",
         "--env", "OLLAMA_HOST=127.0.0.1:11434",
