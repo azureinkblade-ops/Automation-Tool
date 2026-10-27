@@ -80,10 +80,12 @@ class SmokePlan:
     pids_limit: int = 64
     startup_log_diagnostic: bool = False
     mount_only_probe: bool = False
+    reduced_memory_probe: bool = False
 
     @property
     def name(self) -> str:
-        prefix = "ea4e92tg-" if self.mount_only_probe else "ea4e92rm-"
+        prefix = ("ea4e92tj-" if self.reduced_memory_probe else
+                  "ea4e92tg-" if self.mount_only_probe else "ea4e92rm-")
         return prefix + UUID(self.ceremony_id).hex
 
 
@@ -248,11 +250,15 @@ def validate_plan(plan: SmokePlan, *, deadline: float | None = None,
         UUID(plan.ceremony_id)
     except (ValueError, TypeError):
         raise SmokeDenied("fresh ceremony UUID required") from None
-    if (plan.model != "qwen3:14b" or plan.memory_bytes != 20 * 1024**3
+    if type(plan.reduced_memory_probe) is not bool:
+        raise SmokeDenied("unreviewed model or resource budget")
+    expected_memory = (8 if plan.reduced_memory_probe else 20) * 1024**3
+    if (plan.model != "qwen3:14b" or plan.memory_bytes != expected_memory
             or plan.pids_limit != 64
             or type(plan.startup_log_diagnostic) is not bool
             or type(plan.mount_only_probe) is not bool
-            or (plan.mount_only_probe and not plan.startup_log_diagnostic)):
+            or (plan.mount_only_probe and not plan.startup_log_diagnostic)
+            or (plan.reduced_memory_probe and not plan.mount_only_probe)):
         raise SmokeDenied("unreviewed model or resource budget")
     root = plan.models_root.resolve(strict=True)
     if root != plan.models_root or root.is_symlink() or not root.is_dir():
