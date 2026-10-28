@@ -22,10 +22,7 @@ def synthetic_stage(tmp_path: Path, monkeypatch):
         source.write_bytes(payload)
         expected.append((name, hashlib.sha256(payload).hexdigest()))
     recipe = tmp_path / "Dockerfile"
-    recipe.write_bytes(("\n".join([
-        f"FROM {context.IMAGE}",
-        *(f"COPY {name} /models/{name}" for name in names),
-    ]) + "\n").encode("ascii"))
+    recipe.write_bytes(context.expected_recipe_bytes(tuple(expected)))
     monkeypatch.setattr(context, "EXPECTED_MODEL_FILES", tuple(expected))
     monkeypatch.setattr(context, "RECIPE", recipe)
     return root, expected, recipe

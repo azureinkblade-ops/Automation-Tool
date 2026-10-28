@@ -49,6 +49,22 @@ def _member(name: str, size: int) -> tarfile.TarInfo:
     return member
 
 
+def expected_recipe_bytes(files: tuple[tuple[str, str], ...]) -> bytes:
+    checks = " ".join(
+        f"'{digest}  /models/{name}'" for name, digest in files
+    )
+    verification = (
+        'RUN set -eu; test "$(find /models -type f | wc -l)" -eq 6; '
+        'test -z "$(find /models -type l -print -quit)"; '
+        "printf '%s\\n' " + checks + " | sha256sum -c -"
+    )
+    return ("\n".join([
+        f"FROM {IMAGE}",
+        *(f"COPY {name} /models/{name}" for name, _ in files),
+        verification,
+    ]) + "\n").encode("ascii")
+
+
 def stream_context(root: Path, output: BinaryIO) -> None:
     """Write only pinned paths to a tar stream; caller aborts on any error."""
     if (not isinstance(root, Path) or not root.is_absolute()
@@ -65,10 +81,7 @@ def stream_context(root: Path, output: BinaryIO) -> None:
             or any(not re.fullmatch(r"[0-9a-f]{64}", digest)
                    for _, digest in files)):
         raise ContextDenied("reviewed model inventory invalid")
-    expected_recipe = ("\n".join([
-        f"FROM {IMAGE}",
-        *(f"COPY {name} /models/{name}" for name in names),
-    ]) + "\n").encode("ascii")
+    expected_recipe = expected_recipe_bytes(files)
     if RECIPE.read_bytes().replace(b"\r\n", b"\n") != expected_recipe:
         raise ContextDenied("model image recipe mismatch")
 
