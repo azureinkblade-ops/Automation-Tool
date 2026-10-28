@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import ctypes
+from ctypes import wintypes
 import hashlib
 import os
 from pathlib import Path
@@ -18,12 +20,37 @@ from tools.ea4e92ur_staged_build_context import MAX_TAR_BYTES
 
 _STAGED_NAME = re.compile(r"ea4e92ur-[0-9a-f]{32}[.]unverified[.]tar")
 CHUNK_BYTES = 1024 * 1024
+TAR_BLOCK = 512
+TAR_RECORD = 10240
+
+
+def _open_without_writers(path: Path) -> BinaryIO:
+    if os.name != "nt":
+        raise ContextDenied("exclusive staged context open unavailable")
+    import msvcrt
+
+    create_file = ctypes.windll.kernel32.CreateFileW
+    create_file.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                            wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD,
+                            wintypes.HANDLE)
+    create_file.restype = wintypes.HANDLE
+    handle = create_file(str(path), 0x80000000, 0x00000001, None, 3,
+                         0x08000000, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ContextDenied("exclusive staged context open denied")
+    try:
+        descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except OSError:
+        ctypes.windll.kernel32.CloseHandle(handle)
+        raise ContextDenied("exclusive staged context open denied") from None
+    return os.fdopen(descriptor, "rb")
 
 
 def _verify_tar(source: BinaryIO) -> None:
     recipe = expected_recipe_bytes(EXPECTED_MODEL_FILES)
     expected = [("Dockerfile", None), *EXPECTED_MODEL_FILES]
     count = 0
+    expected_offset = 0
     try:
         with tarfile.open(fileobj=source, mode="r|") as archive:
             for member in archive:
@@ -31,9 +58,11 @@ def _verify_tar(source: BinaryIO) -> None:
                     raise ContextDenied("staged context inventory mismatch")
                 name, digest = expected[count]
                 if (member.name != name or not member.isfile()
+                        or member.offset != expected_offset
                         or member.size < 0 or member.size > MAX_TAR_BYTES
                         or member.mode != 0o444 or member.uid != 0
-                        or member.gid != 0 or member.mtime != 0):
+                        or member.gid != 0 or member.mtime != 0
+                        or member.uname or member.gname):
                     raise ContextDenied("staged context member mismatch")
                 content = archive.extractfile(member)
                 if content is None:
@@ -52,11 +81,20 @@ def _verify_tar(source: BinaryIO) -> None:
                     raise ContextDenied("staged context member size mismatch")
                 if digest is not None and hasher.hexdigest() != digest:
                     raise ContextDenied("staged context hash mismatch")
+                expected_offset += TAR_BLOCK * (1 + (member.size + TAR_BLOCK - 1) // TAR_BLOCK)
                 count += 1
     except (tarfile.TarError, OSError, EOFError) as error:
         raise ContextDenied("staged context tar invalid") from None
     if count != len(expected):
         raise ContextDenied("staged context inventory mismatch")
+    total = ((expected_offset + 2 * TAR_BLOCK + TAR_RECORD - 1)
+             // TAR_RECORD) * TAR_RECORD
+    if os.fstat(source.fileno()).st_size != total:
+        raise ContextDenied("staged context framing mismatch")
+    source.seek(expected_offset)
+    while chunk := source.read(CHUNK_BYTES):
+        if any(chunk):
+            raise ContextDenied("staged context trailing bytes")
     source.seek(0)
 
 
@@ -80,15 +118,17 @@ def opened_staged_context(path: Path, staging_dir: Path) -> Iterator[BinaryIO]:
     before = path.stat()
     if not stat.S_ISREG(before.st_mode) or not 0 < before.st_size <= MAX_TAR_BYTES:
         raise ContextDenied("staged context file bound failed")
-    with path.open("rb") as source:
+    with _open_without_writers(path) as source:
         opened = os.fstat(source.fileno())
         if (not stat.S_ISREG(opened.st_mode)
                 or (opened.st_dev, opened.st_ino, opened.st_size)
                 != (before.st_dev, before.st_ino, before.st_size)):
             raise ContextDenied("staged context identity mismatch")
         _verify_tar(source)
-        yield source
-        after = os.fstat(source.fileno())
-        if (after.st_dev, after.st_ino, after.st_size) != (
-                opened.st_dev, opened.st_ino, opened.st_size):
-            raise ContextDenied("staged context changed during consumption")
+        try:
+            yield source
+        finally:
+            after = os.fstat(source.fileno())
+            if (after.st_dev, after.st_ino, after.st_size) != (
+                    opened.st_dev, opened.st_ino, opened.st_size):
+                raise ContextDenied("staged context changed during consumption")
