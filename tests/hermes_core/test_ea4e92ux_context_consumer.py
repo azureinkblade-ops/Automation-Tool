@@ -15,7 +15,7 @@ pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows exclusive handl
 
 
 def _staged_path(root: Path, monkeypatch, *, payload=b"synthetic",
-                 recipe=b"FROM synthetic\n", mode=0o444) -> Path:
+                 recipe=b"FROM synthetic\n", mode=0o444, pax=False) -> Path:
     names = [f"blobs/sha256-{index:064x}" for index in range(6)]
     expected = tuple((name, hashlib.sha256(f"synthetic-{index}".encode()).hexdigest())
                      for index, name in enumerate(names))
@@ -31,6 +31,8 @@ def _staged_path(root: Path, monkeypatch, *, payload=b"synthetic",
             member = tarfile.TarInfo(member_name)
             member.size = len(data)
             member.mode = mode
+            if pax and member_name == names[0]:
+                member.pax_headers = {"size": str(member.size)}
             archive.addfile(member, io.BytesIO(data))
     return path
 
@@ -115,6 +117,50 @@ def test_caller_error_still_closes_handle(tmp_path, monkeypatch):
             raise RuntimeError("caller failure")
     with path.open("r+b") as writer:
         writer.write(b"X")
+
+
+def test_existing_writer_denies_exclusive_consumer(tmp_path, monkeypatch):
+    path = _staged_path(tmp_path, monkeypatch)
+    with path.open("r+b"):
+        with pytest.raises(consumer.ContextDenied, match="exclusive"):
+            with consumer.opened_staged_context(path, tmp_path):
+                pytest.fail("opened with active writer")
+
+
+def test_pax_extended_header_is_accepted(tmp_path, monkeypatch):
+    path = _staged_path(tmp_path, monkeypatch, pax=True)
+    with consumer.opened_staged_context(path, tmp_path) as source:
+        assert source.read(10) == b"Dockerfile"
+
+
+def test_nonzero_member_padding_denied(tmp_path, monkeypatch):
+    path = _staged_path(tmp_path, monkeypatch)
+    with tarfile.open(path, "r:") as archive:
+        member = archive.getmembers()[0]
+        end = member.offset_data + member.size
+    with path.open("r+b") as output:
+        output.seek(end)
+        output.write(b"X")
+    with pytest.raises(consumer.ContextDenied, match="padding mismatch"):
+        with consumer.opened_staged_context(path, tmp_path):
+            pytest.fail("consumed nonzero padding")
+
+
+def test_fdopen_failure_closes_transferred_descriptor(tmp_path, monkeypatch):
+    path = _staged_path(tmp_path, monkeypatch)
+    closed = []
+    real_close = os.close
+
+    def close_spy(descriptor):
+        closed.append(descriptor)
+        return real_close(descriptor)
+
+    monkeypatch.setattr(consumer.os, "fdopen", lambda *_: (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(consumer.os, "close", close_spy)
+    with pytest.raises(consumer.ContextDenied, match="exclusive"):
+        with consumer.opened_staged_context(path, tmp_path):
+            pytest.fail("opened after fdopen failure")
+    assert len(closed) == 1
 
 
 def test_real_context_writer_format_with_synthetic_files(tmp_path, monkeypatch):

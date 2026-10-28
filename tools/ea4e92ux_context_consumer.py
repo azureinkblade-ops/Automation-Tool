@@ -40,17 +40,21 @@ def _open_without_writers(path: Path) -> BinaryIO:
         raise ContextDenied("exclusive staged context open denied")
     try:
         descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
-    except OSError:
+    except Exception:
         ctypes.windll.kernel32.CloseHandle(handle)
         raise ContextDenied("exclusive staged context open denied") from None
-    return os.fdopen(descriptor, "rb")
+    try:
+        return os.fdopen(descriptor, "rb")
+    except Exception:
+        os.close(descriptor)
+        raise ContextDenied("exclusive staged context open denied") from None
 
 
 def _verify_tar(source: BinaryIO) -> None:
     recipe = expected_recipe_bytes(EXPECTED_MODEL_FILES)
     expected = [("Dockerfile", None), *EXPECTED_MODEL_FILES]
     count = 0
-    expected_offset = 0
+    padding = []
     try:
         with tarfile.open(fileobj=source, mode="r|") as archive:
             for member in archive:
@@ -58,7 +62,6 @@ def _verify_tar(source: BinaryIO) -> None:
                     raise ContextDenied("staged context inventory mismatch")
                 name, digest = expected[count]
                 if (member.name != name or not member.isfile()
-                        or member.offset != expected_offset
                         or member.size < 0 or member.size > MAX_TAR_BYTES
                         or member.mode != 0o444 or member.uid != 0
                         or member.gid != 0 or member.mtime != 0
@@ -81,17 +84,22 @@ def _verify_tar(source: BinaryIO) -> None:
                     raise ContextDenied("staged context member size mismatch")
                 if digest is not None and hasher.hexdigest() != digest:
                     raise ContextDenied("staged context hash mismatch")
-                expected_offset += TAR_BLOCK * (1 + (member.size + TAR_BLOCK - 1) // TAR_BLOCK)
+                end = member.offset_data + member.size
+                padded_end = ((end + TAR_BLOCK - 1) // TAR_BLOCK) * TAR_BLOCK
+                padding.append((end, padded_end))
                 count += 1
-    except (tarfile.TarError, OSError, EOFError) as error:
+    except (tarfile.TarError, OSError, EOFError):
         raise ContextDenied("staged context tar invalid") from None
     if count != len(expected):
         raise ContextDenied("staged context inventory mismatch")
-    total = ((expected_offset + 2 * TAR_BLOCK + TAR_RECORD - 1)
-             // TAR_RECORD) * TAR_RECORD
-    if os.fstat(source.fileno()).st_size != total:
+    total = os.fstat(source.fileno()).st_size
+    if total % TAR_RECORD or total - padding[-1][1] < 2 * TAR_BLOCK:
         raise ContextDenied("staged context framing mismatch")
-    source.seek(expected_offset)
+    for start, end in padding:
+        source.seek(start)
+        if any(source.read(end - start)):
+            raise ContextDenied("staged context padding mismatch")
+    source.seek(padding[-1][1])
     while chunk := source.read(CHUNK_BYTES):
         if any(chunk):
             raise ContextDenied("staged context trailing bytes")
