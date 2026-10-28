@@ -83,10 +83,12 @@ class SmokePlan:
     reduced_memory_probe: bool = False
     no_mount_probe: bool = False
     gpu_hidden_probe: bool = False
+    json_file_mount_probe: bool = False
 
     @property
     def name(self) -> str:
-        prefix = ("ea4e92tq-" if self.gpu_hidden_probe else
+        prefix = ("ea4e92uj-" if self.json_file_mount_probe else
+                  "ea4e92tq-" if self.gpu_hidden_probe else
                   "ea4e92tm-" if self.no_mount_probe else
                   "ea4e92tj-" if self.reduced_memory_probe else
                   "ea4e92tg-" if self.mount_only_probe else "ea4e92rm-")
@@ -256,7 +258,8 @@ def validate_plan(plan: SmokePlan, *, deadline: float | None = None,
         raise SmokeDenied("fresh ceremony UUID required") from None
     if (type(plan.reduced_memory_probe) is not bool
             or type(plan.no_mount_probe) is not bool
-            or type(plan.gpu_hidden_probe) is not bool):
+            or type(plan.gpu_hidden_probe) is not bool
+            or type(plan.json_file_mount_probe) is not bool):
         raise SmokeDenied("unreviewed model or resource budget")
     expected_memory = (8 if plan.reduced_memory_probe else 20) * 1024**3
     if (plan.model != "qwen3:14b" or plan.memory_bytes != expected_memory
@@ -266,7 +269,11 @@ def validate_plan(plan: SmokePlan, *, deadline: float | None = None,
             or (plan.mount_only_probe and not plan.startup_log_diagnostic)
             or (plan.reduced_memory_probe and not plan.mount_only_probe)
             or (plan.no_mount_probe and not plan.reduced_memory_probe)
-            or (plan.gpu_hidden_probe and not plan.no_mount_probe)):
+            or (plan.gpu_hidden_probe and not plan.no_mount_probe)
+            or (plan.json_file_mount_probe and not (
+                plan.startup_log_diagnostic and plan.mount_only_probe
+                and plan.reduced_memory_probe and not plan.no_mount_probe
+                and not plan.gpu_hidden_probe))):
         raise SmokeDenied("unreviewed model or resource budget")
     root = plan.models_root.resolve(strict=True)
     if root != plan.models_root or root.is_symlink() or not root.is_dir():
@@ -497,7 +504,8 @@ def _verify_container(observed: dict, plan: SmokePlan, container_id: str,
         ("restart", lambda: (host.get("RestartPolicy") or {}).get("Name") == "no"),
         ("logging", lambda: (
             (host.get("LogConfig") or {}) ==
-            {"Type": "local", "Config": {"max-size": "16k", "max-file": "1"}}
+            {"Type": ("json-file" if plan.json_file_mount_probe else "local"),
+             "Config": {"max-size": "16k", "max-file": "1"}}
             if plan.startup_log_diagnostic else
             (host.get("LogConfig") or {}).get("Type") == "none")),
         ("tmpfs", lambda: host.get("Tmpfs") == {"/tmp": "rw,nosuid,nodev,size=2147483648"}),
@@ -559,7 +567,9 @@ def _verify_expected_running(observed: dict, plan: SmokePlan,
 
 
 def _create_args(plan: SmokePlan, root: Path, owner_token: str) -> tuple[str, ...]:
-    logging = (("--log-driver=local", "--log-opt", "max-size=16k",
+    logging = (("--log-driver=" + (
+                    "json-file" if plan.json_file_mount_probe else "local"),
+                "--log-opt", "max-size=16k",
                 "--log-opt", "max-file=1") if plan.startup_log_diagnostic
                else ("--log-driver=none",))
     return (

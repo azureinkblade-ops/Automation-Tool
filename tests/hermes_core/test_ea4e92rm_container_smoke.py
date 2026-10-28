@@ -74,7 +74,8 @@ class FakeDocker:
                 "Devices": [], "DeviceRequests": [],
                 "SecurityOpt": ["no-new-privileges"],
                 "RestartPolicy": {"Name": "no"}, "PortBindings": None,
-                "LogConfig": ({"Type": "local", "Config": {"max-size": "16k",
+                "LogConfig": ({"Type": ("json-file" if self.plan.json_file_mount_probe
+                                       else "local"), "Config": {"max-size": "16k",
                                                        "max-file": "1"}}
                               if self.plan.startup_log_diagnostic
                               else {"Type": "none"}),
@@ -103,7 +104,8 @@ class FakeDocker:
             assert "--gpus" not in args
             assert "--publish" not in args
             if self.plan.startup_log_diagnostic:
-                assert "--log-driver=local" in args
+                assert ("--log-driver=" + (
+                    "json-file" if self.plan.json_file_mount_probe else "local")) in args
                 assert args.count("--log-opt") == 2
                 assert "max-size=16k" in args and "max-file=1" in args
             else:
@@ -148,6 +150,8 @@ class FakeDocker:
                 observation[0]["Config"]["Env"].remove("NVIDIA_VISIBLE_DEVICES=void")
             if self.fail_on == "cpu":
                 observation[0]["HostConfig"]["NanoCpus"] = 0
+            if self.fail_on == "logging-mismatch":
+                observation[0]["HostConfig"]["LogConfig"]["Type"] = "local"
             if self.fail_on == "start-reject-state":
                 observation[0]["State"]["Error"] = (
                     "nvidia-container-cli: private host details")
@@ -544,6 +548,75 @@ def test_mount_start_probe_never_requests_model_or_http(tmp_path, monkeypatch):
     assert not any("/api/tags" in args or "/api/generate" in args
                    for args, _ in docker.calls)
     assert not docker.created
+
+
+def test_json_file_mount_probe_is_non_model_and_cleans_up(tmp_path, monkeypatch):
+    plan = replace(plan_for(tmp_path, monkeypatch), memory_bytes=8 * 1024**3,
+                   startup_log_diagnostic=True, mount_only_probe=True,
+                   reduced_memory_probe=True, json_file_mount_probe=True)
+    docker = FakeDocker(plan)
+    assert run_smoke(plan, docker, tags_only=True) == "EA4E_MOUNT_START_OK"
+    assert plan.name.startswith("ea4e92uj-")
+    assert any("--log-driver=json-file" in args for args, _ in docker.calls)
+    assert any("--mount" in args for args, _ in docker.calls)
+    assert not any("/api/tags" in args or "/api/generate" in args
+                   for args, _ in docker.calls)
+    assert not docker.created
+
+
+@pytest.mark.parametrize("overrides", [
+    {"startup_log_diagnostic": False},
+    {"mount_only_probe": False},
+    {"reduced_memory_probe": False},
+    {"no_mount_probe": True},
+    {"gpu_hidden_probe": True},
+    {"json_file_mount_probe": 1},
+])
+def test_json_file_mount_probe_denies_unreviewed_combinations(
+        tmp_path, monkeypatch, overrides):
+    settings = {"memory_bytes": 8 * 1024**3,
+                "startup_log_diagnostic": True, "mount_only_probe": True,
+                "reduced_memory_probe": True, "json_file_mount_probe": True}
+    settings.update(overrides)
+    plan = replace(plan_for(tmp_path, monkeypatch), **settings)
+    docker = FakeDocker(plan)
+    with pytest.raises(SmokeDenied, match="unreviewed model or resource budget"):
+        run_smoke(plan, docker, tags_only=True)
+    assert not docker.calls
+
+
+def test_json_file_mount_probe_denies_inference_before_docker(tmp_path, monkeypatch):
+    plan = replace(plan_for(tmp_path, monkeypatch), memory_bytes=8 * 1024**3,
+                   startup_log_diagnostic=True, mount_only_probe=True,
+                   reduced_memory_probe=True, json_file_mount_probe=True)
+    docker = FakeDocker(plan)
+    with pytest.raises(SmokeDenied, match="requires tags-only mode"):
+        run_smoke(plan, docker)
+    assert not docker.calls
+
+
+def test_json_file_mount_probe_denies_effective_log_mismatch(tmp_path, monkeypatch):
+    plan = replace(plan_for(tmp_path, monkeypatch), memory_bytes=8 * 1024**3,
+                   startup_log_diagnostic=True, mount_only_probe=True,
+                   reduced_memory_probe=True, json_file_mount_probe=True)
+    docker = FakeDocker(plan, fail_on="logging-mismatch")
+    with pytest.raises(SmokeDenied, match="containment mismatch: logging"):
+        run_smoke(plan, docker, tags_only=True)
+    assert not docker.started
+    assert not docker.created
+
+
+def test_json_file_mount_probe_failed_start_cleans_up(tmp_path, monkeypatch):
+    plan = replace(plan_for(tmp_path, monkeypatch), memory_bytes=8 * 1024**3,
+                   startup_log_diagnostic=True, mount_only_probe=True,
+                   reduced_memory_probe=True, json_file_mount_probe=True)
+    docker = FakeDocker(plan, fail_on="start-reject-cli")
+    with pytest.raises(SmokeDenied) as error:
+        run_smoke(plan, docker, tags_only=True)
+    assert "startup_category=permission_denied" in str(error.value)
+    assert not docker.created
+    assert not any("/api/tags" in args or "/api/generate" in args
+                   for args, _ in docker.calls)
 
 
 def test_mount_start_probe_refuses_inference_before_docker(tmp_path, monkeypatch):
