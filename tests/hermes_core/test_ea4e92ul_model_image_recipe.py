@@ -20,6 +20,8 @@ def test_recipe_copies_only_reviewed_model_files_from_pinned_base():
 def test_recipe_runs_only_inventory_and_hash_verification():
     lines = RECIPE.read_text(encoding="ascii").splitlines()
     assert all(line.startswith(("FROM ", "COPY ")) for line in lines[:-1])
-    assert lines[-1].startswith('RUN set -eu; test "$(find /models -type f | wc -l)" -eq 6; ')
+    assert lines[-1].startswith('RUN set -eu; files="$(find /models -type f)"; ')
+    assert 'other="$(find /models -mindepth 1 ! -type f ! -type d)"' in lines[-1]
     assert lines[-1].endswith(" | sha256sum -c -")
-    assert lines[-1].count("/models/") == 6
+    assert all(lines[-1].count(f"'{digest}  /models/{name}'") == 1
+               for name, digest in EXPECTED_MODEL_FILES)

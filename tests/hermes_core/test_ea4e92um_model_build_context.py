@@ -53,6 +53,30 @@ def test_drifted_model_bytes_are_denied(tmp_path, monkeypatch):
         context.stream_context(root, io.BytesIO())
 
 
+def test_replaced_path_with_same_size_is_denied_before_its_bytes_stream(tmp_path, monkeypatch):
+    root, expected, _ = synthetic_stage(tmp_path, monkeypatch)
+    target = root.joinpath(*expected[0][0].split("/"))
+    replacement = tmp_path / "replacement"
+    replacement.write_bytes(b"x" * target.stat().st_size)
+    original_open = Path.open
+
+    def redirected_open(path, *args, **kwargs):
+        return original_open(replacement if path == target else path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", redirected_open)
+    with pytest.raises(context.ContextDenied, match="changed before stream"):
+        context.stream_context(root, io.BytesIO())
+
+
+def test_failed_stream_is_partial_and_must_be_discarded(tmp_path, monkeypatch):
+    root, expected, _ = synthetic_stage(tmp_path, monkeypatch)
+    root.joinpath(*expected[-1][0].split("/")).write_bytes(b"changed")
+    output = io.BytesIO()
+    with pytest.raises(context.ContextDenied, match="streamed model bytes mismatch"):
+        context.stream_context(root, output)
+    assert output.tell() > 0
+
+
 def test_crlf_checkout_streams_normalized_recipe(tmp_path, monkeypatch):
     root, _, recipe = synthetic_stage(tmp_path, monkeypatch)
     recipe.write_bytes(recipe.read_bytes().replace(b"\n", b"\r\n"))

@@ -54,8 +54,17 @@ def expected_recipe_bytes(files: tuple[tuple[str, str], ...]) -> bytes:
         f"'{digest}  /models/{name}'" for name, digest in files
     )
     verification = (
-        'RUN set -eu; test "$(find /models -type f | wc -l)" -eq 6; '
-        'test -z "$(find /models -type l -print -quit)"; '
+        'RUN set -eu; files="$(find /models -type f)"; '
+        'test "$(printf "%s\\n" "$files" | wc -l)" -eq 6; '
+        'dirs="$(find /models -mindepth 1 -type d)"; '
+        'test "$(printf "%s\\n" "$dirs" | wc -l)" -eq 5; '
+        'for dir in /models/blobs /models/manifests '
+        '/models/manifests/registry.ollama.ai '
+        '/models/manifests/registry.ollama.ai/library '
+        '/models/manifests/registry.ollama.ai/library/qwen3; '
+        'do test -d "$dir"; done; '
+        'other="$(find /models -mindepth 1 ! -type f ! -type d)"; '
+        'test -z "$other"; '
         "printf '%s\\n' " + checks + " | sha256sum -c -"
     )
     return ("\n".join([
@@ -96,15 +105,18 @@ def stream_context(root: Path, output: BinaryIO) -> None:
         if size < 0 or size > MAX_CONTEXT_BYTES - total:
             raise ContextDenied("model context size bound exceeded")
         total += size
-        sources.append((name, expected, candidate, size))
+        identity = candidate.stat()
+        sources.append((name, expected, candidate, size,
+                        (identity.st_dev, identity.st_ino)))
 
     with tarfile.open(fileobj=output, mode="w|", format=tarfile.PAX_FORMAT) as archive:
         archive.addfile(_member("Dockerfile", len(expected_recipe)),
                         io.BytesIO(expected_recipe))
-        for name, expected, candidate, size in sources:
+        for name, expected, candidate, size, identity in sources:
             with candidate.open("rb") as source:
                 opened = os.fstat(source.fileno())
-                if not stat.S_ISREG(opened.st_mode) or opened.st_size != size:
+                if (not stat.S_ISREG(opened.st_mode) or opened.st_size != size
+                        or (opened.st_dev, opened.st_ino) != identity):
                     raise ContextDenied("model file changed before stream")
                 reader = _HashingReader(source)
                 archive.addfile(_member(name, size), reader)
