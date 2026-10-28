@@ -17,6 +17,16 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Protocol
 
+from tools.i2v_presentation_adapter import DEFAULT_SOCIAL_HEIGHT, DEFAULT_SOCIAL_WIDTH
+from tools.media_validity import (
+    MEDIA_VALIDITY_PREFIX,
+    MIN_PRESENTED_VIDEO_BYTES,
+    MediaValidityResult,
+    validate_presented_social_video,
+)
+
+MEDIA_VALIDITY_PREFIX_FALLBACK = MEDIA_VALIDITY_PREFIX
+
 
 VIDEO_CREATES_IDENTITY_CANON = False
 PIPELINE_VERSION = "media_pipeline_v1"
@@ -164,6 +174,11 @@ class MediaPipeline:
     i2v: I2VPort
     presentation: PresentationPort
     clock: Callable[[], float] = time.time
+    # Optional injectable validator; None → default validate_presented_social_video
+    media_validator: Optional[Callable[..., MediaValidityResult]] = None
+    expected_social_width: int = DEFAULT_SOCIAL_WIDTH
+    expected_social_height: int = DEFAULT_SOCIAL_HEIGHT
+    min_presented_bytes: int = MIN_PRESENTED_VIDEO_BYTES
 
     def produce_social_media(
         self,
@@ -269,6 +284,19 @@ class MediaPipeline:
             record.asset_path = asset_path
             record.asset_sha256 = asset_sha
             record.asset_kind = "presented_mp4"
+
+            # Media validity gate — must pass before SOCIAL_READY
+            validator = self.media_validator or validate_presented_social_video
+            validity = validator(
+                asset_path,
+                min_bytes=self.min_presented_bytes,
+                expected_width=self.expected_social_width,
+                expected_height=self.expected_social_height,
+            )
+            if not getattr(validity, "ok", False):
+                reason = getattr(validity, "failure_reason", None) or f"{MEDIA_VALIDITY_PREFIX_FALLBACK}:unknown"
+                return self._static_fallback(record, still, reason=reason)
+
             record.state = PipelineState.READY.value
             record.outcome = PipelineOutcome.SOCIAL_READY.value
             result = PipelineResult(

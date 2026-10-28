@@ -16,6 +16,14 @@ from tools.media_pipeline_integration import (
     PipelineState,
     _sha256_bytes,
 )
+from tools.media_validity import pass_probe_for_tests, validate_presented_social_video
+
+
+def _pass_validator(path, **kwargs):
+    """Existing unit fixtures are tiny byte tags — inject probe so validity can pass."""
+    kw = dict(kwargs)
+    kw["min_bytes"] = 1
+    return validate_presented_social_video(path, probe_fn=pass_probe_for_tests(), **kw)
 
 
 @dataclass
@@ -85,7 +93,7 @@ def test_happy_path_social_ready(store, tmp_path):
             presented_video_sha256=_sha256_bytes(b"presented-9x16"),
         )
     )
-    pipe = MediaPipeline(store=store, i2v=i2v, presentation=pres)
+    pipe = MediaPipeline(store=store, i2v=i2v, presentation=pres, media_validator=_pass_validator)
     result = pipe.produce_social_media(_still(tmp_path), workflow_id="wf-1", seed=1)
     assert result.outcome == PipelineOutcome.SOCIAL_READY.value
     assert result.state == PipelineState.READY.value
@@ -98,7 +106,7 @@ def test_happy_path_social_ready(store, tmp_path):
 def test_i2v_failure_falls_back_to_static(store, tmp_path):
     i2v = FakeI2V(RuntimeError("oom"))
     pres = FakePresentation(FakePresResult())
-    pipe = MediaPipeline(store=store, i2v=i2v, presentation=pres)
+    pipe = MediaPipeline(store=store, i2v=i2v, presentation=pres, media_validator=_pass_validator)
     still = _still(tmp_path)
     result = pipe.produce_social_media(still, workflow_id="wf-fb-i2v", seed=2)
     assert result.outcome == PipelineOutcome.STATIC_FALLBACK.value
@@ -112,7 +120,7 @@ def test_presentation_failure_falls_back_to_static(store, tmp_path):
     raw.write_bytes(b"raw-svd")
     i2v = FakeI2V(FakeI2VResult(video_path=str(raw), video_sha256=_sha256_bytes(b"raw-svd")))
     pres = FakePresentation(RuntimeError("ffmpeg"))
-    pipe = MediaPipeline(store=store, i2v=i2v, presentation=pres)
+    pipe = MediaPipeline(store=store, i2v=i2v, presentation=pres, media_validator=_pass_validator)
     still = _still(tmp_path)
     result = pipe.produce_social_media(still, workflow_id="wf-fb-pres", seed=3)
     assert result.outcome == PipelineOutcome.STATIC_FALLBACK.value
@@ -132,7 +140,7 @@ def test_idempotent_reuse_hash_gated(store, tmp_path):
             presented_video_sha256=_sha256_bytes(b"presented-9x16"),
         )
     )
-    pipe = MediaPipeline(store=store, i2v=i2v, presentation=pres)
+    pipe = MediaPipeline(store=store, i2v=i2v, presentation=pres, media_validator=_pass_validator)
     still = _still(tmp_path)
     a = pipe.produce_social_media(still, workflow_id="wf-id", seed=4)
     b = pipe.produce_social_media(still, workflow_id="wf-id", seed=4)
@@ -147,6 +155,6 @@ def test_idempotent_reuse_hash_gated(store, tmp_path):
 def test_unapproved_still_rejected(store, tmp_path):
     still = _still(tmp_path)
     still.image_source_approved = False
-    pipe = MediaPipeline(store=store, i2v=FakeI2V(FakeI2VResult()), presentation=FakePresentation(FakePresResult()))
+    pipe = MediaPipeline(store=store, i2v=FakeI2V(FakeI2VResult()), presentation=FakePresentation(FakePresResult()), media_validator=_pass_validator)
     with pytest.raises(ValueError):
         pipe.produce_social_media(still, workflow_id="wf-unapp", seed=5)

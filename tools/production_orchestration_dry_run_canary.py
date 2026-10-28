@@ -44,6 +44,12 @@ from tools.production_orchestration_live_wiring import (
     LiveWiringConfig,
     SimpleValidator,
     TaskSchedulerEntrypoint,
+    report_ledger_status,
+)
+from tools.ledger_status import (
+    LedgerStatus,
+    preflight_chapter_gate,
+    select_next_missing_chapter,
 )
 
 
@@ -89,6 +95,13 @@ class CanaryGates:
     state: str
     ok: bool
     failure_reason: Optional[str] = None
+    latest_materialized_chapter: Optional[int] = None
+    latest_reserved_chapter: Optional[int] = None
+    latest_published_chapter: Optional[int] = None
+    chapter_availability: Optional[str] = None
+    ledger_clean_for_allocate: Optional[str] = None
+    controller_mode: Optional[str] = None
+    chapter_already_exists: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -123,6 +136,7 @@ class DryRunCanaryRunner:
     chapter_id: str
     fiction_id: str
     media_call_counter: Optional[Any] = None  # object with .calls if provided
+    ledger_status: Optional[LedgerStatus] = None
 
     def __post_init__(self) -> None:
         self.root = Path(self.root)
@@ -143,6 +157,7 @@ class DryRunCanaryRunner:
                         priority=100,
                     )
                 ],
+                ledger_status=self.ledger_status,
             ),
             chapter_media=self.chapter_media,
         )
@@ -237,6 +252,30 @@ class DryRunCanaryRunner:
                 f"canon={first.video_creates_identity_canon}"
             )
 
+        mat = res = pub = avail = clean = mode = already = None
+        if self.ledger_status is not None:
+            ls = self.ledger_status
+            mat = ls.latest_materialized_chapter
+            res = ls.latest_reserved_chapter
+            pub = ls.latest_published_chapter or 0
+            try:
+                cand = int(str(self.chapter_id).rsplit("-", 1)[-1])
+            except ValueError:
+                cand = None
+            sel = select_next_missing_chapter(ls, novel_id=self.novel_id)
+            mode = sel.mode
+            if cand is not None:
+                gate = preflight_chapter_gate(ls, candidate_chapter=cand, mode=sel.mode)
+                avail = gate["CHAPTER_AVAILABILITY"]
+                clean = gate["LEDGER_CLEAN_FOR_ALLOCATE"]
+                already = gate["CHAPTER_ALREADY_EXISTS"]
+                # ALLOCATE against a reservation must not pass as ledger-clean
+                if sel.mode == "ALLOCATE" and clean == "NO":
+                    ok = False
+                    reason = (reason or "") + f"|ledger_not_clean:{avail}"
+                # Reporting: never claim CHAPTER_ALREADY_EXISTS=NO for allocate on reservation
+                # When controller is in RECONCILE mode for this candidate, already stays NO if not materialized.
+
         gates = CanaryGates(
             live_publish_enabled=False,
             video_creates_identity_canon=VIDEO_CREATES_IDENTITY_CANON,
@@ -256,6 +295,13 @@ class DryRunCanaryRunner:
             state=first.state,
             ok=ok,
             failure_reason=reason,
+            latest_materialized_chapter=mat,
+            latest_reserved_chapter=res,
+            latest_published_chapter=pub,
+            chapter_availability=avail,
+            ledger_clean_for_allocate=clean,
+            controller_mode=mode,
+            chapter_already_exists=already,
         )
 
         report = CanaryReport(

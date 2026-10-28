@@ -22,6 +22,13 @@ from tools.media_pipeline_integration import (
     MediaRecordStore,
     _sha256_bytes,
 )
+from tools.media_validity import pass_probe_for_tests, validate_presented_social_video
+
+
+def _pass_validator(path, **kwargs):
+    kw = dict(kwargs)
+    kw["min_bytes"] = 1
+    return validate_presented_social_video(path, probe_fn=pass_probe_for_tests(), **kw)
 
 
 @dataclass
@@ -104,7 +111,7 @@ def test_happy_path_social_ready(stores, tmp_path):
     presented = tmp_path / "p.mp4"; presented.write_bytes(b"pres")
     i2v = FakeI2V(FakeI2VResult(video_path=str(raw), video_sha256=_sha256_bytes(b"raw")))
     pres = FakePresentation(FakePresResult(presented_video_path=str(presented), presented_video_sha256=_sha256_bytes(b"pres")))
-    pipe = MediaPipeline(store=media_store, i2v=i2v, presentation=pres)
+    pipe = MediaPipeline(store=media_store, i2v=i2v, presentation=pres, media_validator=_pass_validator)
     imgs = FakeImageRequests(ImageRequestResult("req-1", still=still))
     wf = ChapterToMediaWorkflow(store=ch_store, image_requests=imgs, media_pipeline=pipe)
     result = wf.enqueue_chapter_media(_chapter(), seed=1)
@@ -158,6 +165,7 @@ def test_idempotent_reuse(stores, tmp_path):
         store=media_store,
         i2v=i2v,
         presentation=FakePresentation(FakePresResult(presented_video_path=str(presented), presented_video_sha256=_sha256_bytes(b"pres"))),
+        media_validator=_pass_validator,
     )
     imgs = FakeImageRequests(ImageRequestResult("req-4", still=still))
     wf = ChapterToMediaWorkflow(store=ch_store, image_requests=imgs, media_pipeline=pipe)

@@ -40,9 +40,61 @@ from tools.chapter_production_posting_orchestration import (
     compute_publish_idempotency_key,
 )
 from tools.chapter_to_media_workflow import ChapterToMediaWorkflow
+from tools.ledger_status import (
+    LedgerStatus,
+    NextChapterSelection,
+    compute_ledger_status_from_db,
+    compute_ledger_status_from_structured,
+    preflight_chapter_gate,
+    select_next_missing_chapter,
+)
 
 
 WIRING_VERSION = "production_orch_live_wiring_v1"
+
+def report_ledger_status(status: LedgerStatus) -> Dict[str, Any]:
+    """Observability packet — never a single ledger max."""
+    return {
+        "LATEST_MATERIALIZED_CHAPTER": status.latest_materialized_chapter,
+        "LATEST_RESERVED_CHAPTER": status.latest_reserved_chapter,
+        "LATEST_PUBLISHED_CHAPTER": status.latest_published_chapter or 0,
+        "write_pending_without_materialization": list(
+            status.write_pending_without_materialization
+        ),
+        "ledger_status": status.to_dict(),
+        # Explicitly refuse collapsed reporting
+        "ledger_max_collapsed": False,
+    }
+
+
+def next_inventory_from_ledger_status(
+    status: LedgerStatus,
+    *,
+    novel_id: Optional[str] = None,
+    channel: str = "patreon",
+    priority: int = 50,
+) -> Optional[BacklogItem]:
+    """Controller select: prefer writePending reconcile over allocate max+1."""
+    sel = select_next_missing_chapter(status, novel_id=novel_id)
+    return BacklogItem(
+        chapter_id=sel.chapter_id,
+        novel_id=novel_id or status.novel_id or status.abbr or "XX",
+        channel=channel,
+        priority=priority,
+    )
+
+
+def controller_select_next_missing(
+    db,
+    *,
+    novel_id: str,
+    abbr: Optional[str] = None,
+) -> NextChapterSelection:
+    """Production controller path: DB → split status → reconcile-preferring select."""
+    status = compute_ledger_status_from_db(db, novel_id=novel_id, abbr=abbr)
+    return select_next_missing_chapter(status, novel_id=novel_id)
+
+
 LIVE_PUBLISH_ENABLED_DEFAULT = False
 SOCIAL_READY_CREATES_IDENTITY_CANON = False
 
@@ -293,6 +345,10 @@ class LiveWiringConfig:
     backlog_items: Optional[List[BacklogItem]] = None
     backlog_path: Optional[Path] = None
     next_inventory: Optional[Callable[[], Optional[BacklogItem]]] = None
+    ledger_status: Optional[LedgerStatus] = None
+    ledger_db_path: Optional[Path] = None
+    ledger_novel_id: Optional[str] = None
+    ledger_abbr: Optional[str] = None
 
 
 @dataclass
@@ -337,11 +393,22 @@ class TaskSchedulerEntrypoint:
             raise RuntimeError("LIVE_PUBLISH_ENABLED must stay False until canary + explicit enablement")
         return self.orchestrator.run_tick(tick_id=tick_id, workflow_id=workflow_id)
 
+    def resolve_ledger_status(self) -> Optional[LedgerStatus]:
+        if self.config.ledger_status is not None:
+            return self.config.ledger_status
+        if self.config.ledger_db_path and self.config.ledger_novel_id:
+            return compute_ledger_status_from_db(
+                self.config.ledger_db_path,
+                novel_id=self.config.ledger_novel_id,
+                abbr=self.config.ledger_abbr,
+            )
+        return None
+
     def run_canary_dry_run(self, *, tick_id: str, workflow_id: str) -> Dict[str, Any]:
         """Prove restart/resume + idempotency before any real publication."""
         first = self.run_tick(tick_id=tick_id, workflow_id=workflow_id)
         second = self.run_tick(tick_id=tick_id, workflow_id=workflow_id)
-        return {
+        out: Dict[str, Any] = {
             "first_state": first.state,
             "second_reused_existing": second.reused_existing,
             "same_idempotency_key": first.idempotency_key == second.idempotency_key,
@@ -354,6 +421,27 @@ class TaskSchedulerEntrypoint:
             "first": first.to_dict(),
             "second": second.to_dict(),
         }
+        status = self.resolve_ledger_status()
+        if status is not None:
+            out.update(report_ledger_status(status))
+            # Preflight against selected chapter when present
+            ch_id = first.chapter_id or (second.chapter_id if second else None)
+            if ch_id and "-" in str(ch_id):
+                try:
+                    cand = int(str(ch_id).rsplit("-", 1)[-1])
+                except ValueError:
+                    cand = None
+                if cand is not None:
+                    sel = select_next_missing_chapter(status, novel_id=status.novel_id)
+                    gate = preflight_chapter_gate(
+                        status, candidate_chapter=cand, mode=sel.mode
+                    )
+                    out["preflight"] = gate
+                    out["controller_selection"] = sel.to_dict()
+                    # Never claim clean allocate when reservation holds candidate
+                    out["CHAPTER_ALREADY_EXISTS"] = gate["CHAPTER_ALREADY_EXISTS"]
+                    out["LEDGER_CLEAN_FOR_ALLOCATE"] = gate["LEDGER_CLEAN_FOR_ALLOCATE"]
+        return out
 
 
 def build_entrypoint(
