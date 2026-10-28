@@ -1,7 +1,11 @@
 """Production Image-to-Video adapter (media-pipeline boundary).
 
 Chapter / novel logic must call ``generate_video`` here — never ComfyUI SVD nodes
-directly. Backend V1 is SVD-XT 1.1 (``svd_xt_1_1``) only.
+directly. Backend V1 is SVD-XT 1.1 (``svd_xt_1_1``) — production default until explicit APPROVE.
+Wan 2.2 (``wan_22``) is allowlisted in tools.i2v_backend_registry for additive
+I2V_BACKEND / I2V_WAN_SHADOW selection but is not implementation-ready in P0
+(generate fails closed; P1 transport required). Unknown backends fail closed.
+ExclusiveGpuLease.KIND_I2V is sequential: SVD and Wan must never be co-resident.
 
 Qualified defaults from IMAGE_TO_VIDEO_PRODUCTION_BACKEND_QUALIFICATION PASS:
 frame_count=25, fps=6, motion_bucket_id=127, TEXT_CONTROL_SUPPORTED=NO.
@@ -22,11 +26,26 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional, Protocol, runtime_checkable
 
+from tools.i2v_backend_registry import (
+    BACKEND_ID_WAN_22,
+    UnsupportedBackend,
+    assert_backend_ready_for_generate,
+    assert_no_svd_wan_coresident,
+    assert_shadow_path_inert,
+    document_exclusive_i2v_gpu_policy,
+    get_i2v_backend,
+    i2v_backend_packet_field,
+    is_i2v_wan_shadow_enabled,
+    wan_media_validity_hook_required,
+)
+
 # --------------------------------------------------------------------------- #
 # Constants
 # --------------------------------------------------------------------------- #
 
 BACKEND_ID_SVD_XT_1_1 = "svd_xt_1_1"
+# Wan id: BACKEND_ID_WAN_22 from i2v_backend_registry (re-exported via import).
+# Default remains SVD until explicit APPROVE (see get_i2v_backend).
 MODEL_ID_SVD_XT_1_1 = "svd_xt_1_1.safetensors"
 # SHA256 of Comfy Shared checkpoints/svd_xt_1_1.safetensors from I2V qual (2026-10-26)
 MODEL_SHA256_SVD_XT_1_1 = "69ccfea1bb45dd63b3ba8b6cfe8b0d45d780995dfdde590aeaa97cc567018d33"
@@ -266,6 +285,10 @@ def default_process_alive(process_identity: str) -> bool:
 
 class ExclusiveGpuLease:
     """Process-wide exclusive GPU ownership: image-gen XOR I2V.
+
+    KIND_I2V is shared by every I2V backend (SVD-XT and Wan). Ownership is
+    sequential: SVD and Wan must never be co-resident on the GPU. See
+    document_exclusive_i2v_gpu_policy / assert_no_svd_wan_coresident.
 
     Stale recovery must prove the recorded process is no longer active before
     reclaim. Age alone never clears a lease.
@@ -712,15 +735,24 @@ class ImageToVideoAdapter:
         force_infra_failure_once: bool = False,
     ) -> GenerateVideoResult:
         settings = settings or I2VSettings(model_sha256=self.model_sha256)
-        if backend_id != BACKEND_ID_SVD_XT_1_1:
+        # Allowlist via i2v_backend_registry: SVD default; Wan registered but
+        # not implementation-ready in P0; unknown ids fail closed.
+        # Shadow must not flip MEDIA_OUTCOME / enqueue live (guard stub).
+        assert_shadow_path_inert(enqueue_live_post=False, live_publish_enabled=False)
+        _ = wan_media_validity_hook_required()  # same media_validity gate later
+        _ = document_exclusive_i2v_gpu_policy()
+        try:
+            assert_backend_ready_for_generate(backend_id)
+        except UnsupportedBackend as exc:
             return self._fail_early(
                 source_image,
                 seed,
                 settings,
                 workflow_id or str(uuid.uuid4()),
                 ValidationStatus.INFRA_FAILURE,
-                f"unsupported backend_id={backend_id}",
+                exc.message,
                 motion_plan,
+                backend_id=backend_id,
             )
 
         assert_source_approved(source_image)
@@ -1217,7 +1249,10 @@ class ImageToVideoAdapter:
         status: ValidationStatus,
         reason: str,
         motion_plan: Optional[Mapping[str, Any]],
+        backend_id: str = BACKEND_ID_SVD_XT_1_1,
     ) -> GenerateVideoResult:
+        # Packet reports requested I2V_BACKEND= even on fail-closed paths.
+        report_backend = backend_id or BACKEND_ID_SVD_XT_1_1
         transform = compute_fit_inside_letterbox(
             max(source_image.source_width, 1),
             max(source_image.source_height, 1),
@@ -1227,7 +1262,7 @@ class ImageToVideoAdapter:
         idem = compute_video_idempotency_key(
             workflow_id=wf_id,
             source_image_sha256=source_image.source_image_sha256 or "missing",
-            backend_id=BACKEND_ID_SVD_XT_1_1,
+            backend_id=report_backend,
             backend_settings_version=BACKEND_SETTINGS_VERSION,
             seed=seed,
             motion_plan=motion_plan,
@@ -1236,7 +1271,7 @@ class ImageToVideoAdapter:
         return GenerateVideoResult(
             workflow_id=wf_id,
             video_job_id=str(uuid.uuid4()),
-            backend_id=BACKEND_ID_SVD_XT_1_1,
+            backend_id=report_backend,
             model_id=MODEL_ID_SVD_XT_1_1,
             model_sha256=settings.model_sha256,
             workflow_version=WORKFLOW_VERSION,
