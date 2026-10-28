@@ -2,6 +2,8 @@
 
 Observability must never collapse to a single ledger max.
 HA example: materialized=112, reserved=113 (writePending stub), published=None/0.
+written novel_chapters / ledger rows are MATERIALIZED even if a stale
+writePending stub remains (fail closed; do not promote over manual canon).
 """
 from __future__ import annotations
 
@@ -107,6 +109,26 @@ def _as_int(value: Any) -> Optional[int]:
         return None
 
 
+def _flag_true(value: Any) -> bool:
+    """Fail-closed truthiness for written/writePending JSON flags.
+
+    Accepts bool True, int 1, and common truthy strings. String "false" /
+    "0" / "no" are False (unlike bare bool("false")).
+    """
+    if value is True or value is False:
+        return bool(value)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value == 1
+    if isinstance(value, str):
+        raw = value.strip().lower()
+        if raw in {"1", "true", "yes", "on"}:
+            return True
+        if raw in {"", "0", "false", "no", "off", "none", "null"}:
+            return False
+        return False
+    return False
+
+
 def _publication_true(payload: Mapping[str, Any]) -> bool:
     keys = (
         "postedToPatreon",
@@ -119,7 +141,7 @@ def _publication_true(payload: Mapping[str, Any]) -> bool:
         "published",
     )
     for key in keys:
-        if bool(payload.get(key)):
+        if _flag_true(payload.get(key)):
             return True
     return False
 
@@ -154,8 +176,9 @@ def compute_ledger_status_from_structured(
         ch = _as_int(entry.get("chapter") if "chapter" in entry else payload.get("chapter"))
         if ch is None:
             continue
-        written = bool(payload.get("written"))
-        write_pending = bool(payload.get("writePending"))
+        written = _flag_true(payload.get("written"))
+        write_pending = _flag_true(payload.get("writePending"))
+        # written always wins: stale writePending stub must not hide materialization
         if written:
             mat_set.add(ch)
         if write_pending:
@@ -197,13 +220,46 @@ def compute_ledger_status_from_db(
         own_conn = True
     try:
         con.row_factory = sqlite3.Row
+        # Classify novel_chapters by payload written/writePending (fail closed):
+        # - written=true  -> MATERIALIZED (even if writePending stub remains)
+        # - writePending without written -> RESERVED stub (do NOT fake materialize)
+        # - legacy row (no active pending) -> MATERIALIZED for backward compat
         mat_rows = con.execute(
-            "SELECT chapter_number FROM novel_chapters WHERE novel_id=? OR chapter_id LIKE ?",
+            "SELECT chapter_number, payload_json FROM novel_chapters "
+            "WHERE novel_id=? OR chapter_id LIKE ?",
             (novel_id, f"{novel_id}-%"),
         ).fetchall()
-        materialized = [
-            int(r["chapter_number"]) for r in mat_rows if r["chapter_number"] is not None
-        ]
+        materialized: List[int] = []
+        nc_stub_entries: List[Dict[str, Any]] = []
+        for r in mat_rows:
+            ch = _as_int(r["chapter_number"])
+            if ch is None:
+                continue
+            try:
+                nc_payload = json.loads(r["payload_json"] or "{}")
+            except json.JSONDecodeError:
+                nc_payload = {}
+            if not isinstance(nc_payload, dict):
+                nc_payload = {}
+            nc_written = _flag_true(nc_payload.get("written"))
+            nc_pending = _flag_true(nc_payload.get("writePending"))
+            if nc_written:
+                materialized.append(ch)
+            elif nc_pending:
+                nc_stub_entries.append(
+                    {
+                        "chapter": ch,
+                        "ledger_key": f"{abbr_key}-{ch}",
+                        "payload": {
+                            "written": False,
+                            "writePending": True,
+                            "writeMode": nc_payload.get("writeMode"),
+                        },
+                    }
+                )
+            else:
+                # Legacy inventory row without an active writePending reservation
+                materialized.append(ch)
 
         pub_rows = con.execute(
             """
@@ -242,6 +298,11 @@ def compute_ledger_status_from_db(
                 ch = _as_int(row["chapter"])
                 if ch is not None:
                     published.append(ch)
+
+        # novel_chapters writePending stubs merge into ledger_entries so status
+        # treats them as RESERVED; chapter_ledger written=true still wins later.
+        if nc_stub_entries:
+            entries.extend(nc_stub_entries)
 
         return compute_ledger_status_from_structured(
             novel_id=novel_id,
