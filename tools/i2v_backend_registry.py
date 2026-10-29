@@ -76,11 +76,11 @@ _REGISTRY: Dict[str, BackendRegistration] = {
     BACKEND_ID_WAN_22: BackendRegistration(
         backend_id=BACKEND_ID_WAN_22,
         selectable_as_default=False,
-        implementation_ready=False,  # P1 Comfy/Wan transport required
+        implementation_ready=True,  # P1: API workflow builder + adapter branch
         display_name="Wan 2.2",
         notes=(
             "Additive I2V port only. Not selectable as default. "
-            "P0: registered; generate fails closed until P1 adapter."
+            "P1: build_wan_22_ti2v_workflow transport ready; SVD remains default."
         ),
     ),
 }
@@ -166,8 +166,8 @@ def gate_status_packet() -> Dict[str, str]:
 # --------------------------------------------------------------------------- #
 
 _WAN_P1_REQUIRED_MSG = (
-    "backend_id=wan_22 is registered but not implemented in P0; "
-    "P1 Wan adapter/transport required (no fake success). "
+    "backend_id is registered but implementation_ready=False; "
+    "transport required (no fake success). "
     "SVD-XT 1.1 remains default until explicit APPROVE."
 )
 

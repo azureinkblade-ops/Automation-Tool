@@ -2,9 +2,9 @@
 
 Chapter / novel logic must call ``generate_video`` here — never ComfyUI SVD nodes
 directly. Backend V1 is SVD-XT 1.1 (``svd_xt_1_1``) — production default until explicit APPROVE.
-Wan 2.2 (``wan_22``) is allowlisted in tools.i2v_backend_registry for additive
-I2V_BACKEND / I2V_WAN_SHADOW selection but is not implementation-ready in P0
-(generate fails closed; P1 transport required). Unknown backends fail closed.
+Wan 2.2 (``wan_22``) is allowlisted and P1-ready via ``build_wan_22_ti2v_workflow``
+when I2V_BACKEND=wan_22 (opt-in). SVD-XT 1.1 remains the production default.
+Unknown backends fail closed.
 ExclusiveGpuLease.KIND_I2V is sequential: SVD and Wan must never be co-resident.
 
 Qualified defaults from IMAGE_TO_VIDEO_PRODUCTION_BACKEND_QUALIFICATION PASS:
@@ -611,6 +611,123 @@ def build_svd_xt_workflow(
     }
 
 
+
+
+# Wan 2.2 TI2V freeze (Research draft 2026-10-28) — portrait native + presentation later
+WAN22_UNET = "wan2.2_ti2v_5B_fp16.safetensors"
+WAN22_VAE = "wan2.2_vae.safetensors"
+WAN22_CLIP = "umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+WAN22_NATIVE_WIDTH = 720
+WAN22_NATIVE_HEIGHT = 1280
+WAN22_DEFAULT_LENGTH = 121  # frames
+WAN22_DEFAULT_FPS = 24
+WAN22_DEFAULT_STEPS = 20
+WAN22_DEFAULT_CFG = 5.0
+WAN22_DEFAULT_SAMPLER = "uni_pc"
+WAN22_DEFAULT_SCHEDULER = "simple"
+WAN22_DEFAULT_SHIFT = 8.0
+WAN22_DEFAULT_NEGATIVE = (
+    "overexposed, static, blurry details, subtitles, worst quality, low quality, "
+    "jpeg artifacts, ugly, deformed, extra fingers, bad hands, bad face, "
+    "mutated limbs, fused fingers, still frame, cluttered background"
+)
+WAN22_WORKFLOW_TEMPLATE_RELPATH = "tools/workflow_templates/i2v/wan_22_ti2v_5b.json"
+
+
+def build_wan_22_ti2v_workflow(
+    *,
+    image_filename: str,
+    seed: int,
+    positive_prompt: str = "",
+    negative_prompt: str = WAN22_DEFAULT_NEGATIVE,
+    width: int = WAN22_NATIVE_WIDTH,
+    height: int = WAN22_NATIVE_HEIGHT,
+    length: int = WAN22_DEFAULT_LENGTH,
+    fps: int = WAN22_DEFAULT_FPS,
+    steps: int = WAN22_DEFAULT_STEPS,
+    cfg: float = WAN22_DEFAULT_CFG,
+    sampler_name: str = WAN22_DEFAULT_SAMPLER,
+    scheduler: str = WAN22_DEFAULT_SCHEDULER,
+    shift: float = WAN22_DEFAULT_SHIFT,
+    filename_prefix: str = "i2v_wan22",
+    unet_name: str = WAN22_UNET,
+    vae_name: str = WAN22_VAE,
+    clip_name: str = WAN22_CLIP,
+) -> Dict[str, Any]:
+    """Comfy API prompt for Wan 2.2 TI2V 5B (portrait freeze from Research draft).
+
+    Text prompts are motion/scenery conditioning for Wan TI2V — not SVD identity.
+    Default positive is empty (caller/motion_plan supplies scenery-safe text).
+    SVD remains production default; this graph is opt-in via backend_id=wan_22.
+    """
+    return {
+        "37": {
+            "class_type": "UNETLoader",
+            "inputs": {"unet_name": unet_name, "weight_dtype": "default"},
+        },
+        "38": {
+            "class_type": "CLIPLoader",
+            "inputs": {"clip_name": clip_name, "type": "wan", "device": "default"},
+        },
+        "39": {"class_type": "VAELoader", "inputs": {"vae_name": vae_name}},
+        "48": {
+            "class_type": "ModelSamplingSD3",
+            "inputs": {"model": ["37", 0], "shift": float(shift)},
+        },
+        "56": {"class_type": "LoadImage", "inputs": {"image": image_filename}},
+        "55": {
+            "class_type": "Wan22ImageToVideoLatent",
+            "inputs": {
+                "vae": ["39", 0],
+                "start_image": ["56", 0],
+                "width": int(width),
+                "height": int(height),
+                "length": int(length),
+                "batch_size": 1,
+            },
+        },
+        "6": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {"clip": ["38", 0], "text": str(positive_prompt or "")},
+        },
+        "7": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {"clip": ["38", 0], "text": str(negative_prompt or "")},
+        },
+        "3": {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": ["48", 0],
+                "seed": int(seed),
+                "steps": int(steps),
+                "cfg": float(cfg),
+                "sampler_name": sampler_name,
+                "scheduler": scheduler,
+                "positive": ["6", 0],
+                "negative": ["7", 0],
+                "latent_image": ["55", 0],
+                "denoise": 1.0,
+            },
+        },
+        "8": {
+            "class_type": "VAEDecode",
+            "inputs": {"samples": ["3", 0], "vae": ["39", 0]},
+        },
+        "57": {
+            "class_type": "CreateVideo",
+            "inputs": {"images": ["8", 0], "fps": float(fps)},
+        },
+        "58": {
+            "class_type": "SaveVideo",
+            "inputs": {
+                "video": ["57", 0],
+                "filename_prefix": filename_prefix,
+                "format": "auto",
+                "codec": "auto",
+            },
+        },
+    }
+
 def workflow_contains_text_identity_prompt(workflow: Mapping[str, Any]) -> bool:
     """Heuristic: SVD V1 graph must not introduce CLIP text encode / prompt strings."""
     forbidden_types = {
@@ -735,8 +852,8 @@ class ImageToVideoAdapter:
         force_infra_failure_once: bool = False,
     ) -> GenerateVideoResult:
         settings = settings or I2VSettings(model_sha256=self.model_sha256)
-        # Allowlist via i2v_backend_registry: SVD default; Wan registered but
-        # not implementation-ready in P0; unknown ids fail closed.
+        # Allowlist via i2v_backend_registry: SVD default; Wan P1-ready opt-in;
+        # unknown ids fail closed.
         # Shadow must not flip MEDIA_OUTCOME / enqueue live (guard stub).
         assert_shadow_path_inert(enqueue_live_post=False, live_publish_enabled=False)
         _ = wan_media_validity_hook_required()  # same media_validity gate later
@@ -958,16 +1075,34 @@ class ImageToVideoAdapter:
                         record.comfy_prompt_id = f"mock-{backend_request_id[:12]}"
                         self.store.save(record)
                     else:
-                        workflow = build_svd_xt_workflow(
-                            image_filename=image_filename,
-                            seed=seed,
-                            frame_count=settings.frame_count,
-                            fps=settings.fps,
-                            motion_bucket_id=settings.motion_bucket_id,
-                            decode_temporal_size=decode_size,
-                        )
-                        if workflow_contains_text_identity_prompt(workflow):
-                            raise I2VAdapterError("refusing workflow that contains text identity prompt")
+                        if backend_id == BACKEND_ID_WAN_22:
+                            mp = motion_plan or {}
+                            pos = str(mp.get("positive_prompt") or mp.get("prompt") or "")
+                            neg = str(mp.get("negative_prompt") or WAN22_DEFAULT_NEGATIVE)
+                            workflow = build_wan_22_ti2v_workflow(
+                                image_filename=image_filename,
+                                seed=seed,
+                                positive_prompt=pos,
+                                negative_prompt=neg,
+                                fps=int(getattr(settings, "fps", WAN22_DEFAULT_FPS) or WAN22_DEFAULT_FPS),
+                                length=int(
+                                    mp.get("length")
+                                    or getattr(settings, "frame_count", WAN22_DEFAULT_LENGTH)
+                                    or WAN22_DEFAULT_LENGTH
+                                ),
+                            )
+                            # Wan TI2V requires CLIPTextEncode for motion/scenery — not SVD identity ban.
+                        else:
+                            workflow = build_svd_xt_workflow(
+                                image_filename=image_filename,
+                                seed=seed,
+                                frame_count=settings.frame_count,
+                                fps=settings.fps,
+                                motion_bucket_id=settings.motion_bucket_id,
+                                decode_temporal_size=decode_size,
+                            )
+                            if workflow_contains_text_identity_prompt(workflow):
+                                raise I2VAdapterError("refusing workflow that contains text identity prompt")
                         # Prefer submit→record prompt id→wait when transport supports it
                         submit_only = getattr(self.transport, "submit_workflow", None)
                         wait_only = getattr(self.transport, "wait_for_prompt", None)

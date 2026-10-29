@@ -110,13 +110,13 @@ def test_svd_is_default_constant():
     assert get_registration(BACKEND_ID_SVD_XT_1_1).implementation_ready is True
 
 
-def test_wan_registered_but_not_default_or_ready():
+def test_wan_registered_ready_but_not_default():
     assert is_registered(BACKEND_ID_WAN_22)
     assert BACKEND_ID_WAN_22 in registered_backend_ids()
     reg = get_registration(BACKEND_ID_WAN_22)
     assert reg is not None
     assert reg.selectable_as_default is False
-    assert reg.implementation_ready is False
+    assert reg.implementation_ready is True
 
 
 def test_env_default_svd(monkeypatch):
@@ -162,19 +162,16 @@ def test_unknown_backend_rejected():
     assert "unsupported backend_id=" in str(ei.value)
 
 
-def test_wan_generate_resolve_fails_closed_without_p1():
-    with pytest.raises(UnsupportedBackend) as ei:
-        resolve_backend_for_generate(BACKEND_ID_WAN_22)
-    msg = str(ei.value)
-    assert "P1" in msg
-    assert "wan_22" in msg
+def test_wan_generate_resolve_ok_after_p1():
+    assert resolve_backend_for_generate(BACKEND_ID_WAN_22) == BACKEND_ID_WAN_22
 
 
-def test_wan_shadow_flag_does_not_unlock_generate(monkeypatch):
+def test_wan_env_select_resolves_after_p1(monkeypatch):
     monkeypatch.setenv("I2V_WAN_SHADOW", "1")
     monkeypatch.setenv("I2V_BACKEND", BACKEND_ID_WAN_22)
-    with pytest.raises(UnsupportedBackend):
-        resolve_backend_for_generate(None)
+    assert resolve_backend_for_generate(None) == BACKEND_ID_WAN_22
+    monkeypatch.delenv("I2V_BACKEND", raising=False)
+    assert resolve_backend_for_generate(None) == BACKEND_ID_SVD_XT_1_1
 
 
 def test_svd_resolve_ok():
@@ -230,7 +227,7 @@ def test_adapter_unknown_backend_rejected(store):
     assert i2v_backend_packet_field(result.backend_id) == "I2V_BACKEND=totally_unknown"
 
 
-def test_adapter_wan_fails_closed_not_social_ready(store):
+def test_adapter_wan_p1_submits_wan_workflow(store):
     transport = FakeTransport()
     adapter = ImageToVideoAdapter(
         store=store, transport=transport, gpu_metrics=FakeGpu()
@@ -239,14 +236,27 @@ def test_adapter_wan_fails_closed_not_social_ready(store):
         _approved(),
         seed=1,
         backend_id=BACKEND_ID_WAN_22,
-        workflow_id="wf-wan-p0",
+        workflow_id="wf-wan-p1",
+        motion_plan={"positive_prompt": "scenery only misty forest"},
     )
-    assert result.validation_status == ValidationStatus.INFRA_FAILURE.value
-    assert result.state == "FAILED"
+    assert result.validation_status == ValidationStatus.PASS.value
     assert result.backend_id == BACKEND_ID_WAN_22
-    assert "P1" in (result.failure_reason or "")
-    # No fake success / no transport submit
-    assert len(transport.workflows) == 0
-    # Not a ready/social outcome
-    assert result.video_sha256 is None
-    assert result.video_path is None
+    assert len(transport.workflows) >= 1
+    wf = transport.workflows[0]
+    assert wf["37"]["class_type"] == "UNETLoader"
+    assert wf["55"]["class_type"] == "Wan22ImageToVideoLatent"
+    assert wf["6"]["inputs"]["text"] == "scenery only misty forest"
+    # SVD graph must not be used for wan_22
+    assert "SVD_img2vid_Conditioning" not in str(wf)
+
+
+def test_build_wan_22_ti2v_workflow_smoke():
+    from tools.i2v_production_adapter import build_wan_22_ti2v_workflow, WAN22_NATIVE_WIDTH, WAN22_NATIVE_HEIGHT
+
+    wf = build_wan_22_ti2v_workflow(image_filename="src.png", seed=42, positive_prompt="scenery only")
+    assert wf["56"]["inputs"]["image"] == "src.png"
+    assert wf["3"]["inputs"]["seed"] == 42
+    assert wf["55"]["inputs"]["width"] == WAN22_NATIVE_WIDTH
+    assert wf["55"]["inputs"]["height"] == WAN22_NATIVE_HEIGHT
+    assert wf["6"]["inputs"]["text"] == "scenery only"
+    assert "CLIPTextEncode" == wf["6"]["class_type"]
