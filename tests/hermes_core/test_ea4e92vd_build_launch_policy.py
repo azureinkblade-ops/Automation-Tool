@@ -50,9 +50,11 @@ def test_policy_holds_verified_handle_and_freezes_no_push_args(tmp_path, monkeyp
         assert "--pull=false" in policy.argv
         assert "--no-cache" in policy.argv
         assert "--load" in policy.argv
+        assert "--quiet" in policy.argv
         assert "--push" not in policy.argv
-        assert "--iidfile" in policy.argv
-        assert policy.iidfile.parent == tmp_path
+        assert "--iidfile" not in policy.argv
+        assert "--metadata-file" not in policy.argv
+        assert not hasattr(policy, "iidfile")
         assert policy.work_seconds < policy.wall_seconds
     assert policy.source.closed
 
@@ -94,11 +96,11 @@ def test_recipe_pin_mismatch_denied_before_context_open(tmp_path, monkeypatch):
             pytest.fail("accepted changed recipe")
 
 
-def test_existing_iidfile_is_never_overwritten(tmp_path, monkeypatch):
+def test_preexisting_image_id_file_is_not_used_or_changed(tmp_path, monkeypatch):
     context = _context(tmp_path, monkeypatch)
     iidfile = tmp_path / ("ea4e92vd-" + "a" * 32 + ".iid")
     iidfile.write_text("existing", encoding="ascii")
-    with pytest.raises(ValueError, match="collision"):
-        with policy_module.opened_build_policy(context, tmp_path):
-            pytest.fail("accepted existing output")
+    with policy_module.opened_build_policy(context, tmp_path) as policy:
+        assert str(iidfile) not in policy.argv
+        assert policy.argv[-2:] == ("--quiet", "-")
     assert iidfile.read_text(encoding="ascii") == "existing"
