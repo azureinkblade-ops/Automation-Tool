@@ -17,6 +17,7 @@ from tools.ea4e92ux_context_consumer import opened_staged_context
 
 
 _CONTEXT = re.compile(r"ea4e92ur-[0-9a-f]{32}[.]unverified[.]tar")
+_QUIET_IMAGE_ID = re.compile(rb"sha256:[0-9a-f]{64}(?:\r?\n)?")
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,14 @@ class BuildLaunchPolicy:
     work_seconds: int
     wall_seconds: int
     output_bytes: int
+
+
+def parse_quiet_image_id(output: bytes) -> str:
+    """Reject extra output; callers must inspect the returned image ID."""
+    if (type(output) is not bytes or len(output) > 128
+            or _QUIET_IMAGE_ID.fullmatch(output) is None):
+        raise ValueError("quiet build image ID invalid")
+    return output[:71].decode("ascii")
 
 
 def _make_build_policy(context: Path, source: BinaryIO) -> BuildLaunchPolicy:

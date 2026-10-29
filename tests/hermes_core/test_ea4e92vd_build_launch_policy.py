@@ -104,3 +104,26 @@ def test_preexisting_image_id_file_is_not_used_or_changed(tmp_path, monkeypatch)
         assert str(iidfile) not in policy.argv
         assert policy.argv[-2:] == ("--quiet", "-")
     assert iidfile.read_text(encoding="ascii") == "existing"
+
+
+@pytest.mark.parametrize("suffix", [b"", b"\n", b"\r\n"])
+def test_quiet_image_id_accepts_one_canonical_digest(suffix):
+    identity = b"sha256:" + b"a" * 64
+    assert policy_module.parse_quiet_image_id(identity + suffix) == identity.decode("ascii")
+
+
+@pytest.mark.parametrize("output", [
+    b"", b"a" * 64, b"sha256:" + b"A" * 64,
+    b"sha256:" + b"a" * 63, b"sha256:" + b"a" * 65,
+    b"sha256:" + b"a" * 64 + b"\nextra",
+    b" sha256:" + b"a" * 64, b"sha256:" + b"a" * 64 + b" ",
+    b"\xff" + b"a" * 70, b"x" * 129,
+])
+def test_quiet_image_id_rejects_extra_or_malformed_output(output):
+    with pytest.raises(ValueError, match="image ID invalid"):
+        policy_module.parse_quiet_image_id(output)
+
+
+def test_quiet_image_id_rejects_non_bytes():
+    with pytest.raises(ValueError, match="image ID invalid"):
+        policy_module.parse_quiet_image_id("sha256:" + "a" * 64)
