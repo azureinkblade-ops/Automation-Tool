@@ -25,7 +25,9 @@ from tools.i2v_backend_registry import (
     registered_backend_ids,
     resolve_backend_for_generate,
     shadow_must_not_flip_media_outcome,
+    should_run_wan_shadow,
     wan_media_validity_hook_required,
+    wan_shadow_artifact_dir,
 )
 from tools.i2v_production_adapter import (
     BACKEND_ID_SVD_XT_1_1 as ADAPTER_SVD,
@@ -260,3 +262,17 @@ def test_build_wan_22_ti2v_workflow_smoke():
     assert wf["55"]["inputs"]["height"] == WAN22_NATIVE_HEIGHT
     assert wf["6"]["inputs"]["text"] == "scenery only"
     assert "CLIPTextEncode" == wf["6"]["class_type"]
+
+def test_should_run_wan_shadow_requires_flag_and_svd_primary(monkeypatch):
+    monkeypatch.delenv("I2V_WAN_SHADOW", raising=False)
+    assert should_run_wan_shadow(BACKEND_ID_SVD_XT_1_1) is False
+    monkeypatch.setenv("I2V_WAN_SHADOW", "1")
+    assert should_run_wan_shadow(BACKEND_ID_SVD_XT_1_1) is True
+    assert should_run_wan_shadow(BACKEND_ID_WAN_22) is False
+
+
+def test_wan_shadow_artifact_dir_shape(tmp_path):
+    d = wan_shadow_artifact_dir(tmp_path, "abc")
+    assert "wan_i2v_shadow" in d
+    assert d.endswith("abc") or d.replace("\\", "/").endswith("wan_i2v_shadow/abc")
+

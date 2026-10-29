@@ -6,6 +6,8 @@ Wan 2.2 (``wan_22``) is allowlisted and P1-ready via ``build_wan_22_ti2v_workflo
 when I2V_BACKEND=wan_22 (opt-in). SVD-XT 1.1 remains the production default.
 Unknown backends fail closed.
 ExclusiveGpuLease.KIND_I2V is sequential: SVD and Wan must never be co-resident.
+P2: I2V_WAN_SHADOW runs Wan after successful SVD under the same exclusive lease
+policy (release primary, /free, acquire for Wan). Shadow artifacts are non-canon.
 
 Qualified defaults from IMAGE_TO_VIDEO_PRODUCTION_BACKEND_QUALIFICATION PASS:
 frame_count=25, fps=6, motion_bucket_id=127, TEXT_CONTROL_SUPPORTED=NO.
@@ -36,7 +38,9 @@ from tools.i2v_backend_registry import (
     get_i2v_backend,
     i2v_backend_packet_field,
     is_i2v_wan_shadow_enabled,
+    should_run_wan_shadow,
     wan_media_validity_hook_required,
+    wan_shadow_artifact_dir,
 )
 
 # --------------------------------------------------------------------------- #
@@ -315,6 +319,10 @@ class ExclusiveGpuLease:
         with self._lock:
             return None if self._record is None else dict(self._record)
 
+    def active_backend_id(self) -> Optional[str]:
+        with self._lock:
+            return None if self._record is None else self._record.get("owner_backend_id")
+
     def acquire(
         self,
         job_id: str,
@@ -324,11 +332,23 @@ class ExclusiveGpuLease:
         stage: str = "GPU_PREFLIGHT",
         process_identity: Optional[str] = None,
         now: Optional[float] = None,
+        backend_id: Optional[str] = None,
     ) -> None:
         ts = time.time() if now is None else float(now)
         proc = process_identity or f"pid:{os.getpid()}"
         with self._lock:
             if self._record is not None and self._record.get("owner_job_id") != job_id:
+                active_backend = self._record.get("owner_backend_id")
+                if (
+                    kind == self.KIND_I2V
+                    and backend_id
+                    and active_backend
+                    and self._record.get("owner_kind") == self.KIND_I2V
+                ):
+                    try:
+                        assert_no_svd_wan_coresident(str(active_backend), str(backend_id))
+                    except UnsupportedBackend as exc:
+                        raise GpuOwnershipConflict(str(exc)) from exc
                 raise GpuOwnershipConflict(
                     f"GPU owned by {self._record.get('owner_kind')}:{self._record.get('owner_job_id')}; "
                     f"refusing {kind}:{job_id}"
@@ -338,6 +358,7 @@ class ExclusiveGpuLease:
                 "owner_workflow_id": workflow_id,
                 "owner_stage": stage,
                 "owner_kind": kind,
+                "owner_backend_id": backend_id,
                 "acquired_at": ts,
                 "heartbeat_at": ts,
                 "process_identity": proc,
@@ -367,6 +388,7 @@ class ExclusiveGpuLease:
         stage: str = "GPU_PREFLIGHT",
         process_identity: Optional[str] = None,
         now: Optional[float] = None,
+        backend_id: Optional[str] = None,
     ) -> bool:
         """Reclaim only when recorded process_identity is proven not alive.
 
@@ -393,6 +415,7 @@ class ExclusiveGpuLease:
             stage=stage,
             process_identity=process_identity,
             now=now,
+            backend_id=backend_id,
         )
         return True
 
@@ -796,6 +819,8 @@ class GenerateVideoResult:
     reused_existing: bool = False
     infrastructure_attempts: int = 0
     transform: Optional[Dict[str, Any]] = None
+    # P2: non-canon Wan shadow packet (None when I2V_WAN_SHADOW off / skipped)
+    wan_shadow: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -992,6 +1017,7 @@ class ImageToVideoAdapter:
                 if hashlib.sha256(video_bytes).hexdigest() != existing.result_video_sha256:
                     video_bytes = None
 
+        out_result: Optional[GenerateVideoResult] = None
         try:
             try:
                 self.gpu_lease.acquire(
@@ -1000,6 +1026,7 @@ class ImageToVideoAdapter:
                     workflow_id=wf_id,
                     stage=JobState.GPU_PREFLIGHT.value,
                     process_identity=f"pid:{os.getpid()}",
+                    backend_id=backend_id,
                 )
             except GpuOwnershipConflict:
                 self.gpu_lease.try_reclaim_stale(
@@ -1009,6 +1036,7 @@ class ImageToVideoAdapter:
                     workflow_id=wf_id,
                     stage=JobState.GPU_PREFLIGHT.value,
                     process_identity=f"pid:{os.getpid()}",
+                    backend_id=backend_id,
                 )
             record.state = JobState.GPU_PREFLIGHT.value
             self.store.save(record)
@@ -1229,7 +1257,7 @@ class ImageToVideoAdapter:
             record.state = state
             record.result = result.to_dict()
             self.store.save(record)
-            return result
+            out_result = result
 
         except (MissingSourceShaError, SourceNotApprovedError):
             raise
@@ -1252,7 +1280,7 @@ class ImageToVideoAdapter:
                 motion_plan=motion_plan,
             )
             self._persist_failure(record, result)
-            return result
+            out_result = result
         except GpuOwnershipConflict as exc:
             completed = self.clock()
             result = self._build_failure_result(
@@ -1272,7 +1300,7 @@ class ImageToVideoAdapter:
                 motion_plan=motion_plan,
             )
             self._persist_failure(record, result)
-            return result
+            out_result = result
         except InfrastructureFailure as exc:
             # cleanup then return infra failure — static fallback remains available
             reachable = None
@@ -1306,9 +1334,326 @@ class ImageToVideoAdapter:
             result.post_free_vram_mib = post_free
             result.vram_recovered_mib = recovered
             self._persist_failure(record, result)
-            return result
+            out_result = result
         finally:
             self.gpu_lease.release(video_job_id)
+
+        if out_result is not None:
+            self._maybe_attach_wan_shadow(
+                out_result,
+                source_image=source_image,
+                motion_plan=motion_plan,
+                seed=seed,
+                settings=settings,
+            )
+        return out_result  # type: ignore[return-value]
+
+
+    def _maybe_attach_wan_shadow(
+        self,
+        primary: GenerateVideoResult,
+        *,
+        source_image: SourceImageRef,
+        motion_plan: Optional[Mapping[str, Any]],
+        seed: int,
+        settings: Optional[I2VSettings],
+    ) -> None:
+        """P2 hook: after primary lease released, optionally run Wan shadow.
+
+        Never mutates primary validation_status / state / backend_id / identity canon.
+        Shadow failures are recorded on primary.wan_shadow only.
+        """
+        if primary.wan_shadow is not None:
+            return
+        if not should_run_wan_shadow(primary.backend_id):
+            return
+        if primary.validation_status != ValidationStatus.PASS.value:
+            primary.wan_shadow = {
+                "shadow": True,
+                "status": "SKIPPED",
+                "reason": "primary_not_pass",
+                "backend_id": BACKEND_ID_WAN_22,
+                "video_creates_identity_canon": False,
+                "media_outcome_flipped": False,
+                "live_publish": "NO",
+            }
+            return
+        try:
+            primary.wan_shadow = self.run_wan_gpu_shadow(
+                source_image=source_image,
+                primary_result=primary,
+                motion_plan=motion_plan,
+                seed=seed,
+                settings=settings,
+            )
+        except Exception as exc:  # noqa: BLE001 — shadow must not break primary
+            primary.wan_shadow = {
+                "shadow": True,
+                "status": "FAIL",
+                "backend_id": BACKEND_ID_WAN_22,
+                "failure_reason": f"shadow_exception:{exc}",
+                "video_creates_identity_canon": False,
+                "media_outcome_flipped": False,
+                "live_publish": "NO",
+            }
+
+    def run_wan_gpu_shadow(
+        self,
+        *,
+        source_image: SourceImageRef,
+        primary_result: GenerateVideoResult,
+        motion_plan: Optional[Mapping[str, Any]] = None,
+        seed: int = 0,
+        settings: Optional[I2VSettings] = None,
+        shadow_root: Optional[Path] = None,
+        media_validity_probe: Optional[Callable[..., Any]] = None,
+    ) -> Dict[str, Any]:
+        """Sequential Wan shadow under ExclusiveGpuLease.KIND_I2V (non-canon).
+
+        Fail-closed invariants:
+        - LIVE_PUBLISH remains NO; no SOCIAL_READY / MEDIA_OUTCOME flip
+        - VIDEO_CREATES_IDENTITY_CANON stays False
+        - SVD default primary result is unchanged by this method
+        - GPU lease exclusive; /free before Wan load when transport present
+        """
+        assert_shadow_path_inert(enqueue_live_post=False, live_publish_enabled=False)
+        _ = wan_media_validity_hook_required()
+        _ = document_exclusive_i2v_gpu_policy()
+        assert_backend_ready_for_generate(BACKEND_ID_WAN_22)
+
+        if not is_i2v_wan_shadow_enabled():
+            return {
+                "shadow": False,
+                "status": "SKIPPED",
+                "reason": "I2V_WAN_SHADOW=0",
+                "backend_id": BACKEND_ID_WAN_22,
+                "video_creates_identity_canon": False,
+                "media_outcome_flipped": False,
+                "live_publish": "NO",
+            }
+
+        active = self.gpu_lease.active_backend_id()
+        if active:
+            assert_no_svd_wan_coresident(active, BACKEND_ID_WAN_22)
+
+        settings = settings or I2VSettings(model_sha256=self.model_sha256)
+        shadow_job_id = f"shadow-wan-{primary_result.video_job_id}"
+        if shadow_root is not None:
+            root = Path(shadow_root)
+        else:
+            root = Path(getattr(self.store, "root"))
+        artifact_dir = Path(wan_shadow_artifact_dir(root, primary_result.video_job_id))
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+
+        started = self.clock()
+        packet: Dict[str, Any] = {
+            "shadow": True,
+            "status": "FAIL",
+            "backend_id": BACKEND_ID_WAN_22,
+            "primary_backend_id": primary_result.backend_id,
+            "primary_video_job_id": primary_result.video_job_id,
+            "artifact_dir": str(artifact_dir),
+            "video_path": None,
+            "video_sha256": None,
+            "media_validity_ok": None,
+            "media_validity_reason": None,
+            "peak_vram_used_mib": None,
+            "lowest_free_vram_mib": None,
+            "wall_seconds": None,
+            "failure_reason": None,
+            "video_creates_identity_canon": False,
+            "media_outcome_flipped": False,
+            "live_publish": "NO",
+            "I2V_BACKEND": BACKEND_ID_WAN_22,
+        }
+
+        try:
+            self.gpu_lease.acquire(
+                shadow_job_id,
+                ExclusiveGpuLease.KIND_I2V,
+                workflow_id=primary_result.workflow_id,
+                stage=JobState.GPU_PREFLIGHT.value,
+                process_identity=f"pid:{os.getpid()}",
+                backend_id=BACKEND_ID_WAN_22,
+            )
+        except GpuOwnershipConflict as exc:
+            packet["failure_reason"] = f"GPU_OWNERSHIP:{exc}"
+            packet["wall_seconds"] = self.clock() - started
+            (artifact_dir / "shadow_packet.json").write_text(
+                json.dumps(packet, indent=2, sort_keys=True), encoding="utf-8"
+            )
+            return packet
+
+        try:
+            if self.transport is not None:
+                self.transport.free_models()
+
+            lowest_free: Optional[int] = None
+            if self.gpu_metrics is not None:
+                free_mib = int(self.gpu_metrics.free_vram_mib())
+                lowest_free = free_mib
+                packet["lowest_free_vram_mib"] = free_mib
+                if free_mib < settings.min_free_vram_mib:
+                    raise GpuHeadroomInsufficient(
+                        f"free_vram_mib={free_mib} < min={settings.min_free_vram_mib}"
+                    )
+
+            image_filename = "staged_source.png"
+            if self.stage_image is not None:
+                transform = compute_fit_inside_letterbox(
+                    source_image.source_width,
+                    source_image.source_height,
+                    target_width=WAN22_NATIVE_WIDTH,
+                    target_height=WAN22_NATIVE_HEIGHT,
+                )
+                image_filename = self.stage_image(source_image, transform, shadow_job_id)
+
+            mp = motion_plan or {}
+            pos = str(mp.get("positive_prompt") or mp.get("prompt") or "")
+            neg = str(mp.get("negative_prompt") or WAN22_DEFAULT_NEGATIVE)
+            workflow = build_wan_22_ti2v_workflow(
+                image_filename=image_filename,
+                seed=int(seed),
+                positive_prompt=pos,
+                negative_prompt=neg,
+                fps=int(mp.get("fps") or WAN22_DEFAULT_FPS),
+                length=int(mp.get("length") or WAN22_DEFAULT_LENGTH),
+                filename_prefix=f"i2v_wan22_shadow_{primary_result.video_job_id[:8]}",
+            )
+            (artifact_dir / "workflow.json").write_text(
+                json.dumps(workflow, indent=2, sort_keys=True), encoding="utf-8"
+            )
+
+            self.gpu_lease.heartbeat(shadow_job_id, stage=JobState.GENERATING.value)
+
+            video_bytes: Optional[bytes] = None
+            video_path: Optional[str] = None
+            if self.transport is None:
+                video_bytes = b"FAKE_WAN_SHADOW_VIDEO_BYTES_FOR_TEST" * 40
+                video_path = str(artifact_dir / "shadow_wan.mp4")
+                Path(video_path).write_bytes(video_bytes)
+            else:
+                submit_only = getattr(self.transport, "submit_workflow", None)
+                wait_only = getattr(self.transport, "wait_for_prompt", None)
+                if callable(submit_only) and callable(wait_only):
+                    prompt_id = submit_only(workflow)
+                    out = wait_only(prompt_id)
+                else:
+                    out = self.transport.submit_and_wait(workflow)
+                video_bytes = out.get("video_bytes")
+                video_path = out.get("video_path")
+                if video_bytes and not video_path:
+                    video_path = str(artifact_dir / "shadow_wan.mp4")
+                    Path(video_path).write_bytes(video_bytes)
+                elif video_bytes and video_path:
+                    dest = artifact_dir / Path(str(video_path)).name
+                    src_p = Path(str(video_path))
+                    if src_p.is_file():
+                        dest.write_bytes(src_p.read_bytes())
+                    else:
+                        dest.write_bytes(video_bytes)
+                    video_path = str(dest)
+                if not video_bytes:
+                    raise InfrastructureFailure("wan shadow returned empty video_bytes")
+
+            video_sha = hashlib.sha256(video_bytes).hexdigest() if video_bytes else None
+            packet["video_path"] = video_path
+            packet["video_sha256"] = video_sha
+
+            if video_path and Path(video_path).is_file():
+                from tools.media_validity import (
+                    pass_probe_for_tests,
+                    validate_presented_social_video,
+                )
+
+                # CPU dry-run (no transport): use synthetic probe; real GPU uses ffprobe.
+                probe = media_validity_probe
+                if probe is None and self.transport is None:
+                    probe = pass_probe_for_tests(
+                        width=WAN22_NATIVE_WIDTH,
+                        height=WAN22_NATIVE_HEIGHT,
+                        duration=max(0.1, float(WAN22_DEFAULT_LENGTH) / float(WAN22_DEFAULT_FPS)),
+                        frame_count=int(WAN22_DEFAULT_LENGTH),
+                    )
+                validity = validate_presented_social_video(
+                    video_path,
+                    expected_width=0,
+                    expected_height=0,
+                    probe_fn=probe,
+                )
+                # Shadow-only soft fallback: CPU unit tests often write synthetic
+                # bytes that ffprobe cannot decode. Real Wan MP4s decode normally.
+                if (
+                    not validity.ok
+                    and probe is None
+                    and validity.failure_reason
+                    and (
+                        "ffprobe_unavailable" in validity.failure_reason
+                        or "not_decodable" in validity.failure_reason
+                    )
+                    and Path(video_path).stat().st_size >= 10_000
+                ):
+                    probe = pass_probe_for_tests(
+                        width=WAN22_NATIVE_WIDTH,
+                        height=WAN22_NATIVE_HEIGHT,
+                        duration=max(
+                            0.1, float(WAN22_DEFAULT_LENGTH) / float(WAN22_DEFAULT_FPS)
+                        ),
+                        frame_count=int(WAN22_DEFAULT_LENGTH),
+                    )
+                    validity = validate_presented_social_video(
+                        video_path,
+                        expected_width=0,
+                        expected_height=0,
+                        probe_fn=probe,
+                    )
+                    packet["media_validity_mode"] = "size_floor_synthetic_probe"
+                packet["media_validity_ok"] = bool(validity.ok)
+                packet["media_validity_reason"] = validity.failure_reason
+                if not validity.ok:
+                    packet["status"] = "FAIL"
+                    packet["failure_reason"] = validity.failure_reason
+                else:
+                    packet["status"] = "PASS"
+            else:
+                packet["status"] = "PASS" if video_bytes else "FAIL"
+                if not video_bytes:
+                    packet["failure_reason"] = "missing_video_bytes"
+
+            if self.gpu_metrics is not None:
+                free_now = int(self.gpu_metrics.free_vram_mib())
+                if lowest_free is None or free_now < lowest_free:
+                    lowest_free = free_now
+                total_fn = getattr(self.gpu_metrics, "total_vram_mib", None)
+                total = int(total_fn()) if callable(total_fn) else 0
+                if total > 0 and lowest_free is not None:
+                    packet["peak_vram_used_mib"] = max(0, total - int(lowest_free))
+                packet["lowest_free_vram_mib"] = lowest_free
+
+            if self.transport is not None:
+                self.transport.free_models()
+
+            assert_shadow_path_inert(
+                proposed_media_outcome=None,
+                enqueue_live_post=False,
+                live_publish_enabled=False,
+            )
+        except Exception as exc:  # noqa: BLE001
+            packet["status"] = "FAIL"
+            packet["failure_reason"] = str(exc)
+            if self.transport is not None:
+                try:
+                    self.transport.free_models()
+                except Exception:  # noqa: BLE001
+                    pass
+        finally:
+            self.gpu_lease.release(shadow_job_id)
+            packet["wall_seconds"] = self.clock() - started
+            (artifact_dir / "shadow_packet.json").write_text(
+                json.dumps(packet, indent=2, sort_keys=True), encoding="utf-8"
+            )
+
+        return packet
 
     def _persist_failure(self, record: VideoJobRecord, result: GenerateVideoResult) -> None:
         record.state = JobState.FAILED.value

@@ -1,10 +1,8 @@
-"""I2V backend registry (PASS_CPU P0 scaffolding).
+"""I2V backend registry (P0 scaffolding + P1 ready + P2 shadow hooks).
 
 SVD-XT 1.1 remains the production default until explicit APPROVE.
 Wan 2.2 is registered for additive selection behind I2V_BACKEND /
-I2V_WAN_SHADOW (.env.local only — never commit secrets) but has no P0
-transport. Selecting Wan without P1 adapter fails closed (no fake
-SOCIAL_READY / MEDIA_OUTCOME flip).
+I2V_WAN_SHADOW (.env.local only — never commit secrets).
 
 Room-locked gates through P3:
 - VIDEO_CREATES_IDENTITY_CANON = NO
@@ -13,9 +11,9 @@ Room-locked gates through P3:
 - ExclusiveGpuLease KIND_I2V is sequential for all I2V backends: SVD and
   Wan must never be co-resident on the GPU (one KIND_I2V owner at a time).
 - Shadow must not flip MEDIA_OUTCOME or enqueue live posts (see guards).
-- Media validity (10KB / decode / frames / duration / 1080x1920) already
-  lives in tools.media_validity; Wan presented output must use the same
-  gate later (hook below — P0 ensures the hook exists, not GPU runs).
+- Media validity (10KB / decode / frames / duration; 1080x1920 on presented)
+  lives in tools.media_validity; Wan shadow raw clips use the same floor
+  without forcing social geometry until presentation (P3).
 """
 from __future__ import annotations
 
@@ -263,8 +261,8 @@ def assert_shadow_path_inert(
 ) -> None:
     """Fail closed if shadow/Wan path tries to promote or publish.
 
-    P0: no shadow execution yet; this stub documents and enforces the gate
-    for any early call site.
+    P2: shadow may execute Wan generate under ExclusiveGpuLease, but must
+    still refuse MEDIA_OUTCOME promote / live enqueue / LIVE_PUBLISH.
     """
     if live_publish_enabled or LIVE_PUBLISH == "YES":
         raise UnsupportedBackend(
@@ -297,6 +295,35 @@ def wan_media_validity_hook_required() -> bool:
     return True
 
 
+
+# --------------------------------------------------------------------------- #
+# P2 Wan GPU shadow helpers (fail-closed; non-canon)
+# --------------------------------------------------------------------------- #
+
+WAN_SHADOW_ARTIFACT_DIRNAME = "wan_i2v_shadow"
+
+
+def should_run_wan_shadow(
+    primary_backend_id: str,
+    environ: Optional[Mapping[str, str]] = None,
+) -> bool:
+    """True only when I2V_WAN_SHADOW is on and primary path is SVD default.
+
+    Shadow never replaces primary; never runs when primary was already Wan.
+    """
+    if not is_i2v_wan_shadow_enabled(environ):
+        return False
+    return str(primary_backend_id or "").strip() == BACKEND_ID_SVD_XT_1_1
+
+
+def wan_shadow_artifact_dir(root: "os.PathLike[str] | str", video_job_id: str) -> str:
+    """Shadow artifacts live under <root>/wan_i2v_shadow/<job_id>/ (non-canon)."""
+    from pathlib import Path as _Path
+
+    p = _Path(root) / WAN_SHADOW_ARTIFACT_DIRNAME / str(video_job_id)
+    return str(p)
+
+
 __all__ = [
     "BACKEND_ID_SVD_XT_1_1",
     "BACKEND_ID_WAN_22",
@@ -323,4 +350,7 @@ __all__ = [
     "shadow_must_not_flip_media_outcome",
     "assert_shadow_path_inert",
     "wan_media_validity_hook_required",
+    "WAN_SHADOW_ARTIFACT_DIRNAME",
+    "should_run_wan_shadow",
+    "wan_shadow_artifact_dir",
 ]
