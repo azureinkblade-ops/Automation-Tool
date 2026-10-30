@@ -566,6 +566,39 @@ class I2VBackendTransport(Protocol):
         ...
 
 
+def persist_video_artifact(
+    store_root: Path,
+    video_job_id: str,
+    backend_id: str,
+    video_bytes: bytes,
+    video_sha: Optional[str],
+    reported_path: Optional[str] = None,
+) -> str:
+    """Return a durable on-disk path whose bytes hash to video_sha.
+
+    Uses the transport-reported path only if it exists with matching sha;
+    otherwise writes bytes under <store>/artifacts/<job>/. Fail-closed on empty.
+    """
+    if not video_bytes:
+        raise InfrastructureFailure("persist_video_artifact: empty video bytes")
+    sha = video_sha or hashlib.sha256(video_bytes).hexdigest()
+    if reported_path:
+        rp = Path(str(reported_path))
+        try:
+            if rp.is_file() and hashlib.sha256(rp.read_bytes()).hexdigest() == sha:
+                return str(rp)
+        except OSError:
+            pass
+    dest_dir = Path(store_root) / "artifacts" / str(video_job_id)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / f"{backend_id}_{sha[:16]}.mp4"
+    if not (dest.is_file() and dest.stat().st_size == len(video_bytes)):
+        tmp = dest.with_suffix(".mp4.tmp")
+        tmp.write_bytes(video_bytes)
+        os.replace(tmp, dest)
+    return str(dest)
+
+
 def build_svd_xt_workflow(
     *,
     image_filename: str,
@@ -1179,6 +1212,12 @@ class ImageToVideoAdapter:
 
             video_sha = (
                 hashlib.sha256(video_bytes).hexdigest() if video_bytes is not None else None
+            )
+            # Durable artifact: success packets must carry a real video_path.
+            if not video_bytes:
+                raise InfrastructureFailure("no video bytes after generation (fail-closed)")
+            video_path = persist_video_artifact(
+                self.store.root, video_job_id, backend_id, video_bytes, video_sha, video_path
             )
             # Persist artifact identity separately before validation/READY
             record.result_artifact_path = video_path

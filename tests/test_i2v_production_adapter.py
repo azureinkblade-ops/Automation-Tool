@@ -545,3 +545,34 @@ def test_unreconciled_accepted_prompt_fails_closed(store):
     assert result.validation_status == ValidationStatus.INFRA_FAILURE.value
     assert "unreconciled_comfy_prompt_id" in (result.failure_reason or "")
 
+
+
+# ---- success packet video_path ----
+def test_success_packet_video_path_populated(tmp_path):
+    import hashlib
+    from tools.i2v_production_adapter import ImageToVideoAdapter as _A, VideoJobStore as _S, persist_video_artifact, InfrastructureFailure
+    p = persist_video_artifact(tmp_path, "job1", "wan_22", b"MP4DATA" * 10, None, "/nonexistent/x.mp4")
+    assert Path(p).is_file()
+    assert hashlib.sha256(Path(p).read_bytes()).hexdigest() == hashlib.sha256(b"MP4DATA" * 10).hexdigest()
+    good = tmp_path / "real.mp4"; good.write_bytes(b"ZZ")
+    assert persist_video_artifact(tmp_path, "j", "wan_22", b"ZZ", None, str(good)) == str(good)
+    with pytest.raises(InfrastructureFailure):
+        persist_video_artifact(tmp_path, "j", "wan_22", b"", None, None)
+
+
+def test_generate_video_success_has_durable_video_path(store):
+    adapter = ImageToVideoAdapter(store=store, transport=FakeTransport(), gpu_metrics=FakeGpu(14000))
+    r = adapter.generate_video(_approved(), seed=11, workflow_id="wf-vpath")
+    assert r.video_path and Path(r.video_path).is_file()
+    import hashlib
+    assert hashlib.sha256(Path(r.video_path).read_bytes()).hexdigest() == r.video_sha256
+    assert r.identity_canon is False if hasattr(r, "identity_canon") else True
+
+
+def test_generate_video_empty_bytes_fail_closed(store):
+    class Empty(FakeTransport):
+        def submit_and_wait(self, workflow):
+            return {"video_bytes": b"", "prompt_id": "p"}
+    adapter = ImageToVideoAdapter(store=store, transport=Empty(), gpu_metrics=FakeGpu(14000))
+    r = adapter.generate_video(_approved(), seed=12, workflow_id="wf-empty")
+    assert r.video_path is None and r.video_sha256 is None
