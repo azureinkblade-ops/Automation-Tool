@@ -54,6 +54,19 @@ MODEL_ID_SVD_XT_1_1 = "svd_xt_1_1.safetensors"
 # SHA256 of Comfy Shared checkpoints/svd_xt_1_1.safetensors from I2V qual (2026-10-26)
 MODEL_SHA256_SVD_XT_1_1 = "69ccfea1bb45dd63b3ba8b6cfe8b0d45d780995dfdde590aeaa97cc567018d33"
 WORKFLOW_VERSION = "i2v_svd_xt_1_1_v1"
+# wan_22 packet labels (success/failure packets must not carry SVD labels).
+MODEL_ID_WAN_22 = "wan2.2_ti2v_5B_fp16.safetensors"
+MODEL_SHA256_WAN_22 = "456f901338bd9eadbded3828b819109a9b68e8a525ca5cf8d0049a69fcfeca1e"
+WORKFLOW_VERSION_WAN_22 = "i2v_wan_22_ti2v_5b_v1"
+
+
+def i2v_packet_labels(backend_id: Optional[str], settings_sha: Optional[str] = None) -> Dict[str, str]:
+    """model_id / model_sha256 / workflow_version for a backend's result packet."""
+    if backend_id == "wan_22":
+        sha = settings_sha if settings_sha and settings_sha != MODEL_SHA256_SVD_XT_1_1 else MODEL_SHA256_WAN_22
+        return {"model_id": MODEL_ID_WAN_22, "model_sha256": sha, "workflow_version": WORKFLOW_VERSION_WAN_22}
+    return {"model_id": MODEL_ID_SVD_XT_1_1, "model_sha256": settings_sha or MODEL_SHA256_SVD_XT_1_1,
+            "workflow_version": WORKFLOW_VERSION}
 BACKEND_SETTINGS_VERSION = "svd_xt_1_1_settings_v1"
 I2V_INPUT_TRANSFORM_ID = "FIT_INSIDE_LETTERBOX"
 SVD_NATIVE_WIDTH = 1024
@@ -1068,6 +1081,11 @@ class ImageToVideoAdapter:
             image_filename = "staged_source.png"
             if self.stage_image is not None:
                 image_filename = self.stage_image(source_image, transform, video_job_id)
+            elif backend_id == BACKEND_ID_WAN_22 and callable(getattr(self.transport, "stage_and_upload", None)):
+                # Comfy /upload/image (fail-closed raises InfrastructureFailure).
+                image_filename = self.transport.stage_and_upload(
+                    source_image, WAN22_NATIVE_WIDTH, WAN22_NATIVE_HEIGHT, video_job_id
+                )
 
             record.state = JobState.GENERATING.value
             self.store.save(record)
@@ -1216,9 +1234,7 @@ class ImageToVideoAdapter:
                 workflow_id=wf_id,
                 video_job_id=video_job_id,
                 backend_id=backend_id,
-                model_id=MODEL_ID_SVD_XT_1_1,
-                model_sha256=settings.model_sha256 or self.model_sha256,
-                workflow_version=WORKFLOW_VERSION,
+                **i2v_packet_labels(backend_id, settings.model_sha256 or self.model_sha256),
                 source_image_sha256=source_image.source_image_sha256,
                 source_character_intent=source_image.source_character_intent,
                 source_character_id_or_na=source_image.source_character_id_or_na,
@@ -1264,6 +1280,7 @@ class ImageToVideoAdapter:
         except GpuHeadroomInsufficient as exc:
             completed = self.clock()
             result = self._build_failure_result(
+                backend_id=backend_id,
                 source_image=source_image,
                 seed=seed,
                 settings=settings,
@@ -1284,6 +1301,7 @@ class ImageToVideoAdapter:
         except GpuOwnershipConflict as exc:
             completed = self.clock()
             result = self._build_failure_result(
+                backend_id=backend_id,
                 source_image=source_image,
                 seed=seed,
                 settings=settings,
@@ -1315,6 +1333,7 @@ class ImageToVideoAdapter:
                         recovered = post_free - lowest_free
             completed = self.clock()
             result = self._build_failure_result(
+                backend_id=backend_id,
                 source_image=source_image,
                 seed=seed,
                 settings=settings,
@@ -1507,6 +1526,10 @@ class ImageToVideoAdapter:
                     target_height=WAN22_NATIVE_HEIGHT,
                 )
                 image_filename = self.stage_image(source_image, transform, shadow_job_id)
+            elif callable(getattr(self.transport, "stage_and_upload", None)):
+                image_filename = self.transport.stage_and_upload(
+                    source_image, WAN22_NATIVE_WIDTH, WAN22_NATIVE_HEIGHT, shadow_job_id
+                )
 
             mp = motion_plan or {}
             pos = str(mp.get("positive_prompt") or mp.get("prompt") or "")
@@ -1678,14 +1701,13 @@ class ImageToVideoAdapter:
         lowest_free: Optional[int],
         attempts: int,
         motion_plan: Optional[Mapping[str, Any]],
+        backend_id: str = BACKEND_ID_SVD_XT_1_1,
     ) -> GenerateVideoResult:
         return GenerateVideoResult(
             workflow_id=wf_id,
             video_job_id=video_job_id,
-            backend_id=BACKEND_ID_SVD_XT_1_1,
-            model_id=MODEL_ID_SVD_XT_1_1,
-            model_sha256=settings.model_sha256 or self.model_sha256,
-            workflow_version=WORKFLOW_VERSION,
+            backend_id=backend_id,
+            **i2v_packet_labels(backend_id, settings.model_sha256 or self.model_sha256),
             source_image_sha256=source_image.source_image_sha256,
             source_character_intent=source_image.source_character_intent,
             source_character_id_or_na=source_image.source_character_id_or_na,
@@ -1752,9 +1774,7 @@ class ImageToVideoAdapter:
             workflow_id=wf_id,
             video_job_id=str(uuid.uuid4()),
             backend_id=report_backend,
-            model_id=MODEL_ID_SVD_XT_1_1,
-            model_sha256=settings.model_sha256,
-            workflow_version=WORKFLOW_VERSION,
+            **i2v_packet_labels(report_backend, settings.model_sha256),
             source_image_sha256=source_image.source_image_sha256,
             source_character_intent=source_image.source_character_intent,
             source_character_id_or_na=source_image.source_character_id_or_na,

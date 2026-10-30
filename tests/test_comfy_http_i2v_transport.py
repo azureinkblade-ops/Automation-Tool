@@ -115,3 +115,70 @@ def test_flags_and_no_side_effects():
     src = open(T.__file__, encoding="utf-8").read()
     for bad in ("patreon", "LIVE_PUBLISH", "HA-114", "allocate"):
         assert bad.lower() not in src.lower().replace("no net-patreon", "").replace("no live_publish", "").replace("no chapter allocation", "")
+
+
+# ---- /upload/image + wan_22 packet labels ----
+import io as _io
+from tools import i2v_production_adapter as A
+
+
+def _png(w=64, h=32):
+    from PIL import Image
+    b = _io.BytesIO()
+    Image.new("RGB", (w, h), (200, 10, 10)).save(b, format="PNG")
+    return b.getvalue()
+
+
+def test_upload_image_success_multipart():
+    seen = {}
+
+    def opener(req, timeout=None):
+        seen["url"] = req.full_url
+        seen["ct"] = req.get_header("Content-type")
+        seen["body"] = req.data
+        return _Resp(json.dumps({"name": "i2v_src_job1.png", "subfolder": "", "type": "input"}).encode())
+
+    tr = T.select_i2v_transport(BACKEND_ID_WAN_22, opener=opener)
+    src = A.SourceImageRef("a" * 64, True, True, True, 64, 32, image_bytes=_png())
+    name = tr.stage_and_upload(src, 720, 1280, "job1")
+    assert name == "i2v_src_job1.png"
+    assert seen["url"].endswith("/upload/image")
+    assert "multipart/form-data" in seen["ct"]
+    from PIL import Image
+    body = seen["body"]
+    png = body[body.index(b"\x89PNG"):]
+    assert Image.open(_io.BytesIO(png)).size == (720, 1280)
+
+
+def test_upload_fail_closed():
+    tr = T.select_i2v_transport(BACKEND_ID_WAN_22, opener=_down)
+    with pytest.raises(T.ComfyUploadFailed):
+        tr.upload_image(_png(), "x.png")
+    with pytest.raises(T.ComfyUploadFailed):
+        tr.upload_image(b"", "x.png")
+    bad = T.select_i2v_transport(BACKEND_ID_WAN_22, opener=lambda r, timeout=None: _Resp(b"{}"))
+    with pytest.raises(T.ComfyUploadFailed):
+        bad.upload_image(_png(), "x.png")
+    src = A.SourceImageRef("a" * 64, True, True, True, 64, 32)
+    with pytest.raises(T.ComfyUploadFailed):
+        tr.stage_and_upload(src, 720, 1280, "j")
+    assert issubclass(T.ComfyUploadFailed, InfrastructureFailure)
+
+
+def test_packet_labels_wan_vs_svd():
+    w = A.i2v_packet_labels("wan_22", A.MODEL_SHA256_SVD_XT_1_1)
+    assert w == {"model_id": A.MODEL_ID_WAN_22, "model_sha256": A.MODEL_SHA256_WAN_22,
+                 "workflow_version": A.WORKFLOW_VERSION_WAN_22}
+    s = A.i2v_packet_labels(A.BACKEND_ID_SVD_XT_1_1, None)
+    assert s["model_id"] == A.MODEL_ID_SVD_XT_1_1 and s["workflow_version"] == A.WORKFLOW_VERSION
+    assert s["model_sha256"] == A.MODEL_SHA256_SVD_XT_1_1
+
+
+def test_fail_early_packet_wan_labels(tmp_path):
+    ad = A.ImageToVideoAdapter(store=A.VideoJobStore(tmp_path))
+    src = A.SourceImageRef("a" * 64, True, True, True, 64, 32)
+    st = list(A.ValidationStatus)[0]
+    r = ad._fail_early(src, 1, A.I2VSettings(), "wf", st, "r", None, backend_id="wan_22")
+    assert (r.backend_id, r.model_id, r.workflow_version) == ("wan_22", A.MODEL_ID_WAN_22, A.WORKFLOW_VERSION_WAN_22)
+    r2 = ad._fail_early(src, 1, A.I2VSettings(), "wf", st, "r", None)
+    assert (r2.model_id, r2.workflow_version) == (A.MODEL_ID_SVD_XT_1_1, A.WORKFLOW_VERSION)

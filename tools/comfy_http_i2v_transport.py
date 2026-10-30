@@ -48,6 +48,10 @@ class ComfyJobFailed(InfrastructureFailure):
     pass
 
 
+class ComfyUploadFailed(InfrastructureFailure):
+    pass
+
+
 Opener = Callable[..., Any]
 
 
@@ -132,6 +136,51 @@ class ComfyHttpI2VTransport:
         if missing:
             raise ComfyModelsMissing("comfy models missing: " + ", ".join(missing))
 
+    def upload_image(self, png_bytes: bytes, filename: str, *, overwrite: bool = True) -> str:
+        """POST /upload/image (multipart). Returns LoadImage name. Fail-closed."""
+        if not png_bytes:
+            raise ComfyUploadFailed("upload_image: empty bytes")
+        boundary = "----comfyi2v" + uuid.uuid4().hex
+        parts = [
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"{filename}\"\r\n"
+            "Content-Type: image/png\r\n\r\n".encode() + png_bytes + b"\r\n",
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"type\"\r\n\r\ninput\r\n".encode(),
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"overwrite\"\r\n\r\n"
+            f"{'true' if overwrite else 'false'}\r\n".encode(),
+            f"--{boundary}--\r\n".encode(),
+        ]
+        req = urllib.request.Request(f"{self.base_url}/upload/image", data=b"".join(parts),
+                                     headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+                                     method="POST")
+        try:
+            with self._open(req, timeout=self.timeout) as r:
+                resp = json.loads(r.read().decode("utf-8") or "{}")
+        except Exception as e:  # noqa: BLE001 - every failure is fail-closed
+            raise ComfyUploadFailed(f"comfy /upload/image failed at {self.base_url}: {e}") from e
+        name = resp.get("name") if isinstance(resp, dict) else None
+        if not name:
+            raise ComfyUploadFailed(f"comfy /upload/image returned no name: {resp}")
+        sub = resp.get("subfolder") or ""
+        return f"{sub}/{name}" if sub else str(name)
+
+    def stage_and_upload(self, source_image: Any, target_width: int, target_height: int, job_id: str) -> str:
+        """FIT_INSIDE letterbox the approved still to native dims and upload. Fail-closed."""
+        raw = getattr(source_image, "image_bytes", None)
+        path = getattr(source_image, "source_path", None)
+        try:
+            if not raw and path:
+                with open(path, "rb") as fh:
+                    raw = fh.read()
+            if not raw:
+                raise ComfyUploadFailed("stage_and_upload: no image bytes")
+            png = letterbox_png(raw, int(target_width), int(target_height))
+        except ComfyUploadFailed:
+            raise
+        except Exception as e:  # noqa: BLE001
+            raise ComfyUploadFailed(f"stage_and_upload: letterbox failed: {e}") from e
+        safe = "".join(c for c in str(job_id) if c.isalnum() or c in "-_")[:64] or "job"
+        return self.upload_image(png, f"i2v_src_{safe}.png")
+
     def submit_and_wait(self, workflow: Dict[str, Any]) -> Dict[str, Any]:
         self.assert_ready()
         resp = self._req("/prompt", {"prompt": workflow, "client_id": self.client_id})
@@ -168,6 +217,20 @@ class ComfyHttpI2VTransport:
             "comfy_output": ref,
             "identity_canon": False,
         }
+
+
+def letterbox_png(raw: bytes, tw: int, th: int) -> bytes:
+    """FIT_INSIDE + black letterbox (no crop/stretch) -> PNG bytes."""
+    import io
+    from PIL import Image
+    im = Image.open(io.BytesIO(raw)).convert("RGB")
+    scale = min(tw / im.width, th / im.height)
+    sw, sh = max(1, round(im.width * scale)), max(1, round(im.height * scale))
+    canvas = Image.new("RGB", (tw, th), (0, 0, 0))
+    canvas.paste(im.resize((sw, sh), Image.Resampling.LANCZOS), ((tw - sw) // 2, (th - sh) // 2))
+    buf = io.BytesIO()
+    canvas.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def _pick_video_output(outputs: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
