@@ -56,6 +56,14 @@ class StartupCommandDenied(SmokeDenied):
         super().__init__("Docker CLI start failed: startup_category=" + category)
 
 
+class BuildxInspectDenied(SmokeDenied):
+    """A builder inspection failure with only a fixed stderr category."""
+
+    def __init__(self, category: str):
+        self.category = category
+        super().__init__("Docker CLI builder inspection failed: category=" + category)
+
+
 class UnknownContainerOutcome(RuntimeError):
     """The exact container's creation or cleanup needs reconciliation."""
 
@@ -104,10 +112,14 @@ class DockerCli:
     """Bounded CLI transport. The Docker daemon remains a separate trust boundary."""
 
     def __init__(self, binary: Path, expected_sha256: str, *,
-                 classify_start_failure: bool = False):
+                 classify_start_failure: bool = False,
+                 classify_buildx_inspect_failure: bool = False):
         if type(classify_start_failure) is not bool:
             raise SmokeDenied("invalid startup diagnostic mode")
+        if type(classify_buildx_inspect_failure) is not bool:
+            raise SmokeDenied("invalid builder diagnostic mode")
         self.classify_start_failure = classify_start_failure
+        self.classify_buildx_inspect_failure = classify_buildx_inspect_failure
         self.binary = str(binary.resolve(strict=True))
         if (_hash_file(Path(self.binary)) != expected_sha256
                 or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256)):
@@ -201,6 +213,9 @@ class DockerCli:
             if (self.classify_start_failure
                     and args[:2] == ("container", "start")):
                 raise StartupCommandDenied(_fixed_startup_category(bytes(errors)))
+            if (self.classify_buildx_inspect_failure
+                    and args == ("buildx", "inspect", "default")):
+                raise BuildxInspectDenied(_fixed_buildx_inspect_category(bytes(errors)))
             raise SmokeDenied("Docker CLI command failed")
         return bytes(output + errors) if args[:2] == ("container", "logs") else bytes(output)
 
@@ -442,6 +457,24 @@ def _fixed_startup_category(raw: bytes) -> str:
         (b"no space left on device", "storage_full"),
         (b"cgroup", "resource_control"),
         (b"failed to create shim task", "container_runtime"),
+    ):
+        if marker in lower:
+            return category
+    return "unclassified"
+
+
+def _fixed_buildx_inspect_category(raw: bytes) -> str:
+    lower = raw[:4096].lower()
+    for marker, category in (
+        (b"'buildx' is not a docker command", "plugin_unavailable"),
+        (b"buildx: command not found", "plugin_unavailable"),
+        (b"no builder", "builder_missing"),
+        (b"builder instance does not exist", "builder_missing"),
+        (b"cannot connect to the docker daemon", "daemon_unavailable"),
+        (b"error during connect", "daemon_unavailable"),
+        (b"access is denied", "permission_denied"),
+        (b"permission denied", "permission_denied"),
+        (b"unknown flag", "cli_incompatible"),
     ):
         if marker in lower:
             return category
