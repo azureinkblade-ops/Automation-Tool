@@ -113,13 +113,28 @@ class DockerCli:
 
     def __init__(self, binary: Path, expected_sha256: str, *,
                  classify_start_failure: bool = False,
-                 classify_buildx_inspect_failure: bool = False):
+                 classify_buildx_inspect_failure: bool = False,
+                 user_config_sha256: str | None = None):
         if type(classify_start_failure) is not bool:
             raise SmokeDenied("invalid startup diagnostic mode")
         if type(classify_buildx_inspect_failure) is not bool:
             raise SmokeDenied("invalid builder diagnostic mode")
+        if (user_config_sha256 is not None
+                and (not classify_buildx_inspect_failure
+                     or type(user_config_sha256) is not str
+                     or not re.fullmatch(r"[0-9a-f]{64}", user_config_sha256))):
+            raise SmokeDenied("invalid builder config pin")
         self.classify_start_failure = classify_start_failure
         self.classify_buildx_inspect_failure = classify_buildx_inspect_failure
+        self.user_config_sha256 = user_config_sha256
+        self.user_config = None
+        if user_config_sha256 is not None:
+            try:
+                self.user_config = Path.home() / ".docker" / "config.json"
+                if _hash_file(self.user_config) != user_config_sha256:
+                    raise SmokeDenied("Docker config identity mismatch")
+            except OSError:
+                raise SmokeDenied("Docker config unavailable") from None
         self.binary = str(binary.resolve(strict=True))
         if (_hash_file(Path(self.binary)) != expected_sha256
                 or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256)):
@@ -129,12 +144,22 @@ class DockerCli:
                stdin: bytes = b"", output_limit: int = MAX_CLI_OUTPUT) -> bytes:
         if not 0 < timeout <= WALL_SECONDS or not 0 < output_limit <= MAX_CLI_OUTPUT:
             raise ValueError("invalid Docker CLI bound")
+        environment = {"SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows")}
+        if self.user_config_sha256 is not None:
+            if args != ("buildx", "inspect", "default"):
+                raise SmokeDenied("builder config scope mismatch")
+            try:
+                if _hash_file(self.user_config) != self.user_config_sha256:
+                    raise SmokeDenied("Docker config identity mismatch")
+            except OSError:
+                raise SmokeDenied("Docker config unavailable") from None
+            environment["DOCKER_CONFIG"] = str(self.user_config.parent)
         deadline = time.monotonic() + timeout
         process = subprocess.Popen(
             (self.binary, "--host", LOCAL_DOCKER_HOST, *args), stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            env={"SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows")},
+            env=environment,
         )
         output = bytearray()
         errors = bytearray()

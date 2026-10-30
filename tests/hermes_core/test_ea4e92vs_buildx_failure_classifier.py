@@ -59,3 +59,62 @@ def test_invalid_diagnostic_mode_denied(monkeypatch):
     with pytest.raises(smoke.SmokeDenied, match="invalid builder diagnostic mode"):
         smoke.DockerCli(Path(__file__), "a" * 64,
                         classify_buildx_inspect_failure=1)
+
+
+def test_pinned_user_config_is_exact_inspect_only(monkeypatch):
+    seen = []
+
+    class SuccessProcess:
+        stdin = io.BytesIO()
+        stdout = io.BytesIO(b"Name: default\nDriver: docker\n")
+        stderr = io.BytesIO()
+        returncode = 0
+
+        def wait(self, timeout):
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+    monkeypatch.setattr(smoke, "_hash_file", lambda path: "a" * 64)
+    monkeypatch.setattr(smoke.subprocess, "Popen",
+                        lambda *a, **k: (seen.append(k), SuccessProcess())[1])
+    client = smoke.DockerCli(Path(__file__), "a" * 64,
+                             classify_buildx_inspect_failure=True,
+                             user_config_sha256="a" * 64)
+    assert client.invoke(("buildx", "inspect", "default"), timeout=1) == (
+        b"Name: default\nDriver: docker\n")
+    assert seen[0]["env"] == {
+        "SYSTEMROOT": smoke.os.environ.get("SYSTEMROOT", r"C:\Windows"),
+        "DOCKER_CONFIG": str(Path.home() / ".docker"),
+    }
+    with pytest.raises(smoke.SmokeDenied, match="builder config scope mismatch"):
+        client.invoke(("container", "ls"), timeout=1)
+    assert len(seen) == 1
+
+
+def test_user_config_drift_denied_before_process(monkeypatch):
+    hashes = iter(["a" * 64, "a" * 64, "b" * 64])
+    monkeypatch.setattr(smoke, "_hash_file", lambda path: next(hashes))
+    monkeypatch.setattr(smoke.subprocess, "Popen",
+                        lambda *a, **k: pytest.fail("Docker process started"))
+    client = smoke.DockerCli(Path(__file__), "a" * 64,
+                             classify_buildx_inspect_failure=True,
+                             user_config_sha256="a" * 64)
+    with pytest.raises(smoke.SmokeDenied, match="Docker config identity mismatch"):
+        client.invoke(("buildx", "inspect", "default"), timeout=1)
+
+
+def test_user_config_requires_classifier_and_valid_pin(monkeypatch):
+    monkeypatch.setattr(smoke, "_hash_file", lambda path: "a" * 64)
+    with pytest.raises(smoke.SmokeDenied, match="invalid builder config pin"):
+        smoke.DockerCli(Path(__file__), "a" * 64,
+                        user_config_sha256="a" * 64)
+    with pytest.raises(smoke.SmokeDenied, match="invalid builder config pin"):
+        smoke.DockerCli(Path(__file__), "a" * 64,
+                        classify_buildx_inspect_failure=True,
+                        user_config_sha256="not-a-hash")
+    with pytest.raises(smoke.SmokeDenied, match="invalid builder config pin"):
+        smoke.DockerCli(Path(__file__), "a" * 64,
+                        classify_buildx_inspect_failure=True,
+                        user_config_sha256=7)
