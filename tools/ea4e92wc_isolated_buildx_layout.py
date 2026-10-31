@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+from dataclasses import dataclass
 from pathlib import Path
 import re
 
@@ -12,6 +13,13 @@ _REPARSE_POINT = 0x400
 
 class LayoutDenied(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class IsolatedBuildxLayout:
+    config_dir: Path
+    program_files: Path
+    plugin_sha256: str
 
 
 def _plain(path: Path, *, directory: bool) -> bool:

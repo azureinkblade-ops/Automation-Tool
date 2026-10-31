@@ -22,6 +22,10 @@ import time
 from typing import Protocol
 from uuid import UUID
 
+from tools.ea4e92wc_isolated_buildx_layout import (
+    IsolatedBuildxLayout, LayoutDenied, isolated_environment,
+)
+
 
 IMAGE_RE = re.compile(r"^[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$")
 CONTAINER_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -114,7 +118,8 @@ class DockerCli:
     def __init__(self, binary: Path, expected_sha256: str, *,
                  classify_start_failure: bool = False,
                  classify_buildx_inspect_failure: bool = False,
-                 user_config_sha256: str | None = None):
+                 user_config_sha256: str | None = None,
+                 isolated_buildx_layout: IsolatedBuildxLayout | None = None):
         if type(classify_start_failure) is not bool:
             raise SmokeDenied("invalid startup diagnostic mode")
         if type(classify_buildx_inspect_failure) is not bool:
@@ -124,9 +129,22 @@ class DockerCli:
                      or type(user_config_sha256) is not str
                      or not re.fullmatch(r"[0-9a-f]{64}", user_config_sha256))):
             raise SmokeDenied("invalid builder config pin")
+        if isolated_buildx_layout is not None:
+            if (type(isolated_buildx_layout) is not IsolatedBuildxLayout
+                    or not classify_buildx_inspect_failure
+                    or user_config_sha256 is not None):
+                raise SmokeDenied("invalid isolated builder mode")
+            try:
+                isolated_environment(
+                    isolated_buildx_layout.config_dir,
+                    isolated_buildx_layout.program_files,
+                    isolated_buildx_layout.plugin_sha256)
+            except LayoutDenied:
+                raise SmokeDenied("isolated builder layout denied") from None
         self.classify_start_failure = classify_start_failure
         self.classify_buildx_inspect_failure = classify_buildx_inspect_failure
         self.user_config_sha256 = user_config_sha256
+        self.isolated_buildx_layout = isolated_buildx_layout
         self.user_config = None
         if user_config_sha256 is not None:
             try:
@@ -145,6 +163,18 @@ class DockerCli:
         if not 0 < timeout <= WALL_SECONDS or not 0 < output_limit <= MAX_CLI_OUTPUT:
             raise ValueError("invalid Docker CLI bound")
         environment = {"SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows")}
+        workdir = None
+        if self.isolated_buildx_layout is not None:
+            if args != ("buildx", "inspect", "default") or stdin:
+                raise SmokeDenied("isolated builder command denied")
+            try:
+                environment = isolated_environment(
+                    self.isolated_buildx_layout.config_dir,
+                    self.isolated_buildx_layout.program_files,
+                    self.isolated_buildx_layout.plugin_sha256)
+            except LayoutDenied:
+                raise SmokeDenied("isolated builder layout denied") from None
+            workdir = str(self.isolated_buildx_layout.config_dir)
         if self.user_config_sha256 is not None:
             if args != ("buildx", "inspect", "default"):
                 raise SmokeDenied("builder config scope mismatch")
@@ -155,12 +185,16 @@ class DockerCli:
                 raise SmokeDenied("Docker config unavailable") from None
             environment["DOCKER_CONFIG"] = str(self.user_config.parent)
         deadline = time.monotonic() + timeout
-        process = subprocess.Popen(
-            (self.binary, "--host", LOCAL_DOCKER_HOST, *args), stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False,
+        popen_options = dict(
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, shell=False,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             env=environment,
         )
+        if workdir is not None:
+            popen_options["cwd"] = workdir
+        process = subprocess.Popen(
+            (self.binary, "--host", LOCAL_DOCKER_HOST, *args), **popen_options)
         output = bytearray()
         errors = bytearray()
         exceeded = threading.Event()
@@ -242,7 +276,42 @@ class DockerCli:
                     and args == ("buildx", "inspect", "default")):
                 raise BuildxInspectDenied(_fixed_buildx_inspect_category(bytes(errors)))
             raise SmokeDenied("Docker CLI command failed")
+        if self.isolated_buildx_layout is not None:
+            try:
+                observed = isolated_environment(
+                    self.isolated_buildx_layout.config_dir,
+                    self.isolated_buildx_layout.program_files,
+                    self.isolated_buildx_layout.plugin_sha256)
+            except LayoutDenied:
+                raise SmokeDenied("isolated builder layout drift") from None
+            if observed != environment:
+                raise SmokeDenied("isolated builder environment drift")
+            if not _isolated_buildx_inspect_ok(bytes(output)):
+                raise SmokeDenied("isolated builder result denied")
+            return b"local_default_docker"
         return bytes(output + errors) if args[:2] == ("container", "logs") else bytes(output)
+
+
+def _isolated_buildx_inspect_ok(output: bytes) -> bool:
+    try:
+        decoded = output.decode("utf-8", "strict")
+    except UnicodeDecodeError:
+        return False
+    fields = {}
+    for line in decoded.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        if key in ("Name", "Driver", "Endpoint"):
+            if key in fields:
+                return False
+            fields[key] = value.strip()
+    return fields == {
+        "Name": "default",
+        "Driver": "docker",
+        "Endpoint": LOCAL_DOCKER_HOST,
+    }
 
 
 def _hash_file(path: Path, *, deadline: float | None = None,
