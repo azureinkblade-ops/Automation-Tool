@@ -62,3 +62,22 @@ def test_reparse_plugin_denied(monkeypatch, tmp_path):
                         else plain(path, directory=directory))
     with pytest.raises(LayoutDenied, match="layout mismatch"):
         isolated_environment(config, program, expected)
+
+
+def test_reparse_ancestor_denied(monkeypatch, tmp_path):
+    config, program, plugin = layout(tmp_path)
+    expected = pin(plugin)
+    plain = policy._plain
+    ancestor = tmp_path.parent
+    monkeypatch.setattr(policy, "_plain",
+                        lambda path, *, directory: False if path == ancestor
+                        else plain(path, directory=directory))
+    with pytest.raises(LayoutDenied, match="layout mismatch"):
+        isolated_environment(config, program, expected)
+
+
+def test_parent_alias_denied(tmp_path):
+    config, program, plugin = layout(tmp_path)
+    alias = config / ".." / "config"
+    with pytest.raises(LayoutDenied, match="layout mismatch"):
+        isolated_environment(alias, program, pin(plugin))

@@ -26,6 +26,21 @@ def _plain(path: Path, *, directory: bool) -> bool:
     return path.is_dir() if directory else path.is_file()
 
 
+def _plain_chain(path: Path, *, directory: bool) -> bool:
+    if (not path.is_absolute() or not re.fullmatch(r"[A-Za-z]:", path.drive)
+            or ".." in path.parts):
+        return False
+    try:
+        if os.path.normcase(str(path.resolve(strict=True))) != os.path.normcase(str(path)):
+            return False
+    except OSError:
+        return False
+    for ancestor in path.parents:
+        if not _plain(ancestor, directory=True):
+            return False
+    return _plain(path, directory=directory)
+
+
 def _names(path: Path) -> set[str]:
     try:
         return {entry.name for entry in path.iterdir()}
@@ -55,9 +70,9 @@ def isolated_environment(config_dir: Path, program_files: Path,
     docker_dir = program_files / "Docker"
     plugin_dir = docker_dir / "cli-plugins"
     plugin = plugin_dir / "docker-buildx.exe"
-    if (not all(_plain(path, directory=True) for path in (
+    if (not all(_plain_chain(path, directory=True) for path in (
             config_dir, program_files, docker_dir, plugin_dir))
-            or not _plain(plugin, directory=False)
+            or not _plain_chain(plugin, directory=False)
             or _names(config_dir)
             or _names(program_files) != {"Docker"}
             or _names(docker_dir) != {"cli-plugins"}
