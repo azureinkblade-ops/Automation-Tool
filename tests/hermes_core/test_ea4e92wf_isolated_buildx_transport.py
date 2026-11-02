@@ -57,7 +57,7 @@ def test_exact_isolated_call_returns_only_fixed_result(monkeypatch, tmp_path):
                             timeout=1, output_limit=65536) == b"local_default_docker"
     assert seen[0][0][0][-3:] == ("buildx", "inspect", "default")
     assert seen[0][1]["env"] == {
-        "SYSTEMROOT": smoke.os.environ.get("SYSTEMROOT", r"C:\Windows"),
+        "SYSTEMROOT": r"C:\Windows",
         "DOCKER_CONFIG": str(layout.config_dir),
         "ProgramFiles": str(layout.program_files),
     }
@@ -120,3 +120,26 @@ def test_duplicate_endpoint_denied(monkeypatch, tmp_path):
     transport = client(monkeypatch, layout)
     with pytest.raises(smoke.SmokeDenied, match="isolated builder result denied"):
         transport.invoke(("buildx", "inspect", "default"), timeout=1)
+
+
+def test_unpinned_systemroot_denied_before_start(monkeypatch, tmp_path):
+    layout, _ = fixture_layout(tmp_path)
+    transport = client(monkeypatch, layout)
+    monkeypatch.setenv("SYSTEMROOT", r"D:\other")
+    monkeypatch.setattr(smoke.subprocess, "Popen",
+                        lambda *a, **k: pytest.fail("Docker started"))
+    with pytest.raises(smoke.SmokeDenied, match="isolated builder layout denied"):
+        transport.invoke(("buildx", "inspect", "default"), timeout=1)
+
+
+def test_launch_error_redacted(monkeypatch, tmp_path):
+    layout, _ = fixture_layout(tmp_path)
+    transport = client(monkeypatch, layout)
+
+    def fail_start(*args, **kwargs):
+        raise OSError(r"private path C:\secret\docker-buildx.exe")
+
+    monkeypatch.setattr(smoke.subprocess, "Popen", fail_start)
+    with pytest.raises(smoke.SmokeDenied, match="isolated builder launch denied") as error:
+        transport.invoke(("buildx", "inspect", "default"), timeout=1)
+    assert "secret" not in str(error.value)

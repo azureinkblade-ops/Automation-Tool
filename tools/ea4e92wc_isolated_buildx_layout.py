@@ -70,6 +70,9 @@ def _sha256(path: Path) -> str:
 def isolated_environment(config_dir: Path, program_files: Path,
                          plugin_sha256: str) -> dict[str, str]:
     """Verify a point-in-time layout; caller must still prove ACL and launch bounds."""
+    if (os.path.normcase(os.environ.get("SYSTEMROOT", r"C:\Windows"))
+            != os.path.normcase(r"C:\Windows")):
+        raise LayoutDenied("isolated Windows root mismatch")
     if (type(plugin_sha256) is not str
             or _SHA256.fullmatch(plugin_sha256) is None
             or not config_dir.is_absolute() or not program_files.is_absolute()
@@ -88,7 +91,7 @@ def isolated_environment(config_dir: Path, program_files: Path,
             or _sha256(plugin) != plugin_sha256):
         raise LayoutDenied("isolated plugin layout mismatch")
     return {
-        "SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows"),
+        "SYSTEMROOT": r"C:\Windows",
         "DOCKER_CONFIG": str(config_dir),
         "ProgramFiles": str(program_files),
     }
