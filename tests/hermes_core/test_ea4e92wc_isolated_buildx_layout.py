@@ -53,6 +53,39 @@ def test_plugin_drift_denied(tmp_path):
         isolated_environment(config, program, "a" * 64)
 
 
+def test_inventory_error_has_no_raw_context(monkeypatch, tmp_path):
+    config, program, plugin = layout(tmp_path)
+    original = type(config).iterdir
+
+    def fail_config(path):
+        if path == config:
+            raise OSError(r"private path C:\secret\config")
+        return original(path)
+
+    monkeypatch.setattr(type(config), "iterdir", fail_config)
+    with pytest.raises(LayoutDenied, match="layout unavailable") as error:
+        isolated_environment(config, program, pin(plugin))
+    assert error.value.__context__ is None
+    assert error.value.__cause__ is None
+
+
+def test_plugin_read_error_has_no_raw_context(monkeypatch, tmp_path):
+    config, program, plugin = layout(tmp_path)
+    expected = pin(plugin)
+    original = type(plugin).open
+
+    def fail_plugin(path, *args, **kwargs):
+        if path == plugin:
+            raise OSError(r"private path C:\secret\docker-buildx.exe")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(plugin), "open", fail_plugin)
+    with pytest.raises(LayoutDenied, match="plugin unavailable") as error:
+        isolated_environment(config, program, expected)
+    assert error.value.__context__ is None
+    assert error.value.__cause__ is None
+
+
 def test_reparse_plugin_denied(monkeypatch, tmp_path):
     config, program, plugin = layout(tmp_path)
     expected = pin(plugin)

@@ -174,3 +174,25 @@ def test_ordinary_launch_error_unchanged(monkeypatch):
     monkeypatch.setattr(smoke.subprocess, "Popen", fail_start)
     with pytest.raises(OSError, match="ordinary failure"):
         transport.invoke(("version",), timeout=1)
+
+
+def test_layout_error_chain_excludes_raw_oserror(monkeypatch, tmp_path):
+    layout, _ = fixture_layout(tmp_path)
+    transport = client(monkeypatch, layout)
+    original = type(layout.config_dir).iterdir
+
+    def fail_config(path):
+        if path == layout.config_dir:
+            raise OSError(r"private path C:\secret\config")
+        return original(path)
+
+    monkeypatch.setattr(type(layout.config_dir), "iterdir", fail_config)
+    monkeypatch.setattr(smoke.subprocess, "Popen",
+                        lambda *a, **k: pytest.fail("Docker started"))
+    with pytest.raises(smoke.SmokeDenied, match="isolated builder layout denied") as error:
+        transport.invoke(("buildx", "inspect", "default"), timeout=1)
+    chain = error.value
+    while chain is not None:
+        assert not isinstance(chain, OSError)
+        assert "secret" not in str(chain)
+        chain = chain.__cause__ or chain.__context__

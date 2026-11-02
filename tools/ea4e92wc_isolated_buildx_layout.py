@@ -50,20 +50,27 @@ def _plain_chain(path: Path, *, directory: bool) -> bool:
 
 
 def _names(path: Path) -> set[str]:
+    unavailable = False
     try:
-        return {entry.name for entry in path.iterdir()}
+        names = {entry.name for entry in path.iterdir()}
     except OSError:
-        raise LayoutDenied("isolated plugin layout unavailable") from None
+        unavailable = True
+    if unavailable:
+        raise LayoutDenied("isolated plugin layout unavailable")
+    return names
 
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
+    unavailable = False
     try:
         with path.open("rb") as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
     except OSError:
-        raise LayoutDenied("isolated plugin unavailable") from None
+        unavailable = True
+    if unavailable:
+        raise LayoutDenied("isolated plugin unavailable")
     return digest.hexdigest()
 
 
