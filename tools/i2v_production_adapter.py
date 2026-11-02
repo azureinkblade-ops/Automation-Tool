@@ -289,6 +289,54 @@ def default_process_alive(process_identity: str) -> bool:
         return True
     if pid <= 0:
         return True
+    return _pid_alive(pid)
+
+
+# Windows liveness constants (kernel32).
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_STILL_ACTIVE = 259
+_ERROR_ACCESS_DENIED = 5
+_ERROR_INVALID_PARAMETER = 87
+
+
+def _pid_alive_windows(pid: int) -> bool:
+    """OpenProcess + GetExitCodeProcess. Never sends a console control event.
+
+    On Windows ``os.kill(pid, 0)`` maps signal 0 to CTRL_C_EVENT and delivers a
+    real Ctrl-C to the console process group, so it must not be used here.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+    if not handle:
+        err = ctypes.get_last_error()
+        if err == _ERROR_ACCESS_DENIED:
+            return True  # exists but not ours (mirrors PermissionError -> alive)
+        if err == _ERROR_INVALID_PARAMETER:
+            return False  # no such pid (mirrors ProcessLookupError -> dead)
+        return True  # unknown error: conservative, mirrors OSError -> alive
+    try:
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return True
+        return code.value == _STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _pid_alive(pid: int) -> bool:
+    """Process liveness probe. Windows: kernel32; POSIX: os.kill(pid, 0) semantics."""
+    if os.name == "nt":
+        return _pid_alive_windows(pid)
     try:
         os.kill(pid, 0)
         return True
