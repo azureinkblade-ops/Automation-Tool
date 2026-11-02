@@ -193,13 +193,17 @@ class DockerCli:
         )
         if workdir is not None:
             popen_options["cwd"] = workdir
+        launch_denied = False
         try:
             process = subprocess.Popen(
                 (self.binary, "--host", LOCAL_DOCKER_HOST, *args), **popen_options)
         except OSError:
             if self.isolated_buildx_layout is not None:
-                raise SmokeDenied("isolated builder launch denied") from None
-            raise
+                launch_denied = True
+            else:
+                raise
+        if launch_denied:
+            raise SmokeDenied("isolated builder launch denied")
         output = bytearray()
         errors = bytearray()
         exceeded = threading.Event()

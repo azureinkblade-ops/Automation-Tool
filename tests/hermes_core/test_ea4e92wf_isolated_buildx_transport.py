@@ -132,6 +132,23 @@ def test_unpinned_systemroot_denied_before_start(monkeypatch, tmp_path):
         transport.invoke(("buildx", "inspect", "default"), timeout=1)
 
 
+def test_systemroot_case_variant_uses_pinned_spelling(monkeypatch, tmp_path):
+    layout, _ = fixture_layout(tmp_path)
+    monkeypatch.setenv("SYSTEMROOT", r"C:\WINDOWS")
+    transport = client(monkeypatch, layout)
+    observed = []
+    result = (b"Name: default\nDriver: docker\n"
+              b"Endpoint: npipe:////./pipe/dockerDesktopLinuxEngine\n")
+
+    def start(*args, **kwargs):
+        observed.append(kwargs["env"]["SYSTEMROOT"])
+        return SuccessProcess(result)
+
+    monkeypatch.setattr(smoke.subprocess, "Popen", start)
+    assert transport.invoke(("buildx", "inspect", "default"), timeout=1) == b"local_default_docker"
+    assert observed == [r"C:\Windows"]
+
+
 def test_launch_error_redacted(monkeypatch, tmp_path):
     layout, _ = fixture_layout(tmp_path)
     transport = client(monkeypatch, layout)
@@ -143,3 +160,17 @@ def test_launch_error_redacted(monkeypatch, tmp_path):
     with pytest.raises(smoke.SmokeDenied, match="isolated builder launch denied") as error:
         transport.invoke(("buildx", "inspect", "default"), timeout=1)
     assert "secret" not in str(error.value)
+    assert error.value.__context__ is None
+    assert error.value.__cause__ is None
+
+
+def test_ordinary_launch_error_unchanged(monkeypatch):
+    monkeypatch.setattr(smoke, "_hash_file", lambda path: "a" * 64)
+    transport = smoke.DockerCli(Path(__file__), "a" * 64)
+
+    def fail_start(*args, **kwargs):
+        raise OSError("ordinary failure")
+
+    monkeypatch.setattr(smoke.subprocess, "Popen", fail_start)
+    with pytest.raises(OSError, match="ordinary failure"):
+        transport.invoke(("version",), timeout=1)
