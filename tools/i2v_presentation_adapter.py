@@ -134,7 +134,12 @@ def sha256_bytes(data: bytes) -> str:
 
 
 @dataclass
-class RawSvdClipRef:
+class RawI2VClipRef:
+    """Backend-neutral raw I2V clip reference (SVD, Wan 2.2, ...).
+
+    Defaults remain SVD native geometry so existing callers are unchanged.
+    """
+
     video_path: str
     video_sha256: str
     source_image_sha256: str
@@ -142,6 +147,10 @@ class RawSvdClipRef:
     height: int = SVD_NATIVE_HEIGHT
     frame_count: int = 25
     fps: int = 6
+
+
+# Backward-compatible alias: same class object, so isinstance/construction unchanged.
+RawSvdClipRef = RawI2VClipRef
 
 
 @dataclass
