@@ -26,7 +26,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping, Optional, Protocol, runtime_checkable
+from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Tuple, runtime_checkable
 
 from tools.i2v_backend_registry import (
     BACKEND_ID_WAN_22,
@@ -566,37 +566,88 @@ class I2VBackendTransport(Protocol):
         ...
 
 
+VIDEO_PATH_DURABLE_REASON_STORE_ROOT = "durable_store_root"
+VIDEO_PATH_DURABLE_REASON_NO_ROOT = "no_durable_store_root_configured_using_transport_path"
+
+
+def _path_is_within(child: Path, parent: Path) -> bool:
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def persist_video_artifact_with_meta(
+    store_root: Optional[Path],
+    video_job_id: str,
+    backend_id: str,
+    video_bytes: bytes,
+    video_sha: Optional[str],
+    reported_path: Optional[str] = None,
+) -> Tuple[str, bool, str]:
+    """Return (path, durable, reason) for a video artifact whose bytes hash to video_sha.
+
+    When a durable store root is configured (the VideoJobStore root), the artifact
+    always lands under <store>/artifacts/<job>/ -- a transport-reported path (e.g. a
+    %TEMP% scratch file from ComfyHttpI2VTransport) is reused only when it already
+    lives under the store root with a matching sha. Without a store root, fall back
+    to the transport-reported path (legacy behavior) and flag durable=False.
+    Fail-closed on empty bytes; a failed write removes the orphan .mp4.tmp.
+    """
+    if not video_bytes:
+        raise InfrastructureFailure("persist_video_artifact: empty video bytes")
+    sha = video_sha or hashlib.sha256(video_bytes).hexdigest()
+    rp: Optional[Path] = Path(str(reported_path)) if reported_path else None
+    rp_ok = False
+    if rp is not None:
+        try:
+            rp_ok = rp.is_file() and hashlib.sha256(rp.read_bytes()).hexdigest() == sha
+        except OSError:
+            rp_ok = False
+    if store_root is None:
+        if rp is not None and rp_ok:
+            return str(rp), False, VIDEO_PATH_DURABLE_REASON_NO_ROOT
+        raise InfrastructureFailure(
+            "persist_video_artifact: no durable store root and no valid transport path"
+        )
+    root = Path(store_root)
+    if rp is not None and rp_ok and _path_is_within(rp, root):
+        return str(rp), True, VIDEO_PATH_DURABLE_REASON_STORE_ROOT
+    dest_dir = root / "artifacts" / str(video_job_id)
+    dest = dest_dir / f"{backend_id}_{sha[:16]}.mp4"
+    if not (dest.is_file() and dest.stat().st_size == len(video_bytes)):
+        tmp = dest.with_suffix(".mp4.tmp")
+        try:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            tmp.write_bytes(video_bytes)
+            os.replace(tmp, dest)
+        except OSError as exc:
+            raise InfrastructureFailure(
+                f"persist_video_artifact: write failed: {exc}"
+            ) from exc
+        finally:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
+    return str(dest), True, VIDEO_PATH_DURABLE_REASON_STORE_ROOT
+
+
 def persist_video_artifact(
-    store_root: Path,
+    store_root: Optional[Path],
     video_job_id: str,
     backend_id: str,
     video_bytes: bytes,
     video_sha: Optional[str],
     reported_path: Optional[str] = None,
 ) -> str:
-    """Return a durable on-disk path whose bytes hash to video_sha.
-
-    Uses the transport-reported path only if it exists with matching sha;
-    otherwise writes bytes under <store>/artifacts/<job>/. Fail-closed on empty.
-    """
-    if not video_bytes:
-        raise InfrastructureFailure("persist_video_artifact: empty video bytes")
-    sha = video_sha or hashlib.sha256(video_bytes).hexdigest()
-    if reported_path:
-        rp = Path(str(reported_path))
-        try:
-            if rp.is_file() and hashlib.sha256(rp.read_bytes()).hexdigest() == sha:
-                return str(rp)
-        except OSError:
-            pass
-    dest_dir = Path(store_root) / "artifacts" / str(video_job_id)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / f"{backend_id}_{sha[:16]}.mp4"
-    if not (dest.is_file() and dest.stat().st_size == len(video_bytes)):
-        tmp = dest.with_suffix(".mp4.tmp")
-        tmp.write_bytes(video_bytes)
-        os.replace(tmp, dest)
-    return str(dest)
+    """Back-compat wrapper: return only the artifact path."""
+    path, _durable, _reason = persist_video_artifact_with_meta(
+        store_root, video_job_id, backend_id, video_bytes, video_sha, reported_path
+    )
+    return path
 
 
 def build_svd_xt_workflow(
@@ -867,6 +918,9 @@ class GenerateVideoResult:
     transform: Optional[Dict[str, Any]] = None
     # P2: non-canon Wan shadow packet (None when I2V_WAN_SHADOW off / skipped)
     wan_shadow: Optional[Dict[str, Any]] = None
+    # Additive: whether video_path is under the durable store root, and why.
+    video_path_durable: Optional[bool] = None
+    video_path_durable_reason: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -1216,8 +1270,8 @@ class ImageToVideoAdapter:
             # Durable artifact: success packets must carry a real video_path.
             if not video_bytes:
                 raise InfrastructureFailure("no video bytes after generation (fail-closed)")
-            video_path = persist_video_artifact(
-                self.store.root, video_job_id, backend_id, video_bytes, video_sha, video_path
+            video_path, vp_durable, vp_reason = persist_video_artifact_with_meta(
+                getattr(self.store, "root", None), video_job_id, backend_id, video_bytes, video_sha, video_path
             )
             # Persist artifact identity separately before validation/READY
             record.result_artifact_path = video_path
@@ -1308,6 +1362,8 @@ class ImageToVideoAdapter:
                 reused_existing=False,
                 infrastructure_attempts=attempts,
                 transform=asdict(transform),
+                video_path_durable=vp_durable,
+                video_path_durable_reason=vp_reason,
             )
             record.state = state
             record.result = result.to_dict()

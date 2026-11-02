@@ -444,8 +444,8 @@ def test_ready_reuse_requires_matching_video_hash(store, tmp_path):
     adapter = ImageToVideoAdapter(store=store, transport=transport, gpu_metrics=FakeGpu(14000))
     first = adapter.generate_video(_approved(), seed=22, workflow_id="wf-hash")
     assert first.video_sha256 == hashlib.sha256(b"video-bytes-ok").hexdigest()
-    # corrupt file after READY
-    clip.write_bytes(b"CORRUPTED")
+    # corrupt the READY artifact itself (durable copy under the store root)
+    Path(first.video_path).write_bytes(b"CORRUPTED")
     second = adapter.generate_video(_approved(), seed=22, workflow_id="wf-hash")
     # must NOT silently reuse corrupted READY
     assert second.reused_existing is False
@@ -566,7 +566,10 @@ def test_generate_video_success_has_durable_video_path(store):
     assert r.video_path and Path(r.video_path).is_file()
     import hashlib
     assert hashlib.sha256(Path(r.video_path).read_bytes()).hexdigest() == r.video_sha256
-    assert r.identity_canon is False if hasattr(r, "identity_canon") else True
+    # Packet field for identity canon is video_creates_identity_canon: exactly False.
+    assert r.video_creates_identity_canon is False
+    assert VIDEO_CREATES_IDENTITY_CANON is False
+    assert r.video_path_durable is True
 
 
 def test_generate_video_empty_bytes_fail_closed(store):
@@ -576,3 +579,74 @@ def test_generate_video_empty_bytes_fail_closed(store):
     adapter = ImageToVideoAdapter(store=store, transport=Empty(), gpu_metrics=FakeGpu(14000))
     r = adapter.generate_video(_approved(), seed=12, workflow_id="wf-empty")
     assert r.video_path is None and r.video_sha256 is None
+    assert r.validation_status == ValidationStatus.INFRA_FAILURE.value
+    assert r.validation_status != ValidationStatus.PASS.value
+
+
+def test_persist_write_failure_cleans_tmp_and_fails_closed(tmp_path, monkeypatch):
+    import os as _os
+    from tools import i2v_production_adapter as mod
+
+    def boom(src, dst):
+        raise OSError("simulated disk full")
+
+    monkeypatch.setattr(mod.os, "replace", boom)
+    with pytest.raises(mod.InfrastructureFailure):
+        mod.persist_video_artifact(tmp_path, "jobw", "wan_22", b"MP4" * 50, None, None)
+    leftovers = list((tmp_path / "artifacts").rglob("*.mp4.tmp"))
+    assert leftovers == []
+    assert list((tmp_path / "artifacts").rglob("*.mp4")) == []
+
+
+def test_generate_video_write_failure_no_pass_no_tmp(store, monkeypatch):
+    from tools import i2v_production_adapter as mod
+
+    real_replace = mod.os.replace
+
+    def selective(src, dst):
+        if str(src).endswith(".mp4.tmp"):
+            raise OSError("simulated write failure")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(mod.os, "replace", selective)
+    adapter = ImageToVideoAdapter(store=store, transport=FakeTransport(), gpu_metrics=FakeGpu(14000))
+    r = adapter.generate_video(_approved(), seed=13, workflow_id="wf-writefail")
+    assert r.validation_status == ValidationStatus.INFRA_FAILURE.value
+    assert r.video_path is None and r.video_sha256 is None
+    assert list(Path(store.root).rglob("*.mp4.tmp")) == []
+
+
+def test_durable_non_temp_store_root_used_over_transport_temp_path(tmp_path):
+    temp_dir = tmp_path / "Temp" / "comfy_i2v"
+    temp_dir.mkdir(parents=True)
+    scratch = temp_dir / "wan_out.mp4"
+    payload = b"wan-durable-bytes" * 8
+    scratch.write_bytes(payload)
+
+    class TempPathTransport(FakeTransport):
+        def submit_and_wait(self, workflow):
+            self.workflows.append(workflow)
+            return {"video_bytes": payload, "video_path": str(scratch), "prompt_id": "pt"}
+
+    durable_root = tmp_path / "durable_store" / "i2v_jobs"
+    store = VideoJobStore(durable_root)
+    adapter = ImageToVideoAdapter(store=store, transport=TempPathTransport(), gpu_metrics=FakeGpu(14000))
+    r = adapter.generate_video(_approved(), seed=14, workflow_id="wf-durable-root")
+    vp = Path(r.video_path)
+    assert vp.is_file()
+    assert vp.resolve() != scratch.resolve()
+    vp.resolve().relative_to(durable_root.resolve())
+    assert hashlib.sha256(vp.read_bytes()).hexdigest() == r.video_sha256
+    assert r.video_path_durable is True
+    assert r.video_creates_identity_canon is False
+
+
+def test_no_store_root_falls_back_to_transport_path_flagged(tmp_path):
+    from tools.i2v_production_adapter import persist_video_artifact_with_meta
+
+    good = tmp_path / "scratch.mp4"
+    good.write_bytes(b"QQ")
+    path, durable, reason = persist_video_artifact_with_meta(None, "j", "wan_22", b"QQ", None, str(good))
+    assert path == str(good)
+    assert durable is False
+    assert reason and "no_durable_store_root" in reason
