@@ -258,6 +258,12 @@ class MediaPipeline:
         except Exception as exc:  # noqa: BLE001
             return self._static_fallback(record, still, reason=f"i2v_failed:{exc}")
 
+        # Fail closed: PARTIAL / VIDEO_REVIEW_REQUIRED clips need human review and
+        # must never be auto-promoted to SOCIAL_READY. Skip presentation and fall
+        # back to the approved static still (raw sha / i2v job id kept on record).
+        if status != "PASS":
+            return self._static_fallback(record, still, reason=f"i2v_review_required:{status}")
+
         # --- Presentation ---
         record.state = PipelineState.PRESENTING.value
         self.store.save(record)

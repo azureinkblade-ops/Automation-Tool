@@ -198,3 +198,14 @@ def test_clip_ref_defaults_to_svd_geometry_without_result():
 
 def test_default_settings_svd_unchanged():
     assert default_settings_for_backend("svd_xt_1_1") == i2v.I2VSettings()
+
+
+@pytest.mark.parametrize("status", ["PARTIAL", "VIDEO_REVIEW_REQUIRED"])
+def test_wiring_review_status_fails_closed(tmp_path, status):
+    pipe, fake, pres, _ = _build(tmp_path, env={"I2V_BACKEND": "wan_22"})
+    fake.status = status
+    res = pipe.produce_social_media(_still(tmp_path), workflow_id=f"wf-w-{status}", seed=9)
+    assert res.outcome == PipelineOutcome.STATIC_FALLBACK.value
+    assert res.failure_reason == f"i2v_review_required:{status}"
+    assert pres.clips == []
+

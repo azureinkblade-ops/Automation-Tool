@@ -158,3 +158,46 @@ def test_unapproved_still_rejected(store, tmp_path):
     pipe = MediaPipeline(store=store, i2v=FakeI2V(FakeI2VResult()), presentation=FakePresentation(FakePresResult()), media_validator=_pass_validator)
     with pytest.raises(ValueError):
         pipe.produce_social_media(still, workflow_id="wf-unapp", seed=5)
+
+
+# --- Fail closed on I2V review statuses (PARTIAL / VIDEO_REVIEW_REQUIRED) ---
+
+
+def _review_pipe(store, tmp_path, status):
+    raw = tmp_path / "raw.mp4"
+    raw.write_bytes(b"raw-review")
+    presented = tmp_path / "pres.mp4"
+    presented.write_bytes(b"presented-9x16")
+    i2v = FakeI2V(FakeI2VResult(validation_status=status, video_path=str(raw),
+                                video_sha256=_sha256_bytes(b"raw-review"), video_job_id="i2v-rev"))
+    pres = FakePresentation(FakePresResult(presented_video_path=str(presented),
+                                           presented_video_sha256=_sha256_bytes(b"presented-9x16")))
+    return MediaPipeline(store=store, i2v=i2v, presentation=pres, media_validator=_pass_validator), i2v, pres
+
+
+@pytest.mark.parametrize("status", ["PARTIAL", "VIDEO_REVIEW_REQUIRED"])
+def test_i2v_review_status_fails_closed_to_static(store, tmp_path, status):
+    pipe, i2v, pres = _review_pipe(store, tmp_path, status)
+    result = pipe.produce_social_media(_still(tmp_path), workflow_id=f"wf-{status}", seed=7)
+    assert result.outcome == PipelineOutcome.STATIC_FALLBACK.value
+    assert result.state == PipelineState.STATIC_FALLBACK.value
+    assert result.outcome != PipelineOutcome.SOCIAL_READY.value
+    assert result.asset_kind == "static_still"
+    assert result.presented_video_sha256 is None
+    assert result.failure_reason == f"i2v_review_required:{status}"
+    assert result.failure_reason.startswith("i2v_review_required:")
+    assert result.raw_video_sha256 == _sha256_bytes(b"raw-review")
+    assert result.i2v_job_id == "i2v-rev"
+    assert result.video_creates_identity_canon is False
+    assert i2v.calls == 1 and pres.calls == 0
+    rec = store.get(result.idempotency_key)
+    assert rec.outcome == PipelineOutcome.STATIC_FALLBACK.value
+    assert rec.state != PipelineState.READY.value
+
+
+def test_i2v_pass_still_social_ready_after_review_gate(store, tmp_path):
+    pipe, i2v, pres = _review_pipe(store, tmp_path, "PASS")
+    result = pipe.produce_social_media(_still(tmp_path), workflow_id="wf-pass-gate", seed=8)
+    assert result.outcome == PipelineOutcome.SOCIAL_READY.value
+    assert pres.calls == 1
+
