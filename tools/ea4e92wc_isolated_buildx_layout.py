@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import time
 
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -34,7 +35,14 @@ def _plain(path: Path, *, directory: bool) -> bool:
     return path.is_dir() if directory else path.is_file()
 
 
-def _plain_chain(path: Path, *, directory: bool) -> bool:
+def _check_deadline(deadline: float | None, clock) -> None:
+    if deadline is not None and clock() >= deadline:
+        raise LayoutDenied("isolated plugin deadline reached")
+
+
+def _plain_chain(path: Path, *, directory: bool, deadline: float | None,
+                 clock) -> bool:
+    _check_deadline(deadline, clock)
     if (not path.is_absolute() or not re.fullmatch(r"[A-Za-z]:", path.drive)
             or ".." in path.parts):
         return False
@@ -44,15 +52,21 @@ def _plain_chain(path: Path, *, directory: bool) -> bool:
     except OSError:
         return False
     for ancestor in path.parents:
+        _check_deadline(deadline, clock)
         if not _plain(ancestor, directory=True):
             return False
+    _check_deadline(deadline, clock)
     return _plain(path, directory=directory)
 
 
-def _names(path: Path) -> set[str]:
+def _names(path: Path, *, deadline: float | None, clock) -> set[str]:
     unavailable = False
     try:
-        names = {entry.name for entry in path.iterdir()}
+        names = set()
+        _check_deadline(deadline, clock)
+        for entry in path.iterdir():
+            _check_deadline(deadline, clock)
+            names.add(entry.name)
     except OSError:
         unavailable = True
     if unavailable:
@@ -60,12 +74,18 @@ def _names(path: Path) -> set[str]:
     return names
 
 
-def _sha256(path: Path) -> str:
+def _sha256(path: Path, *, deadline: float | None, clock) -> str:
     digest = hashlib.sha256()
     unavailable = False
     try:
+        _check_deadline(deadline, clock)
         with path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            while True:
+                _check_deadline(deadline, clock)
+                chunk = stream.read(1024 * 1024)
+                _check_deadline(deadline, clock)
+                if not chunk:
+                    break
                 digest.update(chunk)
     except OSError:
         unavailable = True
@@ -75,8 +95,10 @@ def _sha256(path: Path) -> str:
 
 
 def isolated_environment(config_dir: Path, program_files: Path,
-                         plugin_sha256: str) -> dict[str, str]:
+                         plugin_sha256: str, *, deadline: float | None = None,
+                         clock=time.monotonic) -> dict[str, str]:
     """Verify a point-in-time layout; caller must still prove ACL and launch bounds."""
+    _check_deadline(deadline, clock)
     if (os.path.normcase(os.environ.get("SYSTEMROOT", r"C:\Windows"))
             != os.path.normcase(r"C:\Windows")):
         raise LayoutDenied("isolated Windows root mismatch")
@@ -88,15 +110,18 @@ def isolated_environment(config_dir: Path, program_files: Path,
     docker_dir = program_files / "Docker"
     plugin_dir = docker_dir / "cli-plugins"
     plugin = plugin_dir / "docker-buildx.exe"
-    if (not all(_plain_chain(path, directory=True) for path in (
+    if (not all(_plain_chain(path, directory=True, deadline=deadline,
+                             clock=clock) for path in (
             config_dir, program_files, docker_dir, plugin_dir))
-            or not _plain_chain(plugin, directory=False)
-            or _names(config_dir)
-            or _names(program_files) != {"Docker"}
-            or _names(docker_dir) != {"cli-plugins"}
-            or _names(plugin_dir) != {"docker-buildx.exe"}
-            or _sha256(plugin) != plugin_sha256):
+            or not _plain_chain(plugin, directory=False, deadline=deadline,
+                                clock=clock)
+            or _names(config_dir, deadline=deadline, clock=clock)
+            or _names(program_files, deadline=deadline, clock=clock) != {"Docker"}
+            or _names(docker_dir, deadline=deadline, clock=clock) != {"cli-plugins"}
+            or _names(plugin_dir, deadline=deadline, clock=clock) != {"docker-buildx.exe"}
+            or _sha256(plugin, deadline=deadline, clock=clock) != plugin_sha256):
         raise LayoutDenied("isolated plugin layout mismatch")
+    _check_deadline(deadline, clock)
     return {
         "SYSTEMROOT": r"C:\Windows",
         "DOCKER_CONFIG": str(config_dir),

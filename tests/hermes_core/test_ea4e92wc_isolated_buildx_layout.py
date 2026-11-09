@@ -114,3 +114,17 @@ def test_parent_alias_denied(tmp_path):
     alias = config / ".." / "config"
     with pytest.raises(LayoutDenied, match="layout mismatch"):
         isolated_environment(alias, program, pin(plugin))
+
+
+def test_expired_deadline_denied_before_layout_read(tmp_path):
+    config, program, plugin = layout(tmp_path)
+    with pytest.raises(LayoutDenied, match="deadline reached"):
+        isolated_environment(config, program, pin(plugin),
+                             deadline=1, clock=lambda: 2)
+
+
+def test_deadline_during_plugin_hash_denied(tmp_path):
+    _, _, plugin = layout(tmp_path)
+    ticks = iter((0, 0, 2))
+    with pytest.raises(LayoutDenied, match="deadline reached"):
+        policy._sha256(plugin, deadline=1, clock=lambda: next(ticks))

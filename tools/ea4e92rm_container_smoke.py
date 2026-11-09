@@ -162,6 +162,8 @@ class DockerCli:
                stdin: bytes = b"", output_limit: int = MAX_CLI_OUTPUT) -> bytes:
         if not 0 < timeout <= WALL_SECONDS or not 0 < output_limit <= MAX_CLI_OUTPUT:
             raise ValueError("invalid Docker CLI bound")
+        deadline = (time.monotonic() + timeout
+                    if self.isolated_buildx_layout is not None else None)
         environment = {"SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows")}
         workdir = None
         if self.isolated_buildx_layout is not None:
@@ -171,7 +173,8 @@ class DockerCli:
                 environment = isolated_environment(
                     self.isolated_buildx_layout.config_dir,
                     self.isolated_buildx_layout.program_files,
-                    self.isolated_buildx_layout.plugin_sha256)
+                    self.isolated_buildx_layout.plugin_sha256,
+                    deadline=deadline, clock=time.monotonic)
             except LayoutDenied:
                 raise SmokeDenied("isolated builder layout denied") from None
             workdir = str(self.isolated_buildx_layout.config_dir)
@@ -184,7 +187,8 @@ class DockerCli:
             except OSError:
                 raise SmokeDenied("Docker config unavailable") from None
             environment["DOCKER_CONFIG"] = str(self.user_config.parent)
-        deadline = time.monotonic() + timeout
+        if deadline is None:
+            deadline = time.monotonic() + timeout
         popen_options = dict(
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, shell=False,
@@ -193,6 +197,8 @@ class DockerCli:
         )
         if workdir is not None:
             popen_options["cwd"] = workdir
+        if self.isolated_buildx_layout is not None and time.monotonic() >= deadline:
+            raise SmokeDenied("isolated builder deadline reached")
         launch_denied = False
         try:
             process = subprocess.Popen(
@@ -290,7 +296,8 @@ class DockerCli:
                 observed = isolated_environment(
                     self.isolated_buildx_layout.config_dir,
                     self.isolated_buildx_layout.program_files,
-                    self.isolated_buildx_layout.plugin_sha256)
+                    self.isolated_buildx_layout.plugin_sha256,
+                    deadline=deadline, clock=time.monotonic)
             except LayoutDenied:
                 raise SmokeDenied("isolated builder layout drift") from None
             if observed != environment:

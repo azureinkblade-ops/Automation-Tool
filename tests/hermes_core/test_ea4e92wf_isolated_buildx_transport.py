@@ -3,6 +3,7 @@
 import hashlib
 import io
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -147,7 +148,8 @@ def test_systemroot_case_variant_uses_pinned_spelling(monkeypatch, tmp_path):
         return SuccessProcess(result)
 
     monkeypatch.setattr(smoke.subprocess, "Popen", start)
-    assert transport.invoke(("buildx", "inspect", "default"), timeout=1) == b"reported_local_default_docker"
+    assert (transport.invoke(("buildx", "inspect", "default"), timeout=1)
+            == b"reported_local_default_docker")
     assert observed == [r"C:\Windows"]
 
 
@@ -198,3 +200,46 @@ def test_layout_error_chain_excludes_raw_oserror(monkeypatch, tmp_path):
         assert not isinstance(chain, OSError)
         assert "secret" not in str(chain)
         chain = chain.__cause__ or chain.__context__
+
+
+def test_layout_time_consumes_cli_launch_budget(monkeypatch, tmp_path):
+    layout, _ = fixture_layout(tmp_path)
+    transport = client(monkeypatch, layout)
+    observed_deadlines = []
+
+    def checked_layout(*args, deadline=None, clock=None):
+        observed_deadlines.append(deadline)
+        return {"SYSTEMROOT": r"C:\Windows",
+                "DOCKER_CONFIG": str(layout.config_dir),
+                "ProgramFiles": str(layout.program_files)}
+
+    ticks = iter((0, 2))
+    monkeypatch.setattr(smoke, "isolated_environment", checked_layout)
+    monkeypatch.setattr(smoke, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+    monkeypatch.setattr(smoke.subprocess, "Popen",
+                        lambda *a, **k: pytest.fail("Docker started"))
+    with pytest.raises(smoke.SmokeDenied, match="deadline reached"):
+        transport.invoke(("buildx", "inspect", "default"), timeout=1)
+    assert observed_deadlines == [1]
+
+
+def test_postcall_layout_uses_original_deadline(monkeypatch, tmp_path):
+    layout, _ = fixture_layout(tmp_path)
+    transport = client(monkeypatch, layout)
+    observed_deadlines = []
+
+    def checked_layout(*args, deadline=None, clock=None):
+        observed_deadlines.append(deadline)
+        return {"SYSTEMROOT": r"C:\Windows",
+                "DOCKER_CONFIG": str(layout.config_dir),
+                "ProgramFiles": str(layout.program_files)}
+
+    result = (b"Name: default\nDriver: docker\n"
+              b"Endpoint: npipe:////./pipe/dockerDesktopLinuxEngine\n")
+    monkeypatch.setattr(smoke, "isolated_environment", checked_layout)
+    monkeypatch.setattr(smoke, "time", SimpleNamespace(monotonic=lambda: 0))
+    monkeypatch.setattr(smoke.subprocess, "Popen",
+                        lambda *a, **k: SuccessProcess(result))
+    assert (transport.invoke(("buildx", "inspect", "default"), timeout=1)
+            == b"reported_local_default_docker")
+    assert observed_deadlines == [1, 1]
