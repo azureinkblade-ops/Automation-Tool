@@ -2,11 +2,21 @@
 
 import ctypes
 import os
+from dataclasses import dataclass
 
 
 LIMIT_FLAGS = 0x00000008 | 0x00000100 | 0x00002000
+JOB_MEMORY_FLAG = 0x00000200
+BUILD_TREE_FLAGS = LIMIT_FLAGS | JOB_MEMORY_FLAG
 PROCESS_MEMORY_BYTES = 256 * 1024 * 1024
 EXTENDED_LIMITS_CLASS = 9
+
+
+@dataclass(frozen=True)
+class BuildxJobLimits:
+    active_processes: int
+    process_memory_bytes: int
+    job_memory_bytes: int
 
 
 class BasicLimits(ctypes.Structure):
@@ -87,28 +97,27 @@ class UnknownJobCleanup(RuntimeError):
         self.handle = handle
 
 
-def prepare_job(api):
-    """Return an owned configured job; caller must close it through the same API.
-
-    No process is assigned here. Future process creation must use the reviewed
-    creation-time job attribute. This layer does not enforce network/filesystem
-    isolation, wall-clock limits, output caps or parser identity.
-    """
+def _prepare_job(api, *, flags, active_processes, process_memory_bytes,
+                 job_memory_bytes=0):
     handle = api.create()
     if handle is None or type(handle) is not int or handle <= 0:
         raise OSError("job creation failed")
     try:
         limits = ExtendedLimits()
-        limits.BasicLimitInformation.LimitFlags = LIMIT_FLAGS
-        limits.BasicLimitInformation.ActiveProcessLimit = 1
-        limits.ProcessMemoryLimit = PROCESS_MEMORY_BYTES
+        limits.BasicLimitInformation.LimitFlags = flags
+        limits.BasicLimitInformation.ActiveProcessLimit = active_processes
+        limits.ProcessMemoryLimit = process_memory_bytes
+        if flags & JOB_MEMORY_FLAG:
+            limits.JobMemoryLimit = job_memory_bytes
         if api.set_limits(handle, limits) is not True:
             raise OSError("job limit configuration failed")
         observed = api.query_limits(handle)
         if (type(observed) is not ExtendedLimits
-                or observed.BasicLimitInformation.LimitFlags != LIMIT_FLAGS
-                or observed.BasicLimitInformation.ActiveProcessLimit != 1
-                or observed.ProcessMemoryLimit != PROCESS_MEMORY_BYTES):
+                or observed.BasicLimitInformation.LimitFlags != flags
+                or observed.BasicLimitInformation.ActiveProcessLimit != active_processes
+                or observed.ProcessMemoryLimit != process_memory_bytes
+                or (flags & JOB_MEMORY_FLAG
+                    and observed.JobMemoryLimit != job_memory_bytes)):
             raise OSError("job limit verification failed")
     except BaseException:
         try:
@@ -119,3 +128,36 @@ def prepare_job(api):
             raise UnknownJobCleanup("owned job cleanup failed", api, handle)
         raise
     return handle
+
+
+def prepare_job(api):
+    """Return the original one-process test job; caller owns its handle.
+
+    No process is assigned. This does not enforce network or filesystem
+    isolation, a wall-clock deadline, output caps, or parser identity.
+    """
+    return _prepare_job(
+        api, flags=LIMIT_FLAGS, active_processes=1,
+        process_memory_bytes=PROCESS_MEMORY_BYTES)
+
+
+def prepare_buildx_job(api, limits: BuildxJobLimits):
+    """Prepare a candidate process-tree job; no process is created or assigned.
+
+    The caller must close the owned handle. Creation-time membership, a hard
+    deadline, stream bounds, plugin identity, and native enforcement remain
+    separate qualifications.
+    """
+    if (type(limits) is not BuildxJobLimits
+            or type(limits.active_processes) is not int
+            or not 2 <= limits.active_processes <= 64
+            or type(limits.process_memory_bytes) is not int
+            or not 64 * 1024**2 <= limits.process_memory_bytes <= 2 * 1024**3
+            or type(limits.job_memory_bytes) is not int
+            or not limits.process_memory_bytes <= limits.job_memory_bytes <= 16 * 1024**3):
+        raise ValueError("invalid Buildx job limits")
+    return _prepare_job(
+        api, flags=BUILD_TREE_FLAGS,
+        active_processes=limits.active_processes,
+        process_memory_bytes=limits.process_memory_bytes,
+        job_memory_bytes=limits.job_memory_bytes)
