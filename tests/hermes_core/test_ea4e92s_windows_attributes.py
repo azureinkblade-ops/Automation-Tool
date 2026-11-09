@@ -17,18 +17,20 @@ class Function:
 
 
 class FakeKernel:
-    def __init__(self, size=128, error=122, fail_init=False, fail_update=False):
+    def __init__(self, size=128, error=122, fail_init=False, fail_update=False,
+                 expected_count=2):
         self.size = size
         self.error = error
         self.fail_init = fail_init
         self.fail_update = fail_update
+        self.expected_count = expected_count
         self.events = []
         self.InitializeProcThreadAttributeList = Function(self.initialize)
         self.UpdateProcThreadAttribute = Function(self.update)
         self.DeleteProcThreadAttributeList = Function(self.destroy)
 
     def initialize(self, buffer, count, flags, size):
-        assert count == 2 and flags == 0
+        assert count == self.expected_count and flags == 0
         self.events.append("probe" if buffer is None else "initialize")
         size._obj.value = self.size
         return 0 if buffer is None else int(not self.fail_init)

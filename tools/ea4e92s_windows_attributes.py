@@ -22,7 +22,9 @@ class NativeAttributeList:
 
 
 class WindowsAttributeApi:
-    def __init__(self, kernel32=None, last_error=None):
+    def __init__(self, kernel32=None, last_error=None, *, job_only=False):
+        if type(job_only) is not bool:
+            raise ValueError("invalid attribute profile")
         if kernel32 is None:
             if os.name != "nt":
                 raise OSError("Windows attribute API requires Windows")
@@ -42,10 +44,12 @@ class WindowsAttributeApi:
         kernel32.DeleteProcThreadAttributeList.restype = None
         self.dll = kernel32
         self.last_error = last_error
+        self.job_only = job_only
 
     def create(self, count):
-        if type(count) is not int or count != 2:
-            raise ValueError("exactly two reviewed attributes required")
+        expected_count = 1 if self.job_only else 2
+        if type(count) is not int or count != expected_count:
+            raise ValueError("reviewed attribute count required")
         size = ctypes.c_size_t()
         probe = self.dll.InitializeProcThreadAttributeList(None, count, 0, ctypes.byref(size))
         if probe or self.last_error() != 122 or not 0 < size.value <= MAX_ATTRIBUTE_BYTES:
@@ -62,8 +66,9 @@ class WindowsAttributeApi:
 
     def update(self, handle, key, value):
         self.validate_owned(handle)
-        expected = ("JOB_LIST", "SECURITY_CAPABILITIES")
-        if len(handle.keys) >= 2 or key != expected[len(handle.keys)]:
+        expected = (("JOB_LIST",) if self.job_only
+                    else ("JOB_LIST", "SECURITY_CAPABILITIES"))
+        if len(handle.keys) >= len(expected) or key != expected[len(handle.keys)]:
             raise ValueError("unreviewed attribute order or key")
         if key == "JOB_LIST":
             if not (isinstance(value, ctypes.Array) and value._type_ is ctypes.c_void_p
