@@ -297,7 +297,7 @@ class DockerCli:
                 raise SmokeDenied("isolated builder environment drift")
             if not _isolated_buildx_inspect_ok(bytes(output)):
                 raise SmokeDenied("isolated builder result denied")
-            return b"local_default_docker"
+            return b"reported_local_default_docker"
         return bytes(output + errors) if args[:2] == ("container", "logs") else bytes(output)
 
 

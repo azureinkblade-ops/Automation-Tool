@@ -53,8 +53,10 @@ def test_exact_isolated_call_returns_only_fixed_result(monkeypatch, tmp_path):
                         lambda *a, **k: (seen.append((a, k)),
                                          SuccessProcess(result))[1])
     transport = client(monkeypatch, layout)
-    assert transport.invoke(("buildx", "inspect", "default"),
-                            timeout=1, output_limit=65536) == b"local_default_docker"
+    reported = transport.invoke(("buildx", "inspect", "default"),
+                                timeout=1, output_limit=65536)
+    assert reported == b"reported_local_default_docker"
+    assert reported != b"local_default_docker"
     assert seen[0][0][0][-3:] == ("buildx", "inspect", "default")
     assert seen[0][1]["env"] == {
         "SYSTEMROOT": r"C:\Windows",
@@ -145,7 +147,7 @@ def test_systemroot_case_variant_uses_pinned_spelling(monkeypatch, tmp_path):
         return SuccessProcess(result)
 
     monkeypatch.setattr(smoke.subprocess, "Popen", start)
-    assert transport.invoke(("buildx", "inspect", "default"), timeout=1) == b"local_default_docker"
+    assert transport.invoke(("buildx", "inspect", "default"), timeout=1) == b"reported_local_default_docker"
     assert observed == [r"C:\Windows"]
 
 
