@@ -5,8 +5,12 @@ from dataclasses import dataclass
 
 from tools.ea4e92s_creation_attributes import PreparedAttributes
 from tools.ea4e92s_startupinfo_abi import PreparedStartupInfo, StartupInfoExW
-from tools.ea4e92s_suspended_process import OwnedSuspendedProcess
-from tools.ea4e92wr_buildx_suspended_process import _job_attribute_buffer
+from tools.ea4e92s_suspended_process import (
+    OwnedSuspendedProcess, SuspendedCreationResult,
+)
+from tools.ea4e92wr_buildx_suspended_process import (
+    _job_attribute_buffer, _valid_value,
+)
 
 
 class UnknownBuildxOwnerCleanup(RuntimeError):
@@ -25,10 +29,19 @@ class BuildxCreationOwner:
     state: str = "owned"
 
     def attach(self, process):
+        pointer_max = (1 << (ctypes.sizeof(ctypes.c_void_p) * 8)) - 1
         if (self.state != "owned" or self.process is not None
+                or self.attributes.buildx_creation_owner is not self
+                or self.attributes.state != "owned"
                 or type(process) is not OwnedSuspendedProcess
                 or process.state != "owned"
                 or process.creation_owner is not self.attributes
+                or type(process.result) is not SuspendedCreationResult
+                or not _valid_value(process.result.process_handle, pointer_max)
+                or not _valid_value(process.result.thread_handle, pointer_max)
+                or process.result.process_handle == process.result.thread_handle
+                or not _valid_value(process.result.process_id, 0xFFFFFFFF)
+                or not _valid_value(process.result.thread_id, 0xFFFFFFFF)
                 or process.result.suspended is not True
                 or process.result.job_bound_at_creation is not True
                 or process.result.appcontainer_bound_at_creation is not False):
@@ -67,6 +80,9 @@ def prepare_buildx_creation_owner(job_api, job_handle, attributes, startup):
             or startup.attributes is not attributes
             or type(startup.value) is not StartupInfoExW
             or startup.value.StartupInfo.cb != ctypes.sizeof(StartupInfoExW)
-            or startup.value.lpAttributeList != ctypes.addressof(buffer)):
+            or startup.value.lpAttributeList != ctypes.addressof(buffer)
+            or attributes.buildx_creation_owner is not None):
         raise ValueError("reviewed Buildx creation resources required")
-    return BuildxCreationOwner(job_api, job_handle, attributes, startup)
+    owner = BuildxCreationOwner(job_api, job_handle, attributes, startup)
+    attributes.buildx_creation_owner = owner
+    return owner

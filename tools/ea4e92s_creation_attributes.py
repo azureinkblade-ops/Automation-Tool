@@ -25,6 +25,7 @@ class PreparedAttributes:
     handle: object
     keepalive: tuple
     state: str = "owned"
+    buildx_creation_owner: object | None = None
 
     def close(self):
         if self.state == "closed":

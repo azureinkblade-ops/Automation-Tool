@@ -91,6 +91,15 @@ def test_unlaunched_owner_closes_attributes_before_job():
     assert events == ["attributes", ("job", 71)]
 
 
+def test_same_resources_cannot_claim_a_second_job_owner():
+    owned, events = owner()
+    with pytest.raises(ValueError):
+        prepare_buildx_creation_owner(
+            owned.job_api, owned.job_handle, owned.attributes, owned.startup)
+    owned.close()
+    assert events == ["attributes", ("job", 71)]
+
+
 def test_attached_process_closes_before_attributes_and_job():
     owned, events = owner()
     child = process(owned, events)
@@ -136,6 +145,24 @@ def test_unproven_process_attachment_denied(change):
         child.result = replace(child.result, appcontainer_bound_at_creation=True)
     else:
         child.creation_owner = object()
+    with pytest.raises(ValueError):
+        owned.attach(child)
+    assert owned.process is None and events == []
+
+
+@pytest.mark.parametrize("change", ["process_handle", "thread_handle",
+                                     "duplicate_handles", "process_id", "thread_id"])
+def test_invalid_process_identity_attachment_denied(change):
+    owned, events = owner()
+    child = process(owned, events)
+    updates = {
+        "process_handle": {"process_handle": 0},
+        "thread_handle": {"thread_handle": 0},
+        "duplicate_handles": {"thread_handle": child.result.process_handle},
+        "process_id": {"process_id": 0},
+        "thread_id": {"thread_id": 0},
+    }
+    child.result = replace(child.result, **updates[change])
     with pytest.raises(ValueError):
         owned.attach(child)
     assert owned.process is None and events == []
