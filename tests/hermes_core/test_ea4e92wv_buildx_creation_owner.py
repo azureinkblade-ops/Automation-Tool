@@ -133,6 +133,8 @@ def test_distinct_attributes_cannot_claim_the_same_job_token():
         prepare_buildx_creation_owner(owned.job, attributes, startup)
     with pytest.raises(ValueError, match="another owner"):
         owned.job.close()
+    with pytest.raises(ValueError, match="cleanup order"):
+        owned.job.close(owned)
     attributes.close()
     owned.close()
     assert events == ["attributes", "attributes", ("job", 71)]

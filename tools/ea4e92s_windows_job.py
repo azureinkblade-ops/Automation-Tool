@@ -97,12 +97,23 @@ class UnknownJobCleanup(RuntimeError):
         self.handle = handle
 
 
-@dataclass
+_VERIFIED_BUILDX_JOB = object()
+
+
+@dataclass(init=False)
 class OwnedBuildxJob:
     api: object
     handle: int
     state: str = "owned"
     creation_owner: object | None = None
+
+    def __init__(self, api, handle, *, _proof=None):
+        if _proof is not _VERIFIED_BUILDX_JOB:
+            raise ValueError("verified Buildx job preparation required")
+        self.api = api
+        self.handle = handle
+        self.state = "owned"
+        self.creation_owner = None
 
     def claim(self, owner):
         if owner is None or self.state != "owned" or self.creation_owner is not None:
@@ -117,6 +128,14 @@ class OwnedBuildxJob:
         if self.state != "owned":
             raise UnknownJobCleanup("Buildx job cleanup requires reconciliation",
                                     self.api, self.handle)
+        if owner is not None:
+            attributes = getattr(owner, "attributes", None)
+            process = getattr(owner, "process", None)
+            if (getattr(owner, "state", None) != "unknown"
+                    or getattr(attributes, "state", None) != "closed"
+                    or (process is not None
+                        and getattr(process, "state", None) != "closed")):
+                raise ValueError("Buildx creation-owner cleanup order required")
         self.state = "unknown"
         try:
             if self.api.close(self.handle) is not True:
@@ -196,4 +215,5 @@ def prepare_buildx_job(api, limits: BuildxJobLimits):
 
 def prepare_owned_buildx_job(api, limits: BuildxJobLimits):
     """Retain the verified job handle for a single creation-resource owner."""
-    return OwnedBuildxJob(api, prepare_buildx_job(api, limits))
+    return OwnedBuildxJob(api, prepare_buildx_job(api, limits),
+                          _proof=_VERIFIED_BUILDX_JOB)

@@ -1,6 +1,7 @@
 """Fake API tests only; no WinDLL construction or Windows job calls."""
 
 import ctypes
+from types import SimpleNamespace
 
 import pytest
 
@@ -130,7 +131,9 @@ def test_buildx_job_verifies_process_and_total_memory_bounds():
 def test_owned_buildx_job_allows_one_claim_and_owner_only_close():
     api = FakeApi()
     job = subject.prepare_owned_buildx_job(api, buildx_limits())
-    owner = object()
+    owner = SimpleNamespace(state="unknown",
+                            attributes=SimpleNamespace(state="closed"),
+                            process=None)
     job.claim(owner)
     with pytest.raises(ValueError, match="unclaimed"):
         job.claim(object())
@@ -141,6 +144,11 @@ def test_owned_buildx_job_allows_one_claim_and_owner_only_close():
     job.close(owner)
     assert job.state == "closed"
     assert api.events == ["create", "set", "query", "close"]
+
+
+def test_owned_buildx_job_requires_verified_preparation():
+    with pytest.raises(ValueError, match="verified"):
+        subject.OwnedBuildxJob(FakeApi(), 71)
 
 
 def test_owned_buildx_job_cleanup_uncertainty_is_not_retried():
