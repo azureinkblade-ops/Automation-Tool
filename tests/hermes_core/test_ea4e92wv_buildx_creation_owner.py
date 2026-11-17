@@ -8,6 +8,9 @@ from tools.ea4e92s_suspended_process import (
     OwnedSuspendedProcess, SuspendedCreationResult,
 )
 from tools.ea4e92s_windows_attributes import WindowsAttributeApi
+from tools.ea4e92s_windows_job import (
+    BuildxJobLimits, ExtendedLimits, prepare_owned_buildx_job,
+)
 from tools.ea4e92wq_buildx_job_attributes import prepare_buildx_job_attributes
 from tools.ea4e92wt_buildx_startupinfo_abi import prepare_buildx_startup_info_ex
 from tools.ea4e92wv_buildx_creation_owner import (
@@ -44,6 +47,19 @@ class FakeJobApi:
         self.events = events
         self.result = result
 
+    def create(self):
+        self.events.append("job_create")
+        return 71
+
+    def set_limits(self, handle, limits):
+        self.events.append("job_limits")
+        self.limits = ExtendedLimits.from_buffer_copy(bytes(limits))
+        return True
+
+    def query_limits(self, handle):
+        self.events.append("job_readback")
+        return self.limits
+
     def close(self, handle):
         self.events.append(("job", handle))
         return self.result
@@ -67,14 +83,22 @@ class FakeProcessApi:
         return True
 
 
-def owner(events=None, *, job_result=True):
+def resources(events=None, *, job_result=True):
     events = [] if events is None else events
+    job_api = FakeJobApi(events, job_result)
+    job = prepare_owned_buildx_job(
+        job_api, BuildxJobLimits(4, 512 * 1024**2, 2 * 1024**3))
     kernel = FakeKernel(events)
     attributes = prepare_buildx_job_attributes(
-        WindowsAttributeApi(kernel, lambda: 122, job_only=True), 71)
+        WindowsAttributeApi(kernel, lambda: 122, job_only=True), job.handle)
     startup = prepare_buildx_startup_info_ex(attributes)
-    return prepare_buildx_creation_owner(
-        FakeJobApi(events, job_result), 71, attributes, startup), events
+    events.clear()
+    return job, attributes, startup, events
+
+
+def owner(events=None, *, job_result=True):
+    job, attributes, startup, events = resources(events, job_result=job_result)
+    return prepare_buildx_creation_owner(job, attributes, startup), events
 
 
 def process(owner, events, *, terminate=True, result=None):
@@ -94,10 +118,24 @@ def test_unlaunched_owner_closes_attributes_before_job():
 def test_same_resources_cannot_claim_a_second_job_owner():
     owned, events = owner()
     with pytest.raises(ValueError):
-        prepare_buildx_creation_owner(
-            owned.job_api, owned.job_handle, owned.attributes, owned.startup)
+        prepare_buildx_creation_owner(owned.job, owned.attributes, owned.startup)
     owned.close()
     assert events == ["attributes", ("job", 71)]
+
+
+def test_distinct_attributes_cannot_claim_the_same_job_token():
+    owned, events = owner()
+    attributes = prepare_buildx_job_attributes(
+        WindowsAttributeApi(FakeKernel(events), lambda: 122, job_only=True),
+        owned.job.handle)
+    startup = prepare_buildx_startup_info_ex(attributes)
+    with pytest.raises(ValueError):
+        prepare_buildx_creation_owner(owned.job, attributes, startup)
+    with pytest.raises(ValueError, match="another owner"):
+        owned.job.close()
+    attributes.close()
+    owned.close()
+    assert events == ["attributes", "attributes", ("job", 71)]
 
 
 def test_attached_process_closes_before_attributes_and_job():
@@ -111,18 +149,17 @@ def test_attached_process_closes_before_attributes_and_job():
 
 @pytest.mark.parametrize("change", ["job", "state", "startup", "pointer"])
 def test_unmatched_creation_resources_denied(change):
-    owned, events = owner()
+    job, attributes, startup, events = resources()
     if change == "job":
-        owned.job_handle = 72
+        job.handle = 72
     elif change == "state":
-        owned.attributes.state = "unknown"
+        attributes.state = "unknown"
     elif change == "startup":
-        owned.startup = replace(owned.startup, attributes=object())
+        startup = replace(startup, attributes=object())
     else:
-        owned.startup.value.lpAttributeList = 0
+        startup.value.lpAttributeList = 0
     with pytest.raises(ValueError):
-        prepare_buildx_creation_owner(
-            owned.job_api, owned.job_handle, owned.attributes, owned.startup)
+        prepare_buildx_creation_owner(job, attributes, startup)
     assert events == []
 
 
@@ -209,7 +246,7 @@ def test_job_close_exception_preserves_unknown_owner():
         events.append(("job", handle))
         raise OSError("injected job-close ambiguity")
 
-    owned.job_api.close = fail_close
+    owned.job.api.close = fail_close
     with pytest.raises(UnknownBuildxOwnerCleanup) as caught:
         owned.close()
     assert caught.value.owner is owned and owned.state == "unknown"

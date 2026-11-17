@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from tools.ea4e92s_creation_attributes import PreparedAttributes
 from tools.ea4e92s_startupinfo_abi import PreparedStartupInfo, StartupInfoExW
+from tools.ea4e92s_windows_job import OwnedBuildxJob
 from tools.ea4e92s_suspended_process import (
     OwnedSuspendedProcess, SuspendedCreationResult,
 )
@@ -21,8 +22,7 @@ class UnknownBuildxOwnerCleanup(RuntimeError):
 
 @dataclass
 class BuildxCreationOwner:
-    job_api: object
-    job_handle: int
+    job: OwnedBuildxJob
     attributes: PreparedAttributes
     startup: PreparedStartupInfo
     process: OwnedSuspendedProcess | None = None
@@ -31,6 +31,8 @@ class BuildxCreationOwner:
     def attach(self, process):
         pointer_max = (1 << (ctypes.sizeof(ctypes.c_void_p) * 8)) - 1
         if (self.state != "owned" or self.process is not None
+                or self.job.creation_owner is not self
+                or self.job.state != "owned"
                 or self.attributes.buildx_creation_owner is not self
                 or self.attributes.state != "owned"
                 or type(process) is not OwnedSuspendedProcess
@@ -58,24 +60,25 @@ class BuildxCreationOwner:
             if self.process is not None:
                 self.process.close()
             self.attributes.close()
-            if self.job_api.close(self.job_handle) is not True:
-                raise UnknownBuildxOwnerCleanup(self)
+            self.job.close(self)
         except Exception as error:
             raise UnknownBuildxOwnerCleanup(self) from error
         self.state = "closed"
 
 
-def prepare_buildx_creation_owner(job_api, job_handle, attributes, startup):
-    """Retain the supplied job and attributes until ordered cleanup succeeds.
+def prepare_buildx_creation_owner(job, attributes, startup):
+    """Retain a single-claim job and attributes until ordered cleanup succeeds.
 
-    The job handle is caller-supplied; configuration and native membership are
-    not proven here. The caller must not close it independently while owned.
+    The job token comes from verified preparation; native membership is not
+    proven here. A claimed job cannot be closed independently through the token.
     """
     buffer = _job_attribute_buffer(attributes)
     pointer_max = (1 << (ctypes.sizeof(ctypes.c_void_p) * 8)) - 1
-    if (type(job_handle) is not int or not 0 < job_handle <= pointer_max
-            or attributes.keepalive[0][0] != job_handle
-            or not callable(getattr(job_api, "close", None))
+    if (type(job) is not OwnedBuildxJob or job.state != "owned"
+            or job.creation_owner is not None
+            or type(job.handle) is not int or not 0 < job.handle <= pointer_max
+            or attributes.keepalive[0][0] != job.handle
+            or not callable(getattr(job.api, "close", None))
             or type(startup) is not PreparedStartupInfo
             or startup.attributes is not attributes
             or type(startup.value) is not StartupInfoExW
@@ -83,6 +86,7 @@ def prepare_buildx_creation_owner(job_api, job_handle, attributes, startup):
             or startup.value.lpAttributeList != ctypes.addressof(buffer)
             or attributes.buildx_creation_owner is not None):
         raise ValueError("reviewed Buildx creation resources required")
-    owner = BuildxCreationOwner(job_api, job_handle, attributes, startup)
+    owner = BuildxCreationOwner(job, attributes, startup)
+    job.claim(owner)
     attributes.buildx_creation_owner = owner
     return owner

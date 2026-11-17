@@ -97,6 +97,37 @@ class UnknownJobCleanup(RuntimeError):
         self.handle = handle
 
 
+@dataclass
+class OwnedBuildxJob:
+    api: object
+    handle: int
+    state: str = "owned"
+    creation_owner: object | None = None
+
+    def claim(self, owner):
+        if owner is None or self.state != "owned" or self.creation_owner is not None:
+            raise ValueError("unclaimed Buildx job required")
+        self.creation_owner = owner
+
+    def close(self, owner=None):
+        if self.creation_owner is not owner:
+            raise ValueError("Buildx job belongs to another owner")
+        if self.state == "closed":
+            return
+        if self.state != "owned":
+            raise UnknownJobCleanup("Buildx job cleanup requires reconciliation",
+                                    self.api, self.handle)
+        self.state = "unknown"
+        try:
+            if self.api.close(self.handle) is not True:
+                raise UnknownJobCleanup("owned Buildx job cleanup failed",
+                                        self.api, self.handle)
+        except Exception as error:
+            raise UnknownJobCleanup("owned Buildx job cleanup failed",
+                                    self.api, self.handle) from error
+        self.state = "closed"
+
+
 def _prepare_job(api, *, flags, active_processes, process_memory_bytes,
                  job_memory_bytes=0):
     handle = api.create()
@@ -161,3 +192,8 @@ def prepare_buildx_job(api, limits: BuildxJobLimits):
         active_processes=limits.active_processes,
         process_memory_bytes=limits.process_memory_bytes,
         job_memory_bytes=limits.job_memory_bytes)
+
+
+def prepare_owned_buildx_job(api, limits: BuildxJobLimits):
+    """Retain the verified job handle for a single creation-resource owner."""
+    return OwnedBuildxJob(api, prepare_buildx_job(api, limits))

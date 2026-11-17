@@ -127,6 +127,33 @@ def test_buildx_job_verifies_process_and_total_memory_bounds():
     assert subject.BUILD_TREE_FLAGS & (0x00000800 | 0x00001000) == 0
 
 
+def test_owned_buildx_job_allows_one_claim_and_owner_only_close():
+    api = FakeApi()
+    job = subject.prepare_owned_buildx_job(api, buildx_limits())
+    owner = object()
+    job.claim(owner)
+    with pytest.raises(ValueError, match="unclaimed"):
+        job.claim(object())
+    with pytest.raises(ValueError, match="another owner"):
+        job.close()
+    assert api.events == ["create", "set", "query"]
+    job.close(owner)
+    job.close(owner)
+    assert job.state == "closed"
+    assert api.events == ["create", "set", "query", "close"]
+
+
+def test_owned_buildx_job_cleanup_uncertainty_is_not_retried():
+    api = FakeApi(cleanup=False)
+    job = subject.prepare_owned_buildx_job(api, buildx_limits())
+    with pytest.raises(subject.UnknownJobCleanup):
+        job.close()
+    with pytest.raises(subject.UnknownJobCleanup):
+        job.close()
+    assert job.state == "unknown"
+    assert api.events == ["create", "set", "query", "close"]
+
+
 @pytest.mark.parametrize("limits", [
     None,
     subject.BuildxJobLimits(True, 512 * 1024**2, 2 * 1024**3),
