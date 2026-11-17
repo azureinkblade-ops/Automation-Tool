@@ -80,7 +80,7 @@ else:
     # No daily promo image fixture in this workspace -> assert the documented RuntimeError
     # path matches app.py (same guard). We compare the exception type/message shape.
     try:
-        app_mod.make_social_post("EN", "Monday", "{novel} {day}", False, chapter_number="25")
+        app_mod.make_social_post("EN", "Monday", "{novel} {day}", False, chapter_number="25", collaborators=collab)
         app_raised = False
     except Exception as e:
         app_raised = True
@@ -100,9 +100,15 @@ check("promo_builder does not import app", "app" not in sys.modules or sys.modul
 if _backup is not None:
     PROMO_STATE.write_text(_backup, encoding="utf-8")
 
-if FAILS:
-    print("FAIL", len(FAILS))
-    for f in FAILS:
-        print(" -", f)
-    raise SystemExit(1)
-print("PASS all promo_builder characterization checks")
+def test_promo_builder_characterization():
+    """Expose the module-level checks to pytest so pass/fail shows in the suite."""
+    assert not FAILS, "\n".join(FAILS)
+
+
+if __name__ == "__main__":
+    if FAILS:
+        print("FAIL", len(FAILS))
+        for f in FAILS:
+            print(" -", f)
+        raise SystemExit(1)
+    print("PASS all promo_builder characterization checks")

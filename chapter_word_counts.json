@@ -1,0 +1,4956 @@
+{
+ "chapters": {
+  "EN-1": {
+   "chapter": 1,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1049,
+   "words": 1049
+  },
+  "EN-10": {
+   "chapter": 10,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1067,
+   "words": 1067
+  },
+  "EN-100": {
+   "chapter": 100,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2179,
+   "words": 2179
+  },
+  "EN-101": {
+   "chapter": 101,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2188,
+   "words": 2188
+  },
+  "EN-102": {
+   "chapter": 102,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2004,
+   "words": 2004
+  },
+  "EN-103": {
+   "chapter": 103,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2226,
+   "words": 2226
+  },
+  "EN-104": {
+   "chapter": 104,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1914,
+   "words": 1914
+  },
+  "EN-105": {
+   "chapter": 105,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1552,
+   "words": 1552
+  },
+  "EN-106": {
+   "chapter": 106,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1450,
+   "words": 1450
+  },
+  "EN-107": {
+   "chapter": 107,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2054,
+   "words": 2054
+  },
+  "EN-108": {
+   "chapter": 108,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 813,
+   "words": 813
+  },
+  "EN-109": {
+   "chapter": 109,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1494,
+   "words": 1494
+  },
+  "EN-11": {
+   "chapter": 11,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1176,
+   "words": 1176
+  },
+  "EN-110": {
+   "chapter": 110,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1704,
+   "words": 1704
+  },
+  "EN-111": {
+   "chapter": 111,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1621,
+   "words": 1621
+  },
+  "EN-112": {
+   "chapter": 112,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1654,
+   "words": 1654
+  },
+  "EN-113": {
+   "chapter": 113,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1532,
+   "words": 1532
+  },
+  "EN-114": {
+   "chapter": 114,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1422,
+   "words": 1422
+  },
+  "EN-115": {
+   "chapter": 115,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2288,
+   "words": 2288
+  },
+  "EN-116": {
+   "chapter": 116,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3173,
+   "words": 3173
+  },
+  "EN-117": {
+   "chapter": 117,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3173,
+   "words": 3173
+  },
+  "EN-118": {
+   "chapter": 118,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4508,
+   "words": 4508
+  },
+  "EN-119": {
+   "chapter": 119,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3972,
+   "words": 3972
+  },
+  "EN-12": {
+   "chapter": 12,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1160,
+   "words": 1160
+  },
+  "EN-120": {
+   "chapter": 120,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4943,
+   "words": 4948
+  },
+  "EN-121": {
+   "chapter": 121,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3141,
+   "words": 3146
+  },
+  "EN-122": {
+   "chapter": 122,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3329,
+   "words": 3334
+  },
+  "EN-123": {
+   "chapter": 123,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3231,
+   "words": 3236
+  },
+  "EN-124": {
+   "chapter": 124,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3070,
+   "words": 3075
+  },
+  "EN-125": {
+   "chapter": 125,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3689,
+   "words": 3693
+  },
+  "EN-126": {
+   "chapter": 126,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3212,
+   "words": 3217
+  },
+  "EN-127": {
+   "chapter": 127,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3267,
+   "words": 3272
+  },
+  "EN-128": {
+   "chapter": 128,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3123,
+   "words": 3127
+  },
+  "EN-129": {
+   "chapter": 129,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3280,
+   "words": 3285
+  },
+  "EN-13": {
+   "chapter": 13,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1013,
+   "words": 1013
+  },
+  "EN-130": {
+   "chapter": 130,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3151,
+   "words": 3156
+  },
+  "EN-131": {
+   "chapter": 131,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3597,
+   "words": 3600
+  },
+  "EN-132": {
+   "chapter": 132,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3527,
+   "words": 3530
+  },
+  "EN-133": {
+   "chapter": 133,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3876,
+   "words": 3879
+  },
+  "EN-134": {
+   "chapter": 134,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3340,
+   "words": 3345
+  },
+  "EN-135": {
+   "chapter": 135,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4135,
+   "words": 4140
+  },
+  "EN-136": {
+   "chapter": 136,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3386,
+   "words": 3386
+  },
+  "EN-137": {
+   "chapter": 137,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4061,
+   "words": 4065
+  },
+  "EN-138": {
+   "chapter": 138,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4180,
+   "words": 4180
+  },
+  "EN-139": {
+   "chapter": 139,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4674,
+   "words": 4674
+  },
+  "EN-14": {
+   "chapter": 14,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1149,
+   "words": 1149
+  },
+  "EN-140": {
+   "chapter": 140,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3399,
+   "words": 3399
+  },
+  "EN-141": {
+   "chapter": 141,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4789,
+   "words": 4789
+  },
+  "EN-15": {
+   "chapter": 15,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1064,
+   "words": 1064
+  },
+  "EN-16": {
+   "chapter": 16,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1075,
+   "words": 1075
+  },
+  "EN-17": {
+   "chapter": 17,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1077,
+   "words": 1077
+  },
+  "EN-18": {
+   "chapter": 18,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1229,
+   "words": 1229
+  },
+  "EN-19": {
+   "chapter": 19,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1868,
+   "words": 1868
+  },
+  "EN-2": {
+   "chapter": 2,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1200,
+   "words": 1200
+  },
+  "EN-20": {
+   "chapter": 20,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1230,
+   "words": 1230
+  },
+  "EN-21": {
+   "chapter": 21,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1463,
+   "words": 1463
+  },
+  "EN-22": {
+   "chapter": 22,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1120,
+   "words": 1120
+  },
+  "EN-23": {
+   "chapter": 23,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1494,
+   "words": 1494
+  },
+  "EN-24": {
+   "chapter": 24,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 948,
+   "words": 948
+  },
+  "EN-25": {
+   "chapter": 25,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4862,
+   "words": 4862
+  },
+  "EN-26": {
+   "chapter": 26,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 948,
+   "words": 948
+  },
+  "EN-27": {
+   "chapter": 27,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5070,
+   "words": 5070
+  },
+  "EN-28": {
+   "chapter": 28,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1058,
+   "words": 1058
+  },
+  "EN-29": {
+   "chapter": 29,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4307,
+   "words": 4307
+  },
+  "EN-3": {
+   "chapter": 3,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3060,
+   "words": 3060
+  },
+  "EN-30": {
+   "chapter": 30,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 747,
+   "words": 747
+  },
+  "EN-31": {
+   "chapter": 31,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1335,
+   "words": 1335
+  },
+  "EN-32": {
+   "chapter": 32,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4659,
+   "words": 4659
+  },
+  "EN-33": {
+   "chapter": 33,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1426,
+   "words": 1426
+  },
+  "EN-34": {
+   "chapter": 34,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3585,
+   "words": 3585
+  },
+  "EN-35": {
+   "chapter": 35,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1326,
+   "words": 1326
+  },
+  "EN-36": {
+   "chapter": 36,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1405,
+   "words": 1405
+  },
+  "EN-37": {
+   "chapter": 37,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1564,
+   "words": 1564
+  },
+  "EN-38": {
+   "chapter": 38,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1389,
+   "words": 1389
+  },
+  "EN-39": {
+   "chapter": 39,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1359,
+   "words": 1359
+  },
+  "EN-4": {
+   "chapter": 4,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1280,
+   "words": 1280
+  },
+  "EN-40": {
+   "chapter": 40,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1495,
+   "words": 1495
+  },
+  "EN-41": {
+   "chapter": 41,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1382,
+   "words": 1382
+  },
+  "EN-42": {
+   "chapter": 42,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5386,
+   "words": 5386
+  },
+  "EN-43": {
+   "chapter": 43,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1298,
+   "words": 1298
+  },
+  "EN-44": {
+   "chapter": 44,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3767,
+   "words": 3767
+  },
+  "EN-45": {
+   "chapter": 45,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1627,
+   "words": 1627
+  },
+  "EN-46": {
+   "chapter": 46,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1117,
+   "words": 1117
+  },
+  "EN-47": {
+   "chapter": 47,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1332,
+   "words": 1332
+  },
+  "EN-48": {
+   "chapter": 48,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4605,
+   "words": 4605
+  },
+  "EN-49": {
+   "chapter": 49,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1220,
+   "words": 1220
+  },
+  "EN-5": {
+   "chapter": 5,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 962,
+   "words": 962
+  },
+  "EN-50": {
+   "chapter": 50,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1472,
+   "words": 1472
+  },
+  "EN-51": {
+   "chapter": 51,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1602,
+   "words": 1602
+  },
+  "EN-52": {
+   "chapter": 52,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1227,
+   "words": 1227
+  },
+  "EN-53": {
+   "chapter": 53,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1496,
+   "words": 1496
+  },
+  "EN-54": {
+   "chapter": 54,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1439,
+   "words": 1439
+  },
+  "EN-55": {
+   "chapter": 55,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1338,
+   "words": 1338
+  },
+  "EN-56": {
+   "chapter": 56,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1286,
+   "words": 1286
+  },
+  "EN-57": {
+   "chapter": 57,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1516,
+   "words": 1516
+  },
+  "EN-58": {
+   "chapter": 58,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1412,
+   "words": 1412
+  },
+  "EN-59": {
+   "chapter": 59,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1067,
+   "words": 1067
+  },
+  "EN-6": {
+   "chapter": 6,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 747,
+   "words": 747
+  },
+  "EN-60": {
+   "chapter": 60,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1062,
+   "words": 1062
+  },
+  "EN-61": {
+   "chapter": 61,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 981,
+   "words": 981
+  },
+  "EN-62": {
+   "chapter": 62,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1132,
+   "words": 1132
+  },
+  "EN-63": {
+   "chapter": 63,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4960,
+   "words": 4960
+  },
+  "EN-64": {
+   "chapter": 64,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5610,
+   "words": 5610
+  },
+  "EN-65": {
+   "chapter": 65,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 7168,
+   "words": 7168
+  },
+  "EN-66": {
+   "chapter": 66,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1252,
+   "words": 1252
+  },
+  "EN-67": {
+   "chapter": 67,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 7824,
+   "words": 7824
+  },
+  "EN-68": {
+   "chapter": 68,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1721,
+   "words": 1721
+  },
+  "EN-69": {
+   "chapter": 69,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1607,
+   "words": 1607
+  },
+  "EN-7": {
+   "chapter": 7,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1057,
+   "words": 1057
+  },
+  "EN-70": {
+   "chapter": 70,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1718,
+   "words": 1718
+  },
+  "EN-71": {
+   "chapter": 71,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1430,
+   "words": 1430
+  },
+  "EN-72": {
+   "chapter": 72,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1458,
+   "words": 1458
+  },
+  "EN-73": {
+   "chapter": 73,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1548,
+   "words": 1548
+  },
+  "EN-74": {
+   "chapter": 74,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1704,
+   "words": 1704
+  },
+  "EN-75": {
+   "chapter": 75,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1697,
+   "words": 1697
+  },
+  "EN-76": {
+   "chapter": 76,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1491,
+   "words": 1491
+  },
+  "EN-77": {
+   "chapter": 77,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1659,
+   "words": 1659
+  },
+  "EN-78": {
+   "chapter": 78,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1786,
+   "words": 1786
+  },
+  "EN-79": {
+   "chapter": 79,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1393,
+   "words": 1393
+  },
+  "EN-8": {
+   "chapter": 8,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 908,
+   "words": 908
+  },
+  "EN-80": {
+   "chapter": 80,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1665,
+   "words": 1665
+  },
+  "EN-81": {
+   "chapter": 81,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1563,
+   "words": 1563
+  },
+  "EN-82": {
+   "chapter": 82,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1749,
+   "words": 1749
+  },
+  "EN-83": {
+   "chapter": 83,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1595,
+   "words": 1595
+  },
+  "EN-84": {
+   "chapter": 84,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1226,
+   "words": 1226
+  },
+  "EN-85": {
+   "chapter": 85,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2016,
+   "words": 2016
+  },
+  "EN-86": {
+   "chapter": 86,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1918,
+   "words": 1918
+  },
+  "EN-87": {
+   "chapter": 87,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1919,
+   "words": 1919
+  },
+  "EN-88": {
+   "chapter": 88,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2128,
+   "words": 2128
+  },
+  "EN-89": {
+   "chapter": 89,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1884,
+   "words": 1884
+  },
+  "EN-9": {
+   "chapter": 9,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:20",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1149,
+   "words": 1149
+  },
+  "EN-90": {
+   "chapter": 90,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2298,
+   "words": 2298
+  },
+  "EN-91": {
+   "chapter": 91,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2131,
+   "words": 2131
+  },
+  "EN-92": {
+   "chapter": 92,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2303,
+   "words": 2303
+  },
+  "EN-93": {
+   "chapter": 93,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2274,
+   "words": 2274
+  },
+  "EN-94": {
+   "chapter": 94,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1891,
+   "words": 1891
+  },
+  "EN-95": {
+   "chapter": 95,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1536,
+   "words": 1536
+  },
+  "EN-96": {
+   "chapter": 96,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1331,
+   "words": 1331
+  },
+  "EN-97": {
+   "chapter": 97,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1494,
+   "words": 1494
+  },
+  "EN-98": {
+   "chapter": 98,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1491,
+   "words": 1491
+  },
+  "EN-99": {
+   "chapter": 99,
+   "docsCommit": "b3896115",
+   "novel": "EN",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1296,
+   "words": 1296
+  },
+  "HA-1": {
+   "chapter": 1,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2300,
+   "words": 2300
+  },
+  "HA-10": {
+   "chapter": 10,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2189,
+   "words": 2189
+  },
+  "HA-100": {
+   "chapter": 100,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3127,
+   "words": 3132
+  },
+  "HA-101": {
+   "chapter": 101,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3088,
+   "words": 3093
+  },
+  "HA-102": {
+   "chapter": 102,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3315,
+   "words": 3315
+  },
+  "HA-103": {
+   "chapter": 103,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4089,
+   "words": 4089
+  },
+  "HA-104": {
+   "chapter": 104,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3893,
+   "words": 3893
+  },
+  "HA-105": {
+   "chapter": 105,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3737,
+   "words": 3737
+  },
+  "HA-106": {
+   "chapter": 106,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3898,
+   "words": 3898
+  },
+  "HA-107": {
+   "chapter": 107,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4884,
+   "words": 4884
+  },
+  "HA-108": {
+   "chapter": 108,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 7995,
+   "words": 7995
+  },
+  "HA-109": {
+   "chapter": 109,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 6553,
+   "words": 6553
+  },
+  "HA-11": {
+   "chapter": 11,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2187,
+   "words": 2187
+  },
+  "HA-110": {
+   "chapter": 110,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 9248,
+   "words": 9255
+  },
+  "HA-111": {
+   "chapter": 111,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3096,
+   "words": 3101
+  },
+  "HA-112": {
+   "chapter": 112,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3105,
+   "words": 3105
+  },
+  "HA-113": {
+   "chapter": 113,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4348,
+   "words": 4348
+  },
+  "HA-114": {
+   "chapter": 114,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4603,
+   "words": 4603
+  },
+  "HA-115": {
+   "chapter": 115,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5373,
+   "words": 5373
+  },
+  "HA-116": {
+   "chapter": 116,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4670,
+   "words": 4670
+  },
+  "HA-117": {
+   "chapter": 117,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5383,
+   "words": 5383
+  },
+  "HA-118": {
+   "chapter": 118,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4715,
+   "words": 4715
+  },
+  "HA-119": {
+   "chapter": 119,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4269,
+   "words": 4269
+  },
+  "HA-12": {
+   "chapter": 12,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2281,
+   "words": 2281
+  },
+  "HA-13": {
+   "chapter": 13,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2188,
+   "words": 2188
+  },
+  "HA-14": {
+   "chapter": 14,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2171,
+   "words": 2171
+  },
+  "HA-15": {
+   "chapter": 15,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2063,
+   "words": 2063
+  },
+  "HA-16": {
+   "chapter": 16,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2032,
+   "words": 2032
+  },
+  "HA-17": {
+   "chapter": 17,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2041,
+   "words": 2041
+  },
+  "HA-18": {
+   "chapter": 18,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2013,
+   "words": 2013
+  },
+  "HA-19": {
+   "chapter": 19,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2016,
+   "words": 2016
+  },
+  "HA-2": {
+   "chapter": 2,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2348,
+   "words": 2348
+  },
+  "HA-20": {
+   "chapter": 20,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2079,
+   "words": 2079
+  },
+  "HA-21": {
+   "chapter": 21,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2027,
+   "words": 2027
+  },
+  "HA-22": {
+   "chapter": 22,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2047,
+   "words": 2047
+  },
+  "HA-23": {
+   "chapter": 23,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2014,
+   "words": 2014
+  },
+  "HA-24": {
+   "chapter": 24,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2042,
+   "words": 2042
+  },
+  "HA-25": {
+   "chapter": 25,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2010,
+   "words": 2010
+  },
+  "HA-26": {
+   "chapter": 26,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2012,
+   "words": 2012
+  },
+  "HA-27": {
+   "chapter": 27,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2012,
+   "words": 2012
+  },
+  "HA-28": {
+   "chapter": 28,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2016,
+   "words": 2016
+  },
+  "HA-29": {
+   "chapter": 29,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2017,
+   "words": 2017
+  },
+  "HA-3": {
+   "chapter": 3,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2050,
+   "words": 2050
+  },
+  "HA-30": {
+   "chapter": 30,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2052,
+   "words": 2052
+  },
+  "HA-31": {
+   "chapter": 31,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2008,
+   "words": 2008
+  },
+  "HA-32": {
+   "chapter": 32,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2016,
+   "words": 2016
+  },
+  "HA-33": {
+   "chapter": 33,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2024,
+   "words": 2024
+  },
+  "HA-34": {
+   "chapter": 34,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2110,
+   "words": 2110
+  },
+  "HA-35": {
+   "chapter": 35,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2038,
+   "words": 2038
+  },
+  "HA-36": {
+   "chapter": 36,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2037,
+   "words": 2037
+  },
+  "HA-37": {
+   "chapter": 37,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2031,
+   "words": 2031
+  },
+  "HA-38": {
+   "chapter": 38,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2105,
+   "words": 2105
+  },
+  "HA-39": {
+   "chapter": 39,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2014,
+   "words": 2014
+  },
+  "HA-4": {
+   "chapter": 4,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2098,
+   "words": 2098
+  },
+  "HA-40": {
+   "chapter": 40,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2049,
+   "words": 2049
+  },
+  "HA-41": {
+   "chapter": 41,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2023,
+   "words": 2023
+  },
+  "HA-42": {
+   "chapter": 42,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2014,
+   "words": 2014
+  },
+  "HA-43": {
+   "chapter": 43,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2016,
+   "words": 2016
+  },
+  "HA-44": {
+   "chapter": 44,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2015,
+   "words": 2015
+  },
+  "HA-45": {
+   "chapter": 45,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2016,
+   "words": 2016
+  },
+  "HA-46": {
+   "chapter": 46,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2020,
+   "words": 2020
+  },
+  "HA-47": {
+   "chapter": 47,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2016,
+   "words": 2016
+  },
+  "HA-48": {
+   "chapter": 48,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2016,
+   "words": 2016
+  },
+  "HA-49": {
+   "chapter": 49,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2008,
+   "words": 2008
+  },
+  "HA-5": {
+   "chapter": 5,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2030,
+   "words": 2030
+  },
+  "HA-50": {
+   "chapter": 50,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2013,
+   "words": 2013
+  },
+  "HA-51": {
+   "chapter": 51,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2031,
+   "words": 2031
+  },
+  "HA-52": {
+   "chapter": 52,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2005,
+   "words": 2005
+  },
+  "HA-53": {
+   "chapter": 53,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2005,
+   "words": 2005
+  },
+  "HA-54": {
+   "chapter": 54,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2016,
+   "words": 2016
+  },
+  "HA-55": {
+   "chapter": 55,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2024,
+   "words": 2024
+  },
+  "HA-56": {
+   "chapter": 56,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2013,
+   "words": 2013
+  },
+  "HA-57": {
+   "chapter": 57,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2021,
+   "words": 2021
+  },
+  "HA-58": {
+   "chapter": 58,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2028,
+   "words": 2028
+  },
+  "HA-59": {
+   "chapter": 59,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3155,
+   "words": 3155
+  },
+  "HA-6": {
+   "chapter": 6,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2027,
+   "words": 2027
+  },
+  "HA-60": {
+   "chapter": 60,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3176,
+   "words": 3176
+  },
+  "HA-61": {
+   "chapter": 61,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3587,
+   "words": 3587
+  },
+  "HA-62": {
+   "chapter": 62,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5175,
+   "words": 5175
+  },
+  "HA-63": {
+   "chapter": 63,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3704,
+   "words": 3704
+  },
+  "HA-64": {
+   "chapter": 64,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4671,
+   "words": 4671
+  },
+  "HA-65": {
+   "chapter": 65,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5115,
+   "words": 5115
+  },
+  "HA-66": {
+   "chapter": 66,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3555,
+   "words": 3555
+  },
+  "HA-67": {
+   "chapter": 67,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3554,
+   "words": 3554
+  },
+  "HA-68": {
+   "chapter": 68,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3364,
+   "words": 3364
+  },
+  "HA-69": {
+   "chapter": 69,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3524,
+   "words": 3524
+  },
+  "HA-7": {
+   "chapter": 7,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2039,
+   "words": 2039
+  },
+  "HA-70": {
+   "chapter": 70,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4437,
+   "words": 4437
+  },
+  "HA-71": {
+   "chapter": 71,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3772,
+   "words": 3772
+  },
+  "HA-72": {
+   "chapter": 72,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5200,
+   "words": 5200
+  },
+  "HA-73": {
+   "chapter": 73,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3889,
+   "words": 3889
+  },
+  "HA-74": {
+   "chapter": 74,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3211,
+   "words": 3211
+  },
+  "HA-75": {
+   "chapter": 75,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3416,
+   "words": 3416
+  },
+  "HA-76": {
+   "chapter": 76,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3385,
+   "words": 3385
+  },
+  "HA-77": {
+   "chapter": 77,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3360,
+   "words": 3360
+  },
+  "HA-78": {
+   "chapter": 78,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4765,
+   "words": 4765
+  },
+  "HA-79": {
+   "chapter": 79,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3681,
+   "words": 3681
+  },
+  "HA-8": {
+   "chapter": 8,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2249,
+   "words": 2249
+  },
+  "HA-80": {
+   "chapter": 80,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4328,
+   "words": 4332
+  },
+  "HA-81": {
+   "chapter": 81,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3244,
+   "words": 3248
+  },
+  "HA-82": {
+   "chapter": 82,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3114,
+   "words": 3117
+  },
+  "HA-83": {
+   "chapter": 83,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3127,
+   "words": 3130
+  },
+  "HA-84": {
+   "chapter": 84,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3550,
+   "words": 3554
+  },
+  "HA-85": {
+   "chapter": 85,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3200,
+   "words": 3205
+  },
+  "HA-86": {
+   "chapter": 86,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3308,
+   "words": 3313
+  },
+  "HA-87": {
+   "chapter": 87,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3026,
+   "words": 3031
+  },
+  "HA-88": {
+   "chapter": 88,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3104,
+   "words": 3108
+  },
+  "HA-89": {
+   "chapter": 89,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3055,
+   "words": 3058
+  },
+  "HA-9": {
+   "chapter": 9,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:21",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2417,
+   "words": 2417
+  },
+  "HA-90": {
+   "chapter": 90,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3269,
+   "words": 3269
+  },
+  "HA-91": {
+   "chapter": 91,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2924,
+   "words": 2924
+  },
+  "HA-92": {
+   "chapter": 92,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3215,
+   "words": 3215
+  },
+  "HA-93": {
+   "chapter": 93,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3784,
+   "words": 3784
+  },
+  "HA-94": {
+   "chapter": 94,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3325,
+   "words": 3325
+  },
+  "HA-95": {
+   "chapter": 95,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3852,
+   "words": 3852
+  },
+  "HA-96": {
+   "chapter": 96,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3618,
+   "words": 3618
+  },
+  "HA-97": {
+   "chapter": 97,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4324,
+   "words": 4324
+  },
+  "HA-98": {
+   "chapter": 98,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4454,
+   "words": 4458
+  },
+  "HA-99": {
+   "chapter": 99,
+   "docsCommit": "b3896115",
+   "novel": "HA",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3033,
+   "words": 3036
+  },
+  "HP-1": {
+   "chapter": 1,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1310,
+   "words": 1310
+  },
+  "HP-10": {
+   "chapter": 10,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3783,
+   "words": 3783
+  },
+  "HP-100": {
+   "chapter": 100,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2370,
+   "words": 2370
+  },
+  "HP-101": {
+   "chapter": 101,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1942,
+   "words": 1942
+  },
+  "HP-102": {
+   "chapter": 102,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5538,
+   "words": 5538
+  },
+  "HP-103": {
+   "chapter": 103,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5301,
+   "words": 5301
+  },
+  "HP-104": {
+   "chapter": 104,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2733,
+   "words": 2733
+  },
+  "HP-105": {
+   "chapter": 105,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2268,
+   "words": 2268
+  },
+  "HP-106": {
+   "chapter": 106,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2358,
+   "words": 2358
+  },
+  "HP-107": {
+   "chapter": 107,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2332,
+   "words": 2332
+  },
+  "HP-108": {
+   "chapter": 108,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2221,
+   "words": 2221
+  },
+  "HP-109": {
+   "chapter": 109,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2340,
+   "words": 2340
+  },
+  "HP-11": {
+   "chapter": 11,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3876,
+   "words": 3876
+  },
+  "HP-110": {
+   "chapter": 110,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2278,
+   "words": 2278
+  },
+  "HP-111": {
+   "chapter": 111,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2164,
+   "words": 2164
+  },
+  "HP-112": {
+   "chapter": 112,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2192,
+   "words": 2192
+  },
+  "HP-113": {
+   "chapter": 113,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2320,
+   "words": 2320
+  },
+  "HP-114": {
+   "chapter": 114,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2299,
+   "words": 2299
+  },
+  "HP-115": {
+   "chapter": 115,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1888,
+   "words": 1888
+  },
+  "HP-116": {
+   "chapter": 116,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2094,
+   "words": 2094
+  },
+  "HP-117": {
+   "chapter": 117,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2221,
+   "words": 2221
+  },
+  "HP-118": {
+   "chapter": 118,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1945,
+   "words": 1945
+  },
+  "HP-119": {
+   "chapter": 119,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1653,
+   "words": 1653
+  },
+  "HP-12": {
+   "chapter": 12,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3580,
+   "words": 3580
+  },
+  "HP-120": {
+   "chapter": 120,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2455,
+   "words": 2455
+  },
+  "HP-121": {
+   "chapter": 121,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1367,
+   "words": 1367
+  },
+  "HP-122": {
+   "chapter": 122,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1617,
+   "words": 1617
+  },
+  "HP-123": {
+   "chapter": 123,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1137,
+   "words": 1137
+  },
+  "HP-124": {
+   "chapter": 124,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1553,
+   "words": 1553
+  },
+  "HP-125": {
+   "chapter": 125,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2072,
+   "words": 2072
+  },
+  "HP-126": {
+   "chapter": 126,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1399,
+   "words": 1399
+  },
+  "HP-127": {
+   "chapter": 127,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1730,
+   "words": 1730
+  },
+  "HP-128": {
+   "chapter": 128,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2004,
+   "words": 2004
+  },
+  "HP-129": {
+   "chapter": 129,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2229,
+   "words": 2229
+  },
+  "HP-13": {
+   "chapter": 13,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1461,
+   "words": 1461
+  },
+  "HP-130": {
+   "chapter": 130,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2158,
+   "words": 2158
+  },
+  "HP-131": {
+   "chapter": 131,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2111,
+   "words": 2111
+  },
+  "HP-132": {
+   "chapter": 132,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1873,
+   "words": 1873
+  },
+  "HP-133": {
+   "chapter": 133,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3093,
+   "words": 3093
+  },
+  "HP-134": {
+   "chapter": 134,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4928,
+   "words": 4928
+  },
+  "HP-135": {
+   "chapter": 135,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4056,
+   "words": 4056
+  },
+  "HP-136": {
+   "chapter": 136,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3921,
+   "words": 3921
+  },
+  "HP-137": {
+   "chapter": 137,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5244,
+   "words": 5244
+  },
+  "HP-138": {
+   "chapter": 138,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3889,
+   "words": 3889
+  },
+  "HP-139": {
+   "chapter": 139,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3664,
+   "words": 3664
+  },
+  "HP-14": {
+   "chapter": 14,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4047,
+   "words": 4047
+  },
+  "HP-140": {
+   "chapter": 140,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4792,
+   "words": 4797
+  },
+  "HP-141": {
+   "chapter": 141,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3252,
+   "words": 3257
+  },
+  "HP-142": {
+   "chapter": 142,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3096,
+   "words": 3101
+  },
+  "HP-143": {
+   "chapter": 143,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3076,
+   "words": 3081
+  },
+  "HP-144": {
+   "chapter": 144,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3111,
+   "words": 3116
+  },
+  "HP-145": {
+   "chapter": 145,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3141,
+   "words": 3146
+  },
+  "HP-146": {
+   "chapter": 146,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3173,
+   "words": 3177
+  },
+  "HP-147": {
+   "chapter": 147,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3122,
+   "words": 3127
+  },
+  "HP-148": {
+   "chapter": 148,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3061,
+   "words": 3066
+  },
+  "HP-149": {
+   "chapter": 149,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3086,
+   "words": 3086
+  },
+  "HP-15": {
+   "chapter": 15,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3894,
+   "words": 3894
+  },
+  "HP-150": {
+   "chapter": 150,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3105,
+   "words": 3105
+  },
+  "HP-151": {
+   "chapter": 151,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3033,
+   "words": 3039
+  },
+  "HP-152": {
+   "chapter": 152,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3963,
+   "words": 3969
+  },
+  "HP-153": {
+   "chapter": 153,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3444,
+   "words": 3450
+  },
+  "HP-154": {
+   "chapter": 154,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4965,
+   "words": 4965
+  },
+  "HP-155": {
+   "chapter": 155,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5388,
+   "words": 5388
+  },
+  "HP-156": {
+   "chapter": 156,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5170,
+   "words": 5170
+  },
+  "HP-157": {
+   "chapter": 157,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4492,
+   "words": 4492
+  },
+  "HP-158": {
+   "chapter": 158,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5441,
+   "words": 5441
+  },
+  "HP-16": {
+   "chapter": 16,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4852,
+   "words": 4852
+  },
+  "HP-17": {
+   "chapter": 17,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3313,
+   "words": 3313
+  },
+  "HP-18": {
+   "chapter": 18,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 925,
+   "words": 925
+  },
+  "HP-19": {
+   "chapter": 19,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4081,
+   "words": 4081
+  },
+  "HP-2": {
+   "chapter": 2,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3776,
+   "words": 3776
+  },
+  "HP-20": {
+   "chapter": 20,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3309,
+   "words": 3309
+  },
+  "HP-21": {
+   "chapter": 21,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4391,
+   "words": 4391
+  },
+  "HP-22": {
+   "chapter": 22,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1124,
+   "words": 1124
+  },
+  "HP-23": {
+   "chapter": 23,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1570,
+   "words": 1570
+  },
+  "HP-24": {
+   "chapter": 24,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4396,
+   "words": 4396
+  },
+  "HP-25": {
+   "chapter": 25,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1492,
+   "words": 1492
+  },
+  "HP-26": {
+   "chapter": 26,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1482,
+   "words": 1482
+  },
+  "HP-27": {
+   "chapter": 27,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 984,
+   "words": 984
+  },
+  "HP-28": {
+   "chapter": 28,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 923,
+   "words": 923
+  },
+  "HP-29": {
+   "chapter": 29,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 975,
+   "words": 975
+  },
+  "HP-3": {
+   "chapter": 3,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3364,
+   "words": 3364
+  },
+  "HP-30": {
+   "chapter": 30,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 926,
+   "words": 926
+  },
+  "HP-31": {
+   "chapter": 31,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 872,
+   "words": 872
+  },
+  "HP-32": {
+   "chapter": 32,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 941,
+   "words": 941
+  },
+  "HP-33": {
+   "chapter": 33,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 844,
+   "words": 844
+  },
+  "HP-34": {
+   "chapter": 34,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 754,
+   "words": 754
+  },
+  "HP-35": {
+   "chapter": 35,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 840,
+   "words": 840
+  },
+  "HP-36": {
+   "chapter": 36,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 892,
+   "words": 892
+  },
+  "HP-37": {
+   "chapter": 37,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 959,
+   "words": 959
+  },
+  "HP-38": {
+   "chapter": 38,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 857,
+   "words": 857
+  },
+  "HP-39": {
+   "chapter": 39,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 813,
+   "words": 813
+  },
+  "HP-4": {
+   "chapter": 4,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1650,
+   "words": 1650
+  },
+  "HP-40": {
+   "chapter": 40,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1251,
+   "words": 1251
+  },
+  "HP-41": {
+   "chapter": 41,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 808,
+   "words": 808
+  },
+  "HP-42": {
+   "chapter": 42,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4476,
+   "words": 4476
+  },
+  "HP-43": {
+   "chapter": 43,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 639,
+   "words": 639
+  },
+  "HP-44": {
+   "chapter": 44,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 728,
+   "words": 728
+  },
+  "HP-45": {
+   "chapter": 45,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3168,
+   "words": 3168
+  },
+  "HP-46": {
+   "chapter": 46,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 557,
+   "words": 557
+  },
+  "HP-47": {
+   "chapter": 47,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 720,
+   "words": 720
+  },
+  "HP-48": {
+   "chapter": 48,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 696,
+   "words": 696
+  },
+  "HP-49": {
+   "chapter": 49,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 557,
+   "words": 557
+  },
+  "HP-5": {
+   "chapter": 5,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2620,
+   "words": 2620
+  },
+  "HP-50": {
+   "chapter": 50,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 640,
+   "words": 640
+  },
+  "HP-51": {
+   "chapter": 51,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 692,
+   "words": 692
+  },
+  "HP-52": {
+   "chapter": 52,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1304,
+   "words": 1304
+  },
+  "HP-53": {
+   "chapter": 53,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1244,
+   "words": 1244
+  },
+  "HP-54": {
+   "chapter": 54,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1400,
+   "words": 1400
+  },
+  "HP-55": {
+   "chapter": 55,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1410,
+   "words": 1410
+  },
+  "HP-56": {
+   "chapter": 56,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1230,
+   "words": 1230
+  },
+  "HP-57": {
+   "chapter": 57,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3502,
+   "words": 3502
+  },
+  "HP-58": {
+   "chapter": 58,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1308,
+   "words": 1308
+  },
+  "HP-59": {
+   "chapter": 59,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3773,
+   "words": 3773
+  },
+  "HP-6": {
+   "chapter": 6,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:22",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1375,
+   "words": 1375
+  },
+  "HP-60": {
+   "chapter": 60,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1739,
+   "words": 1739
+  },
+  "HP-61": {
+   "chapter": 61,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1421,
+   "words": 1421
+  },
+  "HP-62": {
+   "chapter": 62,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1763,
+   "words": 1763
+  },
+  "HP-63": {
+   "chapter": 63,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1165,
+   "words": 1165
+  },
+  "HP-64": {
+   "chapter": 64,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1234,
+   "words": 1234
+  },
+  "HP-65": {
+   "chapter": 65,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1238,
+   "words": 1238
+  },
+  "HP-66": {
+   "chapter": 66,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1152,
+   "words": 1152
+  },
+  "HP-67": {
+   "chapter": 67,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1102,
+   "words": 1102
+  },
+  "HP-68": {
+   "chapter": 68,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1045,
+   "words": 1045
+  },
+  "HP-69": {
+   "chapter": 69,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1117,
+   "words": 1117
+  },
+  "HP-7": {
+   "chapter": 7,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1440,
+   "words": 1440
+  },
+  "HP-70": {
+   "chapter": 70,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1041,
+   "words": 1041
+  },
+  "HP-71": {
+   "chapter": 71,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 845,
+   "words": 845
+  },
+  "HP-72": {
+   "chapter": 72,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 704,
+   "words": 704
+  },
+  "HP-73": {
+   "chapter": 73,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1325,
+   "words": 1325
+  },
+  "HP-74": {
+   "chapter": 74,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 6295,
+   "words": 6295
+  },
+  "HP-75": {
+   "chapter": 75,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1708,
+   "words": 1708
+  },
+  "HP-76": {
+   "chapter": 76,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4569,
+   "words": 4569
+  },
+  "HP-77": {
+   "chapter": 77,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1565,
+   "words": 1565
+  },
+  "HP-78": {
+   "chapter": 78,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1528,
+   "words": 1528
+  },
+  "HP-79": {
+   "chapter": 79,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1479,
+   "words": 1479
+  },
+  "HP-8": {
+   "chapter": 8,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1418,
+   "words": 1418
+  },
+  "HP-80": {
+   "chapter": 80,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1526,
+   "words": 1526
+  },
+  "HP-81": {
+   "chapter": 81,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1376,
+   "words": 1376
+  },
+  "HP-82": {
+   "chapter": 82,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1360,
+   "words": 1360
+  },
+  "HP-83": {
+   "chapter": 83,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1382,
+   "words": 1382
+  },
+  "HP-84": {
+   "chapter": 84,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1468,
+   "words": 1468
+  },
+  "HP-85": {
+   "chapter": 85,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1531,
+   "words": 1531
+  },
+  "HP-86": {
+   "chapter": 86,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1479,
+   "words": 1479
+  },
+  "HP-87": {
+   "chapter": 87,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1647,
+   "words": 1647
+  },
+  "HP-88": {
+   "chapter": 88,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1242,
+   "words": 1242
+  },
+  "HP-89": {
+   "chapter": 89,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1479,
+   "words": 1479
+  },
+  "HP-9": {
+   "chapter": 9,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:23",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1617,
+   "words": 1617
+  },
+  "HP-90": {
+   "chapter": 90,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1709,
+   "words": 1709
+  },
+  "HP-91": {
+   "chapter": 91,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1407,
+   "words": 1407
+  },
+  "HP-92": {
+   "chapter": 92,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1302,
+   "words": 1302
+  },
+  "HP-93": {
+   "chapter": 93,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1413,
+   "words": 1413
+  },
+  "HP-94": {
+   "chapter": 94,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4395,
+   "words": 4395
+  },
+  "HP-95": {
+   "chapter": 95,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5812,
+   "words": 5812
+  },
+  "HP-96": {
+   "chapter": 96,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2491,
+   "words": 2491
+  },
+  "HP-97": {
+   "chapter": 97,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2648,
+   "words": 2648
+  },
+  "HP-98": {
+   "chapter": 98,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2409,
+   "words": 2409
+  },
+  "HP-99": {
+   "chapter": 99,
+   "docsCommit": "b3896115",
+   "novel": "HP",
+   "recordedAt": "2026-11-17 09:06:24",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2556,
+   "words": 2556
+  },
+  "SF-1": {
+   "chapter": 1,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 730,
+   "words": 730
+  },
+  "SF-10": {
+   "chapter": 10,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 920,
+   "words": 920
+  },
+  "SF-100": {
+   "chapter": 100,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1999,
+   "words": 1999
+  },
+  "SF-101": {
+   "chapter": 101,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1936,
+   "words": 1936
+  },
+  "SF-103": {
+   "chapter": 103,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1738,
+   "words": 1738
+  },
+  "SF-104": {
+   "chapter": 104,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1741,
+   "words": 1741
+  },
+  "SF-105": {
+   "chapter": 105,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1553,
+   "words": 1553
+  },
+  "SF-106": {
+   "chapter": 106,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1520,
+   "words": 1520
+  },
+  "SF-107": {
+   "chapter": 107,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1273,
+   "words": 1273
+  },
+  "SF-108": {
+   "chapter": 108,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1855,
+   "words": 1855
+  },
+  "SF-109": {
+   "chapter": 109,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1442,
+   "words": 1442
+  },
+  "SF-11": {
+   "chapter": 11,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 728,
+   "words": 728
+  },
+  "SF-110": {
+   "chapter": 110,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1776,
+   "words": 1776
+  },
+  "SF-111": {
+   "chapter": 111,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1327,
+   "words": 1327
+  },
+  "SF-112": {
+   "chapter": 112,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1520,
+   "words": 1520
+  },
+  "SF-113": {
+   "chapter": 113,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2651,
+   "words": 2651
+  },
+  "SF-114": {
+   "chapter": 114,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2350,
+   "words": 2350
+  },
+  "SF-115": {
+   "chapter": 115,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3183,
+   "words": 3183
+  },
+  "SF-116": {
+   "chapter": 116,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4314,
+   "words": 4318
+  },
+  "SF-117": {
+   "chapter": 117,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3151,
+   "words": 3156
+  },
+  "SF-118": {
+   "chapter": 118,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3063,
+   "words": 3068
+  },
+  "SF-119": {
+   "chapter": 119,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3073,
+   "words": 3076
+  },
+  "SF-12": {
+   "chapter": 12,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1659,
+   "words": 1659
+  },
+  "SF-120": {
+   "chapter": 120,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3061,
+   "words": 3067
+  },
+  "SF-121": {
+   "chapter": 121,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3202,
+   "words": 3207
+  },
+  "SF-122": {
+   "chapter": 122,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:27",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3313,
+   "words": 3319
+  },
+  "SF-123": {
+   "chapter": 123,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:27",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3162,
+   "words": 3168
+  },
+  "SF-124": {
+   "chapter": 124,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:27",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3063,
+   "words": 3068
+  },
+  "SF-125": {
+   "chapter": 125,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:27",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3069,
+   "words": 3075
+  },
+  "SF-126": {
+   "chapter": 126,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:27",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3047,
+   "words": 3053
+  },
+  "SF-127": {
+   "chapter": 127,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:27",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3633,
+   "words": 3638
+  },
+  "SF-128": {
+   "chapter": 128,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:27",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3142,
+   "words": 3142
+  },
+  "SF-129": {
+   "chapter": 129,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:27",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5291,
+   "words": 5291
+  },
+  "SF-13": {
+   "chapter": 13,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 922,
+   "words": 922
+  },
+  "SF-130": {
+   "chapter": 130,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:27",
+   "source": "pp-true_word_counts",
+   "splitterWords": 6007,
+   "words": 6007
+  },
+  "SF-131": {
+   "chapter": 131,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:27",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5462,
+   "words": 5462
+  },
+  "SF-132": {
+   "chapter": 132,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:27",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4238,
+   "words": 4238
+  },
+  "SF-133": {
+   "chapter": 133,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:27",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5318,
+   "words": 5318
+  },
+  "SF-14": {
+   "chapter": 14,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 877,
+   "words": 877
+  },
+  "SF-15": {
+   "chapter": 15,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3263,
+   "words": 3263
+  },
+  "SF-16": {
+   "chapter": 16,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 967,
+   "words": 967
+  },
+  "SF-17": {
+   "chapter": 17,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5008,
+   "words": 5008
+  },
+  "SF-18": {
+   "chapter": 18,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1203,
+   "words": 1203
+  },
+  "SF-19": {
+   "chapter": 19,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3506,
+   "words": 3506
+  },
+  "SF-2": {
+   "chapter": 2,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 724,
+   "words": 724
+  },
+  "SF-20": {
+   "chapter": 20,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 811,
+   "words": 811
+  },
+  "SF-21": {
+   "chapter": 21,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4436,
+   "words": 4436
+  },
+  "SF-22": {
+   "chapter": 22,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 926,
+   "words": 926
+  },
+  "SF-23": {
+   "chapter": 23,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3526,
+   "words": 3526
+  },
+  "SF-24": {
+   "chapter": 24,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1072,
+   "words": 1072
+  },
+  "SF-25": {
+   "chapter": 25,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5191,
+   "words": 5191
+  },
+  "SF-26": {
+   "chapter": 26,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 783,
+   "words": 783
+  },
+  "SF-27": {
+   "chapter": 27,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4097,
+   "words": 4097
+  },
+  "SF-28": {
+   "chapter": 28,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 884,
+   "words": 884
+  },
+  "SF-29": {
+   "chapter": 29,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3161,
+   "words": 3161
+  },
+  "SF-3": {
+   "chapter": 3,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1107,
+   "words": 1107
+  },
+  "SF-30": {
+   "chapter": 30,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 862,
+   "words": 862
+  },
+  "SF-31": {
+   "chapter": 31,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4127,
+   "words": 4127
+  },
+  "SF-32": {
+   "chapter": 32,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 875,
+   "words": 875
+  },
+  "SF-33": {
+   "chapter": 33,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1153,
+   "words": 1153
+  },
+  "SF-34": {
+   "chapter": 34,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 780,
+   "words": 780
+  },
+  "SF-35": {
+   "chapter": 35,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3199,
+   "words": 3199
+  },
+  "SF-36": {
+   "chapter": 36,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1122,
+   "words": 1122
+  },
+  "SF-37": {
+   "chapter": 37,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1166,
+   "words": 1166
+  },
+  "SF-38": {
+   "chapter": 38,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1106,
+   "words": 1106
+  },
+  "SF-39": {
+   "chapter": 39,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1078,
+   "words": 1078
+  },
+  "SF-4": {
+   "chapter": 4,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 787,
+   "words": 787
+  },
+  "SF-40": {
+   "chapter": 40,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1210,
+   "words": 1210
+  },
+  "SF-41": {
+   "chapter": 41,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1065,
+   "words": 1065
+  },
+  "SF-42": {
+   "chapter": 42,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 958,
+   "words": 958
+  },
+  "SF-43": {
+   "chapter": 43,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1106,
+   "words": 1106
+  },
+  "SF-44": {
+   "chapter": 44,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 994,
+   "words": 994
+  },
+  "SF-45": {
+   "chapter": 45,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 984,
+   "words": 984
+  },
+  "SF-46": {
+   "chapter": 46,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1266,
+   "words": 1266
+  },
+  "SF-47": {
+   "chapter": 47,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1210,
+   "words": 1210
+  },
+  "SF-48": {
+   "chapter": 48,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1129,
+   "words": 1129
+  },
+  "SF-49": {
+   "chapter": 49,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1100,
+   "words": 1100
+  },
+  "SF-5": {
+   "chapter": 5,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 690,
+   "words": 690
+  },
+  "SF-50": {
+   "chapter": 50,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1052,
+   "words": 1052
+  },
+  "SF-51": {
+   "chapter": 51,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1140,
+   "words": 1140
+  },
+  "SF-52": {
+   "chapter": 52,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1085,
+   "words": 1085
+  },
+  "SF-53": {
+   "chapter": 53,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1051,
+   "words": 1051
+  },
+  "SF-54": {
+   "chapter": 54,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1071,
+   "words": 1071
+  },
+  "SF-55": {
+   "chapter": 55,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1039,
+   "words": 1039
+  },
+  "SF-56": {
+   "chapter": 56,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1020,
+   "words": 1020
+  },
+  "SF-57": {
+   "chapter": 57,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1020,
+   "words": 1020
+  },
+  "SF-58": {
+   "chapter": 58,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1060,
+   "words": 1060
+  },
+  "SF-59": {
+   "chapter": 59,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1079,
+   "words": 1079
+  },
+  "SF-6": {
+   "chapter": 6,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 887,
+   "words": 887
+  },
+  "SF-60": {
+   "chapter": 60,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1099,
+   "words": 1099
+  },
+  "SF-61": {
+   "chapter": 61,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4737,
+   "words": 4737
+  },
+  "SF-62": {
+   "chapter": 62,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 3754,
+   "words": 3754
+  },
+  "SF-63": {
+   "chapter": 63,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5041,
+   "words": 5041
+  },
+  "SF-64": {
+   "chapter": 64,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1516,
+   "words": 1516
+  },
+  "SF-65": {
+   "chapter": 65,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1310,
+   "words": 1310
+  },
+  "SF-66": {
+   "chapter": 66,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1498,
+   "words": 1498
+  },
+  "SF-67": {
+   "chapter": 67,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1544,
+   "words": 1544
+  },
+  "SF-68": {
+   "chapter": 68,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1682,
+   "words": 1682
+  },
+  "SF-69": {
+   "chapter": 69,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1398,
+   "words": 1398
+  },
+  "SF-7": {
+   "chapter": 7,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 840,
+   "words": 840
+  },
+  "SF-70": {
+   "chapter": 70,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1583,
+   "words": 1583
+  },
+  "SF-71": {
+   "chapter": 71,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1520,
+   "words": 1520
+  },
+  "SF-72": {
+   "chapter": 72,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1498,
+   "words": 1498
+  },
+  "SF-73": {
+   "chapter": 73,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1023,
+   "words": 1023
+  },
+  "SF-74": {
+   "chapter": 74,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 6060,
+   "words": 6060
+  },
+  "SF-75": {
+   "chapter": 75,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 5329,
+   "words": 5329
+  },
+  "SF-76": {
+   "chapter": 76,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1752,
+   "words": 1752
+  },
+  "SF-77": {
+   "chapter": 77,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1774,
+   "words": 1774
+  },
+  "SF-78": {
+   "chapter": 78,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1430,
+   "words": 1430
+  },
+  "SF-79": {
+   "chapter": 79,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1418,
+   "words": 1418
+  },
+  "SF-8": {
+   "chapter": 8,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 947,
+   "words": 947
+  },
+  "SF-80": {
+   "chapter": 80,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 903,
+   "words": 903
+  },
+  "SF-81": {
+   "chapter": 81,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1124,
+   "words": 1124
+  },
+  "SF-82": {
+   "chapter": 82,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 984,
+   "words": 984
+  },
+  "SF-83": {
+   "chapter": 83,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1006,
+   "words": 1006
+  },
+  "SF-84": {
+   "chapter": 84,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1786,
+   "words": 1786
+  },
+  "SF-85": {
+   "chapter": 85,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2073,
+   "words": 2073
+  },
+  "SF-86": {
+   "chapter": 86,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1916,
+   "words": 1916
+  },
+  "SF-87": {
+   "chapter": 87,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1889,
+   "words": 1889
+  },
+  "SF-88": {
+   "chapter": 88,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2035,
+   "words": 2035
+  },
+  "SF-89": {
+   "chapter": 89,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2105,
+   "words": 2105
+  },
+  "SF-9": {
+   "chapter": 9,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:25",
+   "source": "pp-true_word_counts",
+   "splitterWords": 4464,
+   "words": 4464
+  },
+  "SF-90": {
+   "chapter": 90,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1838,
+   "words": 1838
+  },
+  "SF-91": {
+   "chapter": 91,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2360,
+   "words": 2360
+  },
+  "SF-92": {
+   "chapter": 92,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2222,
+   "words": 2222
+  },
+  "SF-93": {
+   "chapter": 93,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2237,
+   "words": 2237
+  },
+  "SF-94": {
+   "chapter": 94,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2235,
+   "words": 2235
+  },
+  "SF-95": {
+   "chapter": 95,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2253,
+   "words": 2253
+  },
+  "SF-96": {
+   "chapter": 96,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 2122,
+   "words": 2122
+  },
+  "SF-97": {
+   "chapter": 97,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1828,
+   "words": 1828
+  },
+  "SF-98": {
+   "chapter": 98,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1473,
+   "words": 1473
+  },
+  "SF-99": {
+   "chapter": 99,
+   "docsCommit": "b3896115",
+   "novel": "SF",
+   "recordedAt": "2026-11-17 09:06:26",
+   "source": "pp-true_word_counts",
+   "splitterWords": 1900,
+   "words": 1900
+  }
+ },
+ "counting": "words = len(re.findall(r'\\w+', whole chapter text including the heading line))",
+ "schema": 1
+}

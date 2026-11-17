@@ -23,6 +23,12 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import pytest
+
+# Predates ENABLE_IDENTITY_PRESERVATION (user env sets it to 1): the stubbed assets have no identity provenance.
+_ENV = pytest.MonkeyPatch()
+_ENV.setenv("ENABLE_IDENTITY_PRESERVATION", "0")  # these characterization tests predate the flag; their fake img.png has no identity provenance
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
@@ -585,6 +591,7 @@ check("T16 merged adds new seo tag", "SystemBetrayal" in _merged, True)
 
 # --- cleanup / report ------------------------------------------------------------
 shutil.rmtree(TMP, ignore_errors=True)
+_ENV.undo()
 
 if FAILS:
     print(f"FAILED ({len(FAILS)}):")

@@ -57,6 +57,7 @@ except Exception:  # pragma: no cover - optional runtime helper
 import automation_db
 import growth_scheduler
 import release_planner
+import chapter_split_v2  # safer Docs chapter splitter (grok-jobs/proposed/chapter_split_v2.py -> repo root)
 # SC-3/SC-4 cutover: SQLite-backed repositories for posting schedule and
 # deep-tiktok rotation. These modules never import app at load time.
 from storage import schedule_repository as sr
@@ -18761,10 +18762,10 @@ def docs_chapter_index(abbr: str) -> dict[str, Any]:
             chapters.append({"number": number, "title": title, "heading": paragraph, "index": index})
     full_text = "\n\n".join(paragraphs)
     marker_chapters: list[dict[str, Any]] = []
-    for match in CHAPTER_MARKER_RE.finditer(full_text):
-        label = match.group("label").strip()
-        title = clean_chapter_title(label, match.group("tail") or "")
-        marker_chapters.append({"number": chapter_number_from_label(label), "title": title, "heading": title, "index": match.start()})
+    for split_chapter in chapter_split_v2.split_chapters(full_text):
+        match = CHAPTER_MARKER_RE.match(full_text, split_chapter.start)
+        title = clean_chapter_title(split_chapter.label, (match.group("tail") if match else "") or "")
+        marker_chapters.append({"number": split_chapter.number, "title": title, "heading": title, "index": split_chapter.start})
     if marker_chapters:
         unique_markers: list[dict[str, Any]] = []
         seen_numbers: set[int] = set()
@@ -18820,6 +18821,14 @@ def docs_chapter_text(abbr: str, chapter_number: int) -> dict[str, Any]:
     abbr = abbr.upper().strip()
     paragraphs = docx_paragraphs(docs_file_content(DOCS_NOVEL_FILES[abbr]))
     full_text = "\n\n".join(paragraphs)
+    # Safer split: heading at paragraph start or right after a sentence end, number in (last, last+3], sub-parts continue
+    # the chapter, a repeated heading ends it, trailing bare next-title line dropped. Falls back to the legacy logic below
+    # only when the new splitter does not know the chapter (e.g. "Prologue").
+    split_hit = chapter_split_v2.find_chapter(full_text, int(chapter_number))
+    if split_hit is not None:
+        hit_match = CHAPTER_MARKER_RE.match(full_text, split_hit.start)
+        hit_title = clean_chapter_title(split_hit.label, (hit_match.group("tail") if hit_match else "") or "")
+        return docs_chapter_payload(abbr, split_hit.number, hit_title, hit_title, chapter_split_v2.chapter_text(full_text, split_hit))
     markers = list(CHAPTER_MARKER_RE.finditer(full_text))
     starts: list[tuple[int, int, str, str]] = []
     for index, paragraph in enumerate(paragraphs):
@@ -18911,12 +18920,19 @@ def append_chapter_to_github_docs(abbr_or_novel: str, title: str, chapter_text: 
         repo=DOCS_REPO_NAME,
         branch=branch,
     )
+    word_count: dict[str, Any] = {}
+    try:
+        import chapter_word_counts
+        word_count = chapter_word_counts.record_import(abbr, title, chapter_text, result)
+    except Exception as exc:  # the chapter already reached the Docs: never fail the import; the Patreon gate fails closed on a missing count
+        word_count = {"ok": False, "error": str(exc)[:200]}
     return {
         "abbr": abbr,
         "novel": NOVEL_NAMES.get(abbr, abbr),
         "file": repo_path,
         "branch": branch,
         "upload": result,
+        "wordCount": word_count,
     }
 
 
@@ -20080,6 +20096,27 @@ def _royal_road_result_row(result_path: Path) -> dict[str, Any]:
     return row
 
 
+def _patreon_readback_gate(row: dict[str, Any], stage: str, abbr: str, chapter: int) -> dict[str, Any]:
+    """Post-save read-back diff: selected tier + saved body length vs the SAVED chapter word count (chapter_word_counts.json,
+    seeded from an independent count and recorded at import).  A missing saved count fails closed; chapter_split_v2 is only a
+    secondary diagnostic (grok-jobs/proposed/patreon_readback_gate.py)."""
+    import chapter_word_counts
+    import patreon_readback_gate
+    abbr = str(abbr or "").upper().strip()
+    record = chapter_word_counts.get(abbr, int(chapter))
+    splitter_words, splitter_error = None, ""
+    if record is not None:
+        try:
+            full_text = "\n\n".join(docx_paragraphs(docs_file_content(DOCS_NOVEL_FILES[abbr])))
+            splitter_words = patreon_readback_gate.splitter_chapter_words(full_text, int(chapter))
+        except Exception as exc:
+            splitter_error = str(exc)[:200]
+    verdict = patreon_readback_gate.evaluate_readback(row, stage, record, splitter_words, splitter_error)
+    if not verdict["ok"]:
+        raise RuntimeError("Patreon post-save read-back failed: " + "; ".join(verdict["reasons"]))
+    return verdict
+
+
 def _verified_royal_road_result(result_path: Path) -> dict[str, Any]:
     row = _royal_road_result_row(result_path)
     verification = row.get("verification") if isinstance(row.get("verification"), dict) else {}
@@ -20325,6 +20362,7 @@ def run_release_automation_job(job: dict[str, Any]) -> dict[str, Any]:
         },
     )
     row = _verified_patreon_result(result_path, stage)
+    readback = _patreon_readback_gate(row, stage, str(job.get("abbr") or ""), int(job.get("chapter") or 0))
     remote_url = str(row.get("pageUrl") or "")
     completed = mark_chapter_release_stage_complete(assignment_key, stage)
     if not completed.get("completed"):
@@ -20339,6 +20377,9 @@ def run_release_automation_job(job: dict[str, Any]) -> dict[str, Any]:
             "resultPath": str(result_path),
             "completion": completed,
             "verificationSource": "playwright-hard-gate",
+            "readback": readback,
+            "mediaStatus": str(row.get("mediaStatus") or ""),
+            "mediaHold": row.get("mediaHold") if isinstance(row.get("mediaHold"), dict) else {},
         },
     )
     return {"ok": True, "alreadyCompleted": False, "result": row, "job": updated}
@@ -24233,7 +24274,9 @@ def release_stage_completion_gate(assignment: dict[str, Any], stage: str) -> dic
             if publish_date > iso_today().isoformat() and not checks.get("date") and publish_date not in schedule_actions:
                 errors.append("Patreon helper did not confirm the scheduled publish date.")
             media = result.get("mediaResult") if isinstance(result.get("mediaResult"), dict) else {}
-            if not (media.get("attached") or checks.get("media")):
+            if str(result.get("mediaStatus") or checks.get("mediaStatus") or "") == "HELD_IDENTITY":
+                warnings.append("Patreon image held pending identity approval (HELD_IDENTITY); text posts without an image.")
+            elif not (media.get("attached") or checks.get("media")):
                 warnings.append("Patreon helper did not confirm an image was attached.")
             if result.get("submitResult") and not bool((result.get("submitResult") or {}).get("verified")):
                 errors.append("Patreon helper submitted the form but could not verify the schedule or publish result.")
@@ -24387,32 +24430,229 @@ async function clickIfVisible(page, texts) {{
   return false;
 }}
 
-async function setTierSelection(page, tier, shouldSelect) {{
-  const control = page.getByRole('menuitemcheckbox').filter({{ hasText: tier }}).first();
-  if (!(await control.count().catch(() => 0))) return {{ found: false, verified: false }};
-  try {{
-    await control.scrollIntoViewIfNeeded().catch(() => null);
-    let checked = (await control.getAttribute('aria-checked')) === 'true';
-    if (checked !== shouldSelect) {{
-      await control.click({{ force: true }});
-      await page.waitForTimeout(400);
-      checked = (await control.getAttribute('aria-checked')) === 'true';
-    }}
-    return {{
-      found: true,
-      verified: checked === shouldSelect,
-      finalChecked: checked,
-      selector: `menuitemcheckbox:${{tier}}`
-    }};
-  }} catch (error) {{
-    return {{
-      found: true,
-      verified: false,
-      error: String(error.message || error).slice(0, 400),
-      selector: `menuitemcheckbox:${{tier}}`
-    }};
+// === PATREON TIER HELPERS BEGIN ===
+// Drafted from the real editor markup captured in grok-jobs/proposed/patreon_editor_controls.json.
+// Access:   input[type=radio][value=paid] (no aria-label, readonly) / input[type=radio][aria-label="Free access"][value=public]
+// Tiers on: input#paid-members-toggle[type=checkbox][aria-label="Toggle tier selection"]
+// Tier menu: button[aria-label="Select tiers"][aria-haspopup=menu] (text "N tier(s)") -> button[role=menuitemcheckbox][aria-checked]
+//            items: "Select all tiers" (NEVER clicked), "Path Initiate $3/month ...", "Inner Disciple $5/month ..." (price-agnostic match)
+const PATREON_TIER_NAMES = ['Inner Disciple', 'Path Initiate'];
+
+function tierNameFromText(text) {{
+  const t = String(text || '').replace(/\\s+/g, ' ').trim();
+  if (/^select all/i.test(t)) return 'ALL';
+  for (const name of PATREON_TIER_NAMES) {{
+    if (new RegExp('^' + name + '\\\\b', 'i').test(t)) return name;
+  }}
+  return null;
+}}
+
+function tierTrigger(page) {{
+  return page.locator('button[aria-label="Select tiers"], button[aria-haspopup="menu"][aria-label*="tier" i]').first();
+}}
+
+async function tierTriggerInfo(page) {{
+  const trigger = tierTrigger(page);
+  if (!(await trigger.count().catch(() => 0))) return {{ found: false, text: '', count: null, expanded: false }};
+  const text = String(await trigger.innerText().catch(() => '')).replace(/\\s+/g, ' ').trim();
+  const match = text.match(/(\\d+)\\s+tiers?/i);
+  return {{
+    found: true,
+    text,
+    count: match ? Number(match[1]) : null,
+    expanded: (await trigger.getAttribute('aria-expanded').catch(() => null)) === 'true'
+  }};
+}}
+
+async function openTierMenu(page) {{
+  const trigger = tierTrigger(page);
+  if (!(await trigger.count().catch(() => 0))) return false;
+  for (let attempt = 0; attempt < 2; attempt += 1) {{
+    if ((await trigger.getAttribute('aria-expanded').catch(() => null)) === 'true') return true;
+    await trigger.click({{ force: true, timeout: 5000 }}).catch(() => null);
+    await page.waitForTimeout(500);
+  }}
+  return (await trigger.getAttribute('aria-expanded').catch(() => null)) === 'true';
+}}
+
+async function closeTierMenu(page) {{
+  const trigger = tierTrigger(page);
+  if (!(await trigger.count().catch(() => 0))) return;
+  if ((await trigger.getAttribute('aria-expanded').catch(() => null)) === 'true') {{
+    await page.keyboard.press('Escape').catch(() => null);
+    await page.waitForTimeout(300);
+  }}
+  if ((await trigger.getAttribute('aria-expanded').catch(() => null)) === 'true') {{
+    await trigger.click({{ force: true, timeout: 5000 }}).catch(() => null);
+    await page.waitForTimeout(300);
   }}
 }}
+
+async function readTierItems(page) {{
+  const locator = page.locator('[role="menuitemcheckbox"]');
+  const total = await locator.count().catch(() => 0);
+  const items = [];
+  for (let index = 0; index < total; index += 1) {{
+    const el = locator.nth(index);
+    const text = await el.textContent().catch(() => '');
+    const name = tierNameFromText(text);
+    if (!name) continue;
+    items.push({{ name, checked: (await el.getAttribute('aria-checked').catch(() => null)) === 'true', el }});
+  }}
+  return items;
+}}
+
+async function readPaidAccess(page) {{
+  // Fail closed: Paid counts only when the Paid radio (value=paid) is FOUND and CHECKED. Nothing is inferred
+  // from the Free radio, the tier toggle or the tier menu.
+  const radio = page.locator('input[type="radio"][value="paid"]').first();
+  if (!(await radio.count().catch(() => 0))) return {{ found: false, checked: false, paid: false, source: 'radio' }};
+  const checked = (await radio.isChecked().catch(() => false)) || (await radio.getAttribute('aria-checked').catch(() => null)) === 'true';
+  return {{ found: true, checked, paid: checked, source: 'radio' }};
+}}
+
+async function selectPaidAccess(page) {{
+  const actions = [];
+  let state = await readPaidAccess(page);
+  if (!state.found) {{
+    actions.push('missing paid access control');
+    return {{ ok: false, actions, paidFound: false, paidChecked: false }};
+  }}
+  if (state.checked) {{
+    actions.push('Paid access already selected');
+    return {{ ok: true, actions, paidFound: true, paidChecked: true }};
+  }}
+  const radio = page.locator('input[type="radio"][value="paid"]').first();
+  const attempts = [
+    ['radio', async () => radio.check({{ force: true, timeout: 3000 }})],
+    ['radio label', async () => radio.locator('xpath=ancestor::label[1]').click({{ force: true, timeout: 3000 }})]
+  ];
+  for (const [name, run] of attempts) {{
+    await run().catch(() => null);
+    await page.waitForTimeout(600);
+    state = await readPaidAccess(page);
+    if (state.checked) {{
+      actions.push(`selected Paid access (${{name}})`);
+      return {{ ok: true, actions, paidFound: true, paidChecked: true }};
+    }}
+  }}
+  actions.push('failed to select Paid access');
+  return {{ ok: false, actions, paidFound: state.found, paidChecked: state.checked }};
+}}
+
+function tierAccessToggle(page) {{
+  return page.locator('input#paid-members-toggle, input[type="checkbox"][aria-label="Toggle tier selection"]').first();
+}}
+
+async function readTierAccessToggle(page) {{
+  const toggle = tierAccessToggle(page);
+  if (!(await toggle.count().catch(() => 0))) return {{ found: false, on: false }};
+  const checked = await toggle.isChecked().catch(() => false);
+  const aria = await toggle.getAttribute('aria-checked').catch(() => null);
+  return {{ found: true, on: checked || aria === 'true' }};
+}}
+
+async function enableTierAccess(page) {{
+  let state = await readTierAccessToggle(page);
+  if (!state.found) {{
+    // The checkbox is not required: the tier menu itself is the source of truth (verified later).
+    return {{ ok: true, actions: ['paid-member tier toggle not present; relying on Select tiers menu'] }};
+  }}
+  if (!state.on) {{
+    const toggle = tierAccessToggle(page);
+    await toggle.check({{ force: true, timeout: 3000 }}).catch(async () => {{
+      await toggle.locator('xpath=ancestor::label[1]').click({{ force: true, timeout: 3000 }}).catch(() => null);
+    }});
+    await page.waitForTimeout(500);
+    state = await readTierAccessToggle(page);
+  }}
+  if (!state.on) return {{ ok: false, actions: ['failed to enable paid-member tier access'] }};
+  return {{ ok: true, actions: ['verified paid-member tier access enabled'] }};
+}}
+
+async function configurePatreonTiers(page, desired) {{
+  const actions = [];
+  if (!(await openTierMenu(page))) {{
+    actions.push((await tierTrigger(page).count().catch(() => 0)) ? 'failed to open tier menu' : 'missing Select tiers control');
+    return {{ ok: false, actions, states: {{}} }};
+  }}
+  actions.push('opened tier menu');
+  let ok = true;
+  for (const tier of PATREON_TIER_NAMES) {{
+    const want = desired.has(tier);
+    await openTierMenu(page);
+    let item = (await readTierItems(page)).find(entry => entry.name === tier);
+    if (!item) {{
+      actions.push(want ? `missing ${{tier}} control` : `missing ${{tier}} control to clear`);
+      ok = false;
+      continue;
+    }}
+    if (item.checked !== want) {{
+      await item.el.click({{ force: true, timeout: 5000 }}).catch(() => null);
+      await page.waitForTimeout(500);
+      await openTierMenu(page);
+      item = (await readTierItems(page)).find(entry => entry.name === tier);
+    }}
+    const verified = Boolean(item) && item.checked === want;
+    actions.push(verified
+      ? `verified ${{tier}} ${{want ? 'selected' : 'cleared'}}`
+      : `failed ${{tier}} ${{want ? 'selected' : 'cleared'}} via menuitemcheckbox`);
+    if (!verified) ok = false;
+  }}
+  await openTierMenu(page);
+  const finalItems = await readTierItems(page);
+  const states = {{}};
+  for (const tier of PATREON_TIER_NAMES) {{
+    const entry = finalItems.find(item => item.name === tier);
+    states[tier] = entry ? entry.checked : null;
+  }}
+  await closeTierMenu(page);
+  const trigger = await tierTriggerInfo(page);
+  if (trigger.count !== null && trigger.count !== desired.size) {{
+    actions.push(`tier trigger shows "${{trigger.text}}" but ${{desired.size}} expected`);
+    ok = false;
+  }}
+  return {{ ok, actions, states, trigger: trigger.text }};
+}}
+
+// Read-only state read used by the pre-submit check and the post-save read-back. Never clicks a menu item.
+async function readPatreonTierState(page, desired) {{
+  const out = {{
+    paid: await readPaidAccess(page),
+    toggle: await readTierAccessToggle(page),
+    trigger: await tierTriggerInfo(page),
+    states: {{}},
+    menu: false,
+    allMatched: false
+  }};
+  if (out.trigger.found) {{
+    out.menu = await openTierMenu(page);
+    if (out.menu) {{
+      const items = await readTierItems(page);
+      let all = true;
+      for (const tier of PATREON_TIER_NAMES) {{
+        const entry = items.find(item => item.name === tier);
+        if (!entry) {{
+          out.states[tier] = null;
+          all = false;
+          continue;
+        }}
+        out.states[tier] = entry.checked;
+        if (entry.checked !== desired.has(tier)) all = false;
+      }}
+      out.allMatched = all;
+    }}
+    await closeTierMenu(page);
+    out.trigger = await tierTriggerInfo(page);
+  }}
+  const triggerOk = out.trigger.count === null || out.trigger.count === desired.size;
+  out.tiersOk = out.menu && out.allMatched && triggerOk;
+  const primary = out.tiersOk && (out.trigger.count === null || out.trigger.count >= 1);
+  out.tierAccess = (out.toggle.found && !out.toggle.on) ? false : (primary || (out.toggle.found && out.toggle.on));
+  out.tierAccessSource = primary ? 'menu' : (out.toggle.found ? 'checkbox' : 'none');
+  return out;
+}}
+// === PATREON TIER HELPERS END ===
 
 async function fillTitle(page, draft) {{
   const target = await firstVisible(page, [
@@ -24457,61 +24697,15 @@ async function tryConfigureAudience(page, draft) {{
     await page.waitForTimeout(600);
     return actions;
   }}
-  const paid = page.locator('input[type="radio"][value="paid"]:visible').first();
-  if (await paid.count().catch(() => 0)) {{
-    await paid.check({{ force: true }}).catch(async () => {{
-      await paid.locator('xpath=ancestor::label[1]').click({{ force: true }});
-    }});
-    actions.push('selected Paid access');
-    await page.waitForTimeout(600);
-  }} else {{
-    const clickedPaid = await clickIfVisible(page, ['Paid members only', 'Paid patrons only', 'Paid only', 'Select tiers', 'Who can see this post?']);
-    actions.push(clickedPaid ? 'selected Paid access by label' : 'Paid access control not found');
-    await page.waitForTimeout(600);
-  }}
   const desired = new Set(draft.tiers || []);
-  const tierAccessToggle = page.locator('input[type="checkbox"][aria-label="Toggle tier selection"]:visible').first();
-  if (desired.size > 0) {{
-    if (!(await tierAccessToggle.count().catch(() => 0))) {{
-      actions.push('missing paid-member tier access toggle');
-      return actions;
-    }}
-    await tierAccessToggle.check({{ force: true }}).catch(() => null);
-    await page.waitForTimeout(500);
-    if (!(await tierAccessToggle.isChecked().catch(() => false))) {{
-      actions.push('failed to enable paid-member tier access');
-      return actions;
-    }}
-    actions.push('verified paid-member tier access enabled');
-  }}
-  const tierButton = page.getByRole('button', {{ name: 'Select tiers' }}).first();
-  if (!(await tierButton.count().catch(() => 0))) {{
-    actions.push('missing Select tiers control');
-    return actions;
-  }}
-  if ((await tierButton.getAttribute('aria-expanded').catch(() => 'false')) !== 'true') {{
-    await tierButton.click({{ force: true }}).catch(() => null);
-    await page.waitForTimeout(500);
-  }}
-  if ((await tierButton.getAttribute('aria-expanded').catch(() => 'false')) !== 'true') {{
-    actions.push('failed to open tier menu');
-    return actions;
-  }}
-  actions.push('opened tier menu');
-  for (const tier of ['Inner Disciple', 'Path Initiate']) {{
-    const desiredState = desired.has(tier);
-    const selected = await setTierSelection(page, tier, desiredState);
-    if (selected.found && selected.verified) {{
-      actions.push(`verified ${{tier}} ${{desiredState ? 'selected' : 'cleared'}}`);
-    }} else if (selected.found) {{
-      actions.push(`failed ${{tier}} ${{desiredState ? 'selected' : 'cleared'}} via ${{selected.selector || 'unknown control'}}`);
-    }} else if (desiredState) {{
-      actions.push(`missing ${{tier}} control`);
-    }} else {{
-      actions.push(`missing ${{tier}} control to clear`);
-    }}
-  }}
-  await page.keyboard.press('Escape').catch(() => null);
+  const paidResult = await selectPaidAccess(page);
+  actions.push(...paidResult.actions);
+  if (!paidResult.ok) return actions;
+  const accessResult = await enableTierAccess(page);
+  actions.push(...accessResult.actions);
+  if (!accessResult.ok) return actions;
+  const tierResult = await configurePatreonTiers(page, desired);
+  actions.push(...tierResult.actions);
   return actions;
 }}
 
@@ -24571,6 +24765,10 @@ async function tryConfigureSchedule(page, draft) {{
 
 async function attachMedia(page, draft) {{
   const mediaPath = String(draft.media_path || '');
+  if (String(draft.media_status || '') === 'HELD_IDENTITY') {{
+    const hold = draft.media_hold || {{}};
+    return {{ attached: false, held: true, mediaStatus: 'HELD_IDENTITY', reason: String(hold.reason || 'identity approval missing'), imagePath: String(hold.imagePath || ''), sha256: String(hold.sha256 || '') }};
+  }}
   if (!mediaPath || !fs.existsSync(mediaPath)) return {{ attached: false, reason: 'media missing', mediaPath }};
   if (draft.edit_url) {{
     const existingMedia = page.locator('button[aria-label*="edit cover image media" i], img[alt*="preview" i], img[alt*="uploaded" i]').first();
@@ -24623,40 +24821,22 @@ async function verifyPatreonDraft(page, draft, row) {{
     : '';
   const expectedBody = String(draft.body || '').trim();
   checks.body = expectedBody.length > 0 && String(bodyText || '').trim().length >= Math.min(500, Math.floor(expectedBody.length * 0.8));
-  checks.media = Boolean(row.mediaResult && row.mediaResult.attached && row.mediaReady !== false);
+  const heldIdentity = String(draft.media_status || '') === 'HELD_IDENTITY';
+  checks.mediaStatus = heldIdentity ? 'HELD_IDENTITY' : (row.mediaResult && row.mediaResult.attached ? 'ATTACHED' : 'MISSING');
+  // Only in the identity-held case is the 'image attached' requirement relaxed (recorded explicitly); nothing else is relaxed.
+  checks.mediaRelaxed = heldIdentity ? 'HELD_IDENTITY' : '';
+  checks.media = heldIdentity ? true : Boolean(row.mediaResult && row.mediaResult.attached && row.mediaReady !== false);
 
-  const paid = page.locator('input[type="radio"][value="paid"]:visible').first();
-  checks.paidAccess = Boolean(await paid.isChecked().catch(() => false));
-  const tierAccessToggle = page.locator('input[type="checkbox"][aria-label="Toggle tier selection"]:visible').first();
-  checks.tierAccess = Boolean(await tierAccessToggle.isChecked().catch(() => false));
-
-  const tierButton = page.getByRole('button', {{ name: 'Select tiers' }}).first();
-  checks.tierMenu = Boolean(await tierButton.count().catch(() => 0));
-  checks.tiers = false;
-  if (checks.tierMenu) {{
-    if ((await tierButton.getAttribute('aria-expanded').catch(() => 'false')) !== 'true') {{
-      await tierButton.click({{ force: true }}).catch(() => null);
-      await page.waitForTimeout(400);
-    }}
-    const desired = new Set(draft.tiers || []);
-    let allMatched = true;
-    const states = {{}};
-    for (const tier of ['Inner Disciple', 'Path Initiate']) {{
-      const control = page.getByRole('menuitemcheckbox').filter({{ hasText: tier }}).first();
-      if (!(await control.count().catch(() => 0))) {{
-        states[tier] = null;
-        allMatched = false;
-        continue;
-      }}
-      const checked = (await control.getAttribute('aria-checked')) === 'true';
-      states[tier] = checked;
-      if (checked !== desired.has(tier)) allMatched = false;
-    }}
-    checks.tierStates = states;
-    checks.tiers = allMatched;
-    await page.keyboard.press('Escape').catch(() => null);
-    await page.waitForTimeout(250);
-  }}
+  const tierState = await readPatreonTierState(page, new Set(draft.tiers || []));
+  checks.paidFound = tierState.paid.found;
+  checks.paidChecked = tierState.paid.checked;
+  checks.paidAccess = tierState.paid.found && tierState.paid.checked;
+  checks.tierAccess = tierState.tierAccess;
+  checks.tierMenu = tierState.trigger.found;
+  checks.tiers = tierState.tiersOk;
+  checks.tierStates = tierState.states;
+  checks.tierTrigger = tierState.trigger.text;
+  checks.tierAccessSource = tierState.tierAccessSource;
 
   const today = new Date();
   const localDate = `${{today.getFullYear()}}-${{String(today.getMonth() + 1).padStart(2, '0')}}-${{String(today.getDate()).padStart(2, '0')}}`;
@@ -24707,6 +24887,7 @@ async function verifyPersistedPatreonPost(page, draft) {{
   await page.waitForTimeout(2500);
 
   const checks = {{ canonicalPostUrl: patreonPostId(page.url()) === postId }};
+  const tierStates = {{}};
   const titleInput = await firstVisible(page, [
     'input[placeholder*="title" i]',
     'textarea[placeholder*="title" i]',
@@ -24723,42 +24904,29 @@ async function verifyPersistedPatreonPost(page, draft) {{
     .replace(/^Paid access starts here\\s*/i, '');
   const expectedBody = normalizePatreonText(draft.body);
   checks.body = Boolean(expectedBody) && (persistedBody === expectedBody || persistedBody.includes(expectedBody));
+  const readbackBodyWords = (persistedBody.match(/\\w+/g) || []).length;
 
-  const paid = page.locator('input[type="radio"][value="paid"]:visible').first();
-  checks.paidAccess = Boolean(await paid.isChecked().catch(() => false));
-  const tierAccessToggle = page.locator('input[type="checkbox"][aria-label="Toggle tier selection"]:visible').first();
-  checks.tierAccess = Boolean(await tierAccessToggle.isChecked().catch(() => false));
-  const tierButton = page.getByRole('button', {{ name: 'Select tiers' }}).first();
-  checks.tiers = false;
-  if (await tierButton.count().catch(() => 0)) {{
-    if ((await tierButton.getAttribute('aria-expanded').catch(() => 'false')) !== 'true') {{
-      await tierButton.click({{ force: true }}).catch(() => null);
-      await page.waitForTimeout(400);
-    }}
-    const desired = new Set(draft.tiers || []);
-    let allMatched = true;
-    for (const tier of ['Inner Disciple', 'Path Initiate']) {{
-      const control = page.getByRole('menuitemcheckbox').filter({{ hasText: tier }}).first();
-      if (!(await control.count().catch(() => 0))) {{
-        allMatched = false;
-        continue;
-      }}
-      const checked = (await control.getAttribute('aria-checked')) === 'true';
-      if (checked !== desired.has(tier)) allMatched = false;
-    }}
-    checks.tiers = allMatched;
-    await page.keyboard.press('Escape').catch(() => null);
-  }}
+  const tierState = await readPatreonTierState(page, new Set(draft.tiers || []));
+  checks.paidFound = tierState.paid.found;
+  checks.paidChecked = tierState.paid.checked;
+  checks.paidAccess = tierState.paid.found && tierState.paid.checked;
+  checks.tierAccess = tierState.tierAccess;
+  checks.tiers = tierState.tiersOk;
+  Object.assign(tierStates, tierState.states);
+  checks.tierTrigger = tierState.trigger.text;
 
   const dateInput = page.locator('input[type="date"]:visible').first();
   const timeInput = page.locator('input[type="time"]:visible').first();
   checks.date = (await dateInput.inputValue().catch(() => '')) === String(draft.publish_date || '');
   checks.time = (await timeInput.inputValue().catch(() => '')).slice(0, 5) === String(draft.publish_time || '09:00').slice(0, 5);
-  checks.media = await waitForPatreonMediaReady(page, 30000)
-    && Boolean(await page.locator('button[aria-label*="edit cover image media" i], img[alt*="post preview" i], img[alt*="uploaded" i]').count().catch(() => 0));
+  const heldIdentity = String(draft.media_status || '') === 'HELD_IDENTITY';
+  checks.mediaStatus = heldIdentity ? 'HELD_IDENTITY' : 'CHECKED';
+  checks.mediaRelaxed = heldIdentity ? 'HELD_IDENTITY' : '';
+  checks.media = heldIdentity ? true : (await waitForPatreonMediaReady(page, 30000)
+    && Boolean(await page.locator('button[aria-label*="edit cover image media" i], img[alt*="post preview" i], img[alt*="uploaded" i]').count().catch(() => 0)));
 
   const required = ['canonicalPostUrl', 'title', 'body', 'paidAccess', 'tierAccess', 'tiers', 'date', 'time', 'media'];
-  return {{ ok: required.every(key => checks[key] === true), checks, required, pageUrl: page.url(), postId }};
+  return {{ ok: required.every(key => checks[key] === true), checks, required, pageUrl: page.url(), postId, readback: {{ bodyWords: readbackBodyWords, tierStates, paidFound: checks.paidFound, paidChecked: checks.paidChecked, mediaStatus: checks.mediaStatus }} }};
 }}
 
 async function submitPatreonDraft(page, verification, draft) {{
@@ -24854,6 +25022,9 @@ async function findReusablePatreonPage(context, editUrl) {{
       row.bodyFilled = await fillBody(page, draft);
       row.mediaResult = await attachMedia(page, draft);
       row.mediaReady = await waitForPatreonMediaReady(page);
+      row.mediaStatus = String(draft.media_status || '') === 'HELD_IDENTITY' ? 'HELD_IDENTITY'
+        : (row.mediaResult && row.mediaResult.attached ? 'ATTACHED' : (draft.media_path ? 'NOT_ATTACHED' : 'NONE'));
+      row.mediaHold = row.mediaStatus === 'HELD_IDENTITY' ? (draft.media_hold || {{}}) : null;
       row.audienceActions = await tryConfigureAudience(page, draft);
       row.scheduleActions = await tryConfigureSchedule(page, draft);
       await page.waitForTimeout(1200);
@@ -24957,6 +25128,8 @@ def upload_chapter_review_tabs(
             "text_file": payload["text_file"],
             "media_path": payload["media_path"],
             "media_name": payload["media_name"],
+            "media_status": payload.get("media_status", ""),
+            "media_hold": payload.get("media_hold") or {},
             "publish_date": payload["publish_date"],
             "path_initiate_date": payload["path_initiate_date"],
             "royal_road_date": payload["royal_road_date"],
@@ -28647,7 +28820,7 @@ def social_post_preview(
             }
         )
     if wants("patreon") and (post_folder / "patreon.txt").exists():
-        patreon_media = select_patreon_media(post_folder, metadata)
+        patreon_media, patreon_media_hold = patreon_select_media_with_identity_gate(post_folder, metadata)
         specs.append(
             {
                 "key": "patreon",
@@ -28655,6 +28828,8 @@ def social_post_preview(
                 "url": PATREON_URL,
                 "text": (post_folder / "patreon.txt").read_text(encoding="utf-8"),
                 "media_path": str(patreon_media) if patreon_media else "",
+                "media_status": PATREON_MEDIA_HELD_STATUS if patreon_media_hold else "",
+                "media_hold_reason": str(patreon_media_hold.get("reason") or ""),
             }
         )
     if wants("royal-road") and (post_folder / "royal-road.txt").exists():
@@ -28936,6 +29111,8 @@ def patreon_draft_payload(folder: str, *, ignore_existing: bool = False, tier_st
             "text_file": "",
             "media_path": "",
             "media_name": "",
+            "media_status": "NONE",
+            "media_hold": {},
             "publish_date": dates.get("pathInitiateDate", "") if tier_stage == "path_initiate" else dates.get("innerDiscipleDate", ""),
             "path_initiate_date": dates.get("pathInitiateDate", ""),
             "royal_road_date": dates.get("royalRoadDate", ""),
@@ -28966,7 +29143,7 @@ def patreon_draft_payload(folder: str, *, ignore_existing: bool = False, tier_st
     is_chapter_draft = bool(tier_stage_override) or str(metadata.get("focus") or "").strip().lower() == "patreon_early"
     access_level = "paid" if is_chapter_draft else "free"
     body = text_path.read_text(encoding="utf-8").strip()
-    media_path = select_patreon_media(post_folder, metadata)
+    media_path, media_hold = patreon_select_media_with_identity_gate(post_folder, metadata)
     summary_lines = [
         f"Title: {draft_title}",
         f"Audience/Tier: {tiers[0]}",
@@ -28986,6 +29163,8 @@ def patreon_draft_payload(folder: str, *, ignore_existing: bool = False, tier_st
         "text_file": str(text_path),
         "media_path": str(media_path) if media_path else "",
         "media_name": media_path.name if media_path else "",
+        "media_status": PATREON_MEDIA_HELD_STATUS if media_hold else ("ATTACH" if media_path else "NONE"),
+        "media_hold": media_hold,
         "publish_date": publish_date,
         "publish_time": publish_time,
         "path_initiate_date": path_initiate_date,
@@ -28997,6 +29176,433 @@ def patreon_draft_payload(folder: str, *, ignore_existing: bool = False, tier_st
             {"tier": tiers[0], "date": publish_date},
         ],
     }
+
+
+PATREON_MEDIA_HELD_STATUS = "HELD_IDENTITY"
+
+
+def patreon_media_identity_hold(media_path: Any, folder: Any = None, metadata: Any = None, *, path_id: str = "PUBLISH:patreon_media") -> dict[str, Any]:
+    """Patreon media identity gate (same check as _identity_publish_eligible / publish_identity_check).
+
+    Returns {} when the image may be attached (flag OFF, non-governed / scenery / approved image, or no image).
+    Returns a HELD_IDENTITY record (reason, imagePath, sha256, folder) when the gate refuses the image OR the check itself errors
+    (fail closed). The caller must then attach NOTHING and must not substitute another image; the chapter text still posts."""
+    if not media_path:
+        return {}
+    path = Path(str(media_path))
+    try:
+        if not _identity_flag_on():
+            return {}
+        from tools.aivsb_prompt_provenance import publish_identity_check
+        ok, why = publish_identity_check(path, folder=folder, metadata=metadata)
+        if ok:
+            return {}
+        reason = str(why or "IDENTITY_APPROVAL_MISSING")
+    except Exception as exc:  # noqa: BLE001 - any gate error holds the image
+        reason = f"IDENTITY_GATE_ERROR:{type(exc).__name__}:{str(exc)[:200]}"
+    sha = ""
+    try:
+        sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    except Exception:  # noqa: BLE001
+        pass
+    print(f"[identity-publish] {path_id} held: {path.name}:{reason}")
+    return {
+        "mediaStatus": PATREON_MEDIA_HELD_STATUS,
+        "reason": reason,
+        "imagePath": str(path),
+        "sha256": sha,
+        "folder": str(folder or ""),
+        "gate": path_id,
+        "heldAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def patreon_select_media_with_identity_gate(post_folder: Path, metadata: dict[str, Any]) -> tuple[Path | None, dict[str, Any]]:
+    """select_patreon_media + identity gate. A refused image yields (None, hold); no other image is ever substituted."""
+    media = select_patreon_media(post_folder, metadata)
+    hold = patreon_media_identity_hold(media, post_folder, metadata) if media else {}
+    return (None if hold else media), hold
+
+
+def write_patreon_attach_media_playwright_script(folder: Path, job: dict[str, Any]) -> Path:
+    script = folder / "patreon-attach-media-playwright.js"
+    script.write_text(
+        f"""const fs = require('fs');
+const {{ chromium }} = require('playwright');
+
+const job = {json.dumps(job, ensure_ascii=False, indent=2)};
+const cdpUrl = {json.dumps(chrome_debug_url())};
+
+// === PATREON TIER HELPERS BEGIN ===
+// Drafted from the real editor markup captured in grok-jobs/proposed/patreon_editor_controls.json.
+// Access:   input[type=radio][value=paid] (no aria-label, readonly) / input[type=radio][aria-label="Free access"][value=public]
+// Tiers on: input#paid-members-toggle[type=checkbox][aria-label="Toggle tier selection"]
+// Tier menu: button[aria-label="Select tiers"][aria-haspopup=menu] (text "N tier(s)") -> button[role=menuitemcheckbox][aria-checked]
+//            items: "Select all tiers" (NEVER clicked), "Path Initiate $3/month ...", "Inner Disciple $5/month ..." (price-agnostic match)
+const PATREON_TIER_NAMES = ['Inner Disciple', 'Path Initiate'];
+
+function tierNameFromText(text) {{
+  const t = String(text || '').replace(/\\s+/g, ' ').trim();
+  if (/^select all/i.test(t)) return 'ALL';
+  for (const name of PATREON_TIER_NAMES) {{
+    if (new RegExp('^' + name + '\\\\b', 'i').test(t)) return name;
+  }}
+  return null;
+}}
+
+function tierTrigger(page) {{
+  return page.locator('button[aria-label="Select tiers"], button[aria-haspopup="menu"][aria-label*="tier" i]').first();
+}}
+
+async function tierTriggerInfo(page) {{
+  const trigger = tierTrigger(page);
+  if (!(await trigger.count().catch(() => 0))) return {{ found: false, text: '', count: null, expanded: false }};
+  const text = String(await trigger.innerText().catch(() => '')).replace(/\\s+/g, ' ').trim();
+  const match = text.match(/(\\d+)\\s+tiers?/i);
+  return {{
+    found: true,
+    text,
+    count: match ? Number(match[1]) : null,
+    expanded: (await trigger.getAttribute('aria-expanded').catch(() => null)) === 'true'
+  }};
+}}
+
+async function openTierMenu(page) {{
+  const trigger = tierTrigger(page);
+  if (!(await trigger.count().catch(() => 0))) return false;
+  for (let attempt = 0; attempt < 2; attempt += 1) {{
+    if ((await trigger.getAttribute('aria-expanded').catch(() => null)) === 'true') return true;
+    await trigger.click({{ force: true, timeout: 5000 }}).catch(() => null);
+    await page.waitForTimeout(500);
+  }}
+  return (await trigger.getAttribute('aria-expanded').catch(() => null)) === 'true';
+}}
+
+async function closeTierMenu(page) {{
+  const trigger = tierTrigger(page);
+  if (!(await trigger.count().catch(() => 0))) return;
+  if ((await trigger.getAttribute('aria-expanded').catch(() => null)) === 'true') {{
+    await page.keyboard.press('Escape').catch(() => null);
+    await page.waitForTimeout(300);
+  }}
+  if ((await trigger.getAttribute('aria-expanded').catch(() => null)) === 'true') {{
+    await trigger.click({{ force: true, timeout: 5000 }}).catch(() => null);
+    await page.waitForTimeout(300);
+  }}
+}}
+
+async function readTierItems(page) {{
+  const locator = page.locator('[role="menuitemcheckbox"]');
+  const total = await locator.count().catch(() => 0);
+  const items = [];
+  for (let index = 0; index < total; index += 1) {{
+    const el = locator.nth(index);
+    const text = await el.textContent().catch(() => '');
+    const name = tierNameFromText(text);
+    if (!name) continue;
+    items.push({{ name, checked: (await el.getAttribute('aria-checked').catch(() => null)) === 'true', el }});
+  }}
+  return items;
+}}
+
+async function readPaidAccess(page) {{
+  // Fail closed: Paid counts only when the Paid radio (value=paid) is FOUND and CHECKED. Nothing is inferred
+  // from the Free radio, the tier toggle or the tier menu.
+  const radio = page.locator('input[type="radio"][value="paid"]').first();
+  if (!(await radio.count().catch(() => 0))) return {{ found: false, checked: false, paid: false, source: 'radio' }};
+  const checked = (await radio.isChecked().catch(() => false)) || (await radio.getAttribute('aria-checked').catch(() => null)) === 'true';
+  return {{ found: true, checked, paid: checked, source: 'radio' }};
+}}
+
+async function selectPaidAccess(page) {{
+  const actions = [];
+  let state = await readPaidAccess(page);
+  if (!state.found) {{
+    actions.push('missing paid access control');
+    return {{ ok: false, actions, paidFound: false, paidChecked: false }};
+  }}
+  if (state.checked) {{
+    actions.push('Paid access already selected');
+    return {{ ok: true, actions, paidFound: true, paidChecked: true }};
+  }}
+  const radio = page.locator('input[type="radio"][value="paid"]').first();
+  const attempts = [
+    ['radio', async () => radio.check({{ force: true, timeout: 3000 }})],
+    ['radio label', async () => radio.locator('xpath=ancestor::label[1]').click({{ force: true, timeout: 3000 }})]
+  ];
+  for (const [name, run] of attempts) {{
+    await run().catch(() => null);
+    await page.waitForTimeout(600);
+    state = await readPaidAccess(page);
+    if (state.checked) {{
+      actions.push(`selected Paid access (${{name}})`);
+      return {{ ok: true, actions, paidFound: true, paidChecked: true }};
+    }}
+  }}
+  actions.push('failed to select Paid access');
+  return {{ ok: false, actions, paidFound: state.found, paidChecked: state.checked }};
+}}
+
+function tierAccessToggle(page) {{
+  return page.locator('input#paid-members-toggle, input[type="checkbox"][aria-label="Toggle tier selection"]').first();
+}}
+
+async function readTierAccessToggle(page) {{
+  const toggle = tierAccessToggle(page);
+  if (!(await toggle.count().catch(() => 0))) return {{ found: false, on: false }};
+  const checked = await toggle.isChecked().catch(() => false);
+  const aria = await toggle.getAttribute('aria-checked').catch(() => null);
+  return {{ found: true, on: checked || aria === 'true' }};
+}}
+
+async function enableTierAccess(page) {{
+  let state = await readTierAccessToggle(page);
+  if (!state.found) {{
+    // The checkbox is not required: the tier menu itself is the source of truth (verified later).
+    return {{ ok: true, actions: ['paid-member tier toggle not present; relying on Select tiers menu'] }};
+  }}
+  if (!state.on) {{
+    const toggle = tierAccessToggle(page);
+    await toggle.check({{ force: true, timeout: 3000 }}).catch(async () => {{
+      await toggle.locator('xpath=ancestor::label[1]').click({{ force: true, timeout: 3000 }}).catch(() => null);
+    }});
+    await page.waitForTimeout(500);
+    state = await readTierAccessToggle(page);
+  }}
+  if (!state.on) return {{ ok: false, actions: ['failed to enable paid-member tier access'] }};
+  return {{ ok: true, actions: ['verified paid-member tier access enabled'] }};
+}}
+
+async function configurePatreonTiers(page, desired) {{
+  const actions = [];
+  if (!(await openTierMenu(page))) {{
+    actions.push((await tierTrigger(page).count().catch(() => 0)) ? 'failed to open tier menu' : 'missing Select tiers control');
+    return {{ ok: false, actions, states: {{}} }};
+  }}
+  actions.push('opened tier menu');
+  let ok = true;
+  for (const tier of PATREON_TIER_NAMES) {{
+    const want = desired.has(tier);
+    await openTierMenu(page);
+    let item = (await readTierItems(page)).find(entry => entry.name === tier);
+    if (!item) {{
+      actions.push(want ? `missing ${{tier}} control` : `missing ${{tier}} control to clear`);
+      ok = false;
+      continue;
+    }}
+    if (item.checked !== want) {{
+      await item.el.click({{ force: true, timeout: 5000 }}).catch(() => null);
+      await page.waitForTimeout(500);
+      await openTierMenu(page);
+      item = (await readTierItems(page)).find(entry => entry.name === tier);
+    }}
+    const verified = Boolean(item) && item.checked === want;
+    actions.push(verified
+      ? `verified ${{tier}} ${{want ? 'selected' : 'cleared'}}`
+      : `failed ${{tier}} ${{want ? 'selected' : 'cleared'}} via menuitemcheckbox`);
+    if (!verified) ok = false;
+  }}
+  await openTierMenu(page);
+  const finalItems = await readTierItems(page);
+  const states = {{}};
+  for (const tier of PATREON_TIER_NAMES) {{
+    const entry = finalItems.find(item => item.name === tier);
+    states[tier] = entry ? entry.checked : null;
+  }}
+  await closeTierMenu(page);
+  const trigger = await tierTriggerInfo(page);
+  if (trigger.count !== null && trigger.count !== desired.size) {{
+    actions.push(`tier trigger shows "${{trigger.text}}" but ${{desired.size}} expected`);
+    ok = false;
+  }}
+  return {{ ok, actions, states, trigger: trigger.text }};
+}}
+
+// Read-only state read used by the pre-submit check and the post-save read-back. Never clicks a menu item.
+async function readPatreonTierState(page, desired) {{
+  const out = {{
+    paid: await readPaidAccess(page),
+    toggle: await readTierAccessToggle(page),
+    trigger: await tierTriggerInfo(page),
+    states: {{}},
+    menu: false,
+    allMatched: false
+  }};
+  if (out.trigger.found) {{
+    out.menu = await openTierMenu(page);
+    if (out.menu) {{
+      const items = await readTierItems(page);
+      let all = true;
+      for (const tier of PATREON_TIER_NAMES) {{
+        const entry = items.find(item => item.name === tier);
+        if (!entry) {{
+          out.states[tier] = null;
+          all = false;
+          continue;
+        }}
+        out.states[tier] = entry.checked;
+        if (entry.checked !== desired.has(tier)) all = false;
+      }}
+      out.allMatched = all;
+    }}
+    await closeTierMenu(page);
+    out.trigger = await tierTriggerInfo(page);
+  }}
+  const triggerOk = out.trigger.count === null || out.trigger.count === desired.size;
+  out.tiersOk = out.menu && out.allMatched && triggerOk;
+  const primary = out.tiersOk && (out.trigger.count === null || out.trigger.count >= 1);
+  out.tierAccess = (out.toggle.found && !out.toggle.on) ? false : (primary || (out.toggle.found && out.toggle.on));
+  out.tierAccessSource = primary ? 'menu' : (out.toggle.found ? 'checkbox' : 'none');
+  return out;
+}}
+// === PATREON TIER HELPERS END ===
+
+function patreonPostId(url) {{
+  const match = String(url || '').match(/patreon\\.com\\/posts\\/(?:[^/?#]*-)?(\\d+)/);
+  return match ? match[1] : '';
+}}
+
+const MEDIA_SELECTOR = 'button[aria-label*="edit cover image media" i], img[alt*="post preview" i], img[alt*="uploaded" i]';
+
+async function waitForPatreonMediaReady(page, timeout = 120000) {{
+  const processing = page.getByText(/your file is processing/i).first();
+  if (await processing.isVisible().catch(() => false)) {{
+    await processing.waitFor({{ state: 'hidden', timeout }}).catch(() => null);
+  }}
+  return !(await processing.isVisible().catch(() => false));
+}}
+
+async function attachImage(page) {{
+  const beforeImages = await page.locator('img').count().catch(() => 0);
+  await page.getByRole('button', {{ name: /^Image$/ }}).click({{ timeout: 5000 }}).catch(async () => {{
+    await page.getByText('Image', {{ exact: true }}).click({{ timeout: 5000 }}).catch(() => null);
+  }});
+  await page.waitForTimeout(1000);
+  const inputs = page.locator('input[type="file"]');
+  const count = await inputs.count().catch(() => 0);
+  for (let i = count - 1; i >= 0; i--) {{
+    const input = inputs.nth(i);
+    const accept = String(await input.evaluate(el => el.getAttribute('accept') || '').catch(() => '')).toLowerCase();
+    if (accept && !(accept.includes('image') || accept.includes('.png') || accept.includes('.jpg') || accept.includes('.jpeg') || accept.includes('.webp'))) continue;
+    try {{
+      await input.setInputFiles(job.mediaPath, {{ timeout: 12000 }});
+      await page.waitForTimeout(8000);
+      const afterImages = await page.locator('img').count().catch(() => 0);
+      return {{ attached: afterImages > beforeImages, index: i, beforeImages, afterImages }};
+    }} catch (_) {{}}
+  }}
+  return {{ attached: false, reason: 'no working image input', inputCount: count }};
+}}
+
+(async () => {{
+  const out = {{ ok: false, mediaStatus: 'ATTACH_FAILED', editUrl: job.editUrl, imagePath: job.mediaPath, sha256: job.sha256, startedAt: new Date().toISOString() }};
+  let page = null;
+  let created = false;
+  try {{
+    const postId = patreonPostId(job.editUrl);
+    if (!postId || /\\/posts\\/new/.test(job.editUrl)) throw new Error('edit url is not an existing Patreon post; refusing to create a new post');
+    if (!fs.existsSync(job.mediaPath)) throw new Error('approved image file is missing');
+    const browser = await chromium.connectOverCDP(cdpUrl);
+    const context = browser.contexts()[0] || await browser.newContext({{ viewport: {{ width: 1440, height: 1000 }} }});
+    page = context.pages().find(p => patreonPostId(p.url()) === postId) || null;
+    if (!page) {{ page = await context.newPage(); created = true; }}
+    await page.goto(job.editUrl, {{ waitUntil: 'domcontentloaded', timeout: 60000 }});
+    await page.waitForTimeout(3500);
+    if (/login|signin|sign-in/i.test(page.url())) throw new Error('Patreon sign-in required; stopped');
+    const desired = new Set(job.tiers || []);
+    const before = await readPatreonTierState(page, desired);
+    out.tierStatesBefore = before.states;
+    out.attach = await attachImage(page);
+    out.mediaReady = await waitForPatreonMediaReady(page);
+    if (!out.attach.attached) throw new Error('image did not attach: ' + JSON.stringify(out.attach));
+    const update = page.getByRole('button', {{ name: 'Update', exact: true }}).first();
+    if (!(await update.count().catch(() => 0)) || await update.isDisabled().catch(() => true)) throw new Error('Update action is unavailable');
+    await update.click({{ timeout: 10000 }});
+    await page.waitForTimeout(4000);
+    await page.goto(job.editUrl, {{ waitUntil: 'domcontentloaded', timeout: 60000 }});
+    await page.waitForTimeout(3500);
+    out.mediaPersisted = await waitForPatreonMediaReady(page, 30000)
+      && Boolean(await page.locator(MEDIA_SELECTOR).count().catch(() => 0));
+    const after = await readPatreonTierState(page, desired);
+    out.tierStatesAfter = after.states;
+    out.readback = {{ paidFound: after.paid.found, paidChecked: after.paid.checked, tierStates: after.states, tierTrigger: after.trigger.text }};
+    out.tiersUnchanged = JSON.stringify(before.states) === JSON.stringify(after.states);
+    out.pageUrl = page.url();
+    out.ok = Boolean(out.mediaPersisted && out.tiersUnchanged);
+    out.mediaStatus = out.ok ? 'ATTACHED' : 'ATTACH_FAILED';
+  }} catch (error) {{
+    out.error = String(error.message || error).slice(0, 600);
+  }}
+  out.finishedAt = new Date().toISOString();
+  fs.writeFileSync(job.resultFile, JSON.stringify(out, null, 2), 'utf8');
+  if (page && created) await page.close().catch(() => null);
+  process.exit(0);
+}})().catch((error) => {{
+  fs.writeFileSync(job.resultFile, JSON.stringify({{ ok: false, mediaStatus: 'ATTACH_FAILED', error: error.message }}, null, 2), 'utf8');
+  process.exit(1);
+}});
+""",
+        encoding="utf-8",
+    )
+    return script
+
+
+def attach_held_patreon_media(job_id: str, *, launch: bool = True) -> dict[str, Any]:
+    """Follow-up step for a chapter whose image was held by the identity gate: re-run the gate on the held image and, only if it is
+    now approved, edit the SAME (already saved) Patreon post to attach it. Still refused / any error => nothing is attached."""
+    job = next((item for item in automation_db.list_release_jobs(ROOT, limit=5000) if str(item.get("jobId") or "") == str(job_id)), None)
+    if not job:
+        return {"ok": False, "attached": False, "reason": "release job not found"}
+    hold = job.get("mediaHold") if isinstance(job.get("mediaHold"), dict) else {}
+    if str(job.get("mediaStatus") or hold.get("mediaStatus") or "") != PATREON_MEDIA_HELD_STATUS or not hold.get("imagePath"):
+        return {"ok": False, "attached": False, "reason": "job has no HELD_IDENTITY media", "mediaStatus": str(job.get("mediaStatus") or "")}
+    edit_url = str(job.get("editUrl") or job.get("remoteUrl") or "").strip()
+    if not re.search(r"patreon\.com/posts/(?:[^/?#]*-)?\d+", edit_url) or "/posts/new" in edit_url:
+        return {"ok": False, "attached": False, "reason": "no saved Patreon edit URL for this job", "editUrl": edit_url}
+    image = Path(str(hold.get("imagePath")))
+    folder = Path(str(hold.get("folder") or image.parent))
+    if not image.is_file():
+        return {"ok": False, "attached": False, "stillHeld": True, "reason": "held image file is missing", "imagePath": str(image)}
+    try:
+        metadata = read_metadata(folder)
+    except Exception:  # noqa: BLE001
+        metadata = {}
+    again = patreon_media_identity_hold(image, folder, metadata, path_id="PUBLISH:patreon_media_attach")
+    if again:
+        return {"ok": False, "attached": False, "stillHeld": True, "mediaStatus": PATREON_MEDIA_HELD_STATUS, "reason": again.get("reason"), "imagePath": str(image), "sha256": again.get("sha256")}
+    sha_now = hashlib.sha256(image.read_bytes()).hexdigest()
+    stage = str(job.get("stage") or "inner_disciple")
+    tiers = ["Path Initiate"] if stage == "path_initiate" else ["Inner Disciple"]
+    result_file = folder / f"patreon-attach-media-result-{str(job_id)[:12]}.json"
+    script = write_patreon_attach_media_playwright_script(folder, {
+        "editUrl": edit_url, "mediaPath": str(image), "sha256": sha_now, "tiers": tiers, "resultFile": str(result_file),
+    })
+    out: dict[str, Any] = {"ok": True, "attached": False, "approved": True, "script": str(script), "resultFile": str(result_file), "editUrl": edit_url, "imagePath": str(image), "sha256": sha_now, "heldSha256": hold.get("sha256", "")}
+    if not launch:
+        return out
+    if not (playwright_available() and chrome_debug_available()[0]):
+        return {**out, "ok": False, "reason": "Chrome helper or Playwright is not available."}
+    result_file.unlink(missing_ok=True)
+    proc = subprocess.run(
+        [str(bundled_node_executable()), str(script)], cwd=str(folder), capture_output=True, text=True, timeout=420, check=False,
+        env={**os.environ, "NODE_PATH": str(ROOT / "node_modules"), "PLAYWRIGHT_BROWSERS_PATH": str(ROOT / "ms-playwright")},
+    )
+    row = read_json_safe(result_file)
+    row = row if isinstance(row, dict) else {}
+    out["result"] = row
+    out["attached"] = bool(row.get("ok"))
+    out["ok"] = bool(row.get("ok"))
+    if out["attached"]:
+        history = list(job.get("mediaHoldHistory") or []) + [hold]
+        automation_db.update_release_job(
+            ROOT, str(job_id), str(job.get("status") or "verified"),
+            completedAt=job.get("completedAt") or "", verifiedAt=job.get("verifiedAt") or "",
+            payloadUpdates={"mediaStatus": "ATTACHED", "mediaHold": {}, "mediaHoldHistory": history,
+                            "mediaAttachedAt": time.strftime("%Y-%m-%d %H:%M:%S"), "mediaSha256": sha_now},
+        )
+    else:
+        out["reason"] = str(row.get("error") or (proc.stderr or proc.stdout or "attach step failed")[-400:])
+    return out
 
 
 def select_patreon_media(post_folder: Path, metadata: dict[str, Any]) -> Path | None:
@@ -29134,62 +29740,229 @@ async function clickIfVisible(page, texts) {{
   return false;
 }}
 
-async function setTierSelection(page, tier, shouldSelect) {{
-  const selectors = [
-    `input[type="checkbox"][aria-label*="${{tier}}" i]:visible`,
-    `[role="checkbox"][aria-label*="${{tier}}" i]:visible`,
-    `label:has-text("${{tier}}") input[type="checkbox"]`,
-    `label:has-text("${{tier}}") [role="checkbox"]`,
-    `button:has-text("${{tier}}")`,
-    `[role="menuitemcheckbox"]:has-text("${{tier}}")`,
-    `[role="option"]:has-text("${{tier}}")`,
-    `div:has-text("${{tier}}") [role="checkbox"]`
-  ];
-  for (const selector of selectors) {{
-    const locator = page.locator(selector).first();
-    if (!(await locator.count().catch(() => 0))) continue;
-    try {{
-      await locator.scrollIntoViewIfNeeded().catch(() => null);
-      const tag = await locator.evaluate(el => el.tagName.toLowerCase()).catch(() => '');
-      const type = await locator.getAttribute('type').catch(() => '');
-      const checked = tag === 'input' && type === 'checkbox'
-        ? await locator.isChecked().catch(() => false)
-        : (await locator.getAttribute('aria-checked').catch(() => 'false')) === 'true';
-      if (checked !== shouldSelect) {{
-        if (tag === 'input' && type === 'checkbox') {{
-          if (shouldSelect) await locator.check({{ force: true }}); else await locator.uncheck({{ force: true }});
-        }} else {{
-          await locator.click({{ force: true }});
-        }}
-        await page.waitForTimeout(500);
-      }}
-      const finalChecked = tag === 'input' && type === 'checkbox'
-        ? await locator.isChecked().catch(() => shouldSelect)
-        : (await locator.getAttribute('aria-checked').catch(() => String(shouldSelect))) === 'true';
-      return {{ found: true, verified: finalChecked === shouldSelect, finalChecked, selector }};
-    }} catch (error) {{
-      return {{ found: true, verified: false, error: String(error.message || error).slice(0, 400), selector }};
-    }}
+// === PATREON TIER HELPERS BEGIN ===
+// Drafted from the real editor markup captured in grok-jobs/proposed/patreon_editor_controls.json.
+// Access:   input[type=radio][value=paid] (no aria-label, readonly) / input[type=radio][aria-label="Free access"][value=public]
+// Tiers on: input#paid-members-toggle[type=checkbox][aria-label="Toggle tier selection"]
+// Tier menu: button[aria-label="Select tiers"][aria-haspopup=menu] (text "N tier(s)") -> button[role=menuitemcheckbox][aria-checked]
+//            items: "Select all tiers" (NEVER clicked), "Path Initiate $3/month ...", "Inner Disciple $5/month ..." (price-agnostic match)
+const PATREON_TIER_NAMES = ['Inner Disciple', 'Path Initiate'];
+
+function tierNameFromText(text) {{
+  const t = String(text || '').replace(/\\s+/g, ' ').trim();
+  if (/^select all/i.test(t)) return 'ALL';
+  for (const name of PATREON_TIER_NAMES) {{
+    if (new RegExp('^' + name + '\\\\b', 'i').test(t)) return name;
   }}
-  const text = page.getByText(tier, {{ exact: false }}).first();
-  if (await text.count().catch(() => 0)) {{
-    try {{
-      const control = text.locator('xpath=ancestor::*[@role="checkbox" or @role="menuitemcheckbox" or self::label or self::button][1]').first();
-      if (await control.count().catch(() => 0)) {{
-        const checked = (await control.getAttribute('aria-checked').catch(() => 'false')) === 'true';
-        if (checked !== shouldSelect) {{
-          await control.click({{ force: true }});
-          await page.waitForTimeout(500);
-        }}
-        const finalChecked = (await control.getAttribute('aria-checked').catch(() => String(shouldSelect))) === 'true';
-        return {{ found: true, verified: finalChecked === shouldSelect, finalChecked, selector: 'tier text ancestor control' }};
-      }}
-    }} catch (error) {{
-      return {{ found: true, verified: false, error: String(error.message || error).slice(0, 400), selector: 'tier text ancestor control' }};
-    }}
-  }}
-  return {{ found: false, verified: false }};
+  return null;
 }}
+
+function tierTrigger(page) {{
+  return page.locator('button[aria-label="Select tiers"], button[aria-haspopup="menu"][aria-label*="tier" i]').first();
+}}
+
+async function tierTriggerInfo(page) {{
+  const trigger = tierTrigger(page);
+  if (!(await trigger.count().catch(() => 0))) return {{ found: false, text: '', count: null, expanded: false }};
+  const text = String(await trigger.innerText().catch(() => '')).replace(/\\s+/g, ' ').trim();
+  const match = text.match(/(\\d+)\\s+tiers?/i);
+  return {{
+    found: true,
+    text,
+    count: match ? Number(match[1]) : null,
+    expanded: (await trigger.getAttribute('aria-expanded').catch(() => null)) === 'true'
+  }};
+}}
+
+async function openTierMenu(page) {{
+  const trigger = tierTrigger(page);
+  if (!(await trigger.count().catch(() => 0))) return false;
+  for (let attempt = 0; attempt < 2; attempt += 1) {{
+    if ((await trigger.getAttribute('aria-expanded').catch(() => null)) === 'true') return true;
+    await trigger.click({{ force: true, timeout: 5000 }}).catch(() => null);
+    await page.waitForTimeout(500);
+  }}
+  return (await trigger.getAttribute('aria-expanded').catch(() => null)) === 'true';
+}}
+
+async function closeTierMenu(page) {{
+  const trigger = tierTrigger(page);
+  if (!(await trigger.count().catch(() => 0))) return;
+  if ((await trigger.getAttribute('aria-expanded').catch(() => null)) === 'true') {{
+    await page.keyboard.press('Escape').catch(() => null);
+    await page.waitForTimeout(300);
+  }}
+  if ((await trigger.getAttribute('aria-expanded').catch(() => null)) === 'true') {{
+    await trigger.click({{ force: true, timeout: 5000 }}).catch(() => null);
+    await page.waitForTimeout(300);
+  }}
+}}
+
+async function readTierItems(page) {{
+  const locator = page.locator('[role="menuitemcheckbox"]');
+  const total = await locator.count().catch(() => 0);
+  const items = [];
+  for (let index = 0; index < total; index += 1) {{
+    const el = locator.nth(index);
+    const text = await el.textContent().catch(() => '');
+    const name = tierNameFromText(text);
+    if (!name) continue;
+    items.push({{ name, checked: (await el.getAttribute('aria-checked').catch(() => null)) === 'true', el }});
+  }}
+  return items;
+}}
+
+async function readPaidAccess(page) {{
+  // Fail closed: Paid counts only when the Paid radio (value=paid) is FOUND and CHECKED. Nothing is inferred
+  // from the Free radio, the tier toggle or the tier menu.
+  const radio = page.locator('input[type="radio"][value="paid"]').first();
+  if (!(await radio.count().catch(() => 0))) return {{ found: false, checked: false, paid: false, source: 'radio' }};
+  const checked = (await radio.isChecked().catch(() => false)) || (await radio.getAttribute('aria-checked').catch(() => null)) === 'true';
+  return {{ found: true, checked, paid: checked, source: 'radio' }};
+}}
+
+async function selectPaidAccess(page) {{
+  const actions = [];
+  let state = await readPaidAccess(page);
+  if (!state.found) {{
+    actions.push('missing paid access control');
+    return {{ ok: false, actions, paidFound: false, paidChecked: false }};
+  }}
+  if (state.checked) {{
+    actions.push('Paid access already selected');
+    return {{ ok: true, actions, paidFound: true, paidChecked: true }};
+  }}
+  const radio = page.locator('input[type="radio"][value="paid"]').first();
+  const attempts = [
+    ['radio', async () => radio.check({{ force: true, timeout: 3000 }})],
+    ['radio label', async () => radio.locator('xpath=ancestor::label[1]').click({{ force: true, timeout: 3000 }})]
+  ];
+  for (const [name, run] of attempts) {{
+    await run().catch(() => null);
+    await page.waitForTimeout(600);
+    state = await readPaidAccess(page);
+    if (state.checked) {{
+      actions.push(`selected Paid access (${{name}})`);
+      return {{ ok: true, actions, paidFound: true, paidChecked: true }};
+    }}
+  }}
+  actions.push('failed to select Paid access');
+  return {{ ok: false, actions, paidFound: state.found, paidChecked: state.checked }};
+}}
+
+function tierAccessToggle(page) {{
+  return page.locator('input#paid-members-toggle, input[type="checkbox"][aria-label="Toggle tier selection"]').first();
+}}
+
+async function readTierAccessToggle(page) {{
+  const toggle = tierAccessToggle(page);
+  if (!(await toggle.count().catch(() => 0))) return {{ found: false, on: false }};
+  const checked = await toggle.isChecked().catch(() => false);
+  const aria = await toggle.getAttribute('aria-checked').catch(() => null);
+  return {{ found: true, on: checked || aria === 'true' }};
+}}
+
+async function enableTierAccess(page) {{
+  let state = await readTierAccessToggle(page);
+  if (!state.found) {{
+    // The checkbox is not required: the tier menu itself is the source of truth (verified later).
+    return {{ ok: true, actions: ['paid-member tier toggle not present; relying on Select tiers menu'] }};
+  }}
+  if (!state.on) {{
+    const toggle = tierAccessToggle(page);
+    await toggle.check({{ force: true, timeout: 3000 }}).catch(async () => {{
+      await toggle.locator('xpath=ancestor::label[1]').click({{ force: true, timeout: 3000 }}).catch(() => null);
+    }});
+    await page.waitForTimeout(500);
+    state = await readTierAccessToggle(page);
+  }}
+  if (!state.on) return {{ ok: false, actions: ['failed to enable paid-member tier access'] }};
+  return {{ ok: true, actions: ['verified paid-member tier access enabled'] }};
+}}
+
+async function configurePatreonTiers(page, desired) {{
+  const actions = [];
+  if (!(await openTierMenu(page))) {{
+    actions.push((await tierTrigger(page).count().catch(() => 0)) ? 'failed to open tier menu' : 'missing Select tiers control');
+    return {{ ok: false, actions, states: {{}} }};
+  }}
+  actions.push('opened tier menu');
+  let ok = true;
+  for (const tier of PATREON_TIER_NAMES) {{
+    const want = desired.has(tier);
+    await openTierMenu(page);
+    let item = (await readTierItems(page)).find(entry => entry.name === tier);
+    if (!item) {{
+      actions.push(want ? `missing ${{tier}} control` : `missing ${{tier}} control to clear`);
+      ok = false;
+      continue;
+    }}
+    if (item.checked !== want) {{
+      await item.el.click({{ force: true, timeout: 5000 }}).catch(() => null);
+      await page.waitForTimeout(500);
+      await openTierMenu(page);
+      item = (await readTierItems(page)).find(entry => entry.name === tier);
+    }}
+    const verified = Boolean(item) && item.checked === want;
+    actions.push(verified
+      ? `verified ${{tier}} ${{want ? 'selected' : 'cleared'}}`
+      : `failed ${{tier}} ${{want ? 'selected' : 'cleared'}} via menuitemcheckbox`);
+    if (!verified) ok = false;
+  }}
+  await openTierMenu(page);
+  const finalItems = await readTierItems(page);
+  const states = {{}};
+  for (const tier of PATREON_TIER_NAMES) {{
+    const entry = finalItems.find(item => item.name === tier);
+    states[tier] = entry ? entry.checked : null;
+  }}
+  await closeTierMenu(page);
+  const trigger = await tierTriggerInfo(page);
+  if (trigger.count !== null && trigger.count !== desired.size) {{
+    actions.push(`tier trigger shows "${{trigger.text}}" but ${{desired.size}} expected`);
+    ok = false;
+  }}
+  return {{ ok, actions, states, trigger: trigger.text }};
+}}
+
+// Read-only state read used by the pre-submit check and the post-save read-back. Never clicks a menu item.
+async function readPatreonTierState(page, desired) {{
+  const out = {{
+    paid: await readPaidAccess(page),
+    toggle: await readTierAccessToggle(page),
+    trigger: await tierTriggerInfo(page),
+    states: {{}},
+    menu: false,
+    allMatched: false
+  }};
+  if (out.trigger.found) {{
+    out.menu = await openTierMenu(page);
+    if (out.menu) {{
+      const items = await readTierItems(page);
+      let all = true;
+      for (const tier of PATREON_TIER_NAMES) {{
+        const entry = items.find(item => item.name === tier);
+        if (!entry) {{
+          out.states[tier] = null;
+          all = false;
+          continue;
+        }}
+        out.states[tier] = entry.checked;
+        if (entry.checked !== desired.has(tier)) all = false;
+      }}
+      out.allMatched = all;
+    }}
+    await closeTierMenu(page);
+    out.trigger = await tierTriggerInfo(page);
+  }}
+  const triggerOk = out.trigger.count === null || out.trigger.count === desired.size;
+  out.tiersOk = out.menu && out.allMatched && triggerOk;
+  const primary = out.tiersOk && (out.trigger.count === null || out.trigger.count >= 1);
+  out.tierAccess = (out.toggle.found && !out.toggle.on) ? false : (primary || (out.toggle.found && out.toggle.on));
+  out.tierAccessSource = primary ? 'menu' : (out.toggle.found ? 'checkbox' : 'none');
+  return out;
+}}
+// === PATREON TIER HELPERS END ===
 
 async function tryConfigureAudience(page) {{
   const actions = [];
@@ -29208,40 +29981,15 @@ async function tryConfigureAudience(page) {{
     await page.waitForTimeout(600);
     return actions;
   }}
-  const paid = page.locator('input[type="radio"][value="paid"]:visible').first();
-  if (await paid.count()) {{
-    await paid.check({{ force: true }}).catch(async () => {{
-      await paid.locator('xpath=ancestor::label[1]').click({{ force: true }});
-    }});
-    actions.push('selected Paid access');
-    await page.waitForTimeout(600);
-  }} else {{
-    const clickedPaid = await clickIfVisible(page, ['Paid members only', 'Paid patrons only', 'Paid only', 'Select tiers', 'Who can see this post?']);
-    actions.push(clickedPaid ? 'selected Paid access by label' : 'Paid access control not found');
-    await page.waitForTimeout(600);
-  }}
-  const tierButton = page.locator('button[aria-label*="tier" i], button:has-text("Select tiers"), button:has-text("Choose tiers"), button:has-text("Tiers")').first();
-  if (await tierButton.count()) {{
-    await tierButton.click({{ force: true }});
-    actions.push('opened tier controls');
-    await page.waitForTimeout(400);
-  }}
   const desired = new Set(draft.tiers || []);
-  for (const tier of ['Inner Disciple', 'Path Initiate']) {{
-    const desiredState = desired.has(tier);
-    const selected = await setTierSelection(page, tier, desiredState);
-    if (selected.found && selected.verified) {{
-      actions.push(`verified ${{tier}} ${{desiredState ? 'selected' : 'cleared'}}`);
-    }} else if (selected.found) {{
-      actions.push(`failed ${{tier}} ${{desiredState ? 'selected' : 'cleared'}} via ${{selected.selector || 'unknown control'}}`);
-    }} else if (desiredState) {{
-      actions.push(`missing ${{tier}} control`);
-    }} else {{
-      actions.push(`missing ${{tier}} control to clear`);
-    }}
-  }}
-  await page.waitForTimeout(1500);
-  if (await tierButton.count()) await page.keyboard.press('Escape').catch(() => {{}});
+  const paidResult = await selectPaidAccess(page);
+  actions.push(...paidResult.actions);
+  if (!paidResult.ok) return actions;
+  const accessResult = await enableTierAccess(page);
+  actions.push(...accessResult.actions);
+  if (!accessResult.ok) return actions;
+  const tierResult = await configurePatreonTiers(page, desired);
+  actions.push(...tierResult.actions);
   return actions;
 }}
 
@@ -29282,6 +30030,10 @@ async function tryConfigureSchedule(page) {{
 
 async function attachMedia(page) {{
   const mediaPath = String(draft.media_path || '');
+  if (String(draft.media_status || '') === 'HELD_IDENTITY') {{
+    const hold = draft.media_hold || {{}};
+    return {{ attached: false, held: true, mediaStatus: 'HELD_IDENTITY', reason: String(hold.reason || 'identity approval missing'), imagePath: String(hold.imagePath || ''), sha256: String(hold.sha256 || '') }};
+  }}
   if (!mediaPath || !fs.existsSync(mediaPath)) {{
     return {{ attached: false, reason: 'media missing', mediaPath }};
   }}
@@ -29357,12 +30109,32 @@ async function launchAutomationContext() {{
   const mediaResult = await attachMedia(page);
   const audienceActions = await tryConfigureAudience(page);
   const scheduleActions = await tryConfigureSchedule(page);
+  let readback = null;
+  try {{
+    const tierState = await readPatreonTierState(page, new Set(draft.tiers || []));
+    readback = {{
+      paidFound: tierState.paid.found,
+      paidChecked: tierState.paid.checked,
+      tierAccess: tierState.tierAccess,
+      tiersOk: tierState.tiersOk,
+      tierStates: tierState.states,
+      tierTrigger: tierState.trigger.text,
+      tierAccessSource: tierState.tierAccessSource
+    }};
+  }} catch (error) {{
+    readback = {{ error: String(error.message || error).slice(0, 300) }};
+  }}
+  const mediaStatus = String(draft.media_status || '') === 'HELD_IDENTITY' ? 'HELD_IDENTITY'
+    : (mediaResult && mediaResult.attached ? 'ATTACHED' : (draft.media_path ? 'NOT_ATTACHED' : 'NONE'));
   const result = {{
     browserMode: context.__browserMode || 'unknown',
     pageUrl: page.url(),
     titleFilled,
     bodyFilled,
     mediaResult,
+    mediaStatus,
+    mediaHold: mediaStatus === 'HELD_IDENTITY' ? (draft.media_hold || {{}}) : null,
+    readback,
     audienceActions,
     scheduleActions,
     note: 'Draft prepared only. Review the Patreon page and use Patreon publish/schedule controls manually.'
@@ -30293,6 +31065,7 @@ def manual_campaign_platform_specs(campaign_folder: Path) -> list[dict[str, str]
     ]
     result: list[dict[str, str]] = []
     for spec in specs:
+        manual_media_hold: dict[str, Any] = {}
         if spec["key"] in {"x", "facebook"} and matching_social_post:
             social_file = "x.txt" if spec["key"] == "x" else "facebook.txt"
             text_path = social_folder / social_file
@@ -30302,7 +31075,7 @@ def manual_campaign_platform_specs(campaign_folder: Path) -> list[dict[str, str]
             media_path = manual_social_image if manual_social_image and manual_social_image.exists() else None
         elif spec["key"] == "patreon":
             text_path = campaign_folder / spec["file"]
-            media_path = select_patreon_media(campaign_folder, campaign_metadata)
+            media_path, manual_media_hold = patreon_select_media_with_identity_gate(campaign_folder, campaign_metadata)
         else:
             text_path = campaign_folder / spec["file"]
             media_path = campaign_folder / spec["media"] if spec["media"] else None
@@ -30344,6 +31117,8 @@ def manual_campaign_platform_specs(campaign_folder: Path) -> list[dict[str, str]
                 "text": text,
                 "text_path": str(text_path),
                 "media_path": str(media_path) if media_path and media_path.exists() else "",
+                "media_status": PATREON_MEDIA_HELD_STATUS if manual_media_hold else "",
+                "media_hold_reason": str(manual_media_hold.get("reason") or ""),
                 "source_folder": str(social_folder if spec["key"] in {"x", "facebook"} and matching_social_post else campaign_folder),
                 "media_source": "social_promo" if spec["key"] in {"x", "facebook"} and media_path else spec["media"],
                 "chapter_title": chapter_title if spec["key"] == "royal-road" else "",
@@ -47518,6 +48293,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/chapter-release-upload-tabs":
                 self.send_json(upload_chapter_review_tabs(str(body.get("key") or "")))
+                return
+            if self.path == "/api/patreon-attach-held-media":
+                self.send_json(attach_held_patreon_media(str(body.get("jobId") or "")))
                 return
             if self.path == "/api/weekend-posts":
                 self.send_json(make_weekend_posts(str(body.get("day") or "")))

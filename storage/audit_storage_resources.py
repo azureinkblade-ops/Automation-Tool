@@ -37,6 +37,13 @@ EXCLUDE_DIRS = {
     "experiments",
     "_tmp_tiktok_smoke_assets",
     "_tmp_tiktok_icon",
+    # large trees that made scan_repository walk ~146k files (test_storage_manifest timed out)
+    ".worktrees",
+    ".venv-stage2-v2",
+    ".venv-ci312",
+    ".venv-ci312-repro",
+    ".venv-ci312h",
+    ".model-acquisition",
 }
 
 # Roots of generated artifact trees: metadata.json there is a sidecar pattern.

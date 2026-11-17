@@ -14,6 +14,13 @@ Run: python tests/test_buffer_publish.py   (from repo root)
 import os, sys, tempfile, json
 from pathlib import Path
 
+import pytest
+
+# Test-only env (dummy values) is applied through a MonkeyPatch and undone when this
+# script-style module finishes, so nothing leaks into the rest of the pytest session.
+_ENV = pytest.MonkeyPatch()
+_ENV.setenv("ENABLE_IDENTITY_PRESERVATION", "0")  # these characterization tests predate the flag; their fake img.png has no identity provenance
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
@@ -51,7 +58,8 @@ BP_COLLAB["video_meets_minimum_duration"] = lambda *a, **k: True
 # release_state's ledger writes) re-reads .env.local and can clear BUFFER_CHANNEL_IDS,
 # so re-assert it before each buffer_post_from_folder call.
 CHANNEL_ENV = "instagram:ig1,tiktok:c1,youtube:yt1"
-os.environ["BUFFER_CHANNEL_IDS"] = CHANNEL_ENV
+_ENV.setenv("BUFFER_CHANNEL_IDS", CHANNEL_ENV)
+_ENV.setenv("ENABLE_IDENTITY_PRESERVATION", "0")  # load_env_file() re-reads .env.local (flag=1) during ledger writes
 
 # --- fixture TikTok folder -> buffer_post_from_folder returns {"posts":[...]} ---
 tmp = Path(tempfile.mkdtemp(prefix="buf_test_"))
@@ -62,7 +70,8 @@ tk.mkdir()
     "caption": "A short caption", "title": "Chapter 10",
 }), encoding="utf-8")
 (tk / "tiktok-video.mp4").write_text("fake", encoding="utf-8")
-os.environ["BUFFER_CHANNEL_IDS"] = CHANNEL_ENV
+_ENV.setenv("BUFFER_CHANNEL_IDS", CHANNEL_ENV)
+_ENV.setenv("ENABLE_IDENTITY_PRESERVATION", "0")  # load_env_file() re-reads .env.local (flag=1) during ledger writes
 res = bp.buffer_post_from_folder(str(tk), ["c1"], "tiktok", "addToQueue", collaborators=BP_COLLAB)
 check("buffer_post_from_folder returns posts key", "posts" in res, True)
 check("buffer_post_from_folder posts is list", isinstance(res["posts"], list), True)
@@ -82,7 +91,8 @@ ig_meta = {
 }
 (ig / "metadata.json").write_text(json.dumps(ig_meta), encoding="utf-8")
 (ig / "img.png").write_text("fake", encoding="utf-8")
-os.environ["BUFFER_CHANNEL_IDS"] = CHANNEL_ENV
+_ENV.setenv("BUFFER_CHANNEL_IDS", CHANNEL_ENV)
+_ENV.setenv("ENABLE_IDENTITY_PRESERVATION", "0")  # load_env_file() re-reads .env.local (flag=1) during ledger writes
 ig_res = bp.buffer_post_from_folder(str(ig), ["ig1"], "instagram", "addToQueue", collaborators=BP_COLLAB)
 ig_posts = ig_res.get("posts", [])
 ig_routed = [p for p in ig_posts if isinstance(p, dict) and not p.get("skipped")]
@@ -105,7 +115,8 @@ reel_meta = {
 }
 (reel / "metadata.json").write_text(json.dumps(reel_meta), encoding="utf-8")
 (reel / "tiktok-video.mp4").write_text("fake", encoding="utf-8")
-os.environ["BUFFER_CHANNEL_IDS"] = CHANNEL_ENV
+_ENV.setenv("BUFFER_CHANNEL_IDS", CHANNEL_ENV)
+_ENV.setenv("ENABLE_IDENTITY_PRESERVATION", "0")  # load_env_file() re-reads .env.local (flag=1) during ledger writes
 reel_res = bp.buffer_post_from_folder(str(reel), ["ig1"], "instagram", "addToQueue", collaborators=BP_COLLAB)
 reel_routed = [p for p in reel_res.get("posts", []) if isinstance(p, dict) and not p.get("skipped")]
 reel_metadata = reel_routed[0].get("captured_metadata") if reel_routed else None
@@ -127,11 +138,13 @@ BR_COLLAB["open_url_once"] = lambda *a, **k: None
 BR_COLLAB["clipboard_copy"] = lambda *a, **k: None
 
 # fixture social folder for X
-os.environ.setdefault("X_ACCESS_TOKEN", "test_token_for_parity")
+if "X_ACCESS_TOKEN" not in os.environ:
+    _ENV.setenv("X_ACCESS_TOKEN", "test_token_for_parity")
 xdir = Path(app_mod.SOCIAL_OUTPUT_DIR) / "x_fixture_pack"
 xdir.mkdir(parents=True, exist_ok=True)
 (xdir / "metadata.json").write_text(json.dumps({"x": "Hello X world", "image": str(xdir / "img.png")}), encoding="utf-8")
 (xdir / "img.png").write_text("fake", encoding="utf-8")
+_ENV.setenv("ENABLE_IDENTITY_PRESERVATION", "0")
 xres = br.publish_x_post(str(xdir), collaborators=BR_COLLAB)
 check("publish_x_post returns media_id", xres.get("media_id"), "media123")
 check("publish_x_post returns post_response", xres.get("post_response", {}).get("data", {}).get("id"), "tweet123")
@@ -141,13 +154,54 @@ check("publish_x_post returns expected keys", set(xres.keys()), {"media_id", "po
 # --- manual_facebook_assist: injectable browser launcher, no real launch ---
 launcher_calls = []
 BR_COLLAB["browser_launcher"] = lambda folder: launcher_calls.append(folder)
+_ENV.setenv("ENABLE_IDENTITY_PRESERVATION", "0")
 fbres = br.manual_facebook_assist(str(xdir), collaborators=BR_COLLAB)
 check("manual_facebook_assist returns folder", fbres.get("folder"), str(xdir.resolve()))
 check("manual_facebook_assist invoked browser launcher", launcher_calls, [str(xdir.resolve())])
 
-if FAILS:
-    print("FAIL", len(FAILS))
-    for f in FAILS:
-        print(" -", f)
-    raise SystemExit(1)
-print("PASS all buffer_publish + browser_publish characterization checks")
+# --- identity gate stays ENFORCED with ENABLE_IDENTITY_PRESERVATION=1 (the module-level 0 above is only for the legacy checks) ---
+_ENV.setenv("ENABLE_IDENTITY_PRESERVATION", "1")
+from tools.identity_preservation import IdentityAcceptanceBlocked
+_gov = tmp / "gov_pack"
+_gov.mkdir()
+_gov_meta = {"abbr": "HP", "novel": "Hundredfold Path", "chapter": "7"}
+(_gov / "metadata.json").write_text(json.dumps(_gov_meta), encoding="utf-8")
+_gov_img = _gov / "HP_7_1.png"
+_gov_img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"X" * 40)   # governed novel, no identity sidecar / approval
+for _name, _gate, _arg in (
+    ("X/browser gate", br._browser_identity_publish_gate, _gov_img),
+    ("Buffer gate", bp._buffer_identity_publish_gate, [_gov_img]),
+):
+    try:
+        _gate(_gov, _arg, _gov_meta)
+        _refused = False
+    except IdentityAcceptanceBlocked:
+        _refused = True
+    check(f"flag ON: {_name} refuses an unapproved governed image", _refused, True)
+# a non-image file and an image outside any governed context are not blocked by the gate
+_free = tmp / "free_pack"
+_free.mkdir()
+(_free / "metadata.json").write_text(json.dumps({"abbr": "ZZ", "novel": "Not Governed"}), encoding="utf-8")
+_free_img = _free / "banner.png"
+_free_img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"Y" * 40)
+try:
+    br._browser_identity_publish_gate(_free, _free_img, {"abbr": "ZZ", "novel": "Not Governed"})
+    _free_ok = True
+except IdentityAcceptanceBlocked:
+    _free_ok = False
+check("flag ON: non-governed image is not blocked", _free_ok, True)
+_ENV.setenv("ENABLE_IDENTITY_PRESERVATION", "0")
+_ENV.undo()  # restore BUFFER_CHANNEL_IDS / X_ACCESS_TOKEN to their pre-import state
+
+def test_buffer_publish_characterization():
+    """Expose the module-level checks to pytest so pass/fail shows in the suite."""
+    assert not FAILS, "\n".join(FAILS)
+
+
+if __name__ == "__main__":
+    if FAILS:
+        print("FAIL", len(FAILS))
+        for f in FAILS:
+            print(" -", f)
+        raise SystemExit(1)
+    print("PASS all buffer_publish + browser_publish characterization checks")
