@@ -1,0 +1,18 @@
+{
+  "draft_for": "tools/workflow_templates/i2v/wan_22_ti2v_5b.json",
+  "backend_id": "wan_22",
+  "freeze": {
+    "length": 121,
+    "fps": 24,
+    "steps": 20,
+    "cfg": 5,
+    "sampler": "uni_pc",
+    "scheduler": "simple",
+    "shift": 8,
+    "native": "720x1280",
+    "fallback_native": "480x832",
+    "presentation": "FIT_INSIDE 1080x1920"
+  },
+  "upstream": "Comfy-Org/workflow_templates templates/video_wan2_2_5B_ti2v.json",
+  "note": "DRAFT only \u2014 not committed. Portrait swap from upstream 1280x704. Checkpoints: wan2.2_ti2v_5B_fp16.safetensors, wan2.2_vae.safetensors, umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+}
