@@ -47125,6 +47125,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/promo-master-rollout-decide",
             "/api/still-production-rollout-start",
             "/api/still-production-rollout-stop",
+            "/api/patreon-attach-held-media",
         }:
             self.send_error(404)
             return
