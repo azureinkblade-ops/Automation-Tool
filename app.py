@@ -746,6 +746,157 @@ def media_duration_seconds(path: Path) -> float:
 def video_meets_minimum_duration(path: Path, minimum_seconds: float = 3.0) -> bool:
     return media_file_valid(path, "v:0") and media_duration_seconds(path) >= minimum_seconds
 
+# ---------------------------------------------------------------------------
+# CHAPTER_VIDEO_WIRING_20261118: normal (non-deep) Reel/Short packs get a Wan 2.2 motion clip
+# (SVD-XT fallback) built from the pack's first approved scene still through the stage-1 media
+# pipeline. No valid clip => MEDIA_HOLD: no tiktok-video.mp4, metadata["mediaHold"], and the quality
+# gate blocks the media/social post. The chapter text path (Patreon / Royal Road) is untouched and
+# the still / an old clip / the legacy slideshow is never substituted.
+# One switch: CHAPTER_VIDEO_BACKEND = wan_22 (default) | svd_xt_1_1 | off (legacy slideshow builder).
+# Deep (60-75 s) TikToks keep their own builder. See tools/chapter_video_wiring.py.
+# ---------------------------------------------------------------------------
+CHAPTER_VIDEO_LEGACY_NAME = "tiktok-video.slideshow-legacy.mp4"
+
+
+def chapter_video_wire_config():
+    from tools.chapter_video_wiring import ChapterVideoConfig
+
+    return ChapterVideoConfig.from_env()
+
+
+def chapter_video_wire_applies(folder: Path, metadata: dict[str, Any] | None = None) -> bool:
+    """True for a normal (non-deep) Reel/Short pack folder while the wiring is not switched off."""
+    target = Path(folder).resolve()
+    if not str(target).startswith(str(TIKTOK_OUTPUT_DIR.resolve())):
+        return False
+    if metadata is None:
+        metadata = read_metadata(target) if (target / "metadata.json").exists() else {}
+    if str(metadata.get("kind") or "") == "deep_tiktok" or target.name.lower().endswith("-deep"):
+        return False
+    return chapter_video_wire_config().enabled
+
+
+def _chapter_video_retire_video(video: Path) -> None:
+    """Move any existing (legacy slideshow / stale) tiktok-video.mp4 aside so it can never be posted."""
+    if video.exists():
+        legacy = video.with_name(CHAPTER_VIDEO_LEGACY_NAME)
+        try:
+            if legacy.exists():
+                legacy.unlink()
+            os.replace(video, legacy)
+        except OSError:
+            video.unlink(missing_ok=True)
+
+
+def build_reel_motion_video(post_folder: Path, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Wan 2.2 -> SVD -> MEDIA_HOLD clip for a Reel/Short pack. Returns a build dict (created / media_hold)."""
+    from tools import chapter_video_wiring as cvw
+
+    target = Path(post_folder).resolve()
+    metadata = dict(metadata) if metadata is not None else read_metadata(target)
+    cfg = cvw.ChapterVideoConfig.from_env()
+    video = target / "tiktok-video.mp4"
+    started = time.strftime("%Y-%m-%d %H:%M:%S")
+    if video.exists():
+        ok, _why = cvw.verify_motion_clip(video, metadata.get("motion_clip"), min_seconds=cfg.min_seconds)
+        if ok:  # our own previously built, still-valid clip
+            return {"script": "chapter_video_wiring", "output": str(video), "created": True, "already_exists": True,
+                    "media_hold": False, "duration": media_duration_seconds(video)}
+    images = [Path(str(item)) for item in (metadata.get("images") or []) if str(item).strip() and Path(str(item)).is_file()]
+    hold_reason = ""
+    result = None
+    if not images:
+        hold_reason = "VIDEO_REQUIRED_MISSING:SOURCE_STILL_MISSING"
+    else:
+        still = images[0]
+        identity_hold = patreon_media_identity_hold(still, target, metadata, path_id="VIDEO:chapter_clip")
+        if identity_hold:
+            hold_reason = f"VIDEO_REQUIRED_MISSING:IDENTITY_HELD:{identity_hold.get('reason')}"
+        else:
+            with HeavyJobLimiter():
+                result = cvw.produce_chapter_clip(
+                    still,
+                    workflow_id=f"chapter-clip:{target.name}",
+                    store_root=OUTPUT_DIR / "chapter-video",
+                    still_approved=True,
+                    cfg=cfg,
+                )
+            if not result.ready:
+                hold_reason = str(result.hold_reason or "VIDEO_REQUIRED_MISSING:unknown")
+    finished = time.strftime("%Y-%m-%d %H:%M:%S")
+    if not hold_reason and result is not None:
+        _chapter_video_retire_video(video)
+        tmp = target / "tiktok-video.mp4.tmp"
+        shutil.copy2(result.asset_path, tmp)
+        if hashlib.sha256(tmp.read_bytes()).hexdigest() != result.asset_sha256:
+            tmp.unlink(missing_ok=True)
+            hold_reason = "VIDEO_REQUIRED_MISSING:CLIP_COPY_HASH_MISMATCH"
+        else:
+            os.replace(tmp, video)
+    if hold_reason:
+        _chapter_video_retire_video(video)
+        metadata.pop("motion_clip", None)
+        metadata["mediaHold"] = {
+            "status": "MEDIA_HOLD",
+            "reason": hold_reason,
+            "attempts": list(getattr(result, "attempts", []) or []),
+            "heldAt": finished,
+            "stillPostingBlocked": True,
+        }
+        metadata["video"] = ""
+        metadata["duration"] = 0.0
+        metadata["videoNeedsRebuild"] = True
+        metadata["packStatusOverride"] = "needs_video_build"
+        write_json_atomic(target / "metadata.json", metadata)
+        return {"script": "chapter_video_wiring", "output": str(video), "created": False, "media_hold": True,
+                "message": hold_reason, "started_at": started, "finished_at": finished}
+    metadata.pop("mediaHold", None)
+    metadata["motion_clip"] = {
+        "asset_sha256": result.asset_sha256,
+        "backend": result.backend_used,
+        "fallback_used": result.fallback_used,
+        "frame_count": result.frame_count,
+        "duration": result.duration_seconds,
+        "width": result.width,
+        "height": result.height,
+        "looped": result.looped,
+        "source_image": result.source_image_path,
+        "source_image_sha256": result.source_image_sha256,
+        "workflow_id": result.workflow_id,
+        "attempts": result.attempts,
+        "builtAt": finished,
+        "wiring_version": result.wiring_version,
+    }
+    metadata["video"] = str(video)
+    metadata["duration"] = media_duration_seconds(video)
+    metadata["videoNeedsRebuild"] = False
+    metadata["videoRebuiltAt"] = finished
+    metadata["packStatusOverride"] = ""
+    metadata.pop("github_media_publish", None)
+    metadata.pop("public_media_urls", None)
+    write_json_atomic(target / "metadata.json", metadata)
+    return {"script": "chapter_video_wiring", "output": str(video), "created": True, "media_hold": False,
+            "duration": metadata["duration"], "backend": result.backend_used, "fallback_used": result.fallback_used,
+            "started_at": started, "finished_at": finished}
+
+
+def chapter_video_wire_gate_errors(target: Path, metadata: dict[str, Any]) -> list[str]:
+    """Quality-gate errors for a normal Reel pack while the wiring is on: only the verified motion clip may post.
+
+    Strict by design: a held pack, a missing clip, a legacy slideshow, an old/replaced clip or a clip under the
+    media gate minimum all block the media/social post (never falls back to the images / a still)."""
+    cfg = chapter_video_wire_config()
+    if not cfg.enabled:
+        return []
+    from tools.chapter_video_wiring import verify_motion_clip
+
+    hold = metadata.get("mediaHold")
+    if hold:
+        return [f"MEDIA_HOLD: {hold.get('reason') if isinstance(hold, dict) else hold} (media and social post wait; no still or old clip is posted)."]
+    ok, why = verify_motion_clip(target / "tiktok-video.mp4", metadata.get("motion_clip"), min_seconds=cfg.min_seconds)
+    return [] if ok else [f"MEDIA_HOLD: no verified motion clip ({why}); media and social post wait (no still or old clip is posted)."]
+
+
 
 def wait_for_video_ready(path: Path, minimum_duration: float = 0.0, timeout_seconds: float = 90.0) -> tuple[bool, float]:
     deadline = time.time() + max(1.0, timeout_seconds)
@@ -849,6 +1000,8 @@ def folder_quality_gate(folder: str, text_kind: str = "instagram", full_duplicat
                 errors.append("Deep TikTok video has not been rendered yet.")
             else:
                 warnings.append("Short/Reel video has not been rendered yet.")
+        if not is_deep_tiktok:
+            errors.extend(chapter_video_wire_gate_errors(target, metadata))  # MEDIA_HOLD / unverified clip blocks the post
     elif str(target).startswith(str(YOUTUBE_OUTPUT_DIR.resolve())) or str(target).startswith(str(STORY_HOOK_OUTPUT_DIR.resolve())):
         text = str(metadata.get("description") or "")
         video = target / "youtube-video.mp4"
@@ -17084,6 +17237,20 @@ def rebuild_normal_tiktok_video_from_metadata(target: Path, metadata: dict[str, 
     abbr = story_key(str(metadata.get("abbr") or ""))
     chapter = str(metadata.get("chapter") or metadata.get("chapter_number") or "").strip()
     novel = str(metadata.get("novel") or NOVEL_NAMES.get(abbr, abbr or "Azure Inkblade"))
+    if chapter_video_wire_applies(target, metadata):
+        wired = build_reel_motion_video(target, metadata)  # Wan -> SVD -> MEDIA_HOLD
+        if wired.get("created") and abbr and chapter:
+            try:
+                update_chapter_ledger(abbr, chapter, {
+                    "shortsReelsBuilt": True, "shortsPackBuilt": True, "shortsNeedsRebuild": False,
+                    "shortsMissingReason": "", "shortsPackBuiltAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "shortsFolder": str(target), "folders": {"shorts": str(target)},
+                })
+            except Exception:
+                pass
+        if not wired.get("created"):
+            raise RuntimeError(str(wired.get("message") or "MEDIA_HOLD: no valid motion clip was created."))
+        return wired
     images = [str(Path(str(item)).resolve()) for item in metadata.get("images", []) or [] if Path(str(item)).exists()]
     if len(images) < 3:
         raise RuntimeError("This Shorts/Reels pack needs at least three valid images before the MP4 can be rebuilt.")
@@ -37973,6 +38140,8 @@ def normalize_youtube_video_for_buffer(post_folder: Path) -> dict[str, Any] | No
 
 def ensure_buffer_video(post_folder: Path, text_kind: str = "") -> dict[str, Any] | None:
     if str(post_folder).startswith(str(TIKTOK_OUTPUT_DIR.resolve())):
+        if chapter_video_wire_applies(post_folder):
+            return build_reel_motion_video(post_folder)  # Wan -> SVD -> MEDIA_HOLD (never the slideshow/still)
         output = post_folder / "tiktok-video.mp4"
         if video_meets_minimum_duration(output, 3.0):
             return {"created": True, "output": str(output), "already_exists": True, "duration": media_duration_seconds(output)}
@@ -47951,6 +48120,10 @@ class Handler(BaseHTTPRequestHandler):
                     build = rebuild_deep_tiktok_video_from_metadata(folder, metadata)
                     refreshed = deep_tiktok_pack_from_folder(str(folder))
                     self.send_json({"created": bool(build.get("created")), "video": refreshed.get("video"), "message": build.get("message") or "Deep TikTok MP4 rebuilt.", "post": refreshed})
+                    return
+                if chapter_video_wire_applies(folder, metadata):
+                    wired = build_reel_motion_video(folder, metadata)
+                    self.send_json({"created": bool(wired.get("created")), "video": wired.get("output") if wired.get("created") else "", "mediaHold": bool(wired.get("media_hold")), "message": wired.get("message") or "Motion clip built."})
                     return
                 script = folder / "make_tiktok_video.py"
                 if not script.exists():

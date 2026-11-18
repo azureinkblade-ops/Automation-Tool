@@ -234,6 +234,8 @@ def buffer_post_from_folder(
         metadata = _get(collab, "repair_deep_tiktok_metadata")(post_folder, metadata)
     video_build = _get(collab, "ensure_buffer_video")(post_folder, text_kind)
     if video_build:
+        # ensure_buffer_video may have rewritten metadata.json (motion_clip / mediaHold); never overwrite it with a stale copy.
+        metadata = _get(collab, "read_metadata")(post_folder)
         metadata.setdefault("buffer_video_builds", []).append(video_build)
         metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     quality = _get(collab, "folder_quality_gate")(str(post_folder), text_kind)
