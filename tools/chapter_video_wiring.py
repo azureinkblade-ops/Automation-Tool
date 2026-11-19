@@ -19,7 +19,20 @@ Tunables (all optional): CHAPTER_VIDEO_FRAMES (73, must be 4n+1), CHAPTER_VIDEO_
 CHAPTER_VIDEO_MIN_SECONDS (3.0, floored at 3.0), CHAPTER_VIDEO_LOOP_FALLBACK (0; explicit
 opt-in ffmpeg loop of a too-short clip), CHAPTER_VIDEO_MIN_FREE_VRAM_MIB (0 = as in the
 passing Wan health check), CHAPTER_VIDEO_MAX_WAIT_S (1200), CHAPTER_VIDEO_COMFY_LAUNCHER,
-CHAPTER_VIDEO_STOP_COMFY_AFTER (1: stop ComfyUI only if this run started it), COMFY_I2V_URL.
+CHAPTER_VIDEO_STOP_COMFY_AFTER (1: stop ComfyUI only if this run started it),
+CHAPTER_VIDEO_COMFY_IDLE_RESTART (1: an already-running ComfyUI is restarted through the launcher
+only when GET /queue shows it idle; 0 = legacy reuse), COMFY_I2V_URL.
+
+ComfyUI lifecycle (all through ``start_comfyui_wan.bat``, always re-checked with ``-Status``):
+  * port busy + queue idle  -> launcher ``-Stop`` (it verifies its own pid file + command line and
+    never touches anything else), then a fresh start, then ``-Status`` dynvram_disabled=True.
+  * port busy + queue busy / unknown / instance not stoppable -> MEDIA_HOLD; a busy instance is never stopped.
+  * port free -> one start via the launcher.
+  * an attempt that fails while the launcher reports the port FREE (ComfyUI died / crashed loading the
+    model) -> one fresh start via the launcher and ONE retry of the same backend (then the normal
+    fallback chain). A still-alive instance that merely errors is never restarted.
+Every subprocess here is built as an argv LIST (no shell=True, no joined command strings), so paths
+with spaces (e.g. a repo folder called 'Automation tool') are safe.
 
 Hard rules kept here: ComfyUI is only ever started through the launcher .bat and only
 used once ``-Status`` reports dynvram_disabled=True; a second ComfyUI is never started on
@@ -61,7 +74,7 @@ from tools.media_validity import (
     validate_presented_social_video,
 )
 
-WIRING_VERSION = "chapter_video_wiring_v1"
+WIRING_VERSION = "chapter_video_wiring_v2"
 
 ENV_BACKEND = "CHAPTER_VIDEO_BACKEND"
 ENV_FRAMES = "CHAPTER_VIDEO_FRAMES"
@@ -72,6 +85,7 @@ ENV_MIN_FREE_VRAM = "CHAPTER_VIDEO_MIN_FREE_VRAM_MIB"
 ENV_MAX_WAIT = "CHAPTER_VIDEO_MAX_WAIT_S"
 ENV_LAUNCHER = "CHAPTER_VIDEO_COMFY_LAUNCHER"
 ENV_STOP_AFTER = "CHAPTER_VIDEO_STOP_COMFY_AFTER"
+ENV_IDLE_RESTART = "CHAPTER_VIDEO_COMFY_IDLE_RESTART"
 
 BACKEND_OFF = "off"
 DEFAULT_BACKEND = reg.BACKEND_ID_WAN_22
@@ -139,6 +153,7 @@ class ChapterVideoConfig:
     max_wait_s: float = 1200.0
     comfy_launcher: str = DEFAULT_LAUNCHER
     stop_comfy_after: bool = True
+    idle_restart: bool = True
     problems: Tuple[str, ...] = ()
 
     @property
@@ -173,6 +188,8 @@ class ChapterVideoConfig:
         loop = str(env.get(ENV_LOOP, "") or "").strip().lower() in _TRUTHY
         stop_raw = str(env.get(ENV_STOP_AFTER, "") or "").strip().lower()
         stop_after = True if stop_raw == "" else stop_raw in _TRUTHY
+        idle_raw = str(env.get(ENV_IDLE_RESTART, "") or "").strip().lower()
+        idle_restart = True if idle_raw == "" else idle_raw in _TRUTHY
         cfg = cls(
             backend=backend,
             frames=frames,
@@ -184,6 +201,7 @@ class ChapterVideoConfig:
             max_wait_s=max(30.0, _env_float(env, ENV_MAX_WAIT, 1200.0, problems)),
             comfy_launcher=str(env.get(ENV_LAUNCHER, "") or DEFAULT_LAUNCHER).strip() or DEFAULT_LAUNCHER,
             stop_comfy_after=stop_after,
+            idle_restart=idle_restart,
         )
         problems.extend(cfg._frame_problems())
         return dataclasses.replace(cfg, problems=tuple(problems))
@@ -242,28 +260,45 @@ class ComfyReady:
     reason: str = ""
 
 
-def ensure_comfy_ready(cfg: ChapterVideoConfig, runner: LauncherRunner = default_launcher_runner) -> ComfyReady:
-    """Reuse a running ComfyUI that reports dynvram_disabled=True; otherwise start ONE via the launcher.
+QueueProbe = Callable[[str, float], Optional[Tuple[int, int]]]
 
-    Never starts a second server: if 8188 is busy but not confirmed dynvram_disabled=True
-    the result is not-ok (caller holds the media).
-    """
+
+def launcher_argv(launcher: str, *flags: str) -> List[str]:
+    """argv LIST for the launcher .bat (never a joined string; the path may contain spaces)."""
+    return [str(launcher), *flags]
+
+
+def default_queue_probe(base_url: str, timeout: float = 8.0) -> Optional[Tuple[int, int]]:
+    """GET ``{base_url}/queue`` -> (running, pending) job counts; None if unreachable / unparseable."""
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(str(base_url).rstrip("/") + "/queue", timeout=timeout) as resp:  # noqa: S310 (local ComfyUI)
+            data = json.loads(resp.read().decode("utf-8", "replace"))
+        if not isinstance(data, dict):
+            return None
+        return len(data.get("queue_running") or []), len(data.get("queue_pending") or [])
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _launcher_status(cfg: ChapterVideoConfig, runner: LauncherRunner) -> Tuple[Optional[LauncherStatus], str]:
+    try:
+        rc, out = runner(launcher_argv(cfg.comfy_launcher, "-Status"), 90.0)
+    except Exception as exc:  # noqa: BLE001
+        return None, f"COMFY_STATUS_ERROR:{type(exc).__name__}:{str(exc)[:120]}"
+    st = parse_launcher_status(out)
+    if st.port_busy is None:
+        return None, f"COMFY_STATUS_UNPARSEABLE:rc={rc}"
+    return st, ""
+
+
+def start_comfy_via_launcher(cfg: ChapterVideoConfig, runner: LauncherRunner = default_launcher_runner) -> ComfyReady:
+    """Start exactly ONE ComfyUI through the launcher .bat (caller has confirmed the port is free), then
+    require ``-Status`` dynvram_disabled=True. Never starts anything but via the launcher."""
     bat = cfg.comfy_launcher
     try:
-        rc, out = runner([bat, "-Status"], 90.0)
-    except Exception as exc:  # noqa: BLE001
-        return ComfyReady(False, reason=f"COMFY_STATUS_ERROR:{type(exc).__name__}:{str(exc)[:120]}")
-    st = parse_launcher_status(out)
-    if st.port_busy and st.dynvram_disabled is True:
-        return ComfyReady(True, started_by_us=False, reason="reused_running_comfyui")
-    if st.port_busy:
-        return ComfyReady(False, reason="COMFY_PORT_BUSY_DYNVRAM_NOT_CONFIRMED")
-    if st.port_busy is None:
-        return ComfyReady(False, reason=f"COMFY_STATUS_UNPARSEABLE:rc={rc}")
-
-    # Port free: start exactly one instance through the launcher.
-    try:
-        rc, out = runner([bat], 480.0)
+        rc, out = runner(launcher_argv(bat), 480.0)
     except Exception as exc:  # noqa: BLE001
         stop_comfy_started_by_us(cfg, runner)
         return ComfyReady(False, reason=f"COMFY_START_ERROR:{type(exc).__name__}:{str(exc)[:120]}")
@@ -273,7 +308,7 @@ def ensure_comfy_ready(cfg: ChapterVideoConfig, runner: LauncherRunner = default
             stop_comfy_started_by_us(cfg, runner)
         return ComfyReady(False, reason=f"COMFY_START_FAILED:rc={rc}")
     try:
-        rc2, out2 = runner([bat, "-Status"], 90.0)
+        rc2, out2 = runner(launcher_argv(bat, "-Status"), 90.0)
     except Exception as exc:  # noqa: BLE001
         stop_comfy_started_by_us(cfg, runner)
         return ComfyReady(False, started_by_us=False, reason=f"COMFY_STATUS_ERROR:{type(exc).__name__}")
@@ -284,10 +319,97 @@ def ensure_comfy_ready(cfg: ChapterVideoConfig, runner: LauncherRunner = default
     return ComfyReady(True, started_by_us=True, reason="started_via_launcher")
 
 
+def _wait_port_free(
+    cfg: ChapterVideoConfig, runner: LauncherRunner, sleep: Callable[[float], Any], tries: int = 6, delay: float = 2.0
+) -> Optional[bool]:
+    """True once the launcher reports the port free; False if still busy after ``tries``; None if status unusable."""
+    for i in range(max(1, tries)):
+        st, _err = _launcher_status(cfg, runner)
+        if st is None:
+            return None
+        if st.port_busy is False:
+            return True
+        if i + 1 < tries:
+            sleep(delay)
+    return False
+
+
+def _restart_idle_instance(
+    cfg: ChapterVideoConfig, runner: LauncherRunner, queue_probe: QueueProbe, sleep: Callable[[float], Any]
+) -> ComfyReady:
+    """Port busy by a ComfyUI this run did not start: restart it through the launcher ONLY if it is idle."""
+    try:
+        queue = queue_probe(cfg.comfy_url, 8.0)
+    except Exception:  # noqa: BLE001
+        queue = None
+    if queue is None:
+        return ComfyReady(False, reason="COMFY_BUSY_PORT_QUEUE_UNKNOWN_NOT_RESTARTED")
+    running, pending = int(queue[0]), int(queue[1])
+    if running or pending:
+        return ComfyReady(False, reason=f"COMFY_BUSY_NOT_RESTARTED:running={running},pending={pending}")
+    # Idle. The launcher's -Stop verifies its own pid file + command line; anything else is left alone (rc 1).
+    try:
+        stop_rc, _out = runner(launcher_argv(cfg.comfy_launcher, "-Stop"), 90.0)
+    except Exception as exc:  # noqa: BLE001
+        return ComfyReady(False, reason=f"COMFY_STOP_ERROR:{type(exc).__name__}:{str(exc)[:120]}")
+    if stop_rc != 0:
+        return ComfyReady(False, reason=f"COMFY_IDLE_INSTANCE_NOT_STOPPABLE_BY_LAUNCHER:rc={stop_rc}")
+    free = _wait_port_free(cfg, runner, sleep)
+    if free is not True:
+        return ComfyReady(False, reason="COMFY_IDLE_RESTART_PORT_STILL_BUSY" if free is False else "COMFY_STATUS_UNUSABLE_AFTER_STOP")
+    res = start_comfy_via_launcher(cfg, runner)
+    if res.ok:
+        res.reason = "restarted_idle_instance_via_launcher"
+    return res
+
+
+def ensure_comfy_ready(
+    cfg: ChapterVideoConfig,
+    runner: LauncherRunner = default_launcher_runner,
+    queue_probe: QueueProbe = default_queue_probe,
+    sleep: Callable[[float], Any] = time.sleep,
+) -> ComfyReady:
+    """Get ONE ComfyUI that reports dynvram_disabled=True, only ever via the launcher.
+
+    * port free            -> start via the launcher.
+    * port busy, idle      -> launcher ``-Stop`` + fresh start (``idle_restart``; else legacy reuse).
+    * port busy, busy/unknown queue or not stoppable -> not-ok (caller holds the media). Never a second server.
+    """
+    st, err = _launcher_status(cfg, runner)
+    if st is None:
+        return ComfyReady(False, reason=err)
+    if st.port_busy:
+        if cfg.idle_restart:
+            return _restart_idle_instance(cfg, runner, queue_probe, sleep)
+        if st.dynvram_disabled is True:
+            return ComfyReady(True, started_by_us=False, reason="reused_running_comfyui")
+        return ComfyReady(False, reason="COMFY_PORT_BUSY_DYNVRAM_NOT_CONFIRMED")
+    return start_comfy_via_launcher(cfg, runner)
+
+
+def restart_comfy_if_gone(
+    cfg: ChapterVideoConfig, runner: LauncherRunner = default_launcher_runner
+) -> ComfyReady:
+    """After a failed attempt: if (and only if) the launcher reports the port FREE (ComfyUI died / crashed),
+    start a fresh instance via the launcher. A still-alive instance is never touched."""
+    st, err = _launcher_status(cfg, runner)
+    if st is None:
+        return ComfyReady(False, reason=err)
+    if st.port_busy:
+        return ComfyReady(False, reason=COMFY_STILL_ALIVE)
+    res = start_comfy_via_launcher(cfg, runner)
+    if res.ok:
+        res.reason = "restarted_after_crash_via_launcher"
+    return res
+
+
+COMFY_STILL_ALIVE = "COMFY_STILL_ALIVE_NOT_RESTARTED"
+
+
 def stop_comfy_started_by_us(cfg: ChapterVideoConfig, runner: LauncherRunner = default_launcher_runner) -> None:
     """``-Stop`` only ever stops the process the launcher itself started (pid file + cmdline verified)."""
     try:
-        runner([cfg.comfy_launcher, "-Stop"], 90.0)
+        runner(launcher_argv(cfg.comfy_launcher, "-Stop"), 90.0)
     except Exception:  # noqa: BLE001
         pass
 
@@ -295,6 +417,13 @@ def stop_comfy_started_by_us(cfg: ChapterVideoConfig, runner: LauncherRunner = d
 # --------------------------------------------------------------------------- #
 # Optional loop render (explicit opt-in, off by default)
 # --------------------------------------------------------------------------- #
+
+
+def build_loop_ffmpeg_argv(ffmpeg: str, src: "os.PathLike[str] | str", out_path: "os.PathLike[str] | str",
+                           extra_loops: int, vf: str) -> List[str]:
+    """argv LIST for the opt-in loop render (paths with spaces stay single elements)."""
+    return [str(ffmpeg), "-y", "-stream_loop", str(int(extra_loops)), "-i", str(src), "-vf", vf,
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", str(out_path)]
 
 
 class LoopingRender:
@@ -322,8 +451,7 @@ class LoopingRender:
             f"pad={transform.target_width}:{transform.target_height}:{transform.pad_left}:{transform.pad_top}:black,"
             f"setsar=1"
         )
-        cmd = [ffmpeg, "-y", "-stream_loop", str(extra_loops), "-i", str(src), "-vf", vf,
-               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", str(out_path)]
+        cmd = build_loop_ffmpeg_argv(ffmpeg, src, out_path, extra_loops, vf)
         proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode != 0 or not out_path.is_file():
             raise pa.PresentationError(f"ffmpeg loop failed: {proc.stderr[-300:]}")
@@ -424,6 +552,7 @@ class ChapterClipResult:
     source_image_sha256: Optional[str] = None
     attempts: List[Dict[str, Any]] = field(default_factory=list)
     comfy: str = ""
+    comfy_restarts: int = 0
     video_creates_identity_canon: bool = VIDEO_CREATES_IDENTITY_CANON
     wiring_version: str = WIRING_VERSION
 
@@ -463,6 +592,8 @@ def produce_chapter_clip(
     comfy_runner: LauncherRunner = default_launcher_runner,
     skip_comfy_guard: bool = False,
     probe: Callable[[Path], Any] = probe_presented_video,
+    queue_probe: QueueProbe = default_queue_probe,
+    sleep: Callable[[float], Any] = time.sleep,
 ) -> ChapterClipResult:
     """Wan -> SVD -> MEDIA_HOLD for one approved still. Never raises; never returns a still/old clip."""
     cfg = cfg or ChapterVideoConfig.from_env()
@@ -490,64 +621,97 @@ def produce_chapter_clip(
 
     comfy = ComfyReady(True, reason="skipped")
     if not skip_comfy_guard:
-        comfy = ensure_comfy_ready(cfg, comfy_runner)
+        comfy = ensure_comfy_ready(cfg, comfy_runner, queue_probe, sleep)
         if not comfy.ok:
             return _hold(comfy.reason, comfy=comfy.reason, **base)
     attempts: List[Dict[str, Any]] = []
+    restarts = 0
+    abort = False
+
+    def _attempt(backend: str, idx: int, wf: str) -> Tuple[Optional[ChapterClipResult], Dict[str, Any]]:
+        loop_render = LoopingRender(cfg.min_seconds) if cfg.loop_fallback else None
+        try:
+            if pipeline_builder is not None:
+                pipeline = pipeline_builder(backend)
+            else:
+                pipeline = build_backend_pipeline(cfg, backend, store_root, render=loop_render)
+            res = pipeline.produce_social_media(
+                ApprovedStillRef(
+                    image_path=str(still),
+                    source_image_sha256=sha,
+                    image_source_approved=True,
+                    source_character_intent=source_character_intent,
+                    source_width=int(width),
+                    source_height=int(height),
+                ),
+                workflow_id=wf,
+                seed=int(seed),
+            )
+        except Exception as exc:  # noqa: BLE001 - one backend failing must not skip the fallback
+            return None, {"backend": backend, "outcome": "ERROR", "reason": f"{type(exc).__name__}:{str(exc)[:200]}"}
+        rd = res.to_dict()
+        attempt: Dict[str, Any] = {"backend": backend, "outcome": rd.get("outcome"), "reason": rd.get("failure_reason")}
+        asset = rd.get("asset_path")
+        if rd.get("outcome") == SOCIAL_READY and asset and Path(asset).is_file():
+            # Independent re-check of the final file (belt and braces on top of the pipeline gate).
+            verdict = validate_presented_social_video(asset, min_duration=cfg.min_seconds)
+            if verdict.ok:
+                info = verdict.probe
+                return ChapterClipResult(
+                    outcome=SOCIAL_READY,
+                    asset_path=str(asset),
+                    asset_sha256=rd.get("asset_sha256") or _sha256_file(Path(asset)),
+                    backend_used=backend,
+                    fallback_used=idx > 0,
+                    duration_seconds=round(float(getattr(info, "duration", 0.0) or 0.0), 3),
+                    width=int(getattr(info, "width", 0) or 0),
+                    height=int(getattr(info, "height", 0) or 0),
+                    frame_count=int(getattr(info, "frame_count", 0) or 0),
+                    looped=bool(loop_render.looped) if loop_render else False,
+                    attempts=attempts,
+                    comfy=comfy.reason,
+                    comfy_restarts=restarts,
+                    **base,
+                ), attempt
+            attempt["outcome"] = MEDIA_HOLD
+            attempt["reason"] = verdict.failure_reason
+        return None, attempt
+
     try:
         for idx, backend in enumerate(cfg.backend_order):
-            loop_render = LoopingRender(cfg.min_seconds) if cfg.loop_fallback else None
-            wf = f"{workflow_id}|{backend}|{cfg.frames}x{cfg.fps}|min{cfg.min_seconds:g}"
-            try:
-                if pipeline_builder is not None:
-                    pipeline = pipeline_builder(backend)
-                else:
-                    pipeline = build_backend_pipeline(cfg, backend, store_root, render=loop_render)
-                res = pipeline.produce_social_media(
-                    ApprovedStillRef(
-                        image_path=str(still),
-                        source_image_sha256=sha,
-                        image_source_approved=True,
-                        source_character_intent=source_character_intent,
-                        source_width=int(width),
-                        source_height=int(height),
-                    ),
-                    workflow_id=wf,
-                    seed=int(seed),
-                )
-            except Exception as exc:  # noqa: BLE001 - one backend failing must not skip the fallback
-                attempts.append({"backend": backend, "outcome": "ERROR",
-                                 "reason": f"{type(exc).__name__}:{str(exc)[:200]}"})
-                continue
-            rd = res.to_dict()
-            attempt = {"backend": backend, "outcome": rd.get("outcome"), "reason": rd.get("failure_reason")}
-            asset = rd.get("asset_path")
-            if rd.get("outcome") == SOCIAL_READY and asset and Path(asset).is_file():
-                # Independent re-check of the final file (belt and braces on top of the pipeline gate).
-                verdict = validate_presented_social_video(asset, min_duration=cfg.min_seconds)
-                if verdict.ok:
-                    info = verdict.probe
-                    attempts.append(attempt)
-                    return ChapterClipResult(
-                        outcome=SOCIAL_READY,
-                        asset_path=str(asset),
-                        asset_sha256=rd.get("asset_sha256") or _sha256_file(Path(asset)),
-                        backend_used=backend,
-                        fallback_used=idx > 0,
-                        duration_seconds=round(float(getattr(info, "duration", 0.0) or 0.0), 3),
-                        width=int(getattr(info, "width", 0) or 0),
-                        height=int(getattr(info, "height", 0) or 0),
-                        frame_count=int(getattr(info, "frame_count", 0) or 0),
-                        looped=bool(loop_render.looped) if loop_render else False,
-                        attempts=attempts,
-                        comfy=comfy.reason,
-                        **base,
-                    )
-                attempt["outcome"] = MEDIA_HOLD
-                attempt["reason"] = verdict.failure_reason
-            attempts.append(attempt)
-        reasons = "|".join(f"{a['backend']}:{a.get('reason') or a.get('outcome')}" for a in attempts) or "no_backend_attempted"
-        return _hold(reasons, attempts=attempts, comfy=comfy.reason, **base)
+            retried = False
+            while True:
+                # frames/fps/min are part of the job identity (the adapter's idempotency key ignores them);
+                # a post-crash retry gets its own key so a stale GENERATING record of the dead server is never reconciled.
+                wf = f"{workflow_id}|{backend}|{cfg.frames}x{cfg.fps}|min{cfg.min_seconds:g}" + ("|retry1" if retried else "")
+                clip, attempt = _attempt(backend, idx, wf)
+                if retried:
+                    attempt["retry"] = 1
+                attempts.append(attempt)
+                if clip is not None:
+                    clip.comfy_restarts = restarts
+                    return clip
+                # Failed. Crash resilience: restart ONLY if the launcher says the port is free (ComfyUI is gone).
+                if retried or restarts >= 1 or skip_comfy_guard:
+                    break
+                gone = restart_comfy_if_gone(cfg, comfy_runner)
+                if gone.reason == COMFY_STILL_ALIVE:
+                    attempt["comfy_alive"] = True  # alive but erroring: never restarted, go to the next backend
+                    break
+                if not gone.ok:
+                    attempts.append({"backend": backend, "outcome": "COMFY_RESTART_FAILED", "reason": gone.reason})
+                    abort = True  # ComfyUI is gone and could not be brought back: fail closed
+                    break
+                restarts += 1
+                comfy = ComfyReady(True, started_by_us=True, reason=gone.reason)
+                attempts.append({"backend": backend, "outcome": "COMFY_RESTARTED", "reason": gone.reason})
+                retried = True
+            if abort:
+                break
+        reasons = "|".join(
+            f"{a['backend']}:{a.get('reason') or a.get('outcome')}" for a in attempts if a.get("outcome") != "COMFY_RESTARTED"
+        ) or "no_backend_attempted"
+        return _hold(reasons, attempts=attempts, comfy=comfy.reason, comfy_restarts=restarts, **base)
     finally:
         if comfy.started_by_us and cfg.stop_comfy_after:
             stop_comfy_started_by_us(cfg, comfy_runner)

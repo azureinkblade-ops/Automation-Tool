@@ -38,6 +38,8 @@ def test_defaults_are_wan_73_frames_24fps_3s_no_loop():
     assert cfg.min_seconds == 3.0 and cfg.loop_fallback is False
     assert cfg.problems == () and cfg.wan_clip_seconds >= 3.0
     assert cfg.backend_order == ["wan_22", "svd_xt_1_1"]
+    assert cfg.idle_restart is True  # an already-running idle ComfyUI is restarted via the launcher by default
+    assert cvw.ChapterVideoConfig.from_env({"CHAPTER_VIDEO_COMFY_IDLE_RESTART": "0"}).idle_restart is False
 
 
 def test_one_line_switch_to_svd_and_off():
@@ -158,7 +160,8 @@ class Launcher:
         a = list(args)[1:]
         self.calls.append(a)
         if a == ["-Status"]:
-            return 0, self.status_outputs.pop(0)
+            # the last scripted status repeats (the driver re-checks -Status after a failed attempt)
+            return 0, (self.status_outputs.pop(0) if len(self.status_outputs) > 1 else self.status_outputs[0])
         if a == []:
             return self.start_rc, "START"
         if a == ["-Stop"]:
@@ -170,7 +173,9 @@ BUSY_OK = "STATUS port8188_busy=True our_pid=123\nSTATUS dynvram_disabled=True"
 BUSY_BAD = "STATUS port8188_busy=True our_pid=none\nSTATUS dynvram_disabled=False"
 BUSY_UNREACH = "STATUS port8188_busy=True our_pid=none\nSTATUS /system_stats unreachable"
 FREE = "STATUS port8188_busy=False our_pid=none\nSTATUS /system_stats unreachable"
-CFG = cvw.ChapterVideoConfig.from_env({})
+# Legacy reuse semantics (idle_restart off) for the pre-existing guard/driver tests; the default idle-restart
+# and crash-retry behaviour lives in tests/test_chapter_video_comfy_resilience.py.
+CFG = dataclasses.replace(cvw.ChapterVideoConfig.from_env({}), idle_restart=False)
 
 
 def test_guard_reuses_running_comfy_with_dynvram_disabled_and_never_starts_second():
@@ -278,7 +283,7 @@ def test_both_fail_is_media_hold_with_no_asset(tmp_path, monkeypatch):
 
 
 def test_svd_only_switch_never_tries_wan(tmp_path, monkeypatch):
-    cfg = cvw.ChapterVideoConfig.from_env({"CHAPTER_VIDEO_BACKEND": "svd_xt_1_1"})
+    cfg = dataclasses.replace(cvw.ChapterVideoConfig.from_env({"CHAPTER_VIDEO_BACKEND": "svd_xt_1_1"}), idle_restart=False)
     res, log, _ = _drive(tmp_path, {"wan_22": "ok", "svd_xt_1_1": "ok"}, monkeypatch, cfg=cfg)
     assert res.ready and res.backend_used == "svd_xt_1_1" and [b for b, *_ in log] == ["svd_xt_1_1"]
 
@@ -397,7 +402,7 @@ def test_real_stack_wan_down_svd_ok_uses_stage_upload(tmp_path):
 
 @needs_ffmpeg
 def test_loop_fallback_is_explicit_opt_in_and_reaches_3s(tmp_path):
-    cfg = cvw.ChapterVideoConfig.from_env({"CHAPTER_VIDEO_FRAMES": "17", "CHAPTER_VIDEO_LOOP_FALLBACK": "1"})
+    cfg = dataclasses.replace(cvw.ChapterVideoConfig.from_env({"CHAPTER_VIDEO_FRAMES": "17", "CHAPTER_VIDEO_LOOP_FALLBACK": "1"}), idle_restart=False)
     transport = FakeComfy(tmp_path)
     res = cvw.produce_chapter_clip(
         _still(tmp_path), workflow_id="chapter-clip:loop", store_root=tmp_path / "store", still_approved=True, cfg=cfg,
