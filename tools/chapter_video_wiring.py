@@ -20,6 +20,7 @@ CHAPTER_VIDEO_MIN_SECONDS (3.0, floored at 3.0), CHAPTER_VIDEO_LOOP_FALLBACK (0;
 opt-in ffmpeg loop of a too-short clip), CHAPTER_VIDEO_MIN_FREE_VRAM_MIB (0 = as in the
 passing Wan health check), CHAPTER_VIDEO_MAX_WAIT_S (1200), CHAPTER_VIDEO_COMFY_LAUNCHER,
 CHAPTER_VIDEO_STOP_COMFY_AFTER (1: stop ComfyUI only if this run started it),
+CHAPTER_VIDEO_STEP_TIMEOUT_S (3600, floored at 60: overall deadline on the whole clip step -> MEDIA_HOLD),
 CHAPTER_VIDEO_COMFY_IDLE_RESTART (1: an already-running ComfyUI is restarted through the launcher
 only when GET /queue shows it idle; 0 = legacy reuse), COMFY_I2V_URL.
 
@@ -32,7 +33,9 @@ ComfyUI lifecycle (all through ``start_comfyui_wan.bat``, always re-checked with
     model) -> one fresh start via the launcher and ONE retry of the same backend (then the normal
     fallback chain). A still-alive instance that merely errors is never restarted.
 Every subprocess here is built as an argv LIST (no shell=True, no joined command strings), so paths
-with spaces (e.g. a repo folder called 'Automation tool') are safe.
+with spaces (e.g. a repo folder called 'Automation tool') are safe. The launcher runs with NO pipes
+(stdin DEVNULL, output to a temp file): the ComfyUI it starts inherits handles, and an inherited pipe
+used to block ``subprocess.run`` forever on Windows. A launcher timeout kills the launcher tree -> MEDIA_HOLD.
 
 Hard rules kept here: ComfyUI is only ever started through the launcher .bat and only
 used once ``-Status`` reports dynvram_disabled=True; a second ComfyUI is never started on
@@ -86,12 +89,15 @@ ENV_MAX_WAIT = "CHAPTER_VIDEO_MAX_WAIT_S"
 ENV_LAUNCHER = "CHAPTER_VIDEO_COMFY_LAUNCHER"
 ENV_STOP_AFTER = "CHAPTER_VIDEO_STOP_COMFY_AFTER"
 ENV_IDLE_RESTART = "CHAPTER_VIDEO_COMFY_IDLE_RESTART"
+ENV_STEP_TIMEOUT = "CHAPTER_VIDEO_STEP_TIMEOUT_S"
 
 BACKEND_OFF = "off"
 DEFAULT_BACKEND = reg.BACKEND_ID_WAN_22
 DEFAULT_FRAMES = 73  # 4n+1; 73 / 24 fps = 3.04 s
 DEFAULT_FPS = 24
 DEFAULT_LAUNCHER = r"C:\Users\David\ComfyUI-Launch\start_comfyui_wan.bat"
+DEFAULT_STEP_TIMEOUT_S = 3600.0  # whole clip step (start + Wan + SVD fallback); never wait longer
+MIN_STEP_TIMEOUT_S = 60.0
 SVD_REQUIRED_MODELS: Dict[str, str] = {"svd_xt_1_1.safetensors": "checkpoints"}
 
 MEDIA_HOLD = PipelineOutcome.MEDIA_HOLD.value
@@ -154,6 +160,7 @@ class ChapterVideoConfig:
     comfy_launcher: str = DEFAULT_LAUNCHER
     stop_comfy_after: bool = True
     idle_restart: bool = True
+    step_timeout_s: float = DEFAULT_STEP_TIMEOUT_S
     problems: Tuple[str, ...] = ()
 
     @property
@@ -202,6 +209,7 @@ class ChapterVideoConfig:
             comfy_launcher=str(env.get(ENV_LAUNCHER, "") or DEFAULT_LAUNCHER).strip() or DEFAULT_LAUNCHER,
             stop_comfy_after=stop_after,
             idle_restart=idle_restart,
+            step_timeout_s=max(MIN_STEP_TIMEOUT_S, _env_float(env, ENV_STEP_TIMEOUT, DEFAULT_STEP_TIMEOUT_S, problems)),
         )
         problems.extend(cfg._frame_problems())
         return dataclasses.replace(cfg, problems=tuple(problems))
@@ -228,9 +236,65 @@ class ChapterVideoConfig:
 LauncherRunner = Callable[[Sequence[str], float], Tuple[int, str]]
 
 
+def _kill_process_tree(proc: "subprocess.Popen[Any]") -> None:
+    """Kill ``proc`` and every descendant (Windows: ``taskkill /T /F``; POSIX: its process group)."""
+    if proc.poll() is not None and os.name != "nt":
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=30, check=False,
+            )
+        else:
+            import signal
+
+            os.killpg(proc.pid, signal.SIGKILL)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        proc.kill()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        proc.wait(timeout=10)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def default_launcher_runner(args: Sequence[str], timeout: float) -> Tuple[int, str]:
-    proc = subprocess.run(list(args), capture_output=True, text=True, timeout=timeout, check=False)
-    return proc.returncode, (proc.stdout or "") + "\n" + (proc.stderr or "")
+    """Run the launcher (argv LIST, never shell=True) with NO pipes.
+
+    The launcher's background start (``Start-Process``) hands its inherited handles to the fresh ComfyUI.
+    With ``capture_output=True`` that child kept the stdout/stderr PIPE open and ``subprocess.run`` waited on
+    it forever on Windows, even past ``timeout`` (the 24 h hang). Output now goes to an anonymous temp FILE
+    (a child holding a file handle blocks nothing) and stdin is DEVNULL. The timeout is enforced on the
+    launcher process itself; on expiry the whole launcher tree is killed and ``subprocess.TimeoutExpired``
+    is raised, which every caller turns into a not-ok ComfyReady -> MEDIA_HOLD.
+    """
+    import tempfile
+
+    popen_kw: Dict[str, Any] = {}
+    if os.name == "nt":
+        popen_kw["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        popen_kw["start_new_session"] = True
+    with tempfile.TemporaryFile() as out_f:
+        proc = subprocess.Popen(
+            list(args), stdin=subprocess.DEVNULL, stdout=out_f, stderr=subprocess.STDOUT, **popen_kw
+        )
+        try:
+            rc = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill_process_tree(proc)
+            raise
+        except BaseException:
+            _kill_process_tree(proc)
+            raise
+        out_f.seek(0)
+        text = out_f.read().decode("utf-8", "replace")
+    return rc, text
 
 
 @dataclass
@@ -579,7 +643,7 @@ def _hold(reason: str, **kw: Any) -> ChapterClipResult:
 PipelineBuilder = Callable[[str], MediaPipeline]
 
 
-def produce_chapter_clip(
+def _produce_chapter_clip_inner(
     still_path: "os.PathLike[str] | str",
     *,
     workflow_id: str,
@@ -594,8 +658,10 @@ def produce_chapter_clip(
     probe: Callable[[Path], Any] = probe_presented_video,
     queue_probe: QueueProbe = default_queue_probe,
     sleep: Callable[[float], Any] = time.sleep,
+    _state: Optional[Dict[str, Any]] = None,
 ) -> ChapterClipResult:
-    """Wan -> SVD -> MEDIA_HOLD for one approved still. Never raises; never returns a still/old clip."""
+    """The clip step itself (no deadline); ``produce_chapter_clip`` runs it under the overall deadline."""
+    _state = {} if _state is None else _state
     cfg = cfg or ChapterVideoConfig.from_env()
     still = Path(still_path)
     base: Dict[str, Any] = {"workflow_id": workflow_id, "source_image_path": str(still)}
@@ -622,6 +688,7 @@ def produce_chapter_clip(
     comfy = ComfyReady(True, reason="skipped")
     if not skip_comfy_guard:
         comfy = ensure_comfy_ready(cfg, comfy_runner, queue_probe, sleep)
+        _state["comfy"] = comfy
         if not comfy.ok:
             return _hold(comfy.reason, comfy=comfy.reason, **base)
     attempts: List[Dict[str, Any]] = []
@@ -704,6 +771,7 @@ def produce_chapter_clip(
                     break
                 restarts += 1
                 comfy = ComfyReady(True, started_by_us=True, reason=gone.reason)
+                _state["comfy"] = comfy
                 attempts.append({"backend": backend, "outcome": "COMFY_RESTARTED", "reason": gone.reason})
                 retried = True
             if abort:
@@ -715,6 +783,78 @@ def produce_chapter_clip(
     finally:
         if comfy.started_by_us and cfg.stop_comfy_after:
             stop_comfy_started_by_us(cfg, comfy_runner)
+
+
+CLIP_STEP_TIMEOUT = "CLIP_STEP_TIMEOUT"
+
+
+def produce_chapter_clip(
+    still_path: "os.PathLike[str] | str",
+    *,
+    workflow_id: str,
+    store_root: "os.PathLike[str] | str",
+    still_approved: bool,
+    cfg: Optional[ChapterVideoConfig] = None,
+    seed: Optional[int] = None,
+    source_character_intent: str = "INTENT_NO",
+    pipeline_builder: Optional[PipelineBuilder] = None,
+    comfy_runner: LauncherRunner = default_launcher_runner,
+    skip_comfy_guard: bool = False,
+    probe: Callable[[Path], Any] = probe_presented_video,
+    queue_probe: QueueProbe = default_queue_probe,
+    sleep: Callable[[float], Any] = time.sleep,
+    step_timeout_s: Optional[float] = None,
+) -> ChapterClipResult:
+    """Wan -> SVD -> MEDIA_HOLD for one approved still. Never raises; never returns a still/old clip.
+
+    The whole clip step runs under one overall deadline (``CHAPTER_VIDEO_STEP_TIMEOUT_S``, default
+    3600 s, floored at 1 s; ``step_timeout_s`` overrides it). Past the deadline the caller gets MEDIA_HOLD
+    (``CLIP_STEP_TIMEOUT``) instead of waiting; a ComfyUI this run started is stopped through the launcher
+    so the abandoned worker unblocks. The worker thread is a daemon and can never publish anything: its
+    late result is discarded.
+    """
+    import threading
+
+    cfg = cfg or ChapterVideoConfig.from_env()
+    limit = float(step_timeout_s) if step_timeout_s is not None else float(cfg.step_timeout_s)
+    limit = max(1.0, limit)
+    state: Dict[str, Any] = {"comfy": None, "result": None, "error": None, "timed_out": False}
+
+    def _run() -> None:
+        try:
+            state["result"] = _produce_chapter_clip_inner(
+                still_path,
+                workflow_id=workflow_id,
+                store_root=store_root,
+                still_approved=still_approved,
+                cfg=cfg,
+                seed=seed,
+                source_character_intent=source_character_intent,
+                pipeline_builder=pipeline_builder,
+                comfy_runner=comfy_runner,
+                skip_comfy_guard=skip_comfy_guard,
+                probe=probe,
+                queue_probe=queue_probe,
+                sleep=sleep,
+                _state=state,
+            )
+        except BaseException as exc:  # noqa: BLE001 - never raises to the caller
+            state["error"] = exc
+
+    worker = threading.Thread(target=_run, name=f"chapter-clip-{workflow_id}"[:60], daemon=True)
+    worker.start()
+    worker.join(limit)
+    base: Dict[str, Any] = {"workflow_id": workflow_id, "source_image_path": str(Path(still_path))}
+    if worker.is_alive():
+        state["timed_out"] = True
+        comfy = state.get("comfy")
+        if comfy is not None and getattr(comfy, "started_by_us", False) and cfg.stop_comfy_after:
+            stop_comfy_started_by_us(cfg, comfy_runner)
+        return _hold(f"{CLIP_STEP_TIMEOUT}:{limit:g}s", comfy=getattr(comfy, "reason", "") or "", **base)
+    if state["error"] is not None:
+        exc = state["error"]
+        return _hold(f"UNEXPECTED_ERROR:{type(exc).__name__}:{str(exc)[:160]}", **base)
+    return state["result"]
 
 
 # --------------------------------------------------------------------------- #
