@@ -38,6 +38,9 @@ ComfyUI lifecycle (all through ``start_comfyui_wan.bat``, always re-checked with
     ``/queue`` (launcher ``-Stop`` of our own pid first). A live / foreign / busy instance is never
     stopped. Start failure, or no time left under CHAPTER_VIDEO_STEP_TIMEOUT_S -> MEDIA_HOLD. The result
     records it in ``fallback_restart`` (``svd_after_restart`` / ``svd_restart_failed:...``).
+  * step deadline hit -> the caller gets MEDIA_HOLD at once and a cancel Event is set; from then on the
+    abandoned worker never calls the launcher (no -Status/-Stop/start, no crash restart, no pre-SVD
+    restart) and never submits another job to ComfyUI.
 Every subprocess here is built as an argv LIST (no shell=True, no joined command strings), so paths
 with spaces (e.g. a repo folder called 'Automation tool') are safe. The launcher runs with NO pipes
 (stdin DEVNULL, output to a temp file): the ComfyUI it starts inherits handles, and an inherited pipe
@@ -464,7 +467,9 @@ def ensure_comfy_ready(
 
 
 def restart_comfy_if_gone(
-    cfg: ChapterVideoConfig, runner: LauncherRunner = default_launcher_runner
+    cfg: ChapterVideoConfig,
+    runner: LauncherRunner = default_launcher_runner,
+    on_starting: Optional[Callable[[], Any]] = None,
 ) -> ComfyReady:
     """After a failed attempt: if (and only if) the launcher reports the port FREE (ComfyUI died / crashed),
     start a fresh instance via the launcher. A still-alive instance is never touched."""
@@ -473,6 +478,8 @@ def restart_comfy_if_gone(
         return ComfyReady(False, reason=err)
     if st.port_busy:
         return ComfyReady(False, reason=COMFY_STILL_ALIVE)
+    if on_starting is not None:
+        on_starting()  # lets the step deadline -Stop a half-started instance of ours
     res = start_comfy_via_launcher(cfg, runner)
     if res.ok:
         res.reason = "restarted_after_crash_via_launcher"
@@ -480,6 +487,11 @@ def restart_comfy_if_gone(
 
 
 COMFY_STILL_ALIVE = "COMFY_STILL_ALIVE_NOT_RESTARTED"
+CLIP_STEP_CANCELLED = "CLIP_STEP_CANCELLED"
+
+
+class ClipStepCancelled(RuntimeError):
+    """Raised instead of running the launcher once the step deadline cancelled this clip step."""
 
 FALLBACK_RESTART_OK = "svd_after_restart"
 FALLBACK_RESTART_FAILED = "svd_restart_failed"
@@ -742,6 +754,19 @@ def _produce_chapter_clip_inner(
     """The clip step itself (no deadline); ``produce_chapter_clip`` runs it under the overall deadline."""
     _state = {} if _state is None else _state
     cfg = cfg or ChapterVideoConfig.from_env()
+    cancel = _state.get("cancel")
+
+    def _cancelled() -> bool:
+        return cancel is not None and cancel.is_set()
+
+    raw_runner = comfy_runner
+
+    def comfy_runner(args: Sequence[str], timeout: float) -> Tuple[int, str]:  # noqa: F811 - guarded launcher
+        # Once the step deadline fired, the abandoned worker must never run the launcher again
+        # (no start, no -Status/-Stop, no restart). Every caller already turns an exception into not-ok.
+        if _cancelled():
+            raise ClipStepCancelled(f"{CLIP_STEP_CANCELLED}:launcher_call_blocked")
+        return raw_runner(args, timeout)
     still = Path(still_path)
     base: Dict[str, Any] = {"workflow_id": workflow_id, "source_image_path": str(still)}
     if not cfg.enabled:
@@ -765,6 +790,8 @@ def _produce_chapter_clip_inner(
         seed = int(sha[:8], 16)
 
     comfy = ComfyReady(True, reason="skipped")
+    if _cancelled():
+        return _hold(CLIP_STEP_CANCELLED, **base)
     if not skip_comfy_guard:
         comfy = ensure_comfy_ready(cfg, comfy_runner, queue_probe, sleep)
         _state["comfy"] = comfy
@@ -782,6 +809,8 @@ def _produce_chapter_clip_inner(
 
     def _attempt(backend: str, idx: int, wf: str) -> Tuple[Optional[ChapterClipResult], Dict[str, Any]]:
         loop_render = LoopingRender(cfg.min_seconds) if cfg.loop_fallback else None
+        if _cancelled():  # never submit to ComfyUI after the deadline
+            return None, {"backend": backend, "outcome": CLIP_STEP_CANCELLED, "reason": "not_submitted_after_step_timeout"}
         try:
             if pipeline_builder is not None:
                 pipeline = pipeline_builder(backend)
@@ -832,8 +861,14 @@ def _produce_chapter_clip_inner(
     try:
         for idx, backend in enumerate(cfg.backend_order):
             retried = False
+            if _cancelled():
+                attempts.append({"backend": backend, "outcome": CLIP_STEP_CANCELLED, "reason": "not_started_after_step_timeout"})
+                break
             if idx > 0 and comfy_maybe_down and not skip_comfy_guard:
                 comfy_maybe_down = False
+                if _cancelled():
+                    attempts.append({"backend": backend, "outcome": CLIP_STEP_CANCELLED, "reason": "no_restart_after_step_timeout"})
+                    break
 
                 def _starting() -> None:
                     _state["comfy"] = ComfyReady(False, started_by_us=True, reason="starting_before_fallback")
@@ -863,6 +898,10 @@ def _produce_chapter_clip_inner(
                 # a post-crash retry gets its own key so a stale GENERATING record of the dead server is never reconciled.
                 wf = f"{workflow_id}|{backend}|{cfg.frames}x{cfg.fps}|min{cfg.min_seconds:g}" + ("|retry1" if retried else "")
                 clip, attempt = _attempt(backend, idx, wf)
+                if attempt.get("outcome") == CLIP_STEP_CANCELLED:
+                    attempts.append(attempt)
+                    abort = True
+                    break
                 if retried:
                     attempt["retry"] = 1
                 attempts.append(attempt)
@@ -875,11 +914,18 @@ def _produce_chapter_clip_inner(
                     if retried and not skip_comfy_guard:
                         comfy_maybe_down = True  # the fallback backend re-checks (and may restart) before it runs
                     break
-                gone = restart_comfy_if_gone(cfg, comfy_runner)
+                if _cancelled():  # deadline passed: no crash restart, no retry
+                    attempts.append({"backend": backend, "outcome": CLIP_STEP_CANCELLED, "reason": "no_restart_after_step_timeout"})
+                    abort = True
+                    break
+                gone = restart_comfy_if_gone(
+                    cfg, comfy_runner,
+                    on_starting=lambda: _state.__setitem__("comfy", ComfyReady(False, started_by_us=True, reason="starting_after_crash")))
                 if gone.reason == COMFY_STILL_ALIVE:
                     attempt["comfy_alive"] = True  # alive but erroring: never restarted, go to the next backend
                     break
                 if not gone.ok:
+                    _state["comfy"] = comfy  # start_comfy_via_launcher already stopped a half-started instance of ours
                     attempts.append({"backend": backend, "outcome": "COMFY_RESTART_FAILED", "reason": gone.reason})
                     abort = True  # ComfyUI is gone and could not be brought back: fail closed
                     break
@@ -933,8 +979,9 @@ def produce_chapter_clip(
     cfg = cfg or ChapterVideoConfig.from_env()
     limit = float(step_timeout_s) if step_timeout_s is not None else float(cfg.step_timeout_s)
     limit = max(1.0, limit)
+    cancel = threading.Event()
     state: Dict[str, Any] = {"comfy": None, "result": None, "error": None, "timed_out": False,
-                             "deadline": time.monotonic() + limit}
+                             "deadline": time.monotonic() + limit, "cancel": cancel}
 
     def _run() -> None:
         try:
@@ -962,6 +1009,7 @@ def produce_chapter_clip(
     worker.join(limit)
     base: Dict[str, Any] = {"workflow_id": workflow_id, "source_image_path": str(Path(still_path))}
     if worker.is_alive():
+        cancel.set()  # first: the abandoned worker may not restart / start / submit anything from here on
         state["timed_out"] = True
         comfy = state.get("comfy")
         if comfy is not None and getattr(comfy, "started_by_us", False) and cfg.stop_comfy_after:
