@@ -266,14 +266,14 @@ def test_wan_success_uses_wan_only(tmp_path, monkeypatch):
 
 def test_wan_failure_falls_back_to_svd(tmp_path, monkeypatch):
     res, log, _ = _drive(tmp_path, {"wan_22": "hold", "svd_xt_1_1": "ok"}, monkeypatch)
-    assert res.ready and res.backend_used == "svd_xt_1_1" and res.fallback_used
+    assert res.clip_produced and res.social_hold and not res.ready and res.hold_reason == "SVD_FALLBACK_SOCIAL_HOLD" and res.backend_used == "svd_xt_1_1" and res.fallback_used
     assert [b for b, *_ in log] == ["wan_22", "svd_xt_1_1"]
     assert res.attempts[0]["backend"] == "wan_22" and res.attempts[0]["outcome"] == "MEDIA_HOLD"
 
 
 def test_wan_exception_still_tries_svd(tmp_path, monkeypatch):
     res, log, _ = _drive(tmp_path, {"wan_22": "raise", "svd_xt_1_1": "ok"}, monkeypatch)
-    assert res.ready and res.backend_used == "svd_xt_1_1"
+    assert res.clip_produced and res.social_hold and not res.ready and res.hold_reason == "SVD_FALLBACK_SOCIAL_HOLD" and res.backend_used == "svd_xt_1_1"
 
 
 def test_both_fail_is_media_hold_with_no_asset(tmp_path, monkeypatch):
@@ -285,7 +285,7 @@ def test_both_fail_is_media_hold_with_no_asset(tmp_path, monkeypatch):
 def test_svd_only_switch_never_tries_wan(tmp_path, monkeypatch):
     cfg = dataclasses.replace(cvw.ChapterVideoConfig.from_env({"CHAPTER_VIDEO_BACKEND": "svd_xt_1_1"}), idle_restart=False)
     res, log, _ = _drive(tmp_path, {"wan_22": "ok", "svd_xt_1_1": "ok"}, monkeypatch, cfg=cfg)
-    assert res.ready and res.backend_used == "svd_xt_1_1" and [b for b, *_ in log] == ["svd_xt_1_1"]
+    assert res.clip_produced and res.social_hold and not res.ready and res.hold_reason == "SVD_FALLBACK_SOCIAL_HOLD" and res.backend_used == "svd_xt_1_1" and [b for b, *_ in log] == ["svd_xt_1_1"]
 
 
 def test_final_media_check_rejects_short_clip_even_if_pipeline_said_ready(tmp_path, monkeypatch):
@@ -395,7 +395,7 @@ def test_real_stack_wan_down_svd_ok_uses_stage_upload(tmp_path):
         _still(tmp_path), workflow_id="chapter-clip:fb", store_root=tmp_path / "store", still_approved=True, cfg=CFG,
         pipeline_builder=lambda b: cvw.build_backend_pipeline(CFG, b, tmp_path / "store", transport=wan_t if b == "wan_22" else svd_t),
         comfy_runner=Launcher([BUSY_OK]))
-    assert res.ready and res.backend_used == "svd_xt_1_1" and res.fallback_used
+    assert res.clip_produced and res.social_hold and not res.ready and res.hold_reason == "SVD_FALLBACK_SOCIAL_HOLD" and res.backend_used == "svd_xt_1_1" and res.fallback_used
     assert svd_t.uploads == [(1024, 576)]  # SVD still is staged to Comfy (adapter only auto-stages Wan)
     assert res.duration_seconds >= 3.0
 

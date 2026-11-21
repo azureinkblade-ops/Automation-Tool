@@ -31,7 +31,7 @@ class ScriptedStarts(FakeHost):
 def test_wan_crashes_twice_restart_then_svd_succeeds(tmp_path, monkeypatch):
     host = FakeHost(busy=True)
     res, pipes, _ = _run(tmp_path, monkeypatch, host, {"wan_22": ["crash", "crash"], "svd_xt_1_1": ["ok"]})
-    assert res.ready and res.outcome == "SOCIAL_READY" and res.backend_used == "svd_xt_1_1" and res.fallback_used
+    assert res.clip_produced and res.social_hold and not res.ready and res.hold_reason == "SVD_FALLBACK_SOCIAL_HOLD" and res.outcome == "MEDIA_HOLD" and res.backend_used == "svd_xt_1_1" and res.fallback_used
     assert [b for b, _ in pipes.log] == ["wan_22", "wan_22", "svd_xt_1_1"]
     assert res.fallback_restart == "svd_after_restart" and res.comfy_restarts == 2
     assert host.starts == 2  # Wan crash restart + one fresh start before SVD, both via the launcher

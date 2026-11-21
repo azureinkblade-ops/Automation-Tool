@@ -111,6 +111,13 @@ SVD_REQUIRED_MODELS: Dict[str, str] = {"svd_xt_1_1.safetensors": "checkpoints"}
 
 MEDIA_HOLD = PipelineOutcome.MEDIA_HOLD.value
 SOCIAL_READY = PipelineOutcome.SOCIAL_READY.value
+# An SVD-only clip (Wan failed, SVD succeeded; or SVD chosen) is never SOCIAL_READY: the result is MEDIA_HOLD with
+# this reason, so the Reel/Short (social/video) post waits. It holds the social side only: the Patreon / Royal Road
+# text release never reads the Reel pack or its clip. The clip file is kept (asset_path) for review; what it is
+# (backend, fps, fallback_restart, ...) is in ``clip_metadata`` and on the successful attempt record (``clip``).
+# Wan results stay SOCIAL_READY.
+SVD_FALLBACK_SOCIAL_HOLD = "SVD_FALLBACK_SOCIAL_HOLD"
+SOCIAL_HOLD_BACKENDS = frozenset({reg.BACKEND_ID_SVD_XT_1_1})
 
 _BACKEND_ALIASES = {
     "": DEFAULT_BACKEND,
@@ -708,12 +715,19 @@ class ChapterClipResult:
     comfy: str = ""
     comfy_restarts: int = 0
     fallback_restart: str = ""  # "" | svd_after_restart | svd_restart_failed:<reason>
+    social_hold: bool = False  # True: a verified clip exists but is held for social (SVD_FALLBACK_SOCIAL_HOLD)
+    clip_metadata: Dict[str, Any] = field(default_factory=dict)  # backend / fps / fallback_restart / sizes
     video_creates_identity_canon: bool = VIDEO_CREATES_IDENTITY_CANON
     wiring_version: str = WIRING_VERSION
 
     @property
     def ready(self) -> bool:
         return self.outcome == SOCIAL_READY and bool(self.asset_path)
+
+    @property
+    def clip_produced(self) -> bool:
+        """A verified clip file exists: SOCIAL_READY, or an SVD clip held for social."""
+        return bool(self.asset_path) and (self.outcome == SOCIAL_READY or self.social_hold)
 
     def to_dict(self) -> Dict[str, Any]:
         return dataclasses.asdict(self)
@@ -729,6 +743,56 @@ def _sha256_file(path: Path) -> str:
 
 def _hold(reason: str, **kw: Any) -> ChapterClipResult:
     return ChapterClipResult(outcome=MEDIA_HOLD, hold_reason=f"VIDEO_REQUIRED_MISSING:{reason}", **kw)
+
+
+def _raw_generation_settings(cfg: ChapterVideoConfig, backend: Optional[str]) -> Dict[str, Any]:
+    """What the backend generated before presentation (SVD: 25 frames @ 6 fps, 1024x576)."""
+    try:
+        st = settings_factory_for(cfg)(str(backend or ""))
+        return {
+            "raw_frame_count": int(st.frame_count),
+            "raw_fps": st.fps,
+            "raw_width": int(st.target_width),
+            "raw_height": int(st.target_height),
+        }
+    except Exception as exc:  # noqa: BLE001 - metadata must never fail the clip step
+        return {"raw_settings_error": f"{type(exc).__name__}:{str(exc)[:120]}"}
+
+
+def clip_result_metadata(cfg: ChapterVideoConfig, clip: ChapterClipResult) -> Dict[str, Any]:
+    """What the clip is, for Product Performance / Social: backend, fps, fallback_restart, raw and output sizes."""
+    frames = int(clip.frame_count or 0)
+    duration = float(clip.duration_seconds or 0.0)
+    raw = _raw_generation_settings(cfg, clip.backend_used)
+    return {
+        "backend": clip.backend_used,
+        "fps": raw.get("raw_fps"),
+        "fallback_used": bool(clip.fallback_used),
+        "fallback_restart": clip.fallback_restart,
+        **raw,
+        "output_width": clip.width,
+        "output_height": clip.height,
+        "output_frame_count": frames,
+        "output_fps": round(frames / duration, 3) if frames > 0 and duration > 0 else None,
+        "duration_seconds": clip.duration_seconds,
+        "looped": bool(clip.looped),
+        "social_status": clip.outcome,
+        "social_hold": bool(clip.social_hold),
+        "hold_reason": clip.hold_reason or "",
+    }
+
+
+def finalize_clip_result(cfg: ChapterVideoConfig, clip: ChapterClipResult,
+                         attempt: Optional[Dict[str, Any]] = None) -> ChapterClipResult:
+    """SVD clips -> MEDIA_HOLD (SVD_FALLBACK_SOCIAL_HOLD), Wan unchanged; record clip metadata on result + attempt."""
+    if clip.outcome == SOCIAL_READY and clip.backend_used in SOCIAL_HOLD_BACKENDS:
+        clip.outcome = MEDIA_HOLD
+        clip.hold_reason = SVD_FALLBACK_SOCIAL_HOLD
+        clip.social_hold = True
+    clip.clip_metadata = clip_result_metadata(cfg, clip)
+    if attempt is not None:
+        attempt["clip"] = dict(clip.clip_metadata, asset_path=clip.asset_path, asset_sha256=clip.asset_sha256)
+    return clip
 
 
 PipelineBuilder = Callable[[str], MediaPipeline]
@@ -908,7 +972,7 @@ def _produce_chapter_clip_inner(
                 if clip is not None:
                     clip.comfy_restarts = restarts
                     clip.fallback_restart = fallback_restart
-                    return clip
+                    return finalize_clip_result(cfg, clip, attempt)  # SVD -> held for social; Wan unchanged
                 # Failed. Crash resilience: restart ONLY if the launcher says the port is free (ComfyUI is gone).
                 if retried or restarts >= 1 or skip_comfy_guard:
                     if retried and not skip_comfy_guard:

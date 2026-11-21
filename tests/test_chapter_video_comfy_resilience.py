@@ -198,7 +198,7 @@ def test_default_cfg_idle_restart_then_crash_still_gets_one_fresh_start_and_retr
 def test_retry_fails_then_svd_and_never_a_second_restart(tmp_path, monkeypatch):
     host = FakeHost(busy=True)  # the retry errors but ComfyUI stays alive (/queue answers) -> no restart before SVD
     res, pipes, _ = _run(tmp_path, monkeypatch, host, {"wan_22": ["crash", "raise"], "svd_xt_1_1": ["ok"]}, probe=idle)
-    assert res.ready and res.backend_used == "svd_xt_1_1" and res.fallback_used
+    assert res.clip_produced and res.social_hold and not res.ready and res.hold_reason == "SVD_FALLBACK_SOCIAL_HOLD" and res.backend_used == "svd_xt_1_1" and res.fallback_used
     assert [b for b, _ in pipes.log] == ["wan_22", "wan_22", "svd_xt_1_1"]
     assert host.starts == 1 and res.comfy_restarts == 1 and res.fallback_restart == ""
     assert host.calls[-1] == ["-Stop"]
@@ -207,7 +207,7 @@ def test_retry_fails_then_svd_and_never_a_second_restart(tmp_path, monkeypatch):
 def test_still_alive_but_erroring_is_never_restarted_straight_to_svd(tmp_path, monkeypatch):
     host = FakeHost(busy=True)
     res, pipes, _ = _run(tmp_path, monkeypatch, host, {"wan_22": ["raise"], "svd_xt_1_1": ["ok"]})
-    assert res.ready and res.backend_used == "svd_xt_1_1"
+    assert res.clip_produced and res.social_hold and not res.ready and res.hold_reason == "SVD_FALLBACK_SOCIAL_HOLD" and res.backend_used == "svd_xt_1_1"
     assert [b for b, _ in pipes.log] == ["wan_22", "svd_xt_1_1"]  # no Wan retry
     assert host.starts == 0 and host.stops == 0 and [] not in host.calls and ["-Stop"] not in host.calls
     assert res.comfy_restarts == 0 and res.attempts[0].get("comfy_alive") is True
