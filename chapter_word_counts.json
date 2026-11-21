@@ -432,6 +432,22 @@
    "splitterWords": 4789,
    "words": 4789
   },
+  "EN-142": {
+   "chapter": 142,
+   "docsCommit": "3c7380b4",
+   "novel": "EN",
+   "recordedAt": "2026-11-21 15:28:42",
+   "source": "import",
+   "words": 4265
+  },
+  "EN-143": {
+   "chapter": 143,
+   "docsCommit": "1e452422",
+   "novel": "EN",
+   "recordedAt": "2026-11-21 15:31:08",
+   "source": "import",
+   "words": 4233
+  },
   "EN-15": {
    "chapter": 15,
    "docsCommit": "b3896115",
@@ -1484,6 +1500,22 @@
    "source": "pp-true_word_counts",
    "splitterWords": 2281,
    "words": 2281
+  },
+  "HA-120": {
+   "chapter": 120,
+   "docsCommit": "10183423",
+   "novel": "HA",
+   "recordedAt": "2026-11-21 15:30:25",
+   "source": "import",
+   "words": 3805
+  },
+  "HA-121": {
+   "chapter": 121,
+   "docsCommit": "47fc852d",
+   "novel": "HA",
+   "recordedAt": "2026-11-21 15:31:51",
+   "source": "import",
+   "words": 4009
   },
   "HA-13": {
    "chapter": 13,
@@ -2941,6 +2973,14 @@
    "splitterWords": 5441,
    "words": 5441
   },
+  "HP-159": {
+   "chapter": 159,
+   "docsCommit": "450dd6c3",
+   "novel": "HP",
+   "recordedAt": "2026-11-21 15:29:03",
+   "source": "import",
+   "words": 3988
+  },
   "HP-16": {
    "chapter": 16,
    "docsCommit": "b3896115",
@@ -2949,6 +2989,14 @@
    "source": "pp-true_word_counts",
    "splitterWords": 4852,
    "words": 4852
+  },
+  "HP-160": {
+   "chapter": 160,
+   "docsCommit": "c8f8b119",
+   "novel": "HP",
+   "recordedAt": "2026-11-21 15:31:28",
+   "source": "import",
+   "words": 3968
   },
   "HP-17": {
    "chapter": 17,
@@ -4110,6 +4158,22 @@
    "source": "pp-true_word_counts",
    "splitterWords": 5318,
    "words": 5318
+  },
+  "SF-134": {
+   "chapter": 134,
+   "docsCommit": "04c1893b",
+   "novel": "SF",
+   "recordedAt": "2026-11-21 15:30:47",
+   "source": "import",
+   "words": 3888
+  },
+  "SF-135": {
+   "chapter": 135,
+   "docsCommit": "7fe23eaf",
+   "novel": "SF",
+   "recordedAt": "2026-11-21 15:32:13",
+   "source": "import",
+   "words": 3879
   },
   "SF-14": {
    "chapter": 14,
