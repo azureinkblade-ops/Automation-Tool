@@ -800,6 +800,11 @@ WAN22_DEFAULT_NEGATIVE = (
     "mutated limbs, fused fingers, still frame, cluttered background"
 )
 WAN22_WORKFLOW_TEMPLATE_RELPATH = "tools/workflow_templates/i2v/wan_22_ti2v_5b.json"
+# Node "8" decode (VAEDecodeTiled); values from Research's clean 3/3 tiled-decode trials 2026-11-21.
+WAN22_DECODE_TILE_SIZE = 512
+WAN22_DECODE_OVERLAP = 64
+WAN22_DECODE_TEMPORAL_SIZE = 64
+WAN22_DECODE_TEMPORAL_OVERLAP = 8
 
 
 def build_wan_22_ti2v_workflow(
@@ -878,8 +883,17 @@ def build_wan_22_ti2v_workflow(
             },
         },
         "8": {
-            "class_type": "VAEDecode",
-            "inputs": {"samples": ["3", 0], "vae": ["39", 0]},
+            # Tiled decode: the full-frame VAEDecode crashed ComfyUI (access violation) after all 20 steps;
+            # tiled 512/64 + temporal 64/8 was clean 3/3 (Research 2026-11-21, ComfyUI-Launch healthcheck vae-tiled).
+            "class_type": "VAEDecodeTiled",
+            "inputs": {
+                "samples": ["3", 0],
+                "vae": ["39", 0],
+                "tile_size": WAN22_DECODE_TILE_SIZE,
+                "overlap": WAN22_DECODE_OVERLAP,
+                "temporal_size": WAN22_DECODE_TEMPORAL_SIZE,
+                "temporal_overlap": WAN22_DECODE_TEMPORAL_OVERLAP,
+            },
         },
         "57": {
             "class_type": "CreateVideo",
