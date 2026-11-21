@@ -12,7 +12,13 @@ Run: python tests/test_release_automation.py   (from repo root), or via pytest.
 Import-safe: the checks run inside a function, never at import (they used to `raise SystemExit(1)` during
 collection and kill the pytest run). build_release_automation_backlog() enqueues into the automation DB, so
 under pytest the test only runs when the conftest test-isolation sandbox is active (AT_TEST_ISOLATION_ROOT).
+
+Self-contained: the checks run inside _offline_and_bounded(), which denies every socket connect for the duration
+and replaces the Docs chapter index with a small fixed one. Without that, a clean checkout (no untracked repo-root
+conftest.py / live side-effect barrier) fetched the novel .docx files from GitHub and scheduled a 365-day queue
+into the empty sandbox, re-mirroring the whole ledger per chapter (minutes of O(n^2) DB work).
 """
+import contextlib
 import os, sys, tempfile, json
 from pathlib import Path
 
@@ -28,9 +34,59 @@ def check(name, got, want):
         FAILS.append(f"{name}\n   got : {got!r}\n   want: {want!r}")
 
 
+FAKE_DOCS_CHAPTERS = 3  # chapters per novel in the fake Docs index (keeps the queue build bounded)
+
+
+@contextlib.contextmanager
+def _offline_and_bounded(app_mod):
+    """Deny all network and stub the Docs fetch for the duration; restore everything afterwards."""
+    import socket
+
+    attempts = []
+
+    def _deny(*args, **kwargs):
+        attempts.append(repr(args[1:2] or args[:1])[:120])
+        raise OSError("test_release_automation: network is disabled in this test")
+
+    def _fake_docs_index(abbr):
+        abbr = str(abbr or "").upper().strip()
+        return {
+            "abbr": abbr,
+            "chapters": [
+                {"number": str(n), "title": f"Fake Chapter {n}", "heading": f"Chapter {n}", "index": n}
+                for n in range(1, FAKE_DOCS_CHAPTERS + 1)
+            ],
+        }
+
+    def _no_docs_fetch(path, *args, **kwargs):
+        raise RuntimeError(f"test_release_automation: Docs fetch disabled ({path})")
+
+    patches = [
+        (socket.socket, "connect", _deny),
+        (socket.socket, "connect_ex", _deny),
+        (socket, "create_connection", _deny),
+        (app_mod, "docs_chapter_index", _fake_docs_index),
+        (app_mod, "docs_file_content", _no_docs_fetch),
+    ]
+    saved = [(obj, name, getattr(obj, name)) for obj, name, _ in patches]
+    try:
+        for obj, name, value in patches:
+            setattr(obj, name, value)
+        yield attempts
+    finally:
+        for obj, name, value in reversed(saved):
+            setattr(obj, name, value)
+
+
 def run_checks():
     """Run every characterization check; returns the list of failures (empty = pass)."""
     import app as app_mod
+
+    with _offline_and_bounded(app_mod):
+        return _run_checks(app_mod)
+
+
+def _run_checks(app_mod):
     import release_automation as ra
 
     FAILS.clear()
