@@ -320,6 +320,13 @@ SCHEDULE_FILE = ROOT / "posting_schedule.json"
 RELEASE_STATUS_FILE = ROOT / "release_status.json"
 CHAPTER_LEDGER_FILE = ROOT / "chapter_ledger.json"
 CHAPTER_RELEASE_QUEUE_FILE = ROOT / "chapter-release-queue.json"
+
+
+def ps_single_quoted(value: Any) -> str:
+    """A PowerShell single-quoted string literal for ``value`` (``'`` doubled), for building -Command text.
+
+    Paths such as ``C:\\Users\\O'Brien\\...`` broke the old ``-LiteralPath '{path}'`` f-strings."""
+    return "'" + str(value).replace("'", "''") + "'"
 CHAPTER_PATH_FILE = ROOT / "chapter-path-state.json"
 YOUTUBE_DAILY_STATUS_FILE = ROOT / "youtube_daily_queue_status.json"
 YOUTUBE_DAILY_LOCK = threading.Lock()
@@ -12411,7 +12418,7 @@ def prepare_pinned_profile_asset_pin(asset_id: str) -> dict[str, Any]:
     if not caption_file.exists():
         caption_file.write_text(pinned_asset_caption(asset) + "\n", encoding="utf-8")
     try:
-        subprocess.run(["powershell", "-NoProfile", "-Command", f"Get-Content -Raw -LiteralPath '{caption_file}' | Set-Clipboard"], check=False)
+        subprocess.run(["powershell", "-NoProfile", "-Command", f"Get-Content -Raw -LiteralPath {ps_single_quoted(caption_file)} | Set-Clipboard"], check=False)
     except Exception:
         pass
     script = write_pinned_asset_pin_playwright_script(asset, folder, image, caption_file)
@@ -27025,7 +27032,7 @@ def manual_buffer_assist(folder: str, text_kind: str = "instagram") -> dict[str,
         if not text_file.exists():
             text_file.write_text(text + "\n", encoding="utf-8")
     try:
-        subprocess.run(["powershell", "-NoProfile", "-Command", f"Get-Content -Raw -LiteralPath '{text_file}' | Set-Clipboard"], check=False)
+        subprocess.run(["powershell", "-NoProfile", "-Command", f"Get-Content -Raw -LiteralPath {ps_single_quoted(text_file)} | Set-Clipboard"], check=False)
     except Exception:
         pass
     try:
@@ -28485,7 +28492,7 @@ def manual_instagram_assist(folder: str) -> dict[str, Any]:
     caption_file = post_folder / "instagram.txt"
 
     try:
-        subprocess.run(["powershell", "-NoProfile", "-Command", f"Get-Content -Raw -LiteralPath '{caption_file}' | Set-Clipboard"], check=False)
+        subprocess.run(["powershell", "-NoProfile", "-Command", f"Get-Content -Raw -LiteralPath {ps_single_quoted(caption_file)} | Set-Clipboard"], check=False)
     except Exception:
         pass
     try:
@@ -28566,7 +28573,7 @@ def manual_x_assist(folder: str) -> dict[str, Any]:
     image_path = Path(metadata["image"]).resolve()
     x_file = post_folder / "x.txt"
     try:
-        subprocess.run(["powershell", "-NoProfile", "-Command", f"Get-Content -Raw -LiteralPath '{x_file}' | Set-Clipboard"], check=False)
+        subprocess.run(["powershell", "-NoProfile", "-Command", f"Get-Content -Raw -LiteralPath {ps_single_quoted(x_file)} | Set-Clipboard"], check=False)
     except Exception:
         pass
     try:
@@ -31023,7 +31030,7 @@ def manual_tiktok_assist(folder: str) -> dict[str, Any]:
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     caption_file = post_folder / "caption.txt"
     try:
-        subprocess.run(["powershell", "-NoProfile", "-Command", f"Get-Content -Raw -LiteralPath '{caption_file}' | Set-Clipboard"], check=False)
+        subprocess.run(["powershell", "-NoProfile", "-Command", f"Get-Content -Raw -LiteralPath {ps_single_quoted(caption_file)} | Set-Clipboard"], check=False)
     except Exception:
         pass
     try:
@@ -31109,7 +31116,7 @@ def manual_text_platform_assist(folder: str, platform: str) -> dict[str, Any]:
     if not text_file.exists():
         raise RuntimeError(f"{filename} was not found in this campaign.")
     try:
-        subprocess.run(["powershell", "-NoProfile", "-Command", f"Get-Content -Raw -LiteralPath '{text_file}' | Set-Clipboard"], check=False)
+        subprocess.run(["powershell", "-NoProfile", "-Command", f"Get-Content -Raw -LiteralPath {ps_single_quoted(text_file)} | Set-Clipboard"], check=False)
     except Exception:
         pass
     try:
