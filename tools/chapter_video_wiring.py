@@ -32,6 +32,12 @@ ComfyUI lifecycle (all through ``start_comfyui_wan.bat``, always re-checked with
   * an attempt that fails while the launcher reports the port FREE (ComfyUI died / crashed loading the
     model) -> one fresh start via the launcher and ONE retry of the same backend (then the normal
     fallback chain). A still-alive instance that merely errors is never restarted.
+  * that retry crashed ComfyUI again (e.g. access violation in the final VAE decode) -> before the
+    SVD fallback, ONE more fresh start via the launcher (``-Status`` dynvram_disabled=True required),
+    only when the server is confirmed dead (port free) or this run owns it and it no longer answers
+    ``/queue`` (launcher ``-Stop`` of our own pid first). A live / foreign / busy instance is never
+    stopped. Start failure, or no time left under CHAPTER_VIDEO_STEP_TIMEOUT_S -> MEDIA_HOLD. The result
+    records it in ``fallback_restart`` (``svd_after_restart`` / ``svd_restart_failed:...``).
 Every subprocess here is built as an argv LIST (no shell=True, no joined command strings), so paths
 with spaces (e.g. a repo folder called 'Automation tool') are safe. The launcher runs with NO pipes
 (stdin DEVNULL, output to a temp file): the ComfyUI it starts inherits handles, and an inherited pipe
@@ -357,12 +363,18 @@ def _launcher_status(cfg: ChapterVideoConfig, runner: LauncherRunner) -> Tuple[O
     return st, ""
 
 
-def start_comfy_via_launcher(cfg: ChapterVideoConfig, runner: LauncherRunner = default_launcher_runner) -> ComfyReady:
+START_TIMEOUT_S = 480.0
+STATUS_TIMEOUT_S = 90.0
+
+
+def start_comfy_via_launcher(
+    cfg: ChapterVideoConfig, runner: LauncherRunner = default_launcher_runner, start_timeout: float = START_TIMEOUT_S
+) -> ComfyReady:
     """Start exactly ONE ComfyUI through the launcher .bat (caller has confirmed the port is free), then
     require ``-Status`` dynvram_disabled=True. Never starts anything but via the launcher."""
     bat = cfg.comfy_launcher
     try:
-        rc, out = runner(launcher_argv(bat), 480.0)
+        rc, out = runner(launcher_argv(bat), float(start_timeout))
     except Exception as exc:  # noqa: BLE001
         stop_comfy_started_by_us(cfg, runner)
         return ComfyReady(False, reason=f"COMFY_START_ERROR:{type(exc).__name__}:{str(exc)[:120]}")
@@ -468,6 +480,72 @@ def restart_comfy_if_gone(
 
 
 COMFY_STILL_ALIVE = "COMFY_STILL_ALIVE_NOT_RESTARTED"
+
+FALLBACK_RESTART_OK = "svd_after_restart"
+FALLBACK_RESTART_FAILED = "svd_restart_failed"
+FALLBACK_NOT_NEEDED = "COMFY_ALIVE_NO_RESTART_NEEDED"
+MIN_RESTART_BUDGET_S = 30.0  # less than this left under the step deadline -> do not even try a start
+
+
+def restart_comfy_before_fallback(
+    cfg: ChapterVideoConfig,
+    runner: LauncherRunner = default_launcher_runner,
+    queue_probe: QueueProbe = default_queue_probe,
+    sleep: Callable[[float], Any] = time.sleep,
+    *,
+    owned: bool,
+    remaining_s: Optional[Callable[[], float]] = None,
+    on_starting: Optional[Callable[[], Any]] = None,
+) -> ComfyReady:
+    """The Wan retry is used up and the fallback backend needs a ComfyUI: one fresh start via the launcher.
+
+    * port FREE (server confirmed dead)                  -> start via the launcher.
+    * port busy, this run owns it, ``/queue`` unanswered  -> launcher ``-Stop`` (own pid only), port free, start.
+    * port busy and ``/queue`` answers (alive, ours or not) -> ``FALLBACK_NOT_NEEDED`` (never restarted).
+    * port busy, not ours, ``/queue`` unanswered          -> not-ok: someone else's instance is never stopped.
+    The start always ends with ``-Status`` dynvram_disabled=True (start_comfy_via_launcher). Every launcher
+    timeout is capped by ``remaining_s()`` (time left under the step deadline).
+    """
+    def _budget(cap: float) -> Optional[float]:
+        if remaining_s is None:
+            return cap
+        left = float(remaining_s())
+        if left < MIN_RESTART_BUDGET_S:
+            return None
+        return max(1.0, min(cap, left - 5.0))
+
+    if _budget(STATUS_TIMEOUT_S) is None:
+        return ComfyReady(False, reason="COMFY_FALLBACK_RESTART_NO_TIME_LEFT")
+    st, err = _launcher_status(cfg, runner)
+    if st is None:
+        return ComfyReady(False, reason=err or "COMFY_STATUS_UNUSABLE")
+    if st.port_busy:
+        try:
+            queue = queue_probe(cfg.comfy_url, 8.0)
+        except Exception:  # noqa: BLE001
+            queue = None
+        if queue is not None:
+            return ComfyReady(True, started_by_us=owned, reason=FALLBACK_NOT_NEEDED)
+        if not owned:
+            return ComfyReady(False, reason="COMFY_FOREIGN_INSTANCE_UNRESPONSIVE_NOT_STOPPED")
+        try:
+            stop_rc, _out = runner(launcher_argv(cfg.comfy_launcher, "-Stop"), STATUS_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001
+            return ComfyReady(False, reason=f"COMFY_STOP_ERROR:{type(exc).__name__}:{str(exc)[:120]}")
+        if stop_rc != 0:
+            return ComfyReady(False, reason=f"COMFY_OWN_INSTANCE_NOT_STOPPABLE_BY_LAUNCHER:rc={stop_rc}")
+        free = _wait_port_free(cfg, runner, sleep)
+        if free is not True:
+            return ComfyReady(False, reason="COMFY_FALLBACK_RESTART_PORT_STILL_BUSY" if free is False else "COMFY_STATUS_UNUSABLE_AFTER_STOP")
+    budget = _budget(START_TIMEOUT_S)
+    if budget is None:
+        return ComfyReady(False, reason="COMFY_FALLBACK_RESTART_NO_TIME_LEFT")
+    if on_starting is not None:
+        on_starting()  # lets the step deadline -Stop a half-started instance of ours
+    res = start_comfy_via_launcher(cfg, runner, start_timeout=budget)
+    if res.ok:
+        res.reason = "restarted_before_fallback_via_launcher"
+    return res
 
 
 def stop_comfy_started_by_us(cfg: ChapterVideoConfig, runner: LauncherRunner = default_launcher_runner) -> None:
@@ -617,6 +695,7 @@ class ChapterClipResult:
     attempts: List[Dict[str, Any]] = field(default_factory=list)
     comfy: str = ""
     comfy_restarts: int = 0
+    fallback_restart: str = ""  # "" | svd_after_restart | svd_restart_failed:<reason>
     video_creates_identity_canon: bool = VIDEO_CREATES_IDENTITY_CANON
     wiring_version: str = WIRING_VERSION
 
@@ -694,6 +773,12 @@ def _produce_chapter_clip_inner(
     attempts: List[Dict[str, Any]] = []
     restarts = 0
     abort = False
+    comfy_maybe_down = False  # the Wan retry was used up after a crash restart
+    fallback_restart = ""
+    deadline = _state.get("deadline")
+
+    def _remaining() -> float:
+        return float("inf") if deadline is None else float(deadline) - time.monotonic()
 
     def _attempt(backend: str, idx: int, wf: str) -> Tuple[Optional[ChapterClipResult], Dict[str, Any]]:
         loop_render = LoopingRender(cfg.min_seconds) if cfg.loop_fallback else None
@@ -747,6 +832,32 @@ def _produce_chapter_clip_inner(
     try:
         for idx, backend in enumerate(cfg.backend_order):
             retried = False
+            if idx > 0 and comfy_maybe_down and not skip_comfy_guard:
+                comfy_maybe_down = False
+
+                def _starting() -> None:
+                    _state["comfy"] = ComfyReady(False, started_by_us=True, reason="starting_before_fallback")
+
+                again = restart_comfy_before_fallback(
+                    cfg, comfy_runner, queue_probe, sleep, owned=bool(comfy.started_by_us),
+                    remaining_s=_remaining if deadline is not None else None, on_starting=_starting)
+                if again.reason == FALLBACK_NOT_NEEDED:
+                    _state["comfy"] = comfy
+                elif not again.ok:
+                    fallback_restart = f"{FALLBACK_RESTART_FAILED}:{again.reason}"
+                    attempts.append({"backend": backend, "outcome": "COMFY_RESTART_FAILED", "reason": again.reason,
+                                     "stage": "before_fallback"})
+                    # a half-started instance of ours was already stopped by start_comfy_via_launcher
+                    comfy = ComfyReady(False, started_by_us=False, reason=again.reason)
+                    _state["comfy"] = comfy
+                    break  # ComfyUI is gone and could not be brought back: fail closed (MEDIA_HOLD)
+                else:
+                    restarts += 1
+                    comfy = ComfyReady(True, started_by_us=True, reason=again.reason)
+                    _state["comfy"] = comfy
+                    fallback_restart = FALLBACK_RESTART_OK
+                    attempts.append({"backend": backend, "outcome": "COMFY_RESTARTED", "reason": again.reason,
+                                     "stage": "before_fallback", "status": FALLBACK_RESTART_OK})
             while True:
                 # frames/fps/min are part of the job identity (the adapter's idempotency key ignores them);
                 # a post-crash retry gets its own key so a stale GENERATING record of the dead server is never reconciled.
@@ -757,9 +868,12 @@ def _produce_chapter_clip_inner(
                 attempts.append(attempt)
                 if clip is not None:
                     clip.comfy_restarts = restarts
+                    clip.fallback_restart = fallback_restart
                     return clip
                 # Failed. Crash resilience: restart ONLY if the launcher says the port is free (ComfyUI is gone).
                 if retried or restarts >= 1 or skip_comfy_guard:
+                    if retried and not skip_comfy_guard:
+                        comfy_maybe_down = True  # the fallback backend re-checks (and may restart) before it runs
                     break
                 gone = restart_comfy_if_gone(cfg, comfy_runner)
                 if gone.reason == COMFY_STILL_ALIVE:
@@ -779,7 +893,8 @@ def _produce_chapter_clip_inner(
         reasons = "|".join(
             f"{a['backend']}:{a.get('reason') or a.get('outcome')}" for a in attempts if a.get("outcome") != "COMFY_RESTARTED"
         ) or "no_backend_attempted"
-        return _hold(reasons, attempts=attempts, comfy=comfy.reason, comfy_restarts=restarts, **base)
+        return _hold(reasons, attempts=attempts, comfy=comfy.reason, comfy_restarts=restarts,
+                     fallback_restart=fallback_restart, **base)
     finally:
         if comfy.started_by_us and cfg.stop_comfy_after:
             stop_comfy_started_by_us(cfg, comfy_runner)
@@ -818,7 +933,8 @@ def produce_chapter_clip(
     cfg = cfg or ChapterVideoConfig.from_env()
     limit = float(step_timeout_s) if step_timeout_s is not None else float(cfg.step_timeout_s)
     limit = max(1.0, limit)
-    state: Dict[str, Any] = {"comfy": None, "result": None, "error": None, "timed_out": False}
+    state: Dict[str, Any] = {"comfy": None, "result": None, "error": None, "timed_out": False,
+                             "deadline": time.monotonic() + limit}
 
     def _run() -> None:
         try:

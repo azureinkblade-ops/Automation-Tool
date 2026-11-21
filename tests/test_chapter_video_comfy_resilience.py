@@ -196,11 +196,11 @@ def test_default_cfg_idle_restart_then_crash_still_gets_one_fresh_start_and_retr
 
 
 def test_retry_fails_then_svd_and_never_a_second_restart(tmp_path, monkeypatch):
-    host = FakeHost(busy=True)
-    res, pipes, _ = _run(tmp_path, monkeypatch, host, {"wan_22": ["crash", "raise"], "svd_xt_1_1": ["ok"]})
+    host = FakeHost(busy=True)  # the retry errors but ComfyUI stays alive (/queue answers) -> no restart before SVD
+    res, pipes, _ = _run(tmp_path, monkeypatch, host, {"wan_22": ["crash", "raise"], "svd_xt_1_1": ["ok"]}, probe=idle)
     assert res.ready and res.backend_used == "svd_xt_1_1" and res.fallback_used
     assert [b for b, _ in pipes.log] == ["wan_22", "wan_22", "svd_xt_1_1"]
-    assert host.starts == 1 and res.comfy_restarts == 1
+    assert host.starts == 1 and res.comfy_restarts == 1 and res.fallback_restart == ""
     assert host.calls[-1] == ["-Stop"]
 
 
@@ -229,7 +229,7 @@ def test_crash_restart_failure_fails_closed_no_svd_no_asset(tmp_path, monkeypatc
 
 def test_everything_fails_after_restart_is_media_hold(tmp_path, monkeypatch):
     host = FakeHost(busy=True)
-    res, pipes, _ = _run(tmp_path, monkeypatch, host, {"wan_22": ["crash", "hold"], "svd_xt_1_1": ["hold"]})
+    res, pipes, _ = _run(tmp_path, monkeypatch, host, {"wan_22": ["crash", "hold"], "svd_xt_1_1": ["hold"]}, probe=idle)
     assert res.outcome == "MEDIA_HOLD" and res.asset_path is None and "wan_22" in res.hold_reason and "svd_xt_1_1" in res.hold_reason
     assert host.starts == 1 and host.calls[-1] == ["-Stop"]
 
@@ -237,7 +237,9 @@ def test_everything_fails_after_restart_is_media_hold(tmp_path, monkeypatch):
 def test_second_crash_in_same_run_is_not_restarted_again(tmp_path, monkeypatch):
     host = FakeHost(busy=True)
     res, pipes, _ = _run(tmp_path, monkeypatch, host, {"wan_22": ["crash", "crash"], "svd_xt_1_1": ["crash"]})
-    assert res.outcome == "MEDIA_HOLD" and host.starts == 1  # cap: one restart per run
+    # cap: one crash restart for the Wan retry + one fresh start before SVD (svd_after_restart); never a third
+    assert res.outcome == "MEDIA_HOLD" and host.starts == 2 and res.comfy_restarts == 2
+    assert [b for b, _ in pipes.log] == ["wan_22", "wan_22", "svd_xt_1_1"] and res.fallback_restart == "svd_after_restart"
 
 
 def test_crash_restart_refused_rc3_never_stops_the_foreign_instance(tmp_path, monkeypatch):
