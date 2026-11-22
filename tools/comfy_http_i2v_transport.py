@@ -12,6 +12,11 @@ locally with ffmpeg (no pipes, bounded by a timeout, temp frames always removed)
 short frames and ffmpeg failures raise ComfyJobFailed, i.e. an ordinary Wan failure that goes
 through the normal retry / SVD-fallback path. Graphs with a video output (SVD) are unchanged.
 
+Hardening (2026-11-21, png-app run: 72-frame clips with a pts hole, ffmpeg access violations):
+every fetched PNG must fully decode (PIL verify + load) at the graph's frame size, with one re-fetch;
+ffmpeg stops on any decode error and runs single-threaded (tools.video_frame_probe); and the encoded
+mp4 is re-probed with ffprobe -count_frames: exactly the expected frames with contiguous pts, or a Wan failure.
+
 Opt-in for wan_22 only via select_i2v_transport(); SVD default path is untouched
 (returns None -> caller keeps its existing transport). GPU ownership stays with
 ImageToVideoAdapter's ExclusiveGpuLease.KIND_I2V; this transport never acquires it.
@@ -32,6 +37,7 @@ import urllib.request
 import uuid
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
+from tools import video_frame_probe as vfp
 from tools.i2v_backend_registry import BACKEND_ID_WAN_22
 from tools.i2v_production_adapter import InfrastructureFailure, wan_frames_encode_spec
 
@@ -85,6 +91,7 @@ class ComfyHttpI2VTransport:
         ffmpeg_exe: Optional[str] = None,
         ffmpeg_run: Callable[..., Any] = subprocess.run,
         encode_timeout_s: float = FRAMES_ENCODE_TIMEOUT_S,
+        frame_probe: Optional[Callable[[str], "vfp.FrameProbe"]] = None,
     ) -> None:
         self.base_url = (base_url or os.environ.get(COMFY_I2V_URL_ENV) or DEFAULT_COMFY_URL).rstrip("/")
         self.timeout = timeout
@@ -97,6 +104,7 @@ class ComfyHttpI2VTransport:
         self._ffmpeg_exe = ffmpeg_exe
         self._ffmpeg_run = ffmpeg_run
         self.encode_timeout_s = float(encode_timeout_s)
+        self._frame_probe = frame_probe
         self.client_id = uuid.uuid4().hex
 
     # -- http ---------------------------------------------------------
@@ -252,17 +260,15 @@ class ComfyHttpI2VTransport:
         if not ffmpeg:
             raise ComfyJobFailed("ffmpeg not available for the local Wan frame encode")
         tmp = tempfile.mkdtemp(prefix="wan22_frames_")
+        size = (int(spec["width"]), int(spec["height"])) if spec.get("width") and spec.get("height") else None
+        refetched: List[str] = []
         try:
             for i, ref in enumerate(frames, start=1):
-                q = urllib.parse.urlencode({"filename": ref["filename"], "subfolder": ref.get("subfolder", ""),
-                                            "type": ref.get("type", "output")})
-                data = self._req(f"/view?{q}", raw=True)
-                if not data or not bytes(data).startswith(_PNG_SIG):
-                    raise ComfyJobFailed(f"comfy job {prompt_id} frame {ref['filename']} missing or not a PNG")
+                data = self._fetch_verified_frame(prompt_id, ref, size, refetched)
                 with open(os.path.join(tmp, f"{i:05d}.png"), "wb") as fh:
                     fh.write(data)
             out_path = os.path.join(tmp, "out.mp4")
-            argv = build_frames_encode_argv(ffmpeg, tmp, spec["fps"], out_path)
+            argv = build_frames_encode_argv(ffmpeg, tmp, spec["fps"], out_path, frames=expected)
             log_path = os.path.join(tmp, "ffmpeg.log")
             try:
                 with open(log_path, "wb") as log:
@@ -277,7 +283,12 @@ class ComfyHttpI2VTransport:
                 raise ComfyJobFailed(f"ffmpeg Wan frame encode could not start: {e}") from e
             rc = getattr(proc, "returncode", 1)
             if rc != 0 or not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
-                raise ComfyJobFailed(f"ffmpeg Wan frame encode failed (exit {rc}): {_tail(log_path)}")
+                raise ComfyJobFailed(f"ffmpeg Wan frame encode failed (exit {_rc_text(rc)}): {_tail(log_path)}")
+            # Never trust the PNG count alone: count what the mp4 really decodes to.
+            probe = (self._frame_probe or (lambda path: vfp.probe_frames(path, ffprobe=vfp.resolve_ffprobe(ffmpeg))))(out_path)
+            mismatch = vfp.frame_check_failure(probe, expected)
+            if mismatch:
+                raise ComfyJobFailed(f"comfy job {prompt_id} encoded Wan mp4 rejected: {mismatch} | ffmpeg: {_tail(log_path, 600)}")
             with open(out_path, "rb") as fh:
                 video_bytes = fh.read()
         finally:
@@ -291,9 +302,61 @@ class ComfyHttpI2VTransport:
                 "last_frame": frames[-1]["filename"],
                 "fps": spec["fps"],
                 "encoded": "local_ffmpeg",
+                "frames_probed": probe.frames,
+                "pts_missing": list(probe.missing_indices),
+                "png_refetched": refetched,
             },
             "identity_canon": False,
         }
+
+    def _fetch_verified_frame(self, prompt_id: str, ref: Mapping[str, Any], size: Optional[tuple],
+                              refetched: List[str]) -> bytes:
+        """GET one frame via /view; it must fully decode (PIL verify + load) at ``size``. One re-fetch, then a Wan failure."""
+        q = urllib.parse.urlencode({"filename": ref["filename"], "subfolder": ref.get("subfolder", ""),
+                                    "type": ref.get("type", "output")})
+        problem = ""
+        for attempt in (1, 2):
+            try:
+                data = self._req(f"/view?{q}", raw=True)
+            except InfrastructureFailure as exc:
+                if attempt == 2:
+                    raise
+                problem = f"fetch failed: {exc}"
+                refetched.append(str(ref["filename"]))
+                continue
+            problem = png_frame_problem(data, size)
+            if not problem:
+                return bytes(data)
+            if attempt == 1:
+                refetched.append(str(ref["filename"]))
+        raise ComfyJobFailed(f"comfy job {prompt_id} frame {ref['filename']} unusable after re-fetch: {problem}")
+
+
+def png_frame_problem(data: Any, size: Optional[tuple]) -> str:
+    """'' when ``data`` is a PNG that fully decodes (verify + load) at ``size`` (w, h); else why not."""
+    if not data or not bytes(data).startswith(_PNG_SIG):
+        return "missing or not a PNG"
+    import io
+    from PIL import Image
+    try:
+        with Image.open(io.BytesIO(bytes(data))) as im:
+            im.verify()
+        with Image.open(io.BytesIO(bytes(data))) as im:
+            im.load()
+            got = im.size
+    except Exception as exc:  # noqa: BLE001 - truncated / corrupt PNG
+        return f"PNG does not decode: {type(exc).__name__}: {str(exc)[:160]}"
+    if size is not None and tuple(got) != tuple(size):
+        return f"PNG is {got[0]}x{got[1]}, expected {size[0]}x{size[1]}"
+    return ""
+
+
+def _rc_text(rc: Any) -> str:
+    try:
+        rc = int(rc)
+    except (TypeError, ValueError):
+        return str(rc)
+    return f"{rc} / 0x{rc & 0xFFFFFFFF:08X}" if rc < 0 or rc > 255 else str(rc)
 
 
 def resolve_ffmpeg() -> Optional[str]:
@@ -301,12 +364,22 @@ def resolve_ffmpeg() -> Optional[str]:
     return os.environ.get("FFMPEG_PATH") or shutil.which("ffmpeg")
 
 
-def build_frames_encode_argv(ffmpeg: str, frames_dir: str, fps: Any, out_path: str) -> List[str]:
-    """ffmpeg -y -framerate <fps> -i <dir>/%05d.png -c:v libx264 -pix_fmt yuv420p <out>."""
+def build_frames_encode_argv(ffmpeg: str, frames_dir: str, fps: Any, out_path: str,
+                             frames: Optional[int] = None) -> List[str]:
+    """Every frame, exactly once: explicit -start_number 1 (our local names are 00001.png..), -frames:v N,
+    passthrough timestamps (a dropped frame stays a visible hole instead of a silent duplicate), stop on any
+    decode error, single-threaded. Output tagged like ComfyUI's old SaveVideo mp4 (h264 yuv420p, tv / bt709)."""
     f = float(fps)
     rate = str(int(f)) if f.is_integer() else repr(f)
-    return [str(ffmpeg), "-y", "-framerate", rate, "-i", os.path.join(str(frames_dir), "%05d.png"),
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out_path)]
+    argv = [str(ffmpeg), "-y", "-hide_banner", "-nostdin", *vfp.FFMPEG_SAFE_INPUT_ARGS,
+            "-framerate", rate, "-start_number", "1", "-i", os.path.join(str(frames_dir), "%05d.png")]
+    if frames:
+        argv += ["-frames:v", str(int(frames))]
+    argv += [*vfp.FFMPEG_SAFE_OUTPUT_ARGS, "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p",
+             "-c:v", "libx264", "-pix_fmt", "yuv420p",
+             "-color_range", "tv", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+             str(out_path)]
+    return argv
 
 
 def pick_frame_outputs(outputs: Mapping[str, Any], node_id: str) -> List[Dict[str, Any]]:
@@ -326,7 +399,7 @@ def pick_frame_outputs(outputs: Mapping[str, Any], node_id: str) -> List[Dict[st
     return [indexed[k] for k in sorted(indexed)]
 
 
-def _tail(path: str, n: int = 400) -> str:
+def _tail(path: str, n: int = vfp.STDERR_TAIL_CHARS) -> str:
     try:
         with open(path, "rb") as fh:
             return fh.read()[-n:].decode("utf-8", "replace")

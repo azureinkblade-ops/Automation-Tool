@@ -821,11 +821,19 @@ def wan_frames_encode_spec(workflow: Mapping[str, Any]) -> Optional[Dict[str, An
             continue
         spec = (node.get("_meta") or {}).get(WAN22_FRAMES_META_KEY)
         if isinstance(spec, Mapping):
-            return {
+            out: Dict[str, Any] = {
                 "node_id": str(node_id),
                 "fps": spec["fps"],
                 "expected_frames": int(spec["expected_frames"]),
             }
+            # Frame size the decoded PNGs must have (from the latent node; absent -> size not checked).
+            for other in workflow.values():
+                if isinstance(other, Mapping) and other.get("class_type") == "Wan22ImageToVideoLatent":
+                    ins = other.get("inputs") or {}
+                    if ins.get("width") and ins.get("height"):
+                        out["width"], out["height"] = int(ins["width"]), int(ins["height"])
+                    break
+            return out
     return None
 
 

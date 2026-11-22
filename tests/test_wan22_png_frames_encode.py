@@ -21,6 +21,7 @@ import pytest
 
 from tools import comfy_http_i2v_transport as T
 from tools import i2v_production_adapter as A
+from tools import video_frame_probe as vfp
 from tools.i2v_backend_registry import BACKEND_ID_WAN_22
 
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
@@ -47,8 +48,26 @@ class _Resp(io.BytesIO):
         return False
 
 
-def _wan_wf(length=73, prefix=PREFIX):
-    return A.build_wan_22_ti2v_workflow(image_filename="src.png", seed=7, length=length, filename_prefix=prefix)
+W, H = 64, 112  # small frames keep the PNG decode checks fast; the graph's latent size says what to expect
+
+
+def _wan_wf(length=73, prefix=PREFIX, width=W, height=H):
+    return A.build_wan_22_ti2v_workflow(image_filename="src.png", seed=7, length=length, filename_prefix=prefix,
+                                        width=width, height=height)
+
+
+_PNG_CACHE = {}
+
+
+def _png(fn="", size=(W, H)):
+    """A real, fully decodable PNG (distinct per frame name)."""
+    key = (fn, size)
+    if key not in _PNG_CACHE:
+        from PIL import Image
+        b = io.BytesIO()
+        Image.new("RGB", size, (sum(fn.encode()) % 256, 40, 200)).save(b, format="PNG")
+        _PNG_CACHE[key] = b.getvalue()
+    return _PNG_CACHE[key]
 
 
 def _items(counters, prefix=PREFIX):
@@ -62,7 +81,7 @@ class FakeComfy:
         outputs = {node: {"images": items}}
         outputs.update(extra_outputs or {})
         self.history = {"pid": {"status": {"completed": True, "status_str": "success"}, "outputs": outputs}}
-        self.frame_bytes = frame_bytes or (lambda fn: PNG_SIG + fn.encode())
+        self.frame_bytes = frame_bytes or (lambda fn: _png(fn))
         self.calls, self.views, self.prompts = [], [], 0
 
     def __call__(self, req, timeout=None):
@@ -108,7 +127,12 @@ class FakeRun:
         return subprocess.CompletedProcess(argv, self.returncode)
 
 
+def _good_probe(path, frames=73):
+    return vfp.FrameProbe(path=str(path), frames=frames, packets=frames)
+
+
 def _transport(fake, run=None, **kw):
+    kw.setdefault("frame_probe", _good_probe)
     return T.select_i2v_transport(BACKEND_ID_WAN_22, opener=fake, sleep=lambda s: None,
                                   ffmpeg_exe="ffmpeg-test", ffmpeg_run=run or FakeRun(), **kw)
 
@@ -127,7 +151,9 @@ def test_wan_workflow_has_no_video_nodes_and_saves_png_frames_from_tiled_decode(
     assert wf["8"]["class_type"] == "VAEDecodeTiled"
     assert {k: wf["8"]["inputs"][k] for k in ("tile_size", "overlap", "temporal_size", "temporal_overlap")} == {
         "tile_size": 512, "overlap": 64, "temporal_size": 64, "temporal_overlap": 8}
-    assert A.wan_frames_encode_spec(wf) == {"node_id": "60", "fps": 24, "expected_frames": 73}
+    assert A.wan_frames_encode_spec(wf) == {"node_id": "60", "fps": 24, "expected_frames": 73, "width": W, "height": H}
+    native = A.wan_frames_encode_spec(A.build_wan_22_ti2v_workflow(image_filename="s.png", seed=1))
+    assert (native["width"], native["height"]) == (A.WAN22_NATIVE_WIDTH, A.WAN22_NATIVE_HEIGHT)
     json.dumps(wf)
 
 
@@ -198,10 +224,9 @@ def test_frames_fetched_in_frame_index_order_and_encoded_locally(tmp_path, monke
     want = [f"{PREFIX}_{i:05d}_.png" for i in counters]
     assert fake.views == want  # every frame, in frame-index order, only from the SaveImage node
     assert [n for n, _ in run.frames] == [f"{i:05d}.png" for i in range(1, 74)]  # contiguous %05d sequence
-    assert [b for _, b in run.frames] == [PNG_SIG + fn.encode() for fn in want]
+    assert [b for _, b in run.frames] == [_png(fn) for fn in want]
     d = run.frames_dir
-    assert run.argv == ["ffmpeg-test", "-y", "-framerate", "24", "-i", os.path.join(d, "%05d.png"),
-                        "-c:v", "libx264", "-pix_fmt", "yuv420p", os.path.join(d, "out.mp4")]
+    assert run.argv == T.build_frames_encode_argv("ffmpeg-test", d, 24, os.path.join(d, "out.mp4"), frames=73)
     # no pipes, bounded, no shell
     assert run.kwargs["stdin"] is subprocess.DEVNULL and run.kwargs["stderr"] is subprocess.STDOUT
     assert run.kwargs["stdout"] not in (subprocess.PIPE, None) and hasattr(run.kwargs["stdout"], "write")
@@ -213,10 +238,14 @@ def test_frames_fetched_in_frame_index_order_and_encoded_locally(tmp_path, monke
 
 
 def test_build_frames_encode_argv_exact():
-    assert T.build_frames_encode_argv("ff", "D", 24, "o.mp4") == [
-        "ff", "-y", "-framerate", "24", "-i", os.path.join("D", "%05d.png"),
-        "-c:v", "libx264", "-pix_fmt", "yuv420p", "o.mp4"]
-    assert T.build_frames_encode_argv("ff", "D", 23.976, "o.mp4")[3] == "23.976"
+    assert T.build_frames_encode_argv("ff", "D", 24, "o.mp4", frames=73) == [
+        "ff", "-y", "-hide_banner", "-nostdin", "-xerror", "-err_detect", "explode", "-threads", "1",
+        "-framerate", "24", "-start_number", "1", "-i", os.path.join("D", "%05d.png"), "-frames:v", "73",
+        "-fps_mode", "passthrough", "-threads", "1", "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-color_range", "tv", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "o.mp4"]
+    argv = T.build_frames_encode_argv("ff", "D", 23.976, "o.mp4")
+    assert argv[argv.index("-framerate") + 1] == "23.976" and "-frames:v" not in argv
 
 
 @pytest.mark.parametrize("n", [0, 1, 72])
@@ -235,7 +264,7 @@ def test_missing_or_non_png_frame_fails_and_cleans_up(tmp_path, monkeypatch):
     monkeypatch.setattr(T.tempfile, "mkdtemp", lambda prefix="": made.append(real(prefix=prefix, dir=tmp_path)) or made[-1])
     bad = f"{PREFIX}_00040_.png"
     for payload in (b"", b"<html>not a png"):
-        fake = FakeComfy(_items(range(1, 74)), frame_bytes=lambda fn, p=payload: p if fn == bad else PNG_SIG + b"x")
+        fake = FakeComfy(_items(range(1, 74)), frame_bytes=lambda fn, p=payload: p if fn == bad else _png(fn))
         run = FakeRun()
         with pytest.raises(T.ComfyJobFailed, match="missing or not a PNG"):
             _transport(fake, run).submit_and_wait(_wan_wf())
@@ -294,6 +323,7 @@ def test_real_ffmpeg_encodes_73_frames_at_24fps(tmp_path):
     fake = FakeComfy(_items(range(1, 74)), frame_bytes=frame)
     tr = T.select_i2v_transport(BACKEND_ID_WAN_22, opener=fake, sleep=lambda s: None)
     out = tr.submit_and_wait(_wan_wf())
+    assert out["comfy_output"]["frames_probed"] == 73 and out["comfy_output"]["pts_missing"] == []
     mp4 = tmp_path / "o.mp4"
     mp4.write_bytes(out["video_bytes"])
     probe = subprocess.run([shutil.which("ffprobe"), "-v", "error", "-count_frames", "-select_streams", "v:0",

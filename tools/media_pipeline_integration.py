@@ -175,6 +175,8 @@ class PipelineResult:
     reused_existing: bool = False
     i2v_job_id: Optional[str] = None
     presentation_job_id: Optional[str] = None
+    # "" (no retry needed) | "recovered" | "failed" | "skipped:<why>" -- see MediaPipeline.presentation_retries
+    presentation_retry: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -198,6 +200,11 @@ class MediaPipeline:
     # when video_required). 0 (default): no duration floor (library back-compat);
     # tools.chapter_video_wiring always sets the platform floor (3.0 s).
     min_duration_seconds: float = 0.0
+    # Presentation-only retry: when the raw clip passed and only the presentation encode failed, re-run the
+    # presentation from the saved raw clip (no new I2V render, no ComfyUI). 0 (default) = no retry.
+    presentation_retries: int = 0
+    # Called before each retry: True -> go; anything else (e.g. "cancelled", "no_time_left") -> skip, recorded.
+    presentation_retry_allowed: Optional[Callable[[], Any]] = None
 
     def produce_social_media(
         self,
@@ -290,16 +297,44 @@ class MediaPipeline:
         # --- Presentation ---
         record.state = PipelineState.PRESENTING.value
         self.store.save(record)
+        presentation_retry = ""
+
+        def _with_retry(res: PipelineResult) -> PipelineResult:
+            if presentation_retry:
+                res.presentation_retry = presentation_retry
+                if isinstance(record.result, dict):
+                    record.result["presentation_retry"] = presentation_retry
+                    self.store.save(record)
+            return res
+
         try:
-            pres = self.presentation.present_video(
-                str(raw_path or ""),
-                str(raw_sha),
-                still.source_image_sha256,
-                workflow_id=wf_id,
-            )
-            p_status = getattr(pres, "validation_status", None) or (pres.get("validation_status") if isinstance(pres, dict) else None)
-            if p_status != "PASS":
-                raise RuntimeError(f"presentation_status={p_status}")
+            pres_try = 0
+            while True:
+                pres_try += 1
+                try:
+                    pres = self.presentation.present_video(
+                        str(raw_path or ""),
+                        str(raw_sha),
+                        still.source_image_sha256,
+                        workflow_id=wf_id,
+                    )
+                    p_status = getattr(pres, "validation_status", None) or (pres.get("validation_status") if isinstance(pres, dict) else None)
+                    if p_status != "PASS":
+                        detail = getattr(pres, "failure_reason", None) or (pres.get("failure_reason") if isinstance(pres, dict) else None)
+                        raise RuntimeError(f"presentation_status={p_status}" + (f":{str(detail)[-300:]}" if detail else ""))
+                    break
+                except Exception:
+                    if pres_try > int(self.presentation_retries or 0):
+                        if presentation_retry == "attempting":
+                            presentation_retry = "failed"
+                        raise
+                    verdict = self.presentation_retry_allowed() if self.presentation_retry_allowed else True
+                    if verdict is not True:
+                        presentation_retry = f"skipped:{verdict or 'not_allowed'}"
+                        raise
+                    presentation_retry = "attempting"
+            if pres_try > 1:
+                presentation_retry = "recovered"
             asset_path = getattr(pres, "presented_video_path", None) or (pres.get("presented_video_path") if isinstance(pres, dict) else None)
             asset_sha = getattr(pres, "presented_video_sha256", None) or (pres.get("presented_video_sha256") if isinstance(pres, dict) else None)
             pres_job = getattr(pres, "presentation_job_id", None) or (pres.get("presentation_job_id") if isinstance(pres, dict) else None)
@@ -326,7 +361,7 @@ class MediaPipeline:
             validity = validator(asset_path, **validator_kwargs)
             if not getattr(validity, "ok", False):
                 reason = getattr(validity, "failure_reason", None) or f"{MEDIA_VALIDITY_PREFIX_FALLBACK}:unknown"
-                return self._video_missing(record, still, reason=reason)
+                return _with_retry(self._video_missing(record, still, reason=reason))
 
             record.state = PipelineState.READY.value
             record.outcome = PipelineOutcome.SOCIAL_READY.value
@@ -346,12 +381,14 @@ class MediaPipeline:
                 failure_reason=None,
                 i2v_job_id=i2v_job_id,
                 presentation_job_id=pres_job,
+                presentation_retry=presentation_retry,
             )
             record.result = result.to_dict()
             self.store.save(record)
             return result
         except Exception as exc:  # noqa: BLE001
-            return self._video_missing(record, still, reason=f"presentation_failed:{exc}")
+            suffix = f"|presentation_retry={presentation_retry}" if presentation_retry else ""
+            return _with_retry(self._video_missing(record, still, reason=f"presentation_failed:{exc}{suffix}"))
 
     def _video_missing(self, record: SocialMediaRecord, still: ApprovedStillRef, *, reason: str) -> PipelineResult:
         if self.video_required:

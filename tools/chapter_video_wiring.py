@@ -69,6 +69,7 @@ from tools import i2v_backend_registry as reg
 from tools import i2v_presentation_adapter as pa
 from tools import i2v_production_adapter as i2v
 from tools import media_pipeline_i2v_wiring as wiring
+from tools import video_frame_probe as vfp
 from tools.comfy_http_i2v_transport import (
     DEFAULT_COMFY_URL,
     WAN_22_REQUIRED_MODELS,
@@ -582,9 +583,10 @@ def stop_comfy_started_by_us(cfg: ChapterVideoConfig, runner: LauncherRunner = d
 
 def build_loop_ffmpeg_argv(ffmpeg: str, src: "os.PathLike[str] | str", out_path: "os.PathLike[str] | str",
                            extra_loops: int, vf: str) -> List[str]:
-    """argv LIST for the opt-in loop render (paths with spaces stay single elements)."""
-    return [str(ffmpeg), "-y", "-stream_loop", str(int(extra_loops)), "-i", str(src), "-vf", vf,
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", str(out_path)]
+    """argv LIST for the opt-in loop render (paths with spaces stay single elements); stop on decode error, single-threaded."""
+    return [str(ffmpeg), "-y", "-hide_banner", "-nostdin", *vfp.FFMPEG_SAFE_INPUT_ARGS,
+            "-stream_loop", str(int(extra_loops)), "-i", str(src), "-vf", vf,
+            "-threads", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", str(out_path)]
 
 
 class LoopingRender:
@@ -595,14 +597,14 @@ class LoopingRender:
         self._probe = probe
         self.looped = False
 
-    def __call__(self, clip: Any, transform: Any, out_path: Path) -> bytes:
+    def __call__(self, clip: Any, transform: Any, out_path: Path, *, timeout_s: Optional[float] = None) -> bytes:
         src = Path(clip.video_path)
         info = self._probe(src)
         dur = float(getattr(info, "duration", 0.0) or 0.0)
         if dur <= 0:
             raise pa.PresentationError("loop render: source duration unknown")
         if dur + 1e-6 >= self.min_seconds:
-            return pa.default_ffmpeg_render(clip, transform, out_path)
+            return pa.default_ffmpeg_render(clip, transform, out_path, timeout_s=timeout_s)
         ffmpeg = os.environ.get("FFMPEG_PATH") or shutil.which("ffmpeg")
         if not ffmpeg:
             raise pa.PresentationError("ffmpeg not available")
@@ -613,11 +615,9 @@ class LoopingRender:
             f"setsar=1"
         )
         cmd = build_loop_ffmpeg_argv(ffmpeg, src, out_path, extra_loops, vf)
-        proc = subprocess.run(cmd, capture_output=True, text=True)
-        if proc.returncode != 0 or not out_path.is_file():
-            raise pa.PresentationError(f"ffmpeg loop failed: {proc.stderr[-300:]}")
+        data = pa.run_presentation_ffmpeg(cmd, out_path, label="ffmpeg loop", timeout_s=timeout_s)
         self.looped = True
-        return out_path.read_bytes()
+        return data
 
 
 # --------------------------------------------------------------------------- #
@@ -717,6 +717,8 @@ class ChapterClipResult:
     fallback_restart: str = ""  # "" | svd_after_restart | svd_restart_failed:<reason>
     social_hold: bool = False  # True: a verified clip exists but is held for social (SVD_FALLBACK_SOCIAL_HOLD)
     clip_metadata: Dict[str, Any] = field(default_factory=dict)  # backend / fps / fallback_restart / sizes
+    presentation_retry: str = ""  # "" | recovered | failed | skipped:<why> (presentation-only retry from the saved raw clip)
+    frame_probe: Dict[str, Any] = field(default_factory=dict)  # ffprobe -count_frames of the raw and presented mp4
     video_creates_identity_canon: bool = VIDEO_CREATES_IDENTITY_CANON
     wiring_version: str = WIRING_VERSION
 
@@ -764,6 +766,19 @@ def clip_result_metadata(cfg: ChapterVideoConfig, clip: ChapterClipResult) -> Di
     frames = int(clip.frame_count or 0)
     duration = float(clip.duration_seconds or 0.0)
     raw = _raw_generation_settings(cfg, clip.backend_used)
+    probed_raw = (clip.frame_probe or {}).get("raw") or {}
+    probed_out = (clip.frame_probe or {}).get("presented") or {}
+    if probed_raw.get("frames") is not None:
+        # Record what the file really holds (ffprobe -count_frames), not what was requested.
+        raw["raw_frame_count_requested"] = raw.get("raw_frame_count")
+        raw["raw_frame_count"] = int(probed_raw["frames"])
+        raw["raw_frame_count_source"] = "ffprobe"
+        raw["raw_pts_missing"] = list(probed_raw.get("missing_indices") or [])
+    else:
+        raw["raw_frame_count_source"] = "requested"
+    extra: Dict[str, Any] = {"presentation_retry": clip.presentation_retry}
+    if probed_out:
+        extra["output_pts_missing"] = list(probed_out.get("missing_indices") or [])
     return {
         "backend": clip.backend_used,
         "fps": raw.get("raw_fps"),
@@ -779,6 +794,7 @@ def clip_result_metadata(cfg: ChapterVideoConfig, clip: ChapterClipResult) -> Di
         "social_status": clip.outcome,
         "social_hold": bool(clip.social_hold),
         "hold_reason": clip.hold_reason or "",
+        **extra,
     }
 
 
@@ -793,6 +809,68 @@ def finalize_clip_result(cfg: ChapterVideoConfig, clip: ChapterClipResult,
     if attempt is not None:
         attempt["clip"] = dict(clip.clip_metadata, asset_path=clip.asset_path, asset_sha256=clip.asset_sha256)
     return clip
+
+
+PRESENTATION_MIN_BUDGET_S = 30.0  # never start a presentation encode with less than this left before the step deadline
+
+
+class PresentationGuard:
+    """RenderFn for one backend attempt (presentation stage only).
+
+    * honours the step cancel flag and deadline before every ffmpeg run, and bounds ffmpeg by the time left;
+    * probes the raw clip once (ffprobe -count_frames): exactly ``expected`` frames, contiguous pts -- otherwise
+      the raw clip is rejected (a backend failure; no presentation retry);
+    * probes the presented mp4 the same way (unless the opt-in loop render looped it);
+    * ``retry_allowed`` gates MediaPipeline's single presentation-only retry: raw verified, not cancelled, time left.
+    """
+
+    def __init__(self, expected_frames: int, *, cancelled: Callable[[], bool], remaining: Callable[[], float],
+                 base_render: Optional[Callable[..., bytes]] = None) -> None:
+        self.expected = int(expected_frames or 0)
+        self._cancelled = cancelled
+        self._remaining = remaining
+        self._base = base_render
+        self.probes: Dict[str, Any] = {}
+        self.raw_ok: Optional[bool] = None
+        self.renders = 0
+
+    def _budget_problem(self) -> str:
+        if self._cancelled():
+            return "cancelled"
+        if self._remaining() < PRESENTATION_MIN_BUDGET_S:
+            return "no_time_left"
+        return ""
+
+    def retry_allowed(self) -> Any:
+        if self.raw_ok is not True:
+            return "raw_clip_not_verified"
+        return self._budget_problem() or True
+
+    def __call__(self, clip: Any, transform: Any, out_path: Path) -> bytes:
+        problem = self._budget_problem()
+        if problem:
+            tag = CLIP_STEP_CANCELLED if problem == "cancelled" else CLIP_STEP_TIMEOUT
+            raise pa.PresentationError(f"{tag}:presentation_not_started:{problem}")
+        if self.raw_ok is None:
+            raw = vfp.probe_frames(clip.video_path)
+            self.probes["raw"] = raw.to_dict()
+            bad = vfp.frame_check_failure(raw, self.expected) if self.expected else None
+            self.raw_ok = bad is None
+            if bad:
+                raise pa.PresentationError(f"RAW_CLIP_REJECTED:{bad}")
+        elif self.raw_ok is False:
+            raise pa.PresentationError("RAW_CLIP_REJECTED")
+        self.renders += 1
+        left = self._remaining()
+        base = self._base or pa.default_ffmpeg_render
+        data = base(clip, transform, out_path, timeout_s=None if math.isinf(left) else left)
+        out = vfp.probe_frames(out_path)
+        self.probes["presented"] = out.to_dict()
+        if self.expected and not bool(getattr(base, "looped", False)):
+            bad = vfp.frame_check_failure(out, self.expected)
+            if bad:
+                raise pa.PresentationError(f"PRESENTED_CLIP_REJECTED:{bad}")
+        return data
 
 
 PipelineBuilder = Callable[[str], MediaPipeline]
@@ -873,13 +951,21 @@ def _produce_chapter_clip_inner(
 
     def _attempt(backend: str, idx: int, wf: str) -> Tuple[Optional[ChapterClipResult], Dict[str, Any]]:
         loop_render = LoopingRender(cfg.min_seconds) if cfg.loop_fallback else None
+        guard = PresentationGuard(
+            int(_raw_generation_settings(cfg, backend).get("raw_frame_count") or 0),
+            cancelled=_cancelled, remaining=_remaining, base_render=loop_render)
         if _cancelled():  # never submit to ComfyUI after the deadline
             return None, {"backend": backend, "outcome": CLIP_STEP_CANCELLED, "reason": "not_submitted_after_step_timeout"}
         try:
             if pipeline_builder is not None:
                 pipeline = pipeline_builder(backend)
             else:
-                pipeline = build_backend_pipeline(cfg, backend, store_root, render=loop_render)
+                pipeline = build_backend_pipeline(cfg, backend, store_root, render=guard)
+                if isinstance(pipeline, MediaPipeline):
+                    # Only the presentation encode failed and the raw clip passed: ONE re-run from the saved raw clip
+                    # (no new render, no ComfyUI restart), inside the step deadline and the cancel flag.
+                    pipeline.presentation_retries = 1
+                    pipeline.presentation_retry_allowed = guard.retry_allowed
             res = pipeline.produce_social_media(
                 ApprovedStillRef(
                     image_path=str(still),
@@ -896,10 +982,21 @@ def _produce_chapter_clip_inner(
             return None, {"backend": backend, "outcome": "ERROR", "reason": f"{type(exc).__name__}:{str(exc)[:200]}"}
         rd = res.to_dict()
         attempt: Dict[str, Any] = {"backend": backend, "outcome": rd.get("outcome"), "reason": rd.get("failure_reason")}
+        if rd.get("presentation_retry"):
+            attempt["presentation_retry"] = rd.get("presentation_retry")
+        if guard.probes:
+            attempt["frame_probe"] = dict(guard.probes)
         asset = rd.get("asset_path")
         if rd.get("outcome") == SOCIAL_READY and asset and Path(asset).is_file():
             # Independent re-check of the final file (belt and braces on top of the pipeline gate).
             verdict = validate_presented_social_video(asset, min_duration=cfg.min_seconds)
+            looped = bool(loop_render.looped) if loop_render else False
+            if verdict.ok and guard.renders and guard.expected and not looped \
+                    and int(getattr(verdict.probe, "frame_count", 0) or 0) != guard.expected:
+                attempt["outcome"] = MEDIA_HOLD
+                attempt["reason"] = (f"PRESENTED_FRAME_COUNT_MISMATCH:probed={getattr(verdict.probe, 'frame_count', 0)},"
+                                     f"expected={guard.expected}")
+                return None, attempt
             if verdict.ok:
                 info = verdict.probe
                 return ChapterClipResult(
@@ -912,7 +1009,9 @@ def _produce_chapter_clip_inner(
                     width=int(getattr(info, "width", 0) or 0),
                     height=int(getattr(info, "height", 0) or 0),
                     frame_count=int(getattr(info, "frame_count", 0) or 0),
-                    looped=bool(loop_render.looped) if loop_render else False,
+                    looped=looped,
+                    presentation_retry=str(rd.get("presentation_retry") or ""),
+                    frame_probe=dict(guard.probes),
                     attempts=attempts,
                     comfy=comfy.reason,
                     comfy_restarts=restarts,

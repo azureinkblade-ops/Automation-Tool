@@ -22,7 +22,9 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
+
+from tools import video_frame_probe as vfp
 
 
 PRESENTATION_TRANSFORM_ID = "FIT_INSIDE_LETTERBOX_9x16"
@@ -247,8 +249,35 @@ class PresentVideoResult:
 RenderFn = Callable[[RawSvdClipRef, PresentationTransform, Path], bytes]
 
 
-def default_ffmpeg_render(clip: RawSvdClipRef, transform: PresentationTransform, out_path: Path) -> bytes:
-    """Render with ffmpeg scale+pad (FIT_INSIDE). Requires ffmpeg on PATH or FFMPEG_PATH."""
+PRESENTATION_FFMPEG_TIMEOUT_S = 300.0
+
+
+def run_presentation_ffmpeg(cmd: List[str], out_path: Path, *, label: str = "ffmpeg",
+                            timeout_s: Optional[float] = None) -> bytes:
+    """Run one presentation ffmpeg: no stdin, bounded, and on failure keep the exit code + the LAST 2000 chars of stderr."""
+    limit = PRESENTATION_FFMPEG_TIMEOUT_S if timeout_s is None else max(1.0, min(float(timeout_s), PRESENTATION_FFMPEG_TIMEOUT_S))
+    kw: Dict[str, Any] = {"stdin": subprocess.DEVNULL, "capture_output": True, "timeout": limit}
+    if os.name == "nt":
+        kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        proc = subprocess.run(cmd, **kw)
+    except subprocess.TimeoutExpired as exc:
+        raise PresentationError(f"{label} timed out after {limit:g}s: {vfp.stderr_tail(exc.stderr)}") from exc
+    except OSError as exc:
+        raise PresentationError(f"{label} could not start: {exc}") from exc
+    rc = proc.returncode
+    if rc != 0 or not out_path.is_file():
+        code = f"{rc} / 0x{rc & 0xFFFFFFFF:08X}" if isinstance(rc, int) and (rc < 0 or rc > 255) else str(rc)
+        raise PresentationError(f"{label} failed (exit {code}): {vfp.stderr_tail(proc.stderr)}")
+    return out_path.read_bytes()
+
+
+def default_ffmpeg_render(clip: RawSvdClipRef, transform: PresentationTransform, out_path: Path,
+                          *, timeout_s: Optional[float] = None) -> bytes:
+    """Render with ffmpeg scale+pad (FIT_INSIDE). Requires ffmpeg on PATH or FFMPEG_PATH.
+
+    Stops on the first decode error and runs single-threaded (see tools.video_frame_probe: on this host
+    multithreaded ffmpeg crashed / dropped frames intermittently)."""
     ffmpeg = os.environ.get("FFMPEG_PATH") or shutil.which("ffmpeg")
     if not ffmpeg:
         raise PresentationError("ffmpeg not available")
@@ -263,10 +292,14 @@ def default_ffmpeg_render(clip: RawSvdClipRef, transform: PresentationTransform,
     cmd = [
         ffmpeg,
         "-y",
+        "-hide_banner",
+        "-nostdin",
+        *vfp.FFMPEG_SAFE_INPUT_ARGS,
         "-i",
         str(src),
         "-vf",
         vf,
+        *vfp.FFMPEG_SAFE_OUTPUT_ARGS,
         "-c:v",
         "libx264",
         "-pix_fmt",
@@ -274,10 +307,7 @@ def default_ffmpeg_render(clip: RawSvdClipRef, transform: PresentationTransform,
         "-an",
         str(out_path),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0 or not out_path.is_file():
-        raise PresentationError(f"ffmpeg failed: {proc.stderr[-500:]}")
-    return out_path.read_bytes()
+    return run_presentation_ffmpeg(cmd, out_path, label="ffmpeg", timeout_s=timeout_s)
 
 
 def mock_render(clip: RawSvdClipRef, transform: PresentationTransform, out_path: Path) -> bytes:
