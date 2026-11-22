@@ -14,7 +14,8 @@ from tools.weekday_cadence_stills import (
     StillGenerationBlocked,
     build_still_prompt,
     generate_cadence_still,
-    letterbox_to_size,
+    override_main_posts_resolution,
+    spec_with_resolution,
     structured_image_intent,
 )
 
@@ -27,7 +28,7 @@ def _write_png(path: Path, size: tuple[int, int] = STILL_SIZE_FB_IG, color=(20, 
 
 def test_sizes_match_existing_conventions():
     assert STILL_SIZE_FB_IG == (1024, 1024)
-    assert STILL_SIZE_TIKTOK == (1080, 1920)
+    assert STILL_SIZE_TIKTOK == (720, 1280)
     assert STILL_STYLE == "main-posts"
 
 
@@ -177,10 +178,57 @@ def test_blocked_pipeline_does_not_return_stock(tmp_path: Path):
     assert not (tmp_path / "out.png").exists()
 
 
-def test_letterbox_tiktok_is_1080x1920(tmp_path: Path):
-    source = _write_png(tmp_path / "square.png", STILL_SIZE_FB_IG)
-    dest = tmp_path / "tiktok.png"
-    out = letterbox_to_size(source, dest, STILL_SIZE_TIKTOK)
-    assert out == dest
-    with Image.open(dest) as image:
+def test_native_tiktok_still_is_720x1280_not_letterboxed(tmp_path: Path):
+    calls = []
+    target = tmp_path / "EN-127-tiktok.png"
+
+    def generate_promo(style, prompt, dest, **kwargs):
+        calls.append(Path(dest))
+        _write_png(Path(dest), STILL_SIZE_TIKTOK)
+        return "v2:main-posts"
+
+    path = generate_cadence_still(
+        "EN",
+        127,
+        target=target,
+        visual="Rain sheets across a black stone courtyard.",
+        depiction=DEPICTION_GOVERNED,
+        caption="Kael stands in the rain.",
+        chapter_loader=lambda *_: {"title": "The Gate Opens", "text": ""},
+        generate_promo=generate_promo,
+        size=STILL_SIZE_TIKTOK,
+    )
+    assert path == target
+    with Image.open(target) as image:
         assert image.size == STILL_SIZE_TIKTOK
+        # Native 9:16, not a letterboxed 1024x1024 (which would be a 720-wide
+        # square with black bars above and below).
+        extrema = image.crop((0, 0, 720, 80)).getextrema()
+        assert not all(channel == (0, 0) for channel in extrema)
+    assert calls == [target]
+
+
+def test_override_main_posts_resolution_sets_720x1280():
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from tools import main_posts_pipeline_v2 as main_posts
+    from tools.generation_spec import GenerationSpec, ModelExecutionSpec
+
+    square = GenerationSpec(model_execution=ModelExecutionSpec(resolution=(1024, 1024)))
+    with patch.object(main_posts, "build_main_posts_generation_spec", lambda **_k: square):
+        with override_main_posts_resolution(STILL_SIZE_TIKTOK):
+            out = main_posts.build_main_posts_generation_spec(prompt="visual line")
+        assert out.model_execution.resolution == (720, 1280)
+        # Default builder is restored after the wrapper exits.
+        restored = main_posts.build_main_posts_generation_spec(prompt="visual line")
+        assert restored.model_execution.resolution == (1024, 1024)
+
+
+def test_spec_with_resolution_does_not_mutate_original():
+    from tools.generation_spec import GenerationSpec, ModelExecutionSpec
+
+    original = GenerationSpec(model_execution=ModelExecutionSpec(resolution=(1024, 1024)))
+    updated = spec_with_resolution(original, STILL_SIZE_TIKTOK)
+    assert original.model_execution.resolution == (1024, 1024)
+    assert updated.model_execution.resolution == (720, 1280)

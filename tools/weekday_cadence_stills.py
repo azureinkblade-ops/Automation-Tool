@@ -8,9 +8,10 @@ A blocked governed generation never falls back to an old, stock, or banked image
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterator, Mapping
 
 from tools.weekday_cadence_config import (
     DEPICTION_GOVERNED,
@@ -20,8 +21,9 @@ from tools.weekday_cadence_config import (
 
 # Main Posts / chapter-release default (tools/main_posts_pipeline_v2.py).
 STILL_SIZE_FB_IG = (1024, 1024)
-# TikTok / Wan social presentation size (i2v_presentation_adapter DEFAULT_SOCIAL).
-STILL_SIZE_TIKTOK = (1080, 1920)
+# Wan 2.2 native frame size (tools.i2v_production_adapter.WAN22_NATIVE_WIDTH/HEIGHT).
+# Generated natively; never letterboxed or padded from the square still.
+STILL_SIZE_TIKTOK = (720, 1280)
 STILL_STYLE = "main-posts"
 
 NOVEL_TITLES = {
@@ -159,7 +161,7 @@ def letterbox_to_size(
     *,
     fill: tuple[int, int, int] = (0, 0, 0),
 ) -> Path:
-    """Fit the source inside size (existing I2V FIT_INSIDE + letterbox convention)."""
+    """Letterbox helper kept for tests only. Cadence TikTok stills are generated natively and must not use this."""
     from PIL import Image
 
     src = Path(source)
@@ -178,6 +180,42 @@ def letterbox_to_size(
     return dest
 
 
+def spec_with_resolution(spec: Any, size: tuple[int, int]) -> Any:
+    """Return a copy of a frozen GenerationSpec with model_execution.resolution set."""
+    width, height = int(size[0]), int(size[1])
+    execution = getattr(spec, "model_execution", None)
+    if execution is None:
+        return spec
+    current = tuple(getattr(execution, "resolution", ()) or ())
+    if current == (width, height):
+        return spec
+    return replace(spec, model_execution=replace(execution, resolution=(width, height)))
+
+
+@contextmanager
+def override_main_posts_resolution(size: tuple[int, int]) -> Iterator[None]:
+    """Ask the Main Posts pipeline for a non-default size without editing app.py.
+
+    generate_promo_image_v2 does not take a size argument. It builds the spec
+    through tools.main_posts_pipeline_v2.build_main_posts_generation_spec, and
+    run_main_posts_resolution copies spec.model_execution.resolution onto the
+    Comfy EmptyLatent node. This wrapper intercepts that builder, leaving the
+    1024x1024 default unchanged for every other caller.
+    """
+    from tools import main_posts_pipeline_v2 as main_posts
+
+    original = main_posts.build_main_posts_generation_spec
+
+    def build_with_size(**kwargs: Any):
+        return spec_with_resolution(original(**kwargs), size)
+
+    main_posts.build_main_posts_generation_spec = build_with_size  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        main_posts.build_main_posts_generation_spec = original
+
+
 def generate_cadence_still(
     novel: str,
     chapter: int | None,
@@ -189,8 +227,14 @@ def generate_cadence_still(
     chapter_loader: ChapterLoader | None = None,
     generate_promo: GeneratePromo | None = None,
     style: str = STILL_STYLE,
+    size: tuple[int, int] = STILL_SIZE_FB_IG,
 ) -> Path:
-    """Generate one still with generate_promo_image_v2. No stock/old/banked fallback."""
+    """Generate one still with generate_promo_image_v2. No stock/old/banked fallback.
+
+    ``size`` is applied by overriding Main Posts spec resolution for this call
+    when it differs from the 1024x1024 profile default. It is never passed as
+    a keyword to generate_promo_image_v2 (that function has no size parameter).
+    """
     if depiction == DEPICTION_UNKNOWN:
         raise StillGenerationBlocked("NO_STRUCTURED_DEPICTION_EVIDENCE")
     context = load_chapter_context(novel, chapter, loader=chapter_loader)
@@ -221,8 +265,8 @@ def generate_cadence_still(
             from app import generate_promo_image_v2 as generate
         except Exception as exc:
             raise StillGenerationBlocked(f"STILL_PIPELINE_UNAVAILABLE:{type(exc).__name__}") from exc
-    try:
-        source = generate(
+    def _invoke():
+        return generate(
             style,
             prompt,
             target,
@@ -233,6 +277,13 @@ def generate_cadence_still(
             scene_text=scene_text or None,
             image_intent=intent,
         )
+
+    try:
+        if tuple(size) != tuple(STILL_SIZE_FB_IG):
+            with override_main_posts_resolution(size):
+                source = _invoke()
+        else:
+            source = _invoke()
     except Exception as exc:
         raise StillGenerationBlocked(f"STILL_GENERATION_BLOCKED:{type(exc).__name__}:{exc}") from exc
     if not source:

@@ -266,6 +266,42 @@ def _release_lease(lease: Any, job_id: str) -> None:
         return
 
 
+
+def _accepts_size(generate_still) -> bool:
+    if generate_still is None:
+        return False
+    try:
+        import inspect
+
+        sig = inspect.signature(generate_still)
+    except (TypeError, ValueError):
+        return False
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values()):
+        return True
+    return "size" in sig.parameters
+
+
+def _call_generate_still(generate_still, novel, chapter, size=None):
+    """Call generate_still, requesting size only when the callable accepts it."""
+    if size is None:
+        return generate_still(novel, chapter)
+    if not _accepts_size(generate_still):
+        return None
+    return generate_still(novel, chapter, size=size)
+
+
+def _still_pixel_size(path: Path | None) -> tuple[int, int] | None:
+    if path is None or not Path(path).is_file():
+        return None
+    try:
+        from PIL import Image
+
+        with Image.open(path) as image:
+            return image.size
+    except Exception:
+        return None
+
+
 def prepare_media(
     *,
     novels: Sequence[str],
@@ -332,9 +368,26 @@ def prepare_media(
             if plan.chapter is not None:
                 result.stills_by_chapter[(plan.novel, int(plan.chapter))] = plan.path
 
+    from tools.weekday_cadence_stills import STILL_SIZE_TIKTOK
+
     needs_generation = [plan for plan in plans if plan.path is None]
     needs_clips = list(plans)
-    must_use_gpu = (not dry_run) and (bool(needs_generation) or produce_clip is not None)
+    for plan in plans:
+        if plan.path is None or plan.chapter is None:
+            continue
+        if _still_pixel_size(plan.path) == STILL_SIZE_TIKTOK:
+            result.tiktok_stills[(plan.novel, int(plan.chapter))] = plan.path
+    can_native_tiktok = _accepts_size(generate_still)
+    needs_tiktok = [
+        plan
+        for plan in plans
+        if plan.chapter is not None
+        and (plan.novel, int(plan.chapter)) not in result.tiktok_stills
+        and can_native_tiktok
+    ]
+    must_use_gpu = (not dry_run) and (
+        bool(needs_generation) or bool(needs_tiktok) or produce_clip is not None
+    )
 
     if dry_run or not must_use_gpu:
         result.preflight_ok, result.preflight_reason = True, "DRY_RUN" if dry_run else ""
@@ -356,21 +409,28 @@ def prepare_media(
             acquired = True
             result.lease_acquired = True
         if generate_still is not None:
-            from tools.weekday_cadence_stills import StillGenerationBlocked, letterbox_to_size, STILL_SIZE_TIKTOK
+            from tools.weekday_cadence_stills import STILL_SIZE_TIKTOK, StillGenerationBlocked
+
+            def _record_hold(plan, reason: str) -> None:
+                if plan.chapter is not None:
+                    result.generation_holds[(plan.novel, int(plan.chapter))] = reason
+
+            def _run_generate(plan, size=None):
+                try:
+                    if size is None:
+                        return _call_generate_still(generate_still, plan.novel, plan.chapter)
+                    return _call_generate_still(
+                        generate_still, plan.novel, plan.chapter, size=size
+                    )
+                except StillGenerationBlocked as exc:
+                    _record_hold(plan, str(exc))
+                    return None
+                except Exception as exc:
+                    _record_hold(plan, f"STILL_GENERATION_BLOCKED:{type(exc).__name__}")
+                    return None
 
             for plan in needs_generation:
-                try:
-                    generated = generate_still(plan.novel, plan.chapter)
-                except StillGenerationBlocked as exc:
-                    if plan.chapter is not None:
-                        result.generation_holds[(plan.novel, int(plan.chapter))] = str(exc)
-                    continue
-                except Exception as exc:
-                    if plan.chapter is not None:
-                        result.generation_holds[(plan.novel, int(plan.chapter))] = (
-                            f"STILL_GENERATION_BLOCKED:{type(exc).__name__}"
-                        )
-                    continue
+                generated = _run_generate(plan)
                 if generated is not None and Path(generated).is_file():
                     plan.path = Path(generated)
                     plan.origin = "generate"
@@ -378,36 +438,41 @@ def prepare_media(
                     if plan.chapter is not None:
                         result.stills_by_chapter[(plan.novel, int(plan.chapter))] = plan.path
                     result.generated.append(plan.novel)
-                elif plan.chapter is not None:
-                    result.generation_holds[(plan.novel, int(plan.chapter))] = (
-                        "STILL_GENERATION_MISSING_ARTIFACT"
-                    )
-        from tools.weekday_cadence_stills import letterbox_to_size, STILL_SIZE_TIKTOK
+                    if _still_pixel_size(plan.path) == STILL_SIZE_TIKTOK:
+                        result.tiktok_stills[(plan.novel, int(plan.chapter))] = plan.path
+                elif plan.chapter is not None and (plan.novel, int(plan.chapter)) not in result.generation_holds:
+                    _record_hold(plan, "STILL_GENERATION_MISSING_ARTIFACT")
 
-        dest_root = Path(output_dir) if output_dir is not None else None
-        for plan in plans:
-            still = plan.path or result.stills.get(plan.novel)
-            if still is None or plan.chapter is None:
-                continue
-            tiktok_dest = (
-                (dest_root / f"{plan.novel}-{plan.chapter}-tiktok.png")
-                if dest_root is not None
-                else still.with_name(f"{still.stem}-tiktok{still.suffix or '.png'}")
-            )
-            try:
-                result.tiktok_stills[(plan.novel, int(plan.chapter))] = letterbox_to_size(
-                    still, tiktok_dest, STILL_SIZE_TIKTOK
-                )
-            except Exception:
-                result.tiktok_stills[(plan.novel, int(plan.chapter))] = Path(still)
+            for plan in plans:
+                if plan.chapter is None or not _accepts_size(generate_still):
+                    continue
+                key = (plan.novel, int(plan.chapter))
+                if key in result.tiktok_stills:
+                    continue
+                if key in result.generation_holds and plan.path is None:
+                    # Square generation already blocked; do not invent a TikTok still.
+                    continue
+                try:
+                    generated = _call_generate_still(
+                        generate_still, plan.novel, plan.chapter, size=STILL_SIZE_TIKTOK
+                    )
+                except Exception:
+                    generated = None
+                if generated is not None and Path(generated).is_file():
+                    if _still_pixel_size(generated) == STILL_SIZE_TIKTOK:
+                        result.tiktok_stills[key] = Path(generated)
+                        if plan.novel not in result.generated:
+                            result.generated.append(plan.novel)
+                    # Non-native artifacts are discarded. Never letterbox or pad.
+                # TikTok-only failures do not write generation_holds (that map
+                # also flags the FB/IG square). Missing TikTok media is held later.
+
         if produce_clip is not None:
             for plan in needs_clips:
                 chapter = plan.chapter
                 still = None
                 if chapter is not None:
                     still = result.tiktok_stills.get((plan.novel, int(chapter)))
-                if still is None:
-                    still = result.stills.get(plan.novel)
                 if still is None:
                     continue
                 clip = produce_clip(still, novel=plan.novel, chapter=plan.chapter)

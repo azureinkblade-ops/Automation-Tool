@@ -175,14 +175,23 @@ def test_with_media_false_is_a_no_op():
 
 
 def test_stub_clip_path_is_recorded_when_preflight_passes(tmp_path: Path):
+    from PIL import Image
+    from tools.weekday_cadence_stills import STILL_SIZE_FB_IG, STILL_SIZE_TIKTOK
+
     still = tmp_path / "en.png"
-    still.write_bytes(b"png")
+    Image.new("RGB", STILL_SIZE_FB_IG, (8, 8, 8)).save(still)
+    vertical = tmp_path / "en-tiktok.png"
+    Image.new("RGB", STILL_SIZE_TIKTOK, (16, 16, 16)).save(vertical)
     clip_path = tmp_path / "en.mp4"
     clip_path.write_bytes(b"mp4")
     lease = FakeLease()
 
+    def generate(novel, chapter, size=STILL_SIZE_FB_IG):
+        assert tuple(size) == tuple(STILL_SIZE_TIKTOK)
+        return vertical
+
     def produce(path, **_kwargs):
-        assert path == still
+        assert path == vertical
         return ClipResult(outcome="SOCIAL_READY", backend="wan_22", path=clip_path)
 
     result = prepare_media(
@@ -191,11 +200,14 @@ def test_stub_clip_path_is_recorded_when_preflight_passes(tmp_path: Path):
         with_media=True,
         dry_run=False,
         existing_stills={"EN": still},
+        generate_still=generate,
         produce_clip=produce,
         gpu_lease=lease,
         port_free=lambda _port: True,
         processes=[],
     )
+    assert result.stills["EN"] == still
+    assert result.tiktok_stills[("EN", 140)] == vertical
     assert result.clips["EN"] == clip_path
     assert result.lease_acquired is True
     assert lease.releases
@@ -268,14 +280,20 @@ def test_research_style_sf_item_reaches_media_and_x_stays_text_only(tmp_path: Pa
     generated = []
     clips = []
 
-    def generate(novel, chapter):
-        generated.append((novel, chapter))
-        path = tmp_path / f"{novel}-{chapter}.png"
-        path.write_bytes(b"png")
+    from PIL import Image
+    from tools.weekday_cadence_stills import STILL_SIZE_FB_IG, STILL_SIZE_TIKTOK
+
+    def generate(novel, chapter, size=STILL_SIZE_FB_IG):
+        generated.append((novel, chapter, tuple(size)))
+        role = "tiktok" if tuple(size) == tuple(STILL_SIZE_TIKTOK) else "still"
+        path = tmp_path / f"{novel}-{chapter}-{role}.png"
+        Image.new("RGB", tuple(size), (16, 32, 48)).save(path)
         return path
 
     def produce(still, **kwargs):
         clips.append((still, kwargs))
+        with Image.open(still) as image:
+            assert image.size == STILL_SIZE_TIKTOK
         path = tmp_path / f"{Path(still).stem}.mp4"
         path.write_bytes(b"mp4")
         return ClipResult(
@@ -284,8 +302,8 @@ def test_research_style_sf_item_reaches_media_and_x_stays_text_only(tmp_path: Pa
             path=path,
             frame_count=73,
             duration_seconds=3.04,
-            width=1080,
-            height=1920,
+            width=720,
+            height=1280,
         )
 
     records = _records(
@@ -314,7 +332,7 @@ def test_research_style_sf_item_reaches_media_and_x_stays_text_only(tmp_path: Pa
     items = result["items"]
     by_id = {item["id"]: item for item in items}
 
-    assert ("SF", 126) in generated
+    assert any(pair[:2] == ("SF", 126) for pair in generated)
     assert any(kwargs.get("novel") == "SF" for _still, kwargs in clips)
 
     sf_fb = by_id["SF-facebook"]
@@ -520,21 +538,28 @@ def test_blocked_governed_generation_does_not_fall_back_to_stock(tmp_path: Path)
     assert all(path != stock for path in result.stills_by_chapter.values())
 
 
-def test_letterbox_still_and_clip_use_tiktok_size(tmp_path: Path):
+def test_native_tiktok_still_keeps_square_for_fb_ig(tmp_path: Path):
     from PIL import Image
-    from tools.weekday_cadence_stills import STILL_SIZE_FB_IG, STILL_SIZE_TIKTOK
+    from tools.weekday_cadence_stills import STILL_SIZE_FB_IG, STILL_SIZE_TIKTOK, letterbox_to_size
 
-    made = tmp_path / "SF-117-still.png"
+    square = tmp_path / "SF-117-still.png"
+    vertical = tmp_path / "SF-117-tiktok.png"
     seen = []
+    sizes = []
 
-    def generate(novel, chapter):
-        Image.new("RGB", STILL_SIZE_FB_IG, (10, 20, 30)).save(made)
-        return made
+    def generate(novel, chapter, size=STILL_SIZE_FB_IG):
+        sizes.append(tuple(size))
+        dest = vertical if tuple(size) == tuple(STILL_SIZE_TIKTOK) else square
+        Image.new("RGB", tuple(size), (10, 20, 30)).save(dest)
+        return dest
 
     def produce(still, **kwargs):
         seen.append(Path(still))
         with Image.open(still) as image:
             assert image.size == STILL_SIZE_TIKTOK
+            # Must be a full-frame 9:16 still, not a letterboxed square.
+            extrema = image.crop((0, 0, image.width, 40)).getextrema()
+            assert not all(channel == (0, 0) for channel in extrema)
         clip = tmp_path / "SF-117.mp4"
         clip.write_bytes(b"mp4")
         return ClipResult(outcome="SOCIAL_READY", backend="wan_22", path=clip)
@@ -555,12 +580,22 @@ def test_letterbox_still_and_clip_use_tiktok_size(tmp_path: Path):
         ],
         output_dir=tmp_path,
     )
-    assert result.stills_by_chapter[("SF", 117)] == made
+    assert STILL_SIZE_FB_IG in sizes
+    assert STILL_SIZE_TIKTOK in sizes
+    assert result.stills_by_chapter[("SF", 117)] == square
     with Image.open(result.stills_by_chapter[("SF", 117)]) as image:
         assert image.size == STILL_SIZE_FB_IG
     tiktok = result.tiktok_stills[("SF", 117)]
+    assert tiktok == vertical
     with Image.open(tiktok) as image:
         assert image.size == STILL_SIZE_TIKTOK
+    # Confirm we did not write a letterboxed derivative of the square.
+    assert tiktok != square
+    letterboxed = tmp_path / "would-be-letterbox.png"
+    letterbox_to_size(square, letterboxed, (1080, 1920))
+    assert tiktok.resolve() != letterboxed.resolve()
+    with Image.open(tiktok) as native, Image.open(letterboxed) as padded:
+        assert native.size != padded.size
     assert seen == [tiktok]
     assert result.clips_by_chapter[("SF", 117)].is_file()
 
@@ -577,7 +612,7 @@ def test_research_missing_still_generates_then_holds_governed_for_approval(tmp_p
     from tools.weekday_cadence_captions import parse_copy_bank
     from tools.weekday_cadence_config import WeekdayCadenceConfig
     from tools.weekday_cadence_runner import run_cadence
-    from tools.weekday_cadence_stills import STILL_SIZE_FB_IG
+    from tools.weekday_cadence_stills import STILL_SIZE_FB_IG, STILL_SIZE_TIKTOK
 
     tz = timezone_for("America/Phoenix")
     generated = []
@@ -616,16 +651,20 @@ kael is a name in text only. Eternal Nexus ch 127 is up on Patreon, link in bio 
 the furnaces open. Soulforge Era ch 117 is up on Patreon, link in bio #webnovel #cultivation
 """
 
-    def generate(novel, chapter):
-        generated.append((novel, chapter))
-        path = tmp_path / f"{novel}-{chapter}-still.png"
-        Image.new("RGB", STILL_SIZE_FB_IG, (12, 24, 36)).save(path)
+    def generate(novel, chapter, size=STILL_SIZE_FB_IG):
+        generated.append((novel, chapter, tuple(size)))
+        role = "tiktok" if tuple(size) == tuple(STILL_SIZE_TIKTOK) else "still"
+        path = tmp_path / f"{novel}-{chapter}-{role}.png"
+        Image.new("RGB", tuple(size), (12, 24, 36)).save(path)
         return path
 
     def produce(still, **kwargs):
+        from tools.weekday_cadence_stills import STILL_SIZE_TIKTOK as TT
+        with Image.open(still) as image:
+            assert image.size == TT
         path = tmp_path / f"{kwargs.get('novel')}-{kwargs.get('chapter')}.mp4"
         path.write_bytes(b"mp4")
-        return ClipResult(outcome="SOCIAL_READY", backend="wan_22", path=path, width=1080, height=1920)
+        return ClipResult(outcome="SOCIAL_READY", backend="wan_22", path=path, width=720, height=1280)
 
     records = _records(
         ("EN", 127, {"patreonExists": True}),
@@ -651,9 +690,9 @@ the furnaces open. Soulforge Era ch 117 is up on Patreon, link in bio #webnovel 
         media_processes=[],
     )
     items = {item["id"]: item for item in result["items"]}
-    assert ("EN", 127) in generated
-    assert ("SF", 117) in generated
-    assert all(chapter != 140 for _novel, chapter in generated)
+    assert any(pair[:2] == ("EN", 127) for pair in generated)
+    assert any(pair[:2] == ("SF", 117) for pair in generated)
+    assert all(chapter != 140 for _novel, chapter, _size in generated)
 
     en_fb = items["EN-facebook"]
     assert en_fb["depiction"] == "governed"
@@ -680,3 +719,54 @@ the furnaces open. Soulforge Era ch 117 is up on Patreon, link in bio #webnovel 
     assert (day / en_fb["media"][0]).is_file()
     assert (day / sf_fb["media"][0]).is_file()
     assert (day / sf_tt["media"][0]).is_file()
+
+
+
+def test_blocked_tiktok_generation_holds_and_does_not_letterbox(tmp_path: Path):
+    from PIL import Image
+    from tools.weekday_cadence_stills import (
+        STILL_SIZE_FB_IG,
+        STILL_SIZE_TIKTOK,
+        StillGenerationBlocked,
+        letterbox_to_size,
+    )
+
+    square = tmp_path / "EN-127-still.png"
+    stock = tmp_path / "stock.png"
+    Image.new("RGB", STILL_SIZE_FB_IG, (200, 0, 0)).save(stock)
+    sizes = []
+
+    def generate(novel, chapter, size=STILL_SIZE_FB_IG):
+        sizes.append(tuple(size))
+        if tuple(size) == tuple(STILL_SIZE_TIKTOK):
+            raise StillGenerationBlocked("STILL_GENERATION_BLOCKED:V2ImageGenerationError")
+        Image.new("RGB", STILL_SIZE_FB_IG, (12, 24, 36)).save(square)
+        return square
+
+    result = prepare_media(
+        novels=["EN"],
+        chapters={"EN": 127},
+        with_media=True,
+        dry_run=False,
+        finder=lambda *_: None,
+        generate_still=generate,
+        produce_clip=lambda *a, **k: (_ for _ in ()).throw(AssertionError("clip must not run without a native still")),
+        gpu_lease=FakeLease(),
+        port_free=lambda _port: True,
+        processes=[],
+        items=[
+            _item("facebook", "EN", 127, "governed", "Kael in the rain."),
+            _item("tiktok", "EN", 127, "governed", "Kael in the rain."),
+        ],
+        output_dir=tmp_path,
+    )
+    assert STILL_SIZE_FB_IG in sizes
+    assert STILL_SIZE_TIKTOK in sizes
+    assert result.stills_by_chapter[("EN", 127)] == square
+    with Image.open(square) as image:
+        assert image.size == STILL_SIZE_FB_IG
+    assert ("EN", 127) not in result.tiktok_stills
+    assert "EN" not in result.clips
+    assert ("EN", 127) not in result.clips_by_chapter
+    assert stock not in result.stills.values()
+    assert stock not in result.tiktok_stills.values()

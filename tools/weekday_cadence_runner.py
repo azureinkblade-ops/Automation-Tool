@@ -259,7 +259,9 @@ def run_cadence(
 
             planned_items = planned
 
-            def generate_still(novel, chapter, _items=planned_items, _work=work_dir):
+            from tools.weekday_cadence_stills import STILL_SIZE_FB_IG, STILL_SIZE_TIKTOK
+
+            def generate_still(novel, chapter, size=STILL_SIZE_FB_IG, _items=planned_items, _work=work_dir):
                 match = next(
                     (
                         row
@@ -270,13 +272,15 @@ def run_cadence(
                     ),
                     None,
                 )
+                role = "tiktok" if tuple(size) == tuple(STILL_SIZE_TIKTOK) else "still"
                 return generate_cadence_still(
                     novel,
                     chapter,
-                    target=_work / f"{novel}-{chapter}-still.png",
+                    target=_work / f"{novel}-{chapter}-{role}.png",
                     visual=getattr(match, "visual", "") if match else "",
                     depiction=getattr(match, "depiction", "") if match else "",
                     caption=getattr(match, "caption", "") if match else "",
+                    size=size,
                 )
 
         if not dry_run and produce_clip is None:
