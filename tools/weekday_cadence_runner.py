@@ -225,6 +225,7 @@ def run_cadence(
     gpu_lease=None,
     media_port_free=None,
     media_processes=None,
+    bible_preflight=None,
 ) -> dict[str, Any]:
     if config.publish_generated_media or PUBLISH_GENERATED_MEDIA:
         raise RuntimeError("weekday cadence refused to run with publishing enabled")
@@ -249,6 +250,13 @@ def run_cadence(
     clips_by_chapter: dict[tuple[str, int], Path] = {}
     identity_needed = dict(identity_needed or {})
     identity_approved = dict(identity_approved or {})
+    if with_media and not dry_run:
+        from tools.weekday_cadence_media import check_bible_media_preflight
+
+        # Fail before mkdir or save_day_bundle so an existing day pack is not overwritten.
+        checker = bible_preflight if bible_preflight is not None else check_bible_media_preflight
+        checker()
+
     if with_media:
         from tools.weekday_cadence_media import prepare_media
 
@@ -471,23 +479,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         alt_bank = app_root / COPY_BANK_RELATIVE
         if alt_bank.is_file():
             bank_path = alt_bank
-    payload = run_cadence(
-        target=target,
-        stage=args.stage,
-        dry_run=bool(args.dry_run),
-        config=config,
-        out_root=repo,
-        records=records,
-        source_commit=args.source_commit or _git_commit(repo),
-        produce_clip=(
-            stub_produce_clip
-            if bool(args.dry_run) or not bool(getattr(args, "with_media", False))
-            else None
-        ),
-        overrides=load_patreon_live_overrides(override_path),
-        copy_bank=load_copy_bank(bank_path),
-        with_media=bool(getattr(args, "with_media", False)),
-    )
+    try:
+        payload = run_cadence(
+            target=target,
+            stage=args.stage,
+            dry_run=bool(args.dry_run),
+            config=config,
+            out_root=repo,
+            records=records,
+            source_commit=args.source_commit or _git_commit(repo),
+            produce_clip=(
+                stub_produce_clip
+                if bool(args.dry_run) or not bool(getattr(args, "with_media", False))
+                else None
+            ),
+            overrides=load_patreon_live_overrides(override_path),
+            copy_bank=load_copy_bank(bank_path),
+            with_media=bool(getattr(args, "with_media", False)),
+        )
+    except Exception as exc:
+        from tools.weekday_cadence_media import CadenceMediaPreflightError
+
+        if not isinstance(exc, CadenceMediaPreflightError):
+            raise
+        message = str(exc)
+        print(message)
+        print(message, file=sys.stderr)
+        return 1
     day = payload.get("_dayDir", "")
     summary = payload.get("summary") or {}
     print(f"targetDate={payload.get('targetDate')} weekday={payload.get('targetWeekday')}")

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from pathlib import Path
 
 from tools.weekday_cadence_media import (
@@ -328,6 +330,7 @@ def test_research_style_sf_item_reaches_media_and_x_stays_text_only(tmp_path: Pa
         gpu_lease=FakeLease(),
         media_port_free=lambda _port: True,
         media_processes=[],
+        bible_preflight=lambda: None,
     )
     items = result["items"]
     by_id = {item["id"]: item for item in items}
@@ -688,6 +691,7 @@ the furnaces open. Soulforge Era ch 117 is up on Patreon, link in bio #webnovel 
         gpu_lease=FakeLease(),
         media_port_free=lambda _port: True,
         media_processes=[],
+        bible_preflight=lambda: None,
     )
     items = {item["id"]: item for item in result["items"]}
     assert any(pair[:2] == ("EN", 127) for pair in generated)
@@ -770,3 +774,131 @@ def test_blocked_tiktok_generation_holds_and_does_not_letterbox(tmp_path: Path):
     assert ("EN", 127) not in result.clips_by_chapter
     assert stock not in result.stills.values()
     assert stock not in result.tiktok_stills.values()
+
+
+
+def test_bible_preflight_fails_when_yaml_is_missing():
+    from tools.weekday_cadence_media import bible_media_preflight
+
+    def importer():
+        raise ModuleNotFoundError("No module named 'yaml'")
+
+    ok, message = bible_media_preflight(
+        yaml_importer=importer,
+        projector=lambda: SimpleNamespace(characters=(1,), locations=(1,), styles=(1,)),
+        executable="/fake/python.exe",
+    )
+    assert ok is False
+    assert "WEEKDAY_CADENCE_MEDIA_PREFLIGHT_FAILED" in message
+    assert "interpreter: /fake/python.exe" in message
+    assert "missing: yaml" in message
+    assert "No module named 'yaml'" in message
+
+
+def test_bible_preflight_fails_when_projection_is_empty():
+    from tools.weekday_cadence_media import bible_media_preflight
+
+    ok, message = bible_media_preflight(
+        yaml_importer=lambda: None,
+        projector=lambda: SimpleNamespace(characters=(), locations=(), styles=()),
+        executable="/fake/python.exe",
+    )
+    assert ok is False
+    assert "interpreter: /fake/python.exe" in message
+    assert "characters" in message
+    assert "locations" in message
+    assert "style palettes" in message
+    assert "loaded 0 characters, 0 locations, 0 style palettes" in message
+
+
+def test_bible_preflight_ok_when_projection_is_populated():
+    from tools.weekday_cadence_media import bible_media_preflight, check_bible_media_preflight
+
+    ok, message = bible_media_preflight(
+        yaml_importer=lambda: None,
+        projector=lambda: SimpleNamespace(characters=("a",), locations=("b",), styles=("c",)),
+        executable="/fake/python.exe",
+    )
+    assert ok is True
+    assert message == ""
+    check_bible_media_preflight(
+        yaml_importer=lambda: None,
+        projector=lambda: SimpleNamespace(characters=("a",), locations=("b",), styles=("c",)),
+    )
+
+
+def test_with_media_preflight_failure_does_not_overwrite_existing_pack(tmp_path: Path):
+    from datetime import date, datetime
+    import json
+    from tools.weekday_cadence import timezone_for
+    from tools.weekday_cadence_config import WeekdayCadenceConfig
+    from tools.weekday_cadence_media import CadenceMediaPreflightError
+    from tools.weekday_cadence_runner import run_cadence, main
+
+    day = tmp_path / "daily-social" / "2026-11-23"
+    day.mkdir(parents=True)
+    existing = {"targetDate": "2026-11-23", "keep": "original-pack", "items": []}
+    (day / "manifest.json").write_text(json.dumps(existing), encoding="utf-8")
+    (day / "manifest.md").write_text("original", encoding="utf-8")
+    before = {p.name: p.read_bytes() for p in day.iterdir() if p.is_file()}
+
+    def fail_preflight():
+        raise CadenceMediaPreflightError(
+            "WEEKDAY_CADENCE_MEDIA_PREFLIGHT_FAILED\n"
+            "interpreter: /fake/python.exe\n"
+            "missing: yaml (import failed: ModuleNotFoundError: No module named 'yaml')"
+        )
+
+    def generate(*_args, **_kwargs):
+        raise AssertionError("generate must not run after preflight failure")
+
+    tz = timezone_for("America/Phoenix")
+    try:
+        run_cadence(
+            target=date(2026, 11, 23),
+            stage="pack",
+            dry_run=False,
+            config=WeekdayCadenceConfig(chapter_pick="newest_live", novels=("EN",)),
+            out_root=tmp_path,
+            records={"chapters": {"EN-127": {"abbr": "EN", "chapter": 127, "patreonExists": True}}},
+            now=datetime(2026, 11, 22, 16, 0, tzinfo=tz),
+            with_media=True,
+            generate_still=generate,
+            produce_clip=None,
+            gpu_lease=FakeLease(),
+            media_port_free=lambda _port: True,
+            media_processes=[],
+            bible_preflight=fail_preflight,
+        )
+    except CadenceMediaPreflightError as exc:
+        assert "interpreter: /fake/python.exe" in str(exc)
+        assert "missing: yaml" in str(exc)
+    else:
+        raise AssertionError("expected CadenceMediaPreflightError")
+
+    assert {p.name: p.read_bytes() for p in day.iterdir() if p.is_file()} == before
+    assert not (day / "media").exists()
+
+    # CLI must exit non-zero and still leave the pack untouched.
+    # main() does not accept bible_preflight, so stub check_bible_media_preflight.
+    import tools.weekday_cadence_media as media_mod
+    original = media_mod.check_bible_media_preflight
+    media_mod.check_bible_media_preflight = fail_preflight
+    try:
+        # Ensure the runner sees the stub if it already imported the symbol.
+        # It imports the function inside run_cadence, so the module attr is enough.
+        code = main(
+            [
+                "--date", "2026-11-23",
+                "--root", str(tmp_path),
+                "--app-root", str(tmp_path),
+                "--with-media",
+                "--source-commit", "test",
+            ]
+        )
+    finally:
+        media_mod.check_bible_media_preflight = original
+
+    assert code == 1
+    assert {p.name: p.read_bytes() for p in day.iterdir() if p.is_file()} == before
+    assert not (day / "media").exists()

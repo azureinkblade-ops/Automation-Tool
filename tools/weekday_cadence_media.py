@@ -18,6 +18,7 @@ invocation cannot start ComfyUI during a Research GPU test.
 from __future__ import annotations
 
 import json
+import sys
 
 import socket
 from dataclasses import dataclass, field
@@ -43,6 +44,103 @@ LeaseFactory = Callable[[], Any]
 
 class GpuPreflightError(RuntimeError):
     """Raised when the cadence must not take the GPU."""
+
+
+class CadenceMediaPreflightError(RuntimeError):
+    """Raised when --with-media cannot start. No pack should be written."""
+
+
+def _default_bible_projection() -> Any:
+    """CPU-only Studio Bible projection. Does not import app or use the GPU."""
+    from tools.studio_bible_adapter import build_projection
+
+    return build_projection("en", 1, "")
+
+
+def bible_media_preflight(
+    *,
+    yaml_importer: Callable[[], Any] | None = None,
+    projector: Callable[[], Any] | None = None,
+    executable: str | None = None,
+) -> tuple[bool, str]:
+    """Check that yaml imports and a Studio Bible projection has usable canon.
+
+    Returns (ok, message). On failure the message names sys.executable and
+    what is missing. This does not change studio_bible_adapter's swallow of a
+    missing yaml import; it checks yaml itself first so the failure is clear.
+    """
+    exe = str(executable or sys.executable)
+    nl = chr(10)
+    try:
+        if yaml_importer is not None:
+            yaml_importer()
+        else:
+            import yaml  # noqa: F401
+    except Exception as exc:
+        return False, (
+            "WEEKDAY_CADENCE_MEDIA_PREFLIGHT_FAILED"
+            + nl
+            + "interpreter: "
+            + exe
+            + nl
+            + "missing: yaml (import failed: "
+            + type(exc).__name__
+            + ": "
+            + str(exc)
+            + ")"
+        )
+
+    try:
+        projection = projector() if projector is not None else _default_bible_projection()
+    except Exception as exc:
+        return False, (
+            "WEEKDAY_CADENCE_MEDIA_PREFLIGHT_FAILED"
+            + nl
+            + "interpreter: "
+            + exe
+            + nl
+            + "missing: Studio Bible projection (failed under this interpreter: "
+            + type(exc).__name__
+            + ": "
+            + str(exc)
+            + ")"
+        )
+
+    n_chars = len(getattr(projection, "characters", None) or ())
+    n_locs = len(getattr(projection, "locations", None) or ())
+    n_styles = len(getattr(projection, "styles", None) or ())
+    missing: list[str] = []
+    if n_chars <= 0:
+        missing.append("characters")
+    if n_locs <= 0:
+        missing.append("locations")
+    if n_styles <= 0:
+        missing.append("style palettes")
+    if missing:
+        return False, (
+            "WEEKDAY_CADENCE_MEDIA_PREFLIGHT_FAILED"
+            + nl
+            + "interpreter: "
+            + exe
+            + nl
+            + "missing: Studio Bible "
+            + ", ".join(missing)
+            + " (loaded "
+            + str(n_chars)
+            + " characters, "
+            + str(n_locs)
+            + " locations, "
+            + str(n_styles)
+            + " style palettes; each must be > 0)"
+        )
+    return True, ""
+
+
+def check_bible_media_preflight(**kwargs: Any) -> None:
+    """Raise CadenceMediaPreflightError when the --with-media bible preflight fails."""
+    ok, message = bible_media_preflight(**kwargs)
+    if not ok:
+        raise CadenceMediaPreflightError(message)
 
 
 def default_port_free(port: int) -> bool:
