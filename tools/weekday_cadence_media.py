@@ -22,7 +22,10 @@ mistaken invocation cannot start ComfyUI during a Research GPU test.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
+import time
 
 import socket
 from dataclasses import dataclass, field
@@ -252,6 +255,134 @@ def research_gpu_busy(
     return bool(research_processes(processes, lister=lister))
 
 
+
+def _is_comfy_start_argv(args: Sequence[str]) -> bool:
+    """True for a bare launcher start (no -Status / -Stop / -Foreground)."""
+    for raw in list(args)[1:]:
+        flag = str(raw).strip()
+        if flag.startswith("-") or flag.startswith("/"):
+            return False
+    return True
+
+
+def _windows_detached_creationflags() -> int:
+    flags = 0
+    if os.name == "nt":
+        flags |= int(getattr(subprocess, "DETACHED_PROCESS", 0))
+        flags |= int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+    return flags
+
+
+def cadence_comfy_port_ready(port: int = COMFYUI_PORT) -> bool:
+    """True when something is accepting connections on the ComfyUI port."""
+    return not default_port_free(int(port))
+
+
+def cadence_comfy_health_ok(port: int = COMFYUI_PORT, timeout: float = 2.0) -> bool:
+    """True when the local ComfyUI HTTP health endpoint answers."""
+    import urllib.request
+
+    url = f"http://127.0.0.1:{int(port)}/system_stats"
+    try:
+        with urllib.request.urlopen(url, timeout=float(timeout)) as resp:  # noqa: S310 (local ComfyUI)
+            status = int(getattr(resp, "status", 200) or 200)
+            return 200 <= status < 300
+    except Exception:
+        return False
+
+
+def run_cadence_comfy_start(
+    args: Sequence[str],
+    timeout: float,
+    *,
+    popen: Callable[..., Any] | None = None,
+    port_ready: Callable[[], bool] | None = None,
+    health: Callable[[], bool] | None = None,
+    sleep: Callable[[float], Any] | None = None,
+    clock: Callable[[], float] | None = None,
+    log_path: str | Path | None = None,
+    port: int = COMFYUI_PORT,
+) -> tuple[int, str]:
+    """Start the Comfy launcher detached and poll port 8188 / health.
+
+    Never pipes child output, never calls wait()/communicate() on the start
+    process, and closes any log handle in the parent right after spawn.
+    """
+    spawn = popen or subprocess.Popen
+    port_is_up = port_ready or (lambda: cadence_comfy_port_ready(port))
+    health_ok = health or (lambda: cadence_comfy_health_ok(port))
+    nap = sleep or time.sleep
+    now = clock or time.monotonic
+
+    log_f = None
+    if log_path is not None:
+        log_f = open(log_path, "ab")  # noqa: SIM115
+    try:
+        popen_kw: dict[str, Any] = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": log_f if log_f is not None else subprocess.DEVNULL,
+            "stderr": subprocess.STDOUT if log_f is not None else subprocess.DEVNULL,
+            "close_fds": True,
+        }
+        if os.name == "nt":
+            popen_kw["creationflags"] = _windows_detached_creationflags()
+        else:
+            popen_kw["start_new_session"] = True
+        spawn(list(args), **popen_kw)
+    finally:
+        if log_f is not None:
+            log_f.close()
+
+    deadline = now() + max(0.0, float(timeout))
+    while now() < deadline:
+        if port_is_up() and health_ok():
+            return 0, "detached_start:ready"
+        nap(0.5)
+    raise subprocess.TimeoutExpired(list(args), float(timeout))
+
+
+def _run_short_launcher(
+    args: Sequence[str],
+    timeout: float,
+    *,
+    popen: Callable[..., Any] | None = None,
+) -> tuple[int, str]:
+    """Run -Status / -Stop, capturing output to a file (never a pipe)."""
+    import tempfile
+
+    spawn = popen or subprocess.Popen
+    with tempfile.TemporaryFile() as out_f:
+        popen_kw: dict[str, Any] = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": out_f,
+            "stderr": subprocess.STDOUT,
+            "close_fds": True,
+        }
+        if os.name == "nt":
+            popen_kw["creationflags"] = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        else:
+            popen_kw["start_new_session"] = True
+        proc = spawn(list(args), **popen_kw)
+        try:
+            rc = proc.wait(timeout=timeout)
+        except BaseException:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            raise
+        out_f.seek(0)
+        text = out_f.read().decode("utf-8", "replace")
+    return rc, text
+
+
+def cadence_launcher_runner(args: Sequence[str], timeout: float) -> tuple[int, str]:
+    """Launcher runner for weekday cadence: detach starts, capture short commands."""
+    if _is_comfy_start_argv(args):
+        return run_cadence_comfy_start(args, timeout)
+    return _run_short_launcher(args, timeout)
+
+
 def ensure_cadence_comfy(
     *,
     cfg: Any = None,
@@ -259,22 +390,24 @@ def ensure_cadence_comfy(
     queue_probe: Any = None,
     sleep: Callable[[float], Any] | None = None,
 ) -> Any:
-    """Start or reuse ComfyUI the same way the Wan clip step does.
+    """Start or reuse ComfyUI through the Wan launcher, with a detached start.
 
-    Tests must inject a stub; this default talks to the real launcher.
+    The shared default_launcher_runner waits on the launcher process with
+    redirected stdout. That can hang after READY if ComfyUI inherits the
+    capture handle. Cadence therefore uses cadence_launcher_runner: start is
+    detached (DEVNULL or a parent-closed log, Windows DETACHED_PROCESS /
+    CREATE_NEW_PROCESS_GROUP, close_fds) and readiness is polled on port 8188
+    / health. Tests must inject a stub; this default talks to the real launcher.
     """
-    import time
-
     from tools.chapter_video_wiring import (
         ChapterVideoConfig,
-        default_launcher_runner,
         default_queue_probe,
         ensure_comfy_ready,
     )
 
     return ensure_comfy_ready(
         cfg or ChapterVideoConfig.from_env(),
-        runner or default_launcher_runner,
+        runner or cadence_launcher_runner,
         queue_probe or default_queue_probe,
         sleep or time.sleep,
     )

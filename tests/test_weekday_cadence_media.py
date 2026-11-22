@@ -904,6 +904,86 @@ def test_with_media_preflight_failure_does_not_overwrite_existing_pack(tmp_path:
     assert not (day / "media").exists()
 
 
+
+def test_cadence_comfy_start_does_not_block_on_child_output(tmp_path: Path):
+    """The start call must return from a port/health poll, never wait() or communicate()."""
+    import subprocess
+    from tools.weekday_cadence_media import (
+        _is_comfy_start_argv,
+        run_cadence_comfy_start,
+    )
+
+    communicates = []
+    waits = []
+    popen_kwargs = []
+
+    class BlockingChild:
+        def __init__(self):
+            self.pid = 4242
+            self.returncode = None
+
+        def communicate(self, *args, **kwargs):
+            communicates.append((args, kwargs))
+            raise AssertionError("start must not communicate() on the child")
+
+        def wait(self, timeout=None):
+            waits.append(timeout)
+            raise AssertionError("start must not wait() on the child")
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            pass
+
+    def popen(args, **kwargs):
+        popen_kwargs.append(kwargs)
+        assert kwargs.get("stdout") is not subprocess.PIPE
+        assert kwargs.get("stderr") is not subprocess.PIPE
+        assert kwargs.get("stdin") is subprocess.DEVNULL
+        assert kwargs.get("close_fds") is True
+        import os
+        if os.name == "nt":
+            flags = int(kwargs.get("creationflags") or 0)
+            assert flags & subprocess.DETACHED_PROCESS
+            assert flags & subprocess.CREATE_NEW_PROCESS_GROUP
+        # After spawn the port/health poll should see the server up, even
+        # though this child keeps running and never closes output.
+        port_up["ready"] = True
+        return BlockingChild()
+
+    port_up = {"ready": False}
+
+    def port_ready():
+        return port_up["ready"]
+
+    def health():
+        return port_up["ready"]
+
+    log_path = tmp_path / "comfy-start.log"
+    start_argv = [r"C:\Users\David\ComfyUI-Launch\start_comfyui_wan.bat"]
+    assert _is_comfy_start_argv(start_argv) is True
+    assert _is_comfy_start_argv(start_argv + ["-Status"]) is False
+    rc, out = run_cadence_comfy_start(
+        start_argv,
+        timeout=5,
+        popen=popen,
+        port_ready=port_ready,
+        health=health,
+        sleep=lambda _s: None,
+        log_path=log_path,
+    )
+    assert rc == 0
+    assert out == "detached_start:ready"
+    assert communicates == []
+    assert waits == []
+    assert popen_kwargs, "start must spawn the launcher"
+    stdout = popen_kwargs[0]["stdout"]
+    assert stdout is not subprocess.PIPE
+    if hasattr(stdout, "closed"):
+        assert stdout.closed is True
+
+
 def test_ensure_comfy_runs_before_generate_and_stops_only_if_started(tmp_path: Path):
     order = []
     made = tmp_path / "en-127.png"
