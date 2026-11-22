@@ -20612,7 +20612,13 @@ def release_automation_worker(worker_id: str, max_jobs: int = 0) -> None:
                     "connection refused",
                     "actively refused",
                 ))
-                retry = attempts < max_attempts and "not enabled yet" not in error_text and not uncertain_outcome
+                docs_read_failed = ROYAL_ROAD_DOCS_READ_FAILED.lower() + ":" in error_text  # hold, do not retry-loop
+                retry = (
+                    attempts < max_attempts
+                    and "not enabled yet" not in error_text
+                    and not uncertain_outcome
+                    and not docs_read_failed
+                )
                 next_attempt = (datetime.now() + timedelta(minutes=max(2, attempts * 3))).strftime("%Y-%m-%d %H:%M:%S")
                 automation_db.update_release_job(
                     ROOT,
@@ -24028,6 +24034,13 @@ def live_release_check(folder: str) -> dict[str, Any]:
     }
 
 
+ROYAL_ROAD_DOCS_READ_FAILED = "DOCS_READ_FAILED"
+
+
+class RoyalRoadDocsReadFailed(RuntimeError):
+    """Docs could not be read for a Royal Road pack; the release job must hold, never reuse an old body."""
+
+
 def make_royal_road_chapter_pack(abbr: str, chapter: int) -> dict[str, Any]:
     abbr = story_key(abbr)
     if not abbr:
@@ -24047,39 +24060,9 @@ def make_royal_road_chapter_pack(abbr: str, chapter: int) -> dict[str, Any]:
             "contentHash": revision.get("contentHash", ""),
         }
     except Exception as exc:
-        if str(metadata.get("kind") or "") != "royal-road" or not (post_folder / "royal-road.txt").exists():
-            raise
-        status = release_status_for_chapter(abbr, chapter)
-        revision = metadata.get("revision") if isinstance(metadata.get("revision"), dict) else {}
-        status["revision"] = {
-            "changed": bool(revision.get("changed")),
-            "firstSeen": bool(revision.get("firstSeen")),
-            "wordCount": revision.get("wordCount", 0),
-            "previousHash": revision.get("previousHash", ""),
-            "contentHash": revision.get("contentHash", ""),
-        }
-        decision, reason = decision_from_status(status, status["revision"])
-        metadata["decision"] = decision
-        metadata["decision_reason"] = reason
-        metadata["release_status"] = status
-        metadata["revision"] = status["revision"]
-        metadata["royalRoadChapterUrl"] = str(status.get("royalRoadChapterUrl") or metadata.get("royalRoadChapterUrl") or "")
-        metadata["editExistingRoyalRoadChapter"] = bool(status.get("royalRoadExists") or metadata.get("royalRoadChapterUrl") or decision == "update_existing")
-        metadata["folder"] = str(post_folder)
-        metadata["royal_road_file"] = str(post_folder / "royal-road.txt")
-        metadata["royal_road_post_note_file"] = str(post_folder / "royal-road-post-note.txt")
-        metadata["royalRoadAuthorNoteUpgraded"] = True
-        metadata["royalRoadAuthorNoteUpgradedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-        return {
-            "applied": True,
-            "folder": str(post_folder),
-            "decision": decision,
-            "reason": reason,
-            "status": status,
-            "post": metadata,
-            "message": f"Royal Road check applied to the current review pack. GitHub text refresh was skipped: {exc}",
-        }
+        # Never fall back to an existing royal-road.txt: it can predate the current Docs text and formatter.
+        # The release worker treats DOCS_READ_FAILED as a hold (job -> blocked, no retry loop, nothing posted).
+        raise RoyalRoadDocsReadFailed(f"{ROYAL_ROAD_DOCS_READ_FAILED}: {str(exc)[:300]}") from exc
     decision, reason = decision_from_status(status, revision)
     title = concise_release_title(data.get("title") or data.get("heading") or "", abbr, chapter)
     folder = post_folder
@@ -29256,16 +29239,13 @@ def patreon_stage_text_file(post_folder: Path, tier_stage: str) -> Path:
     tier_stage = str(tier_stage or "inner_disciple").strip().lower()
     stage_name = "path-initiate" if tier_stage == "path_initiate" else "inner-disciple"
     stage_path = post_folder / f"patreon-{stage_name}.txt"
-    if stage_path.exists():
-        return stage_path
-    default_path = post_folder / "patreon.txt"
-    if default_path.exists():
-        stage_path.write_text(default_path.read_text(encoding="utf-8").strip() + "\n", encoding="utf-8")
-        return stage_path
-    note_path = post_folder / "patreon-note.txt"
-    if note_path.exists():
-        stage_path.write_text(note_path.read_text(encoding="utf-8").strip() + "\n", encoding="utf-8")
-        return stage_path
+    # Always rebuild the stage file from its source (patreon.txt, else patreon-note.txt) instead of reusing an
+    # older copy. Stage files carry no tier-specific text: tier, title and dates live in the draft payload and
+    # patreon-draft-summary.txt, and all 412 stage files on disk (2026-11-21) were plain copies of their source.
+    for source in (post_folder / "patreon.txt", post_folder / "patreon-note.txt"):
+        if source.exists():
+            stage_path.write_text(source.read_text(encoding="utf-8").strip() + "\n", encoding="utf-8")
+            return stage_path
     return stage_path
 
 
