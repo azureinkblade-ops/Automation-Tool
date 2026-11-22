@@ -15232,7 +15232,7 @@ def normalize_story_body_text(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = text.replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
     text = text.replace("\u2013", "-").replace("\u2014", "-")
-    text = re.sub(r"([.!?])([A-Z\"'])", r"\1 \2", text)
+    text = promo_copy.space_sentence_gaps(text)  # closing quotes / initials stay tight (same rule as normalize_story_text)
     text = re.sub(r"([a-z0-9])([A-Z][a-z])", r"\1 \2", text)
     paragraphs = []
     for part in re.split(r"\n\s*\n+", text):
@@ -15616,14 +15616,25 @@ def royal_road_editor_spacing(text: str) -> str:
     return "\n\n".join(parts).strip() + "\n"
 
 
-def format_chapter_for_platform(title: str, raw_text: str, chapter: int, abbr: str = "", include_post_note: bool = True) -> str:
+def format_chapter_for_platform(
+    title: str,
+    raw_text: str,
+    chapter: int,
+    abbr: str = "",
+    include_post_note: bool = True,
+    legacy_sentence_gap: bool = False,
+) -> str:
     body = remove_leading_chapter_heading(raw_text, title, chapter)
     body = repair_text_encoding(body)
     body = body.replace("\r\n", "\n").replace("\r", "\n")
     body = body.replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
     body = body.replace("\u2013", "-").replace("\u2014", "-")
     body = re.sub(r"[ \t]+", " ", body)
-    body = re.sub(r"([.!?])(?=[A-Z\u201c\u2018\"'])", r"\1 ", body)
+    if legacy_sentence_gap:
+        # Pre-2026-11-21 rule, kept only for docs_chapter_payload: its "text" feeds stored hashes and caches.
+        body = re.sub(r"([.!?])(?=[A-Z\u201c\u2018\"'])", r"\1 ", body)
+    else:
+        body = promo_copy.space_sentence_gaps(body)  # publish bodies: closing quotes / initials stay tight
     body = re.sub(r"([a-z0-9])(?=(?:PATCH|System Message|Initializing|Syncing|Loading|New Realms|Legacy Classes|All Characters Reset)\b)", r"\1\n\n", body)
     body = re.sub(r"(All Characters Reset)(?=[A-Z])", r"\1\n\n", body)
     body = re.sub(r"\b(PATCH\s+\d+(?:\.\d+)*:\s*[^\n]+)", r"\n\n\1\n", body, flags=re.IGNORECASE)
@@ -18976,7 +18987,8 @@ def docs_chapter_index(abbr: str) -> dict[str, Any]:
 
 
 def docs_chapter_payload(abbr: str, number: int, title: str, heading: str, raw_text: str) -> dict[str, Any]:
-    cleaned_text = format_chapter_for_platform(title, raw_text, number, abbr, include_post_note=False).strip()
+    # legacy_sentence_gap: data["text"] feeds chapter_revision_hash, pack source hashes and word counts -- keep it byte-stable.
+    cleaned_text = format_chapter_for_platform(title, raw_text, number, abbr, include_post_note=False, legacy_sentence_gap=True).strip()
     return {
         "abbr": abbr,
         "novel": NOVEL_NAMES.get(abbr, abbr),

@@ -157,14 +157,23 @@ def _sentence_gap(match: "re.Match[str]") -> str:
     return f"{punct} {nxt}"
 
 
+def space_sentence_gaps(text: str, *, legacy: bool = False) -> str:
+    """Add the missing space after .!? before a capital or an opening quote (closing quotes and initials stay tight).
+
+    ``legacy=True`` is the pre-2026-11-21 rule (space before ANY capital/quote); only hash/identity paths use it.
+    Shared by normalize_story_text and app.py's normalize_story_body_text / format_chapter_for_platform.
+    """
+    if legacy:
+        return _SENTENCE_GAP_RE.sub(r"\1 \2", text)
+    return _SENTENCE_GAP_RE.sub(_sentence_gap, text)
+
+
 def normalize_story_text(text: str, *, legacy_sentence_gap: bool = False) -> str:
     text = repair_text_encoding(text)
     text = text.replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
     text = text.replace("\u2013", "-").replace("\u2014", "-")
-    if legacy_sentence_gap:
-        text = _SENTENCE_GAP_RE.sub(r"\1 \2", text)  # pre-2026-11-21 rule, see normalize_story_text_for_revision_hash
-    else:
-        text = _SENTENCE_GAP_RE.sub(_sentence_gap, text)
+    # legacy: pre-2026-11-21 rule, see normalize_story_text_for_revision_hash
+    text = space_sentence_gaps(text, legacy=legacy_sentence_gap)
     text = re.sub(r"([a-z0-9])([A-Z][a-z])", r"\1 \2", text)
     return re.sub(r"\s+", " ", text).strip()
 
