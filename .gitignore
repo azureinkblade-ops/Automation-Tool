@@ -215,3 +215,9 @@ tiktok-sound-bank/
 *.env.copy
 *.bak
 *.bak.*
+
+# Weekday cadence daily packs (keep the empty override file and the copy bank).
+/daily-social/**
+!/daily-social/patreon_live_overrides.json
+!/daily-social/copy-bank/
+!/daily-social/copy-bank/**

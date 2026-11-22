@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "notes": "Teammate-confirmed live Patreon chapters. A complete entry (chapter id, post_url, verified_at, verified_by) beats the ledger's not-posted flag. Without an entry, the ledger stays the source. Leave entries empty until Product Performance verifies. Do not invent rows. Reported but not added: EN-140 as Patreon post 173664094; HA-94 through HA-99 cancelled as already live, awaiting that check.",
+  "entries": []
+}
