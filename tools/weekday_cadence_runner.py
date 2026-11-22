@@ -37,6 +37,7 @@ from tools.weekday_cadence_config import (
     COPY_BANK_RELATIVE,
     OVERRIDE_RELATIVE,
     PUBLISH_GENERATED_MEDIA,
+    STATUS_HELD,
     WeekdayCadenceConfig,
 )
 from tools.weekday_cadence_overrides import load_patreon_live_overrides
@@ -82,6 +83,22 @@ def format_timestamp(value: datetime) -> str:
     return value.isoformat()
 
 
+def _media_for_item(
+    item: CadenceItem,
+    by_chapter: Mapping[tuple[str, int], Path] | None,
+    by_novel: Mapping[str, Path] | None,
+) -> Path | None:
+    if item.source_chapter is not None and by_chapter:
+        path = by_chapter.get((item.novel, int(item.source_chapter)))
+        if path is not None:
+            return Path(path)
+    if by_novel:
+        path = by_novel.get(item.novel)
+        if path is not None:
+            return Path(path)
+    return None
+
+
 def attach_media(
     items: Sequence[CadenceItem],
     *,
@@ -89,25 +106,37 @@ def attach_media(
     stills: Mapping[str, Path],
     clips: Mapping[str, Path],
     share_still: bool,
+    stills_by_chapter: Mapping[tuple[str, int], Path] | None = None,
+    clips_by_chapter: Mapping[tuple[str, int], Path] | None = None,
 ) -> None:
     used: set[str] = set()
-    for novel, source in stills.items():
+    copied: dict[Path, str] = {}
+
+    def _copy(source: Path, *, novel: str, role: str) -> str | None:
         if not source.is_file():
-            continue
-        relative = unique_media_name(source, novel=novel, role="still", used=used)
+            return None
+        resolved = source.resolve()
+        if resolved in copied:
+            return copied[resolved]
+        relative = unique_media_name(source, novel=novel, role=role, used=used)
         copy_media_file(source, day_path, relative)
-        novel_items = [item for item in items if item.novel == novel]
-        if share_still:
-            apply_shared_still(novel_items, relative)
-        else:
-            apply_shared_still(novel_items, relative)
-    for novel, source in clips.items():
-        if not source.is_file():
-            continue
-        relative = unique_media_name(source, novel=novel, role="tiktok", used=used)
-        copy_media_file(source, day_path, relative)
-        for item in items:
-            if item.novel == novel and item.platform == "tiktok":
+        copied[resolved] = relative
+        return relative
+
+    for item in items:
+        if item.platform in {"facebook", "instagram"}:
+            source = _media_for_item(item, stills_by_chapter, stills)
+            if source is None:
+                continue
+            relative = _copy(source, novel=item.novel, role="still")
+            if relative:
+                item.media = [relative]
+        elif item.platform == "tiktok":
+            source = _media_for_item(item, clips_by_chapter, clips)
+            if source is None:
+                continue
+            relative = _copy(source, novel=item.novel, role="tiktok")
+            if relative:
                 item.media = [relative]
 
 
@@ -121,7 +150,7 @@ def apply_stage(
     deadline: datetime,
     identity_needed: Mapping[str, bool] | None = None,
     identity_approved: Mapping[str, bool] | None = None,
-    stills: Mapping[str, Path],
+    stills: Mapping[Any, Path],
     produce_clip=None,
     pipeline_depiction=None,
 ) -> list[CadenceItem]:
@@ -139,9 +168,12 @@ def apply_stage(
             continue
         if item.platform == "tiktok" and stage in {"encode", "pack"}:
             # Governed items still get their clip made, then are held for approval.
+            tiktok_still = stills.get(item.novel)
+            if item.source_chapter is not None:
+                tiktok_still = stills.get((item.novel, int(item.source_chapter)), tiktok_still)
             item, _clip = build_tiktok_item(
                 item,
-                still=stills.get(item.novel),
+                still=tiktok_still,
                 approved=True,
                 config=config,
                 produce_clip=None if dry_run else produce_clip,
@@ -212,14 +244,53 @@ def run_cadence(
     )
     stills = dict(stills or {})
     clips = dict(clips or {})
+    stills_by_chapter: dict[tuple[str, int], Path] = {}
+    tiktok_stills: dict[tuple[str, int], Path] = {}
+    clips_by_chapter: dict[tuple[str, int], Path] = {}
     identity_needed = dict(identity_needed or {})
     identity_approved = dict(identity_approved or {})
     if with_media:
         from tools.weekday_cadence_media import prepare_media
 
+        work_dir = day_dir(out_root, target.isoformat(), output_dirname=config.output_dirname) / "media"
+        work_dir.mkdir(parents=True, exist_ok=True)
+        if not dry_run and generate_still is None:
+            from tools.weekday_cadence_stills import generate_cadence_still
+
+            planned_items = planned
+
+            def generate_still(novel, chapter, _items=planned_items, _work=work_dir):
+                match = next(
+                    (
+                        row
+                        for row in _items
+                        if row.novel == novel
+                        and row.source_chapter == chapter
+                        and row.platform != "x"
+                    ),
+                    None,
+                )
+                return generate_cadence_still(
+                    novel,
+                    chapter,
+                    target=_work / f"{novel}-{chapter}-still.png",
+                    visual=getattr(match, "visual", "") if match else "",
+                    depiction=getattr(match, "depiction", "") if match else "",
+                    caption=getattr(match, "caption", "") if match else "",
+                )
+
+        if not dry_run and produce_clip is None:
+            from tools.weekday_cadence_stills import CadenceClipAdapter
+
+            produce_clip = CadenceClipAdapter(store_root=work_dir)
+
         prepared = prepare_media(
-            novels=tuple(picks.keys()),
-            chapters={abbr: pick.chapter for abbr, pick in picks.items()},
+            novels=tuple({item.novel for item in planned}),
+            chapters={
+                item.novel: item.source_chapter
+                for item in planned
+                if item.platform != "x" and item.source_chapter is not None
+            },
             with_media=True,
             dry_run=dry_run,
             existing_stills=stills,
@@ -229,9 +300,23 @@ def run_cadence(
             gpu_lease=gpu_lease,
             port_free=media_port_free,
             processes=media_processes,
+            items=planned,
+            output_dir=work_dir,
+            acquire_lease=gpu_lease is not None or (not dry_run and produce_clip is not None and gpu_lease is not None),
         )
         stills.update(prepared.stills)
         clips.update(prepared.clips)
+        stills_by_chapter = dict(prepared.stills_by_chapter)
+        tiktok_stills = dict(prepared.tiktok_stills)
+        clips_by_chapter = dict(prepared.clips_by_chapter)
+        for item in planned:
+            if item.platform == "x" or item.source_chapter is None:
+                continue
+            reason = prepared.generation_holds.get((item.novel, int(item.source_chapter)))
+            if not reason:
+                continue
+            item.status = STATUS_HELD
+            item.hold_reason = reason
     bank_items = list(copy_bank or [])
     provided = dict(captions_by_novel or {})
     for item in planned:
@@ -254,6 +339,8 @@ def run_cadence(
             item.caption = caps[item.platform]
         elif not item.caption:
             item.caption = fallback
+    stage_stills: dict[Any, Path] = dict(stills)
+    stage_stills.update(tiktok_stills)
     planned = apply_stage(
         planned,
         stage=stage,
@@ -263,7 +350,7 @@ def run_cadence(
         deadline=deadline,
         identity_needed=identity_needed,
         identity_approved=identity_approved,
-        stills=stills,
+        stills=stage_stills,
         produce_clip=produce_clip if not dry_run else stub_produce_clip,
     )
     day_path = day_dir(out_root, target.isoformat(), output_dirname=config.output_dirname)
@@ -274,6 +361,8 @@ def run_cadence(
         stills=stills,
         clips=clips,
         share_still=config.share_still_across_static,
+        stills_by_chapter=stills_by_chapter,
+        clips_by_chapter=clips_by_chapter,
     )
     apply_media_required_holds(planned)
     ensure_hold_reasons(planned)
@@ -386,7 +475,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         out_root=repo,
         records=records,
         source_commit=args.source_commit or _git_commit(repo),
-        produce_clip=stub_produce_clip,
+        produce_clip=(
+            stub_produce_clip
+            if bool(args.dry_run) or not bool(getattr(args, "with_media", False))
+            else None
+        ),
         overrides=load_patreon_live_overrides(override_path),
         copy_bank=load_copy_bank(bank_path),
         with_media=bool(getattr(args, "with_media", False)),

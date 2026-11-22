@@ -201,6 +201,10 @@ class StillPlan:
 class MediaPreparation:
     stills: dict[str, Path] = field(default_factory=dict)
     clips: dict[str, Path] = field(default_factory=dict)
+    stills_by_chapter: dict[tuple[str, int], Path] = field(default_factory=dict)
+    clips_by_chapter: dict[tuple[str, int], Path] = field(default_factory=dict)
+    tiktok_stills: dict[tuple[str, int], Path] = field(default_factory=dict)
+    generation_holds: dict[tuple[str, int], str] = field(default_factory=dict)
     identity_needed: dict[str, bool] = field(default_factory=dict)
     plans: list[StillPlan] = field(default_factory=list)
     preflight_ok: bool = True
@@ -279,6 +283,9 @@ def prepare_media(
     processes: Sequence[Mapping[str, Any]] | None = None,
     lister: ProcessLister | None = None,
     job_id: str = "weekday-cadence-media",
+    items: Sequence[Any] | None = None,
+    output_dir: Path | None = None,
+    acquire_lease: bool = True,
 ) -> MediaPreparation:
     """Resolve or (optionally) generate per-novel stills and Wan clips.
 
@@ -290,12 +297,28 @@ def prepare_media(
         return result
 
     existing = dict(existing_stills or {})
+    jobs: list[tuple[str, int | None]] = []
+    seen: set[tuple[str, int | None]] = set()
+    if items:
+        for item in items:
+            if getattr(item, "platform", "") == "x":
+                continue
+            novel = str(getattr(item, "novel", "") or "")
+            chapter = getattr(item, "source_chapter", None)
+            key = (novel, chapter)
+            if not novel or key in seen:
+                continue
+            seen.add(key)
+            jobs.append(key)
+    if not jobs:
+        jobs = [(str(novel), chapters.get(novel)) for novel in novels]
+
     plans: list[StillPlan] = []
-    for novel in novels:
+    for novel, chapter in jobs:
         plans.append(
             plan_still(
                 novel,
-                chapters.get(novel),
+                chapter,
                 existing=existing.get(novel),
                 finder=finder,
             )
@@ -306,6 +329,8 @@ def prepare_media(
             result.identity_needed[plan.novel] = True
         if plan.path is not None:
             result.stills[plan.novel] = plan.path
+            if plan.chapter is not None:
+                result.stills_by_chapter[(plan.novel, int(plan.chapter))] = plan.path
 
     needs_generation = [plan for plan in plans if plan.path is None]
     needs_clips = list(plans)
@@ -326,27 +351,71 @@ def prepare_media(
     lease = gpu_lease if gpu_lease is not None else (lease_factory() if lease_factory else None)
     acquired = False
     try:
-        if lease is not None:
+        if lease is not None and acquire_lease:
             _acquire_lease(lease, job_id)
             acquired = True
             result.lease_acquired = True
         if generate_still is not None:
+            from tools.weekday_cadence_stills import StillGenerationBlocked, letterbox_to_size, STILL_SIZE_TIKTOK
+
             for plan in needs_generation:
-                generated = generate_still(plan.novel, plan.chapter)
+                try:
+                    generated = generate_still(plan.novel, plan.chapter)
+                except StillGenerationBlocked as exc:
+                    if plan.chapter is not None:
+                        result.generation_holds[(plan.novel, int(plan.chapter))] = str(exc)
+                    continue
+                except Exception as exc:
+                    if plan.chapter is not None:
+                        result.generation_holds[(plan.novel, int(plan.chapter))] = (
+                            f"STILL_GENERATION_BLOCKED:{type(exc).__name__}"
+                        )
+                    continue
                 if generated is not None and Path(generated).is_file():
                     plan.path = Path(generated)
                     plan.origin = "generate"
                     result.stills[plan.novel] = plan.path
+                    if plan.chapter is not None:
+                        result.stills_by_chapter[(plan.novel, int(plan.chapter))] = plan.path
                     result.generated.append(plan.novel)
+                elif plan.chapter is not None:
+                    result.generation_holds[(plan.novel, int(plan.chapter))] = (
+                        "STILL_GENERATION_MISSING_ARTIFACT"
+                    )
+        from tools.weekday_cadence_stills import letterbox_to_size, STILL_SIZE_TIKTOK
+
+        dest_root = Path(output_dir) if output_dir is not None else None
+        for plan in plans:
+            still = plan.path or result.stills.get(plan.novel)
+            if still is None or plan.chapter is None:
+                continue
+            tiktok_dest = (
+                (dest_root / f"{plan.novel}-{plan.chapter}-tiktok.png")
+                if dest_root is not None
+                else still.with_name(f"{still.stem}-tiktok{still.suffix or '.png'}")
+            )
+            try:
+                result.tiktok_stills[(plan.novel, int(plan.chapter))] = letterbox_to_size(
+                    still, tiktok_dest, STILL_SIZE_TIKTOK
+                )
+            except Exception:
+                result.tiktok_stills[(plan.novel, int(plan.chapter))] = Path(still)
         if produce_clip is not None:
             for plan in needs_clips:
-                still = result.stills.get(plan.novel)
+                chapter = plan.chapter
+                still = None
+                if chapter is not None:
+                    still = result.tiktok_stills.get((plan.novel, int(chapter)))
+                if still is None:
+                    still = result.stills.get(plan.novel)
                 if still is None:
                     continue
                 clip = produce_clip(still, novel=plan.novel, chapter=plan.chapter)
                 path = getattr(clip, "path", clip)
                 if isinstance(path, Path) and path.is_file():
                     result.clips[plan.novel] = path
+                    if chapter is not None:
+                        result.clips_by_chapter[(plan.novel, int(chapter))] = path
     finally:
         if acquired:
             _release_lease(lease, job_id)

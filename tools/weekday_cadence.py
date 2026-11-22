@@ -706,6 +706,11 @@ def plan_day_items(
                     if choice.caption is not None
                     else DEPICTION_UNKNOWN
                 ),
+                visual=(
+                    choice.caption.visual
+                    if choice.caption is not None
+                    else ""
+                ),
             )
             item = apply_unverified_hold(item, pick)
             # restore the chosen chapter after unverified hold (pick is newest; still verified)

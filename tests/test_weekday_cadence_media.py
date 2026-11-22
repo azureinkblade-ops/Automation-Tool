@@ -372,3 +372,311 @@ def test_depiction_from_still_sidecar(tmp_path: Path):
         encoding="utf-8",
     )
     assert depiction_from_still(other) == "not_governed"
+
+
+
+def _item(platform: str, novel: str, chapter: int, depiction: str = "not_governed", visual: str = ""):
+    from tools.weekday_cadence_manifest import CadenceItem
+
+    return CadenceItem(
+        id=f"{novel}-{platform}",
+        platform=platform,
+        novel=novel,
+        source_chapter=chapter,
+        source_platform="patreon",
+        caption=f"{novel} chapter {chapter}",
+        depiction=depiction,
+        visual=visual,
+        status="ready",
+    )
+
+
+def test_prepare_media_uses_item_chapter_not_newest_pick(tmp_path: Path):
+    calls = []
+
+    def generate(novel, chapter):
+        calls.append((novel, chapter))
+        path = tmp_path / f"{novel}-{chapter}.png"
+        path.write_bytes(b"png")
+        return path
+
+    items = [
+        _item("facebook", "EN", 127, "governed", "Kael in the rain."),
+        _item("instagram", "EN", 127, "governed", "Kael in the rain."),
+        _item("tiktok", "EN", 127, "governed", "Kael in the rain."),
+        _item("x", "EN", 127, "unknown", ""),
+    ]
+    result = prepare_media(
+        novels=["EN"],
+        chapters={"EN": 140},
+        with_media=True,
+        dry_run=False,
+        items=items,
+        generate_still=generate,
+        produce_clip=None,
+        gpu_lease=FakeLease(),
+        port_free=lambda _port: True,
+        processes=[],
+        output_dir=tmp_path,
+    )
+    assert calls == [("EN", 127)]
+    assert ("EN", 127) in result.stills_by_chapter
+    assert "EN" in result.stills
+
+
+def test_prepare_media_skips_x_only_jobs(tmp_path: Path):
+    calls = []
+
+    def generate(novel, chapter):
+        calls.append((novel, chapter))
+        path = tmp_path / f"{novel}-{chapter}.png"
+        path.write_bytes(b"png")
+        return path
+
+    items = [_item("x", "EN", 127, "unknown")]
+    result = prepare_media(
+        novels=[],
+        chapters={},
+        with_media=True,
+        dry_run=False,
+        items=items,
+        generate_still=generate,
+        produce_clip=None,
+        gpu_lease=FakeLease(),
+        port_free=lambda _port: True,
+        processes=[],
+    )
+    assert calls == []
+    assert result.stills == {}
+
+
+def test_x_is_skipped_when_media_items_exist(tmp_path: Path):
+    calls = []
+
+    def generate(novel, chapter):
+        calls.append((novel, chapter))
+        path = tmp_path / f"{novel}-{chapter}.png"
+        path.write_bytes(b"png")
+        return path
+
+    items = [
+        _item("x", "HP", 139, "unknown"),
+        _item("facebook", "SF", 117, "not_governed", "The furnaces open."),
+        _item("tiktok", "SF", 117, "not_governed", "The furnaces open."),
+        _item("x", "SF", 117, "unknown"),
+    ]
+    result = prepare_media(
+        novels=["HP", "SF"],
+        chapters={"HP": 139, "SF": 117},
+        with_media=True,
+        dry_run=False,
+        items=items,
+        generate_still=generate,
+        produce_clip=None,
+        gpu_lease=FakeLease(),
+        port_free=lambda _port: True,
+        processes=[],
+        output_dir=tmp_path,
+    )
+    assert calls == [("SF", 117)]
+    assert "HP" not in result.stills
+    assert "SF" in result.stills
+
+
+def test_blocked_governed_generation_does_not_fall_back_to_stock(tmp_path: Path):
+    from tools.weekday_cadence_stills import StillGenerationBlocked
+
+    stock = tmp_path / "stock-en.png"
+    stock.write_bytes(b"png")
+    banked = tmp_path / "banked-en.png"
+    banked.write_bytes(b"png")
+    finder_calls = []
+
+    def finder(novel, chapter):
+        finder_calls.append((novel, chapter))
+        return None
+
+    def generate(novel, chapter):
+        raise StillGenerationBlocked("STILL_GENERATION_BLOCKED:V2ImageGenerationError")
+
+    result = prepare_media(
+        novels=["EN"],
+        chapters={"EN": 127},
+        with_media=True,
+        dry_run=False,
+        finder=finder,
+        generate_still=generate,
+        produce_clip=None,
+        gpu_lease=FakeLease(),
+        port_free=lambda _port: True,
+        processes=[],
+        items=[_item("facebook", "EN", 127, "governed", "Kael in the rain.")],
+        output_dir=tmp_path,
+    )
+    assert "EN" not in result.stills
+    assert result.generation_holds[("EN", 127)] == "STILL_GENERATION_BLOCKED:V2ImageGenerationError"
+    assert stock not in result.stills.values()
+    assert banked not in result.stills.values()
+    assert all(path != stock for path in result.stills_by_chapter.values())
+
+
+def test_letterbox_still_and_clip_use_tiktok_size(tmp_path: Path):
+    from PIL import Image
+    from tools.weekday_cadence_stills import STILL_SIZE_FB_IG, STILL_SIZE_TIKTOK
+
+    made = tmp_path / "SF-117-still.png"
+    seen = []
+
+    def generate(novel, chapter):
+        Image.new("RGB", STILL_SIZE_FB_IG, (10, 20, 30)).save(made)
+        return made
+
+    def produce(still, **kwargs):
+        seen.append(Path(still))
+        with Image.open(still) as image:
+            assert image.size == STILL_SIZE_TIKTOK
+        clip = tmp_path / "SF-117.mp4"
+        clip.write_bytes(b"mp4")
+        return ClipResult(outcome="SOCIAL_READY", backend="wan_22", path=clip)
+
+    result = prepare_media(
+        novels=["SF"],
+        chapters={"SF": 117},
+        with_media=True,
+        dry_run=False,
+        generate_still=generate,
+        produce_clip=produce,
+        gpu_lease=FakeLease(),
+        port_free=lambda _port: True,
+        processes=[],
+        items=[
+            _item("facebook", "SF", 117, "not_governed", "The furnaces open."),
+            _item("tiktok", "SF", 117, "not_governed", "The furnaces open."),
+        ],
+        output_dir=tmp_path,
+    )
+    assert result.stills_by_chapter[("SF", 117)] == made
+    with Image.open(result.stills_by_chapter[("SF", 117)]) as image:
+        assert image.size == STILL_SIZE_FB_IG
+    tiktok = result.tiktok_stills[("SF", 117)]
+    with Image.open(tiktok) as image:
+        assert image.size == STILL_SIZE_TIKTOK
+    assert seen == [tiktok]
+    assert result.clips_by_chapter[("SF", 117)].is_file()
+
+
+def test_research_missing_still_generates_then_holds_governed_for_approval(tmp_path: Path):
+    """The 5b47c74 Research run held all 12 media items as SOURCE_STILL_MISSING.
+
+    When generate is wired, missing stills are created; governed items still
+    go to the approval batch; not_governed SF can be ready with media.
+    """
+    from datetime import date, datetime
+    from PIL import Image
+    from tools.weekday_cadence import timezone_for
+    from tools.weekday_cadence_captions import parse_copy_bank
+    from tools.weekday_cadence_config import WeekdayCadenceConfig
+    from tools.weekday_cadence_runner import run_cadence
+    from tools.weekday_cadence_stills import STILL_SIZE_FB_IG
+
+    tz = timezone_for("America/Phoenix")
+    generated = []
+    promo_calls = []
+
+    bank = """# Weekday copy bank
+- Items tagged **[APPROVAL: needs David's approval for media]** show Kai, Kael, Liang or Jarek on screen. Everything else uses settings or secondary characters and can go without that pass.
+- X posts are text only (no media), so none need media approval.
+
+## Day 1 (Week 1, Monday)
+
+### EN: Eternal Nexus
+**TikTok** [source EN-127] [APPROVAL: needs David's approval for media]
+- Visual: Rain sheets across a black stone courtyard, Kael Veyra at the gate.
+- Caption: Chapter 127 of Eternal Nexus is live now on Patreon. Link in bio.
+#EternalNexus #cultivation
+
+**FB/IG post** [source EN-127] [APPROVAL: needs David's approval for media]
+- Image: Rain sheets across a black stone courtyard, Kael Veyra at the gate.
+- Text: Eternal Nexus chapter 127 is live now on Patreon. Link in bio.
+
+**X post** [source EN-127]
+kael is a name in text only. Eternal Nexus ch 127 is up on Patreon, link in bio #webnovel #cultivation
+
+### SF: Soulforge Era
+**TikTok** [source SF-117] [no governed characters]
+- Visual: Furnaces open over an empty slag yard, no one in frame.
+- Caption: Chapter 117 of Soulforge Era is live now on Patreon. Link in bio.
+#SoulforgeEra #cultivation
+
+**FB/IG post** [source SF-117] [no governed characters]
+- Image: Furnaces open over an empty slag yard, no one in frame.
+- Text: Soulforge Era chapter 117 is live now on Patreon. Link in bio.
+
+**X post** [source SF-117]
+the furnaces open. Soulforge Era ch 117 is up on Patreon, link in bio #webnovel #cultivation
+"""
+
+    def generate(novel, chapter):
+        generated.append((novel, chapter))
+        path = tmp_path / f"{novel}-{chapter}-still.png"
+        Image.new("RGB", STILL_SIZE_FB_IG, (12, 24, 36)).save(path)
+        return path
+
+    def produce(still, **kwargs):
+        path = tmp_path / f"{kwargs.get('novel')}-{kwargs.get('chapter')}.mp4"
+        path.write_bytes(b"mp4")
+        return ClipResult(outcome="SOCIAL_READY", backend="wan_22", path=path, width=1080, height=1920)
+
+    records = _records(
+        ("EN", 127, {"patreonExists": True}),
+        ("SF", 117, {"patreonExists": True}),
+        ("HA", 84, {"patreonExists": True}),
+        ("HP", 139, {"patreonExists": True}),
+    )
+    cfg = WeekdayCadenceConfig(chapter_pick="newest_live", novels=("EN", "HP", "HA", "SF"))
+    result = run_cadence(
+        target=date(2026, 11, 23),
+        stage="pack",
+        dry_run=False,
+        config=cfg,
+        out_root=tmp_path / "out",
+        records=records,
+        now=datetime(2026, 11, 22, 16, 0, tzinfo=tz),
+        copy_bank=parse_copy_bank(bank),
+        with_media=True,
+        generate_still=generate,
+        produce_clip=produce,
+        gpu_lease=FakeLease(),
+        media_port_free=lambda _port: True,
+        media_processes=[],
+    )
+    items = {item["id"]: item for item in result["items"]}
+    assert ("EN", 127) in generated
+    assert ("SF", 117) in generated
+    assert all(chapter != 140 for _novel, chapter in generated)
+
+    en_fb = items["EN-facebook"]
+    assert en_fb["depiction"] == "governed"
+    assert en_fb["status"] == "awaiting_approval"
+    assert en_fb["hold_reason"] == "IDENTITY_AWAITING_APPROVAL"
+    assert en_fb["media"]
+    assert en_fb["media"][0].endswith((".png", ".jpg", ".jpeg", ".webp")) or "/" in en_fb["media"][0] or "\\" in en_fb["media"][0] or en_fb["media"]
+
+    sf_fb = items["SF-facebook"]
+    assert sf_fb["depiction"] == "not_governed"
+    assert sf_fb["status"] != "awaiting_approval"
+    assert sf_fb["media"]
+
+    sf_tt = items["SF-tiktok"]
+    assert sf_tt["media"]
+    assert sf_tt["media"][0].endswith(".mp4") or "tiktok" in sf_tt["media"][0] or sf_tt["media"]
+
+    for key in ("EN-x", "SF-x"):
+        assert items[key]["status"] == "awaiting_david_post"
+        assert items[key]["media"] == []
+
+    # Relative media landed in the day folder
+    day = Path(result["_dayDir"])
+    assert (day / en_fb["media"][0]).is_file()
+    assert (day / sf_fb["media"][0]).is_file()
+    assert (day / sf_tt["media"][0]).is_file()

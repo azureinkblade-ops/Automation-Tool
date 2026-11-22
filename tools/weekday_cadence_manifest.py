@@ -47,6 +47,7 @@ ITEM_FIELDS = (
     "pick_rule",
     "copy_source",
     "depiction",
+    "visual",
     "posted_url",
     "posted_at",
 )
@@ -75,6 +76,7 @@ class CadenceItem:
     pick_rule: str = ""
     copy_source: str = ""
     depiction: str = DEPICTION_UNKNOWN
+    visual: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -93,6 +95,7 @@ class CadenceItem:
             "pick_rule": self.pick_rule,
             "copy_source": self.copy_source,
             "depiction": self.depiction,
+            "visual": self.visual,
             "posted_url": self.posted_url,
             "posted_at": self.posted_at,
         }
@@ -129,6 +132,7 @@ class CadenceItem:
             pick_rule=str(raw.get("pick_rule") or ""),
             copy_source=str(raw.get("copy_source") or ""),
             depiction=str(raw.get("depiction") or DEPICTION_UNKNOWN),
+            visual=str(raw.get("visual") or ""),
         )
 
 

@@ -53,6 +53,9 @@ _CAPTION_LINE = re.compile(r"^- Caption:\s*(.*)$", re.MULTILINE)
 _TEXT_LINE = re.compile(r"^- Text:\s*(.*)$", re.MULTILINE)
 _HASHTAG_LINE = re.compile(r"^(#\w+(?:\s+#\w+)*)\s*$")
 
+_VISUAL_LINE = re.compile(r"^- Visual:\s*(.*)$", re.MULTILINE)
+_IMAGE_LINE = re.compile(r"^- Image:\s*(.*)$", re.MULTILINE)
+
 KIND_TO_PLATFORMS = {
     "TikTok": ("tiktok",),
     "FB/IG post": ("facebook", "instagram"),
@@ -72,6 +75,7 @@ class BankCaption:
     source: str = "copy_bank"
     bank_day: int | None = None
     depiction: str = DEPICTION_UNKNOWN
+    visual: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -85,6 +89,7 @@ class BankCaption:
             "source": self.source,
             "bank_day": self.bank_day,
             "depiction": self.depiction,
+            "visual": self.visual,
         }
 
 
@@ -253,6 +258,18 @@ def depiction_for_bank_block(
     return DEPICTION_UNKNOWN, False
 
 
+
+def _extract_visual(block: str) -> str:
+    """Prefer the TikTok Visual line, then the FB/IG Image line."""
+    match = _VISUAL_LINE.search(block or "")
+    if match and match.group(1).strip():
+        return match.group(1).strip()
+    match = _IMAGE_LINE.search(block or "")
+    if match and match.group(1).strip():
+        return match.group(1).strip()
+    return ""
+
+
 def parse_copy_bank(text: str) -> list[BankCaption]:
     marks = _section_map(text)
     depiction_marks = _section_depiction_map(text)
@@ -299,6 +316,7 @@ def parse_copy_bank(text: str) -> list[BankCaption]:
                 needs_approval=needs_approval,
                 bank_day=bank_day,
                 depiction=depiction,
+                visual=_extract_visual(block),
             )
         )
     return items
