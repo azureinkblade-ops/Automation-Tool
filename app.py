@@ -20950,7 +20950,7 @@ def next_chapter_selection_for(abbr: str, chapters: list[dict[str, Any]], tool: 
 
 
 def chapter_revision_hash(text: str) -> str:
-    normalized = normalize_story_text(text)
+    normalized = promo_copy.normalize_story_text_for_revision_hash(text)  # old spacing rule: keeps stored hashes valid
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 

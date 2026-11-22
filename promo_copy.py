@@ -135,13 +135,49 @@ def repair_text_encoding(text: str) -> str:
     return text
 
 
-def normalize_story_text(text: str) -> str:
+_SENTENCE_GAP_RE = re.compile(r"([.!?])([A-Z\"'])")
+
+
+def _sentence_gap(match: "re.Match[str]") -> str:
+    """Space a run-on sentence end (``end.Next``, ``end."Next``) but never a closing quote or initials.
+
+    - ``Grip." He`` / ``property."`` -- the quote closes the sentence (a space, punctuation or the end
+      follows it), so it stays tight against the ``.``.
+    - ``R.H.`` / ``J.R.R.`` -- a ``.`` right after a lone capital letter is an initial, not a sentence end.
+    """
+    punct, nxt = match.group(1), match.group(2)
+    s, start, end = match.string, match.start(), match.end()
+    if nxt in "\"'":
+        after = s[end:end + 1]
+        if not after.isalnum():
+            return match.group(0)  # closing quote
+        return f"{punct} {nxt}"  # opening quote of the next sentence
+    if punct == "." and start >= 1 and s[start - 1].isupper() and (start < 2 or not s[start - 2].isalpha()):
+        return match.group(0)  # initials
+    return f"{punct} {nxt}"
+
+
+def normalize_story_text(text: str, *, legacy_sentence_gap: bool = False) -> str:
     text = repair_text_encoding(text)
     text = text.replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
     text = text.replace("\u2013", "-").replace("\u2014", "-")
-    text = re.sub(r"([.!?])([A-Z\"'])", r"\1 \2", text)
+    if legacy_sentence_gap:
+        text = _SENTENCE_GAP_RE.sub(r"\1 \2", text)  # pre-2026-11-21 rule, see normalize_story_text_for_revision_hash
+    else:
+        text = _SENTENCE_GAP_RE.sub(_sentence_gap, text)
     text = re.sub(r"([a-z0-9])([A-Z][a-z])", r"\1 \2", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def normalize_story_text_for_revision_hash(text: str) -> str:
+    """Normalization behind app.chapter_revision_hash -- deliberately the OLD sentence-gap rule.
+
+    Stored release-status ``contentHash`` and ledger ``royalRoadReviewedHash`` values were computed with it.
+    Hashing with the fixed rule would flip 55 contentHash and 24 royalRoadReviewedHash values for chapters
+    already in Docs (closing quotes like ``property."``), marking them changed / not Royal-Road-reviewed.
+    The hash is only an identity of the text, so it keeps the old rule; imports and captions use the fixed one.
+    """
+    return normalize_story_text(text, legacy_sentence_gap=True)
 
 
 def chapter_body_for_marketing(text: str) -> str:
