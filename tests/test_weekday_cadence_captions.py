@@ -154,3 +154,47 @@ def test_captions_for_novel_strips_tiers_when_partial():
         assert "Path Initiate" not in text, platform
         assert "Inner Disciple" not in text, platform
         assert "Patreon" in text
+
+def test_exact_chapter_match_never_selects_neighbor_item():
+    """EN-140 copy must never land on an EN-139 bank item, even if both are present."""
+    bank = """
+### EN: Eternal Nexus
+**TikTok** [source EN-139]
+- Caption: EN-139 tiktok must not be selected for chapter 140.
+**FB/IG post** [source EN-139]
+- Text: EN-139 facebook must not be selected for chapter 140.
+**X post** [source EN-139]
+en 139 x must not be selected for chapter 140
+**TikTok** [source EN-140]
+- Caption: EN-140 tiktok is the only valid tiktok for this pick.
+**FB/IG post** [source EN-140]
+- Text: EN-140 facebook is the only valid static copy for this pick.
+**X post** [source EN-140]
+en 140 x is the only valid x copy for this pick
+"""
+    items = parse_copy_bank(bank)
+    assert {(item.chapter, item.kind) for item in items} == {
+        (139, "TikTok"),
+        (139, "FB/IG post"),
+        (139, "X post"),
+        (140, "TikTok"),
+        (140, "FB/IG post"),
+        (140, "X post"),
+    }
+    for platform in ("facebook", "instagram", "x", "tiktok"):
+        # Even if 139 is also in the allowed set, the requested chapter must match exactly.
+        picked = select_bank_caption(
+            items,
+            novel="EN",
+            chapter=140,
+            platform=platform,
+            allowed_chapters=[139, 140],
+        )
+        assert picked is not None, platform
+        assert picked.chapter == 140, platform
+        assert "EN-139" not in picked.text
+        assert "chapter 139" not in picked.text
+        assert "ch 139" not in picked.text
+        assert "139" not in picked.text
+        assert "140" in picked.text
+

@@ -754,7 +754,7 @@ the hidden hall didn't shake. that was scarier than any collapse. Hundredfold Pa
 - Text: The climb out of the forge was longer than the walk down. Every vent and furnace kept asking him what to do, and every time he gave the same answer: ask the ones who breathe it. Chapter 125 of Soulforge Era is live now on Patreon. Link in bio.
 
 **X post** [source SF-126]
-"history is ownership recorded successfully." the auditor is at the barricade. Soulforge Era ch 126 is up on Patreon, link in bio #webnovel #cultivation
+"History is ownership recorded successfully." The auditor is at the barricade. Soulforge Era ch 126 is up on Patreon, link in bio #webnovel #cultivation
 
 ### Reel 10: HP (sources HP-145 to HP-148) [APPROVAL: needs David's approval for media, 2 of 6 beats]
 - Cold open (0-3s), spoken: "Every manual on the mountain opened to its first page at the same time."
@@ -765,3 +765,127 @@ the hidden hall didn't shake. that was scarier than any collapse. Hundredfold Pa
 - Beat 5. VO: "A thousand freed vessels grabbed the teacher's wrist and pulled, and it screamed without sound. For nine centuries it had only been a relation. Now it had an edge." Visual: Rows of figures gripping one red-wrapped wrist, red threads cutting into their palms.
 - Beat 6 [G]. VO: "Liang told them to let go. Nobody moved. Even resistance can become a lesson, if everyone resists the same way." Visual: Liang standing in the hall with his hand out, the line of figures holding fast.
 - End card, spoken: "For the first time, Teacher had somewhere to end. The Hundredfold Path." End card text: The Hundredfold Path. Live now on Patreon. Link in bio.
+
+---
+
+## Supplement: newly confirmed live chapters (EN-139, EN-140, HA-94 to HA-99)
+Writer, Nov 21 2026. Added after Product Performance checked Patreon's public post listing and confirmed these eight chapters are live. Same rules as the rest of the file. New cutoffs for this section: **EN up to EN-140, HA up to HA-99.** Nothing from EN-141+, HA-100+ or any held chapter. Not slotted into days; Coder's picker or Social can drop them into the calendar as needed.
+- Sources were extracted from the Docs repo (commit b59d6ca) and saved in `/workspace/promo-drafts/src/`. EN-140 is the swapped "Three Points of Contact" text.
+- No item in this section shows Kai, Kael, Liang or Jarek on screen, so none carry the approval tag. All visuals use settings, screens, or secondary characters (Ressa, Aren, Sera, Mina, Taeho).
+- EN-139 copy does not name the ring-four walker; her name is first spoken in EN-140.
+
+### EN: Eternal Nexus
+
+**TikTok** [source EN-139]
+- Spoken hook: "The ark built a road. Then it asked who walks it."
+- On-screen text: A road with a walker can't be sealed again.
+- Visual: A seam of gold light running from a ruined, rain-soaked apartment out across a vast ring toward a dark gap, one set of footsteps lighting up along it.
+- Caption: The core finally has a road, and now it wants to know whose weight the road was built to carry. Not a king. Not a chosen one. The many who kept a gap open in ring four while the old throat called it empty. Chapter 139 of Eternal Nexus is live now on Patreon. Link in bio.
+#EternalNexus #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
+
+**FB/IG post** [source EN-139]
+- Image: A woman's finger resting on a glowing wall map, stopped on a single gap in the fourth ring.
+- Text: The buried maker finally admits what scared him. Not the road. The walker, because a road with a walker can never be sealed again. Now a ring-four name is coming up the seam, worn smooth by thirty years of keeping a gap the old throat called empty. Eternal Nexus chapter 139 is live now on Patreon. Link in bio.
+
+**X post** [source EN-139]
+"a road with a walker is a road that cannot be sealed again." he feared the walker more than the silence. Eternal Nexus ch 139 is up on Patreon, link in bio #webnovel #cultivation
+
+**TikTok** [source EN-140]
+- Spoken hook: "Heel. Sole. Other heel. Never let the current lift you."
+- On-screen text: Three points of contact.
+- Visual: A limping woman in a torn ring-four coat dropping to one palm and one shin on a narrow gantry of gold plating, a backward current tearing at her coat in the duct-dark.
+- Caption: Ressa Hask kept a gap open with her own spine while the recall turned people into errands. When the old throat tries to drag her back, she drops to three points of contact and refuses to become cargo. Chapter 140 of Eternal Nexus is live now on Patreon. Link in bio.
+#EternalNexus #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
+
+**FB/IG post** [source EN-140]
+- Image: Two identical limping women on parallel strips of gold plating, one solid, the other smearing into a scorch mark.
+- Text: First the old throat tried to pull her back. Then it tried to wear her face. Then it tried to steal her name. Ressa had one note for the copy: "If you put on my face, put on the knee. I paid for the knee." Eternal Nexus chapter 140 is live now on Patreon. Link in bio.
+
+**X post** [source EN-140]
+"I am not an errand, and I am not quiet." she kept the gap for a generation. now she walks the road. Eternal Nexus ch 140 is up on Patreon, link in bio #webnovel #cultivation
+
+### HA: Heavenly Ascension System
+
+**TikTok** [source HA-94]
+- Spoken hook: "Heaven asked for consent. Nobody had ever refused before."
+- On-screen text: TERMINATE NETWORK? NO PRIOR REFUSAL RECORDED.
+- Visual: A cracked phone screen glowing gold in a flooded maintenance tunnel, CONSENT REQUIRED across it, gold lines pulsing like veins under the water.
+- Caption: Something built a closed heaven over Haedam to stop one moment: broken networks recognizing each other. Now it's asking permission to end them, and the System has no record of anyone ever saying no. Heavenly Ascension System chapter 94 is live now on Patreon. Link in bio.
+#HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
+
+**FB/IG post** [source HA-94]
+- Image: A sealed gray sky over a dark city, one thin crack of sunlight falling through.
+- Text: The sky over Haedam didn't close because the buried network woke. It closed because the network tried to reach a fifth node. Then a crack opened in the clouds, and for the first time the voice above the city didn't sound certain. It sounded almost like a plea. Heavenly Ascension System chapter 94 is live now on Patreon. Link in bio.
+
+**X post** [source HA-94]
+"TERMINATE NETWORK?" "UNKNOWN. NO PRIOR REFUSAL RECORDED." something built a closed heaven to stop this moment. HAS ch 94 is up on Patreon, link in bio #webnovel #cultivation
+
+**TikTok** [source HA-95]
+- Spoken hook: "The phones were dead. Then every screen in the city said one word."
+- On-screen text: IDENTIFY INITIATING AUTHORITY. NONE.
+- Visual: A crowded street under a gray sky, every phone, sign and display lit with the same white word: NONE.
+- Caption: The sky wants a name. Someone to blame, isolate and remove. But the network has no throne, and when the question comes, a whole city and the broken things beyond it give the same answer. Heavenly Ascension System chapter 95 is live now on Patreon. Link in bio.
+#HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
+
+**FB/IG post** [source HA-95]
+- Image: Digital signs across a blacked-out avenue lit with short messages: I'm here. We're okay. Hospital generator active.
+- Text: The blackout should have meant panic. Instead every dead screen in Haedam lit up with names, locations and "I'm here." Information moved faster than fear. Then the sky started to come down. Heavenly Ascension System chapter 95 is live now on Patreon. Link in bio.
+
+**X post** [source HA-95]
+the sky asked who was in charge. every screen in the city answered "NONE." then something beyond the sky looked back. HAS ch 95 is up on Patreon, link in bio #webnovel #cultivation
+
+**TikTok** [source HA-96]
+- Spoken hook: "A black circle opened in the sky. It said one word: identify."
+- On-screen text: Don't give it something just because silence feels dangerous.
+- Visual: A single black circle widening in a sealed gray sky over dark city towers, no stars beyond it, only depth.
+- Caption: Every light in Haedam died at once, and a voice spoke from every dead phone in the street. Mina's advice is the only thing that holds: don't guess. Heavenly Ascension System chapter 96 is live now on Patreon. Link in bio.
+#HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
+
+**FB/IG post** [source HA-96]
+- Image: A black sky stopped ten meters above city rooftops, every screen below it glowing.
+- Text: Four may remember. Five may answer. Six may refuse heaven. When the darkness fell, it stopped ten meters above the rooftops, as hundreds of distant networks flashed back to watch. A sixth thing began to exist. Heavenly Ascension System chapter 96 is live now on Patreon. Link in bio.
+
+**X post** [source HA-96]
+four may remember. five may answer. six may refuse heaven. HAS ch 96 is up on Patreon, link in bio #webnovel #cultivation
+
+**TikTok** [source HA-97]
+- Spoken hook: "Something new appeared on every dead screen. I SEE YOU."
+- On-screen text: Recognition means access.
+- Visual: A dark city street, every screen showing three words in a color with no name, a gold line under the avenue going black.
+- Caption: Witness protected Haedam. Then something arrived from a place where being seen and being entered are the same act, and witness became the way in. Heavenly Ascension System chapter 97 is live now on Patreon. Link in bio.
+#HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
+
+**FB/IG post** [source HA-97]
+- Image: Taeho backing away from a wall of glowing screens on a crowded street, faces lit from below.
+- Text: The sky needs peer review now. Five distant networks refused the same command, and a limit appeared that no throne owns. Then something slipped through a witness thread, and one of Haedam's four nodes went silent. Not destroyed. Occupied. Heavenly Ascension System chapter 97 is live now on Patreon. Link in bio.
+
+**X post** [source HA-97]
+"so heaven needs permission now?" not quite. but by the end of the chapter, heaven is the one asking. HAS ch 97 is up on Patreon, link in bio #webnovel #cultivation
+
+**TikTok** [source HA-98]
+- Spoken hook: "The node still sounded like Witness. That was the problem."
+- On-screen text: It sounds right. That's bad.
+- Visual: A public display glowing with the word DENIED over a gold line under the pavement that has gone dark.
+- Caption: They gave every node the right to refuse. Now one of them isn't itself, and the veto built to stop abuse is blocking containment. Heavenly Ascension System chapter 98 is live now on Patreon. Link in bio.
+#HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
+
+**FB/IG post** [source HA-98]
+- Image: A white platform hanging in darkness beyond a doorway in a black sky, a second door at its far end and a figure behind it with one hand raised.
+- Text: Heaven offers a formal trial. Participation is voluntary, and refusal will be honored. But if Haedam fails, isolation becomes the rule for every structure like it. Then a figure on a white platform raises one hand and knocks. Heavenly Ascension System chapter 98 is live now on Patreon. Link in bio.
+
+**X post** [source HA-98]
+"please tell me we're allowed at least one normal day before entering the multiversal regulatory test chamber." "no." HAS ch 98 is up on Patreon, link in bio #webnovel #cultivation
+
+**TikTok** [source HA-99]
+- Spoken hook: "It knocked once and was denied. So it learned to knock politely."
+- On-screen text: I WAS BURIED TOO.
+- Visual: A figure on a white platform beyond a gold and black doorway in the sky, its raised hand slowly lowering.
+- Caption: Four nodes, four conditions, one rule: recognition does not become access. Haedam answers the knock without opening the door. Heavenly Ascension System chapter 99 is live now on Patreon. Link in bio.
+#HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
+
+**FB/IG post** [source HA-99]
+- Image: Mina standing on a gold-lit avenue under a black sky, arms folded, looking up at a thin doorway of light.
+- Text: The counterpart has no registered name. Neither does Haedam. It doesn't want in. It wants one line between buried things, so the next network to find its voice knows a door can open a crack without falling off its hinges. Heavenly Ascension System chapter 99 is live now on Patreon. Link in bio.
+
+**X post** [source HA-99]
+"I have no registered name." "neither do you." the knock from beyond heaven was polite. HAS ch 99 is up on Patreon, link in bio #webnovel #cultivation
