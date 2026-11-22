@@ -28,11 +28,17 @@ class PatreonPostRef:
     post_id: str
     tier: str | None = None
     post_url: str = ""
+    published_at: str | None = None
+    published_at_precision: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = {"id": self.post_id, "post_url": self.post_url or patreon_post_url(self.post_id)}
         if self.tier:
             payload["tier"] = self.tier
+        if self.published_at:
+            payload["published_at"] = self.published_at
+            if self.published_at_precision:
+                payload["published_at_precision"] = self.published_at_precision
         return payload
 
 
@@ -46,6 +52,22 @@ class PatreonLiveOverride:
     chapter_id: str
     post_ids: tuple[PatreonPostRef, ...] = ()
     tiers_live: tuple[str, ...] = ()
+    published_at: str | None = None
+    published_at_precision: str | None = None
+
+    def published_at_values(self) -> list[str]:
+        """Publish times only. Never includes verified_at."""
+        values: list[str] = []
+        if self.published_at:
+            values.append(self.published_at)
+        for ref in self.post_ids:
+            if ref.published_at:
+                values.append(ref.published_at)
+        return values
+
+    def publish_live_at_values(self) -> list[str]:
+        """Deprecated alias for published_at_values()."""
+        return self.published_at_values()
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -60,6 +82,10 @@ class PatreonLiveOverride:
             payload["post_ids"] = [item.to_dict() for item in self.post_ids]
         if self.tiers_live:
             payload["tiers_live"] = list(self.tiers_live)
+        if self.published_at:
+            payload["published_at"] = self.published_at
+            if self.published_at_precision:
+                payload["published_at_precision"] = self.published_at_precision
         return payload
 
 
@@ -72,7 +98,7 @@ def empty_override_document() -> dict[str, Any]:
             "the ledger's not-posted flag. Without an entry, chapter_ledger "
             "postedToPatreon plus post records stay the source. Leave entries "
             "empty only when nothing has been confirmed. Do not invent rows "
-            "and do not edit the chapter ledger from this file."
+            "and do not edit the chapter ledger from this file. published_at is an optional real publish timestamp (ledger posted time or a sourced go-live date). verified_at is only when a teammate confirmed the listing and is never used as a publish time."
         ),
         "entries": [],
     }
@@ -106,14 +132,24 @@ def _parse_post_refs(raw: Mapping[str, Any]) -> list[PatreonPostRef]:
                 post_id = str(row.get("id") or row.get("post_id") or "").strip()
                 tier = str(row.get("tier") or "").strip() or None
                 url = str(row.get("post_url") or row.get("url") or "").strip()
+                published_at, precision = _parse_published_at_fields(row)
             else:
                 post_id = str(row or "").strip()
                 tier = None
                 url = ""
+                published_at, precision = None, None
             if not post_id or post_id in seen:
                 continue
             seen.add(post_id)
-            refs.append(PatreonPostRef(post_id=post_id, tier=tier, post_url=url or patreon_post_url(post_id)))
+            refs.append(
+                PatreonPostRef(
+                    post_id=post_id,
+                    tier=tier,
+                    post_url=url or patreon_post_url(post_id),
+                    published_at=published_at,
+                    published_at_precision=precision,
+                )
+            )
     # Also accept a bare post_url / post_id on the entry itself.
     bare_url = str(raw.get("post_url") or raw.get("url") or "").strip()
     bare_id = str(raw.get("post_id") or "").strip()
@@ -138,6 +174,42 @@ def _parse_tiers(raw: Mapping[str, Any], refs: Sequence[PatreonPostRef]) -> tupl
     return tuple(names)
 
 
+
+def _parse_published_at_fields(raw: Mapping[str, Any]) -> tuple[str | None, str | None]:
+    """Optional publish time. Date-only values are stored with precision 'date'.
+
+    Accepts published_at, or live_at as a legacy alias. Never reads verified_at.
+    """
+    value = raw.get("published_at")
+    precision_key = "published_at_precision"
+    if value in (None, ""):
+        value = raw.get("live_at")
+        precision_key = "live_at_precision"
+    if isinstance(value, Mapping):
+        precision = str(
+            value.get("precision")
+            or value.get("published_at_precision")
+            or value.get("live_at_precision")
+            or ""
+        ).strip() or None
+        value = (
+            value.get("date")
+            or value.get("published_at")
+            or value.get("live_at")
+            or value.get("value")
+        )
+    else:
+        precision = str(
+            raw.get("published_at_precision") or raw.get(precision_key) or raw.get("live_at_precision") or ""
+        ).strip() or None
+    text = str(value or "").strip() or None
+    if not text:
+        return None, None
+    if precision not in {"date", "datetime"}:
+        precision = "date" if len(text) <= 10 else "datetime"
+    return text, precision
+
+
 def parse_override_entry(raw: Mapping[str, Any] | None) -> PatreonLiveOverride | None:
     """Return a complete override, or None if any required field is missing."""
     if not isinstance(raw, Mapping):
@@ -154,6 +226,7 @@ def parse_override_entry(raw: Mapping[str, Any] | None) -> PatreonLiveOverride |
     verified_by = str(raw.get("verified_by") or "").strip()
     if (not post_url and not refs) or not verified_at or not verified_by:
         return None
+    published_at, precision = _parse_published_at_fields(raw)
     return PatreonLiveOverride(
         abbr=abbr,
         chapter=chapter,
@@ -163,6 +236,8 @@ def parse_override_entry(raw: Mapping[str, Any] | None) -> PatreonLiveOverride |
         chapter_id=f"{abbr}-{chapter}",
         post_ids=tuple(refs),
         tiers_live=_parse_tiers(raw, refs),
+        published_at=published_at,
+        published_at_precision=precision,
     )
 
 

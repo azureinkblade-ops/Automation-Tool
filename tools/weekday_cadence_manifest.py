@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+from tools.weekday_cadence_config import DEPICTION_UNKNOWN
 from tools.weekday_cadence_config import (
     MANIFEST_CSV,
     MANIFEST_JSON,
@@ -45,6 +46,7 @@ ITEM_FIELDS = (
     "bank_day",
     "pick_rule",
     "copy_source",
+    "depiction",
     "posted_url",
     "posted_at",
 )
@@ -72,6 +74,7 @@ class CadenceItem:
     bank_day: int | None = None
     pick_rule: str = ""
     copy_source: str = ""
+    depiction: str = DEPICTION_UNKNOWN
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -89,6 +92,7 @@ class CadenceItem:
             "bank_day": self.bank_day,
             "pick_rule": self.pick_rule,
             "copy_source": self.copy_source,
+            "depiction": self.depiction,
             "posted_url": self.posted_url,
             "posted_at": self.posted_at,
         }
@@ -124,6 +128,7 @@ class CadenceItem:
             bank_day=(None if raw.get("bank_day") in (None, "") else int(raw.get("bank_day"))),
             pick_rule=str(raw.get("pick_rule") or ""),
             copy_source=str(raw.get("copy_source") or ""),
+            depiction=str(raw.get("depiction") or DEPICTION_UNKNOWN),
         )
 
 

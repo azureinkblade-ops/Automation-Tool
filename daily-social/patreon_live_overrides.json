@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "notes": "Teammate-confirmed live Patreon chapters. A complete entry (chapter id, post URL or post IDs, verified_at, verified_by) beats the ledger's not-posted flag. Without an entry, chapter_ledger postedToPatreon plus post records stay the source. Product Performance confirmed the public listing on 2026-11-21 (EN-133 to EN-140, HA-94 to HA-99). EN-137 and EN-138 were also confirmed earlier the same day during the Coder job-cancel check (2026-11-21 15:43:55 America/Phoenix); Product Performance later assigned Inner Disciple / Path Initiate tiers to those post IDs. EN-140 is live on Inner Disciple only; Path Initiate is not posted. Do not invent rows. Do not edit the chapter ledger from this file.",
+  "notes": "Teammate-confirmed live Patreon chapters. A complete entry (chapter id, post URL or post IDs, verified_at, verified_by) beats the ledger's not-posted flag. Without an entry, chapter_ledger postedToPatreon plus post records stay the source. Product Performance confirmed the public listing on 2026-11-21 (EN-133 to EN-140, HA-94 to HA-99). EN-137 and EN-138 were also confirmed earlier the same day during the Coder job-cancel check (2026-11-21 15:43:55 America/Phoenix); Product Performance later assigned Inner Disciple / Path Initiate tiers to those post IDs. EN-140 is live on Inner Disciple only; Path Initiate is not posted. Do not invent rows. Do not edit the chapter ledger from this file. live_at is optional and is only filled when a source gives a real publish date. Product Performance gave EN-139 Inner Disciple 2026-10-21, EN-139 Path Initiate 2026-10-28, and HA-99 Path Initiate 2026-10-19 (dates only; time unknown, precision=date). verified_at is confirmation time, not publish time, and is never used for the recent-live rule. published_at is an optional real publish timestamp. verified_at is never used as a publish time.",
   "entries": [
     {
       "chapter_id": "EN-133",
@@ -11,7 +11,9 @@
         {
           "id": "167783038",
           "post_url": "https://www.patreon.com/posts/167783038",
-          "tier": "Inner Disciple"
+          "tier": "Inner Disciple",
+          "published_at": "2026-10-13T09:00:00-07:00",
+          "published_at_precision": "datetime"
         },
         {
           "id": "170481122",
@@ -24,7 +26,9 @@
       "tiers_live": [
         "Inner Disciple",
         "Path Initiate"
-      ]
+      ],
+      "published_at": "2026-10-13T09:00:00-07:00",
+      "published_at_precision": "datetime"
     },
     {
       "chapter_id": "EN-134",
@@ -35,7 +39,9 @@
         {
           "id": "170899181",
           "post_url": "https://www.patreon.com/posts/170899181",
-          "tier": "Inner Disciple"
+          "tier": "Inner Disciple",
+          "published_at": "2026-10-14T09:00:00-07:00",
+          "published_at_precision": "datetime"
         },
         {
           "id": "170899227",
@@ -48,7 +54,9 @@
       "tiers_live": [
         "Inner Disciple",
         "Path Initiate"
-      ]
+      ],
+      "published_at": "2026-10-14T09:00:00-07:00",
+      "published_at_precision": "datetime"
     },
     {
       "chapter_id": "EN-135",
@@ -59,7 +67,9 @@
         {
           "id": "170899437",
           "post_url": "https://www.patreon.com/posts/170899437",
-          "tier": "Inner Disciple"
+          "tier": "Inner Disciple",
+          "published_at": "2026-10-15T09:00:00-07:00",
+          "published_at_precision": "datetime"
         },
         {
           "id": "170899489",
@@ -72,7 +82,9 @@
       "tiers_live": [
         "Inner Disciple",
         "Path Initiate"
-      ]
+      ],
+      "published_at": "2026-10-15T09:00:00-07:00",
+      "published_at_precision": "datetime"
     },
     {
       "chapter_id": "EN-136",
@@ -83,7 +95,9 @@
         {
           "id": "170899539",
           "post_url": "https://www.patreon.com/posts/170899539",
-          "tier": "Inner Disciple"
+          "tier": "Inner Disciple",
+          "published_at": "2026-10-16T09:00:00-07:00",
+          "published_at_precision": "datetime"
         },
         {
           "id": "170899597",
@@ -96,7 +110,9 @@
       "tiers_live": [
         "Inner Disciple",
         "Path Initiate"
-      ]
+      ],
+      "published_at": "2026-10-16T09:00:00-07:00",
+      "published_at_precision": "datetime"
     },
     {
       "chapter_id": "EN-137",
@@ -107,7 +123,9 @@
         {
           "id": "170899822",
           "post_url": "https://www.patreon.com/posts/170899822",
-          "tier": "Inner Disciple"
+          "tier": "Inner Disciple",
+          "published_at": "2026-10-19T09:00:00-07:00",
+          "published_at_precision": "datetime"
         },
         {
           "id": "170899872",
@@ -120,7 +138,9 @@
       "tiers_live": [
         "Inner Disciple",
         "Path Initiate"
-      ]
+      ],
+      "published_at": "2026-10-19T09:00:00-07:00",
+      "published_at_precision": "datetime"
     },
     {
       "chapter_id": "EN-138",
@@ -131,7 +151,9 @@
         {
           "id": "170900005",
           "post_url": "https://www.patreon.com/posts/170900005",
-          "tier": "Inner Disciple"
+          "tier": "Inner Disciple",
+          "published_at": "2026-10-20T09:00:00-07:00",
+          "published_at_precision": "datetime"
         },
         {
           "id": "170900071",
@@ -144,7 +166,9 @@
       "tiers_live": [
         "Inner Disciple",
         "Path Initiate"
-      ]
+      ],
+      "published_at": "2026-10-20T09:00:00-07:00",
+      "published_at_precision": "datetime"
     },
     {
       "chapter_id": "EN-139",
@@ -155,12 +179,16 @@
         {
           "id": "170460775",
           "post_url": "https://www.patreon.com/posts/170460775",
-          "tier": "Inner Disciple"
+          "tier": "Inner Disciple",
+          "published_at": "2026-10-21T09:00:00-07:00",
+          "published_at_precision": "datetime"
         },
         {
           "id": "170460933",
           "post_url": "https://www.patreon.com/posts/170460933",
-          "tier": "Path Initiate"
+          "tier": "Path Initiate",
+          "published_at": "2026-10-28",
+          "published_at_precision": "date"
         }
       ],
       "verified_at": "2026-11-21T20:45:00-07:00",
@@ -168,7 +196,9 @@
       "tiers_live": [
         "Inner Disciple",
         "Path Initiate"
-      ]
+      ],
+      "published_at": "2026-10-21T09:00:00-07:00",
+      "published_at_precision": "datetime"
     },
     {
       "chapter_id": "EN-140",
@@ -179,14 +209,18 @@
         {
           "id": "173664094",
           "post_url": "https://www.patreon.com/posts/173664094",
-          "tier": "Inner Disciple"
+          "tier": "Inner Disciple",
+          "published_at": "2026-11-02T09:00:00-07:00",
+          "published_at_precision": "datetime"
         }
       ],
       "verified_at": "2026-11-21T20:45:00-07:00",
       "verified_by": "Product Performance",
       "tiers_live": [
         "Inner Disciple"
-      ]
+      ],
+      "published_at": "2026-11-02T09:00:00-07:00",
+      "published_at_precision": "datetime"
     },
     {
       "chapter_id": "HA-94",
@@ -197,7 +231,9 @@
         {
           "id": "171220335",
           "post_url": "https://www.patreon.com/posts/171220335",
-          "tier": "Inner Disciple"
+          "tier": "Inner Disciple",
+          "published_at": "2026-10-05T09:00:00-07:00",
+          "published_at_precision": "datetime"
         },
         {
           "id": "167782343",
@@ -210,7 +246,9 @@
       "tiers_live": [
         "Inner Disciple",
         "Path Initiate"
-      ]
+      ],
+      "published_at": "2026-10-05T09:00:00-07:00",
+      "published_at_precision": "datetime"
     },
     {
       "chapter_id": "HA-95",
@@ -221,7 +259,9 @@
         {
           "id": "171230971",
           "post_url": "https://www.patreon.com/posts/171230971",
-          "tier": "Inner Disciple"
+          "tier": "Inner Disciple",
+          "published_at": "2026-10-06T09:00:00-07:00",
+          "published_at_precision": "datetime"
         },
         {
           "id": "171231338",
@@ -234,7 +274,9 @@
       "tiers_live": [
         "Inner Disciple",
         "Path Initiate"
-      ]
+      ],
+      "published_at": "2026-10-06T09:00:00-07:00",
+      "published_at_precision": "datetime"
     },
     {
       "chapter_id": "HA-96",
@@ -245,7 +287,9 @@
         {
           "id": "171231789",
           "post_url": "https://www.patreon.com/posts/171231789",
-          "tier": "Inner Disciple"
+          "tier": "Inner Disciple",
+          "published_at": "2026-10-07T09:00:00-07:00",
+          "published_at_precision": "datetime"
         },
         {
           "id": "171232162",
@@ -258,7 +302,9 @@
       "tiers_live": [
         "Inner Disciple",
         "Path Initiate"
-      ]
+      ],
+      "published_at": "2026-10-07T09:00:00-07:00",
+      "published_at_precision": "datetime"
     },
     {
       "chapter_id": "HA-97",
@@ -269,7 +315,9 @@
         {
           "id": "171232686",
           "post_url": "https://www.patreon.com/posts/171232686",
-          "tier": "Inner Disciple"
+          "tier": "Inner Disciple",
+          "published_at": "2026-10-08T09:00:00-07:00",
+          "published_at_precision": "datetime"
         },
         {
           "id": "171232991",
@@ -282,7 +330,9 @@
       "tiers_live": [
         "Inner Disciple",
         "Path Initiate"
-      ]
+      ],
+      "published_at": "2026-10-08T09:00:00-07:00",
+      "published_at_precision": "datetime"
     },
     {
       "chapter_id": "HA-98",
@@ -293,7 +343,9 @@
         {
           "id": "171233745",
           "post_url": "https://www.patreon.com/posts/171233745",
-          "tier": "Inner Disciple"
+          "tier": "Inner Disciple",
+          "published_at": "2026-10-09T09:00:00-07:00",
+          "published_at_precision": "datetime"
         },
         {
           "id": "171234131",
@@ -306,7 +358,9 @@
       "tiers_live": [
         "Inner Disciple",
         "Path Initiate"
-      ]
+      ],
+      "published_at": "2026-10-09T09:00:00-07:00",
+      "published_at_precision": "datetime"
     },
     {
       "chapter_id": "HA-99",
@@ -317,12 +371,16 @@
         {
           "id": "171234532",
           "post_url": "https://www.patreon.com/posts/171234532",
-          "tier": "Inner Disciple"
+          "tier": "Inner Disciple",
+          "published_at": "2026-10-12T09:00:00-07:00",
+          "published_at_precision": "datetime"
         },
         {
           "id": "171234946",
           "post_url": "https://www.patreon.com/posts/171234946",
-          "tier": "Path Initiate"
+          "tier": "Path Initiate",
+          "published_at": "2026-10-19",
+          "published_at_precision": "date"
         }
       ],
       "verified_at": "2026-11-21T20:45:00-07:00",
@@ -330,7 +388,9 @@
       "tiers_live": [
         "Inner Disciple",
         "Path Initiate"
-      ]
+      ],
+      "published_at": "2026-10-12T09:00:00-07:00",
+      "published_at_precision": "datetime"
     }
   ]
 }

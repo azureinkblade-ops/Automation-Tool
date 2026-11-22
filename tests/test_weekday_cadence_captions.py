@@ -198,3 +198,41 @@ en 140 x is the only valid x copy for this pick
         assert "139" not in picked.text
         assert "140" in picked.text
 
+
+
+def test_bank_depiction_markers_are_per_item_not_per_novel():
+    from tools.weekday_cadence_captions import parse_copy_bank, load_copy_bank
+    from pathlib import Path
+
+    snippet = '''# Weekday copy bank
+- Items tagged **[APPROVAL: needs David's approval for media]** show Kai, Kael, Liang or Jarek on screen.
+
+## Day 1 (Week 1, Monday)
+**FB/IG post** [source EN-140] [APPROVAL: needs David's approval for media]
+- Text: Kael in the rain.
+
+**FB/IG post** [source SF-126] [no governed characters]
+- Text: Furnaces only.
+
+**FB/IG post** [source HA-99]
+- Text: A door, no approval tag.
+'''
+    items = {(row.novel, row.chapter, row.kind): row for row in parse_copy_bank(snippet)}
+    assert items[("EN", 140, "FB/IG post")].depiction == "governed"
+    assert items[("EN", 140, "FB/IG post")].needs_approval is True
+    assert items[("SF", 126, "FB/IG post")].depiction == "not_governed"
+    assert items[("HA", 99, "FB/IG post")].depiction == "not_governed"
+
+    bank_path = Path("daily-social/copy-bank/weekday-bank-v1.md")
+    if bank_path.is_file():
+        real = load_copy_bank(bank_path)
+        en128 = next(row for row in real if row.novel == "EN" and row.chapter == 128 and row.kind == "FB/IG post")
+        assert en128.depiction == "governed"
+        sf126 = next(row for row in real if row.novel == "SF" and row.chapter == 126 and row.kind == "FB/IG post")
+        assert sf126.depiction == "not_governed"
+        en127 = next(row for row in real if row.novel == "EN" and row.chapter == 127 and row.kind == "FB/IG post")
+        assert en127.depiction == "not_governed"
+        # The Day 1 SF X post sits just above Reel 1's APPROVAL heading and must not inherit it.
+        sf117_x = next(row for row in real if row.novel == "SF" and row.chapter == 117 and row.kind == "X post")
+        assert sf117_x.depiction == "not_governed"
+        assert sf117_x.needs_approval is False

@@ -54,7 +54,7 @@ def test_unapproved_identity_before_deadline_awaits_approval():
         deadline=approval_deadline_for("2026-11-23", CFG),
     )
     assert item.status == "awaiting_approval"
-    assert item.hold_reason is None
+    assert item.hold_reason == "IDENTITY_AWAITING_APPROVAL"
 
 
 def test_unapproved_identity_after_deadline_is_held():
@@ -85,8 +85,57 @@ def test_approved_identity_does_not_block():
 def test_x_defaults_to_awaiting_david_post():
     item = apply_x_default(_item(platform="x", status="ready"), CFG)
     assert item.status == "awaiting_david_post"
+    assert item.hold_reason == "AWAITING_DAVID_POST"
     held = apply_x_default(_item(platform="x", status="held", hold_reason="CHAPTER_SOURCE_UNVERIFIED:patreon"), CFG)
     assert held.status == "held"
+    assert held.hold_reason == "CHAPTER_SOURCE_UNVERIFIED:patreon"
+
+
+def test_x_is_never_identity_gated():
+    from datetime import datetime
+    from tools.weekday_cadence import apply_depiction_gate, ensure_hold_reasons, timezone_for
+
+    tz = timezone_for("America/Phoenix")
+    now = datetime(2026, 11, 22, 16, 0, tzinfo=tz)
+    deadline = approval_deadline_for("2026-11-23", CFG)
+    item = _item(platform="x", status="ready", depiction="governed")
+    item = apply_depiction_gate(item, approved=False, now=now, deadline=deadline)
+    item = apply_x_default(item, CFG)
+    assert item.status == "awaiting_david_post"
+    assert item.hold_reason == "AWAITING_DAVID_POST"
+    ensure_hold_reasons([item])
+    assert item.hold_reason == "AWAITING_DAVID_POST"
+
+
+def test_depiction_gate_three_branches():
+    from datetime import datetime
+    from tools.weekday_cadence import apply_depiction_gate, timezone_for
+
+    tz = timezone_for("America/Phoenix")
+    now = datetime(2026, 11, 22, 16, 0, tzinfo=tz)
+    deadline = approval_deadline_for("2026-11-23", CFG)
+
+    governed = apply_depiction_gate(
+        _item(platform="facebook", status="ready", media=["media/en.png"], depiction="governed"),
+        approved=False, now=now, deadline=deadline,
+    )
+    assert governed.status == "awaiting_approval"
+    assert governed.hold_reason == "IDENTITY_AWAITING_APPROVAL"
+    assert governed.media == ["media/en.png"]
+
+    clear = apply_depiction_gate(
+        _item(platform="facebook", status="ready", media=["media/sf.png"], depiction="not_governed"),
+        approved=False, now=now, deadline=deadline,
+    )
+    assert clear.status == "ready"
+    assert clear.hold_reason is None
+
+    unknown = apply_depiction_gate(
+        _item(platform="instagram", status="ready", depiction="unknown"),
+        approved=False, now=now, deadline=deadline,
+    )
+    assert unknown.status == "awaiting_approval"
+    assert unknown.hold_reason == "NO_STRUCTURED_DEPICTION_EVIDENCE"
 
 
 def test_wan_social_ready_clip_with_passing_probe_is_ready():

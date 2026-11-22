@@ -99,7 +99,7 @@ def default_captions(novel: str, chapter: int | None, source_platform: str) -> d
 
 def apply_shared_still(items: Sequence[CadenceItem], relative_name: str) -> None:
     for item in items:
-        if item.platform in {"facebook", "instagram", "x"}:
+        if item.platform in {"facebook", "instagram"}:
             item.media = [relative_name]
 
 

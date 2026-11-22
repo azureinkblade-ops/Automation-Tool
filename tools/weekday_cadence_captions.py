@@ -9,7 +9,14 @@ present in the caption are not repeated. X captions are left unchanged.
 
 from __future__ import annotations
 
-from tools.weekday_cadence_config import KNOWN_PATREON_TIERS, TIER_INNER, TIER_PATH
+from tools.weekday_cadence_config import (
+    DEPICTION_GOVERNED,
+    DEPICTION_NOT_GOVERNED,
+    DEPICTION_UNKNOWN,
+    KNOWN_PATREON_TIERS,
+    TIER_INNER,
+    TIER_PATH,
+)
 
 import re
 from dataclasses import dataclass
@@ -64,6 +71,7 @@ class BankCaption:
     needs_approval: bool
     source: str = "copy_bank"
     bank_day: int | None = None
+    depiction: str = DEPICTION_UNKNOWN
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -76,6 +84,7 @@ class BankCaption:
             "needs_approval": self.needs_approval,
             "source": self.source,
             "bank_day": self.bank_day,
+            "depiction": self.depiction,
         }
 
 
@@ -153,13 +162,84 @@ def _extract_x_text(block: str) -> str:
     return " ".join(body).strip()
 
 
+
+_APPROVAL_MARK = "[APPROVAL:"
+_NO_GOVERNED_RE = re.compile(r"\[no governed characters\]", re.I)
+_CONVENTION_RE = re.compile(
+    r"\[APPROVAL:\s*needs David's approval for media\]",
+    re.I,
+)
+_SUPPLEMENT_NO_GOVERNED_RE = re.compile(
+    r"No item in this section shows Kai, Kael, Liang or Jarek",
+    re.I,
+)
+_HEADING_RE = re.compile(r"^#{2,3}\s+.+", re.M)
+
+
+def bank_uses_approval_convention(text: str) -> bool:
+    """True when Writer's bank documents the per-item approval marker."""
+    return bool(_CONVENTION_RE.search(text or ""))
+
+
+def _section_depiction_map(text: str) -> list[tuple[int, str | None]]:
+    """(position, section depiction or None if the heading does not say)."""
+    marks: list[tuple[int, str | None]] = []
+    for match in _HEADING_RE.finditer(text):
+        heading = match.group(0)
+        end = text.find("\n", match.end())
+        window = text[match.start(): (end if end != -1 else match.end()) + 400]
+        if _NO_GOVERNED_RE.search(heading) or _SUPPLEMENT_NO_GOVERNED_RE.search(window):
+            marks.append((match.start(), DEPICTION_NOT_GOVERNED))
+        else:
+            marks.append((match.start(), None))
+    marks.sort(key=lambda item: item[0])
+    return marks
+
+
+def _section_depiction_at(pos: int, marks: Sequence[tuple[int, str | None]]) -> str | None:
+    current: str | None = None
+    for start, depiction in marks:
+        if start <= pos:
+            current = depiction
+        else:
+            break
+    return current
+
+
+def depiction_for_bank_block(
+    block: str,
+    *,
+    section_depiction: str | None = None,
+    convention: bool = False,
+) -> tuple[str, bool]:
+    """Return (depiction, needs_approval) from Writer's per-item markers.
+
+    The approval tag is structured evidence that a governed character is shown.
+    `[no governed characters]`, Supplement's 'none show Kai/Kael/Liang/Jarek'
+    prose, or an untagged item in a bank that uses that tagging convention is
+    structured evidence that no governed character is shown. Otherwise unknown.
+    """
+    if _APPROVAL_MARK in (block or ""):
+        return DEPICTION_GOVERNED, True
+    if _NO_GOVERNED_RE.search(block or "") or section_depiction == DEPICTION_NOT_GOVERNED:
+        return DEPICTION_NOT_GOVERNED, False
+    if convention:
+        return DEPICTION_NOT_GOVERNED, False
+    return DEPICTION_UNKNOWN, False
+
+
 def parse_copy_bank(text: str) -> list[BankCaption]:
     marks = _section_map(text)
+    depiction_marks = _section_depiction_map(text)
+    convention = bank_uses_approval_convention(text)
     matches = list(_ITEM_HEADER.finditer(text))
     items: list[BankCaption] = []
     for index, match in enumerate(matches):
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        # Don't swallow a reel/day heading's following items; the next match already bounds us.
+        # Don't swallow a following reel/day heading (those may carry their own approval markers).
+        heading = _HEADING_RE.search(text, match.end(), end)
+        if heading:
+            end = heading.start()
         block = _block_text(text, match.start(), end)
         kind, abbr, chapter_s = match.group(1), match.group(2), match.group(3)
         platforms = KIND_TO_PLATFORMS.get(kind)
@@ -174,6 +254,11 @@ def parse_copy_bank(text: str) -> list[BankCaption]:
         if not body:
             continue
         bank_day, weekday = _section_at(match.start(), marks)
+        depiction, needs_approval = depiction_for_bank_block(
+            block,
+            section_depiction=_section_depiction_at(match.start(), depiction_marks),
+            convention=convention,
+        )
         items.append(
             BankCaption(
                 novel=abbr,
@@ -182,8 +267,9 @@ def parse_copy_bank(text: str) -> list[BankCaption]:
                 platforms=platforms,
                 text=body,
                 weekday=weekday,
-                needs_approval="[APPROVAL:" in block,
+                needs_approval=needs_approval,
                 bank_day=bank_day,
+                depiction=depiction,
             )
         )
     return items

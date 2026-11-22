@@ -24,7 +24,31 @@ def test_dry_run_writes_relative_manifest_and_stubs_clips(tmp_path: Path):
             "HP-148": {"abbr": "HP", "chapter": 148, "patreonExists": True},
         }
     }
-    cfg = WeekdayCadenceConfig(novels=("EN", "HP"))
+    from tools.weekday_cadence_captions import parse_copy_bank
+
+    cfg = WeekdayCadenceConfig(novels=("EN", "HP"), chapter_pick="newest_live")
+    bank = parse_copy_bank("""# Weekday copy bank
+- Items tagged **[APPROVAL: needs David's approval for media]** show Kai, Kael, Liang or Jarek on screen.
+
+## Day 1 (Week 1, Monday)
+**FB/IG post** [source EN-138]
+- Text: A street after rain. Eternal Nexus chapter 138 is live now on Patreon. Link in bio.
+
+**TikTok** [source EN-138]
+- Caption: A street after rain. Chapter 138 of Eternal Nexus is live now on Patreon. Link in bio.
+
+**X post** [source EN-138]
+a street after rain. Eternal Nexus ch 138 is up on Patreon, link in bio #webnovel #cultivation
+
+**FB/IG post** [source HP-148]
+- Text: A lamp still burns. Chapter 148 of The Hundredfold Path is live now on Patreon. Link in bio.
+
+**TikTok** [source HP-148]
+- Caption: A lamp still burns. Chapter 148 of The Hundredfold Path is live now on Patreon. Link in bio.
+
+**X post** [source HP-148]
+a lamp still burns. Hundredfold Path ch 148 is up on Patreon, link in bio #webnovel #cultivation
+""")
     payload = run_cadence(
         target=date(2026, 11, 23),
         stage="pack",
@@ -34,6 +58,7 @@ def test_dry_run_writes_relative_manifest_and_stubs_clips(tmp_path: Path):
         records=records,
         source_commit="testsha",
         stills={"EN": still},
+        copy_bank=bank,
     )
     day = tmp_path / "daily-social" / "2026-11-23"
     assert (day / "manifest.json").is_file()
@@ -45,6 +70,8 @@ def test_dry_run_writes_relative_manifest_and_stubs_clips(tmp_path: Path):
     assert data["config"]["chapter_source"] == "patreon"
     ids = {item["id"]: item for item in data["items"]}
     assert ids["EN-x"]["status"] == "awaiting_david_post"
+    assert ids["EN-x"]["hold_reason"] == "AWAITING_DAVID_POST"
+    assert ids["EN-x"]["media"] == []
     assert ids["EN-tiktok"]["status"] == "held"
     assert ids["EN-tiktok"]["hold_reason"] == "DRY_RUN:CLIP_STUBBED"
     assert ids["EN-facebook"]["source_chapter"] == 138
@@ -57,8 +84,11 @@ def test_dry_run_writes_relative_manifest_and_stubs_clips(tmp_path: Path):
     assert ids["HP-instagram"]["status"] == "held"
     assert ids["HP-instagram"]["hold_reason"] == "MEDIA_REQUIRED_MISSING"
     media = ids["EN-facebook"]["media"]
-    assert media == ids["EN-instagram"]["media"] == ids["EN-x"]["media"]
+    assert media == ids["EN-instagram"]["media"]
     assert media == ["media/EN-still.png"]
+    for item in data["items"]:
+        if item["status"] != "ready":
+            assert str(item.get("hold_reason") or "").strip(), item
     assert not any(p.startswith("/") or (len(p) > 1 and p[1] == ":") for item in data["items"] for p in item["media"])
     assert (day / "media" / "EN-still.png").is_file()
     # HA and SF were not in this config; EN/HP only -> 8 items

@@ -20,7 +20,9 @@ from typing import Any, Mapping, Sequence
 from tools.weekday_cadence import (
     approval_deadline_for,
     approval_inbox_entries,
-    apply_identity_cutoff,
+    apply_depiction_gate,
+    apply_x_default,
+    ensure_hold_reasons,
     is_weekday,
     load_live_chapter_records,
     load_release_status_records,
@@ -117,33 +119,54 @@ def apply_stage(
     config: WeekdayCadenceConfig,
     now: datetime,
     deadline: datetime,
-    identity_needed: Mapping[str, bool],
-    identity_approved: Mapping[str, bool],
+    identity_needed: Mapping[str, bool] | None = None,
+    identity_approved: Mapping[str, bool] | None = None,
     stills: Mapping[str, Path],
     produce_clip=None,
+    pipeline_depiction=None,
 ) -> list[CadenceItem]:
+    """Apply media (TikTok) first, then the per-item depiction gate.
+
+    identity_needed is ignored: approval is never inferred from novel membership.
+    identity_approved may still clear a governed item, keyed by item id then novel.
+    """
+    del identity_needed  # never a novel-membership gate
+    approved_map = dict(identity_approved or {})
     updated: list[CadenceItem] = []
     for item in items:
-        needs = bool(identity_needed.get(item.novel, False))
-        approved = bool(identity_approved.get(item.novel, False))
-        item = apply_identity_cutoff(
-            item,
-            needs_approval=needs,
-            approved=approved,
-            now=now,
-            deadline=deadline,
-        )
+        if item.platform == "x":
+            updated.append(apply_x_default(item, config))
+            continue
         if item.platform == "tiktok" and stage in {"encode", "pack"}:
+            # Governed items still get their clip made, then are held for approval.
             item, _clip = build_tiktok_item(
                 item,
                 still=stills.get(item.novel),
-                approved=approved or not needs,
+                approved=True,
                 config=config,
                 produce_clip=None if dry_run else produce_clip,
                 dry_run=dry_run,
             )
+        approved = bool(approved_map.get(item.id) or approved_map.get(item.novel, False))
+        still = stills.get(item.novel)
+        sidecar = None
+        if pipeline_depiction is not None:
+            sidecar = pipeline_depiction(item, still)
+        else:
+            try:
+                from tools.weekday_cadence_media import depiction_from_still
+                sidecar = depiction_from_still(still)
+            except Exception:
+                sidecar = None
+        item = apply_depiction_gate(
+            item,
+            approved=approved,
+            now=now,
+            deadline=deadline,
+            pipeline_depiction=sidecar,
+        )
         updated.append(item)
-    return updated
+    return ensure_hold_reasons(updated)
 
 
 def run_cadence(
@@ -209,8 +232,6 @@ def run_cadence(
         )
         stills.update(prepared.stills)
         clips.update(prepared.clips)
-        for abbr, needed in prepared.identity_needed.items():
-            identity_needed[abbr] = bool(needed) or bool(identity_needed.get(abbr))
     bank_items = list(copy_bank or [])
     provided = dict(captions_by_novel or {})
     for item in planned:
@@ -255,6 +276,7 @@ def run_cadence(
         share_still=config.share_still_across_static,
     )
     apply_media_required_holds(planned)
+    ensure_hold_reasons(planned)
     payload = build_manifest(
         target_date=target.isoformat(),
         target_weekday=weekday_name(target),

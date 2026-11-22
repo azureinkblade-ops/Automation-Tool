@@ -42,7 +42,13 @@ from tools.weekday_cadence_config import (
     CHAPTER_PICK_BANK_DAY,
     CHAPTER_SOURCE_PATREON,
     CHAPTER_SOURCE_ROYAL_ROAD,
+    DEPICTION_GOVERNED,
+    DEPICTION_NOT_GOVERNED,
+    DEPICTION_UNKNOWN,
+    HOLD_AWAITING_DAVID,
+    HOLD_IDENTITY_AWAITING,
     HOLD_IDENTITY_UNAPPROVED,
+    HOLD_NO_DEPICTION_EVIDENCE,
     HOLD_UNVERIFIED_SOURCE,
     KNOWN_PATREON_TIERS,
     STATUS_AWAITING_APPROVAL,
@@ -294,8 +300,10 @@ def went_live_iso(entry: Mapping[str, Any] | None, override, default_tz=None) ->
     values = []
     if isinstance(entry, Mapping):
         values.extend(entry.get(key) for key in WENT_LIVE_KEYS)
-    if override is not None:
-        values.append(getattr(override, "verified_at", None))
+    if override is not None and hasattr(override, "published_at_values"):
+        values.extend(override.published_at_values())
+    elif override is not None and hasattr(override, "publish_live_at_values"):
+        values.extend(override.publish_live_at_values())
     stamp = earliest_went_live_at(values, default_tz=default_tz)
     if stamp is None:
         return None
@@ -507,7 +515,7 @@ def apply_identity_cutoff(
         return item
     if now <= deadline:
         item.status = STATUS_AWAITING_APPROVAL
-        item.hold_reason = None
+        item.hold_reason = HOLD_IDENTITY_AWAITING
         return item
     item.status = STATUS_HELD
     item.hold_reason = HOLD_IDENTITY_UNAPPROVED
@@ -515,12 +523,64 @@ def apply_identity_cutoff(
 
 
 def apply_x_default(item: CadenceItem, config: WeekdayCadenceConfig) -> CadenceItem:
+    """X is text-only: no media stage, no identity check, awaiting David to post."""
     if item.platform != "x":
         return item
-    if item.status == STATUS_HELD or item.status == STATUS_AWAITING_APPROVAL:
+    if item.status == STATUS_HELD and item.hold_reason:
         return item
     item.status = config.x_status or STATUS_AWAITING_DAVID
+    if not item.hold_reason:
+        item.hold_reason = HOLD_AWAITING_DAVID
     return item
+
+
+def merge_depiction(*values: str | None) -> str:
+    cleaned = [str(value or "").strip() or DEPICTION_UNKNOWN for value in values]
+    if DEPICTION_GOVERNED in cleaned:
+        return DEPICTION_GOVERNED
+    if DEPICTION_NOT_GOVERNED in cleaned:
+        return DEPICTION_NOT_GOVERNED
+    return DEPICTION_UNKNOWN
+
+
+def apply_depiction_gate(
+    item: CadenceItem,
+    *,
+    approved: bool,
+    now: datetime,
+    deadline: datetime,
+    pipeline_depiction: str | None = None,
+) -> CadenceItem:
+    """Per-item identity gate. Never uses novel membership. Never applies to X."""
+    if item.platform == "x":
+        return item
+    if item.status == STATUS_HELD and item.hold_reason:
+        return item
+    evidence = merge_depiction(getattr(item, "depiction", None), pipeline_depiction)
+    item.depiction = evidence
+    if evidence == DEPICTION_NOT_GOVERNED:
+        return item
+    if evidence == DEPICTION_GOVERNED:
+        return apply_identity_cutoff(
+            item,
+            needs_approval=True,
+            approved=approved,
+            now=now,
+            deadline=deadline,
+        )
+    item.status = STATUS_AWAITING_APPROVAL
+    item.hold_reason = HOLD_NO_DEPICTION_EVIDENCE
+    return item
+
+
+def ensure_hold_reasons(items: list[CadenceItem]) -> list[CadenceItem]:
+    """Every non-ready item must have a hold reason, never an empty one."""
+    for item in items:
+        if item.status == STATUS_READY:
+            continue
+        if not str(item.hold_reason or "").strip():
+            item.hold_reason = f"MISSING_HOLD_REASON:{item.status}"
+    return items
 
 
 def apply_unverified_hold(item: CadenceItem, pick: ChapterPick) -> CadenceItem:
@@ -641,6 +701,11 @@ def plan_day_items(
                 bank_day=choice.bank_day,
                 pick_rule=choice.pick_rule,
                 copy_source=choice.copy_source,
+                depiction=(
+                    choice.caption.depiction
+                    if choice.caption is not None
+                    else DEPICTION_UNKNOWN
+                ),
             )
             item = apply_unverified_hold(item, pick)
             # restore the chosen chapter after unverified hold (pick is newest; still verified)

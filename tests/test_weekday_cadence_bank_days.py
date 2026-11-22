@@ -258,3 +258,85 @@ def test_exact_chapter_match_in_bank_day_selection():
     assert neighboring is not None
     assert neighboring.chapter == 140
     assert "139" not in neighboring.text
+
+
+def test_verified_at_never_triggers_recent_live():
+    """Confirmation time is not publish time; rule (a) must ignore verified_at."""
+    from tools.weekday_cadence import went_live_iso
+    from tools.weekday_cadence_overrides import parse_override_entry
+
+    override = parse_override_entry(
+        {
+            "chapter_id": "EN-140",
+            "post_url": "https://www.patreon.com/posts/173664094",
+            "verified_at": "2026-11-21T20:45:00-07:00",
+            "verified_by": "Product Performance",
+            "post_ids": [{"id": "173664094", "tier": "Inner Disciple"}],
+        }
+    )
+    assert override is not None
+    assert override.verified_at.startswith("2026-11-21")
+    assert override.published_at_values() == []
+    assert went_live_iso(None, override) is None
+
+    items = _items()
+    # Even if we mistakenly had only verified_at, choose_for_platform gets went_live=None.
+    choice = choose_for_platform(
+        novel="EN",
+        platform="facebook",
+        target=date(2026, 11, 23),
+        weekday="Monday",
+        newest_chapter=140,
+        newest_went_live_at=None,
+        items=items,
+        is_live=_live(127, 140),
+        start=date(2026, 11, 23),
+    )
+    assert choice.pick_rule == RULE_BANK_DAY
+    assert choice.chapter == 127
+    assert "140" not in choice.caption.text
+
+
+def test_override_published_at_date_precision_can_trigger_or_skip_rule_a():
+    from tools.weekday_cadence import went_live_iso
+    from tools.weekday_cadence_bank_days import parse_went_live_at
+    from tools.weekday_cadence_overrides import parse_override_entry
+
+    override = parse_override_entry(
+        {
+            "chapter_id": "HA-99",
+            "post_url": "https://www.patreon.com/posts/171234946",
+            "verified_at": "2026-11-21T20:45:00-07:00",
+            "verified_by": "Product Performance",
+            "post_ids": [
+                {"id": "171234532", "tier": "Inner Disciple"},
+                {
+                    "id": "171234946",
+                    "tier": "Path Initiate",
+                    "published_at": "2026-10-19",
+                    "published_at_precision": "date",
+                },
+            ],
+        }
+    )
+    assert override is not None
+    assert override.published_at_values() == ["2026-10-19"]
+    iso = went_live_iso(None, override)
+    assert iso is not None and iso.startswith("2026-10-19")
+    went = parse_went_live_at(iso)
+    assert is_recent_live(went, date(2026, 11, 23), recent_days=7) is False
+
+    recent = parse_override_entry(
+        {
+            "chapter_id": "EN-140",
+            "post_url": "https://www.patreon.com/posts/173664094",
+            "verified_at": "2026-11-21T20:45:00-07:00",
+            "verified_by": "Product Performance",
+            "published_at": "2026-11-20",
+            "published_at_precision": "date",
+        }
+    )
+    assert recent is not None
+    went_recent = parse_went_live_at(went_live_iso(None, recent))
+    assert is_recent_live(went_recent, date(2026, 11, 23), recent_days=7) is True
+

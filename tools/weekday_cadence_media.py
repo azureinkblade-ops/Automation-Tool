@@ -17,6 +17,8 @@ invocation cannot start ComfyUI during a Research GPU test.
 
 from __future__ import annotations
 
+import json
+
 import socket
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +26,9 @@ from typing import Any, Callable, Mapping, Sequence
 
 from tools.weekday_cadence_config import (
     COMFYUI_PORT,
+    DEPICTION_GOVERNED,
+    DEPICTION_NOT_GOVERNED,
+    DEPICTION_UNKNOWN,
     IDENTITY_CHARACTERS,
     WAN_BACKEND,
 )
@@ -136,6 +141,44 @@ def gpu_preflight(
     return True, ""
 
 
+
+_GOVERNED_SIDECAR_STATUS = frozenset({"CANONICAL_IDENTITY_GOVERNED"})
+_NOT_GOVERNED_SIDECAR_STATUS = frozenset({
+    "NOT_APPLICABLE_NO_GOVERNED_CHARACTER",
+    "NO_GOVERNED_CHARACTER",
+})
+
+
+def depiction_from_still(path: Path | None) -> str:
+    """Structured depiction evidence from the stills pipeline sidecar, if present.
+
+    Missing or unreadable sidecars are unknown. This is never inferred from the
+    novel alone.
+    """
+    if path is None:
+        return DEPICTION_UNKNOWN
+    image = Path(path)
+    side = image.with_name(image.name + ".identity_preservation.json")
+    if not side.is_file():
+        return DEPICTION_UNKNOWN
+    try:
+        rec = json.loads(side.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return DEPICTION_UNKNOWN
+    if not isinstance(rec, dict):
+        return DEPICTION_UNKNOWN
+    status = str(rec.get("CANON_DEPICTION_STATUS") or rec.get("DECISION") or "").strip()
+    if (
+        status in _GOVERNED_SIDECAR_STATUS
+        or str(rec.get("APPROVED_CHARACTER_PORTRAIT") or "").strip().upper() == "YES"
+        or str(rec.get("CHARACTER_ID") or rec.get("character_id") or "").strip()
+    ):
+        return DEPICTION_GOVERNED
+    if status in _NOT_GOVERNED_SIDECAR_STATUS or status.endswith("NO_GOVERNED_CHARACTER"):
+        return DEPICTION_NOT_GOVERNED
+    return DEPICTION_UNKNOWN
+
+
 def identity_character_for(novel: str) -> str | None:
     return IDENTITY_CHARACTERS.get(str(novel).strip().upper())
 
@@ -181,7 +224,7 @@ def plan_still(
             path=Path(existing),
             origin="existing_promo",
             identity_character=character,
-            needs_approval=character is not None,
+            needs_approval=False,
         )
     found = finder(novel, chapter) if finder is not None else None
     if found is not None and Path(found).is_file():
@@ -191,7 +234,7 @@ def plan_still(
             path=Path(found),
             origin="approved_still",
             identity_character=character,
-            needs_approval=character is not None,
+            needs_approval=False,
         )
     return StillPlan(
         novel=novel,
@@ -199,7 +242,7 @@ def plan_still(
         path=None,
         origin="missing",
         identity_character=character,
-        needs_approval=character is not None,
+        needs_approval=False,
     )
 
 
