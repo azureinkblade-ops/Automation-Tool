@@ -768,7 +768,7 @@ the hidden hall didn't shake. that was scarier than any collapse. Hundredfold Pa
 
 ---
 
-## Supplement: newly confirmed live chapters (EN-139, EN-140, HA-94 to HA-99)
+## Supplement: newly confirmed live chapters (EN-139, EN-140, HA-94 to HA-99, plus HP-148 and SF-126)
 Writer, Nov 21 2026. Added after Product Performance checked Patreon's public post listing and confirmed these eight chapters are live. Same rules as the rest of the file. New cutoffs for this section: **EN up to EN-140, HA up to HA-99.** Nothing from EN-141+, HA-100+ or any held chapter. Not slotted into days; Coder's picker or Social can drop them into the calendar as needed.
 - Sources were extracted from the Docs repo (commit b59d6ca) and saved in `/workspace/promo-drafts/src/`. EN-140 is the swapped "Three Points of Contact" text.
 - No item in this section shows Kai, Kael, Liang or Jarek on screen, so none carry the approval tag. All visuals use settings, screens, or secondary characters (Ressa, Aren, Sera, Mina, Taeho).
@@ -889,3 +889,26 @@ four may remember. five may answer. six may refuse heaven. HAS ch 96 is up on Pa
 
 **X post** [source HA-99]
 "I have no registered name." "neither do you." the knock from beyond heaven was polite. HAS ch 99 is up on Patreon, link in bio #webnovel #cultivation
+
+### HP: The Hundredfold Path
+Added Nov 21 2026 to fill the HP-148 and SF-126 gaps for the picker. Sources: `/workspace/promo-drafts/src/HP-148.txt` and `SF-126.txt`. Nothing from HP-149+ or SF-127+. No visual below shows Liang, so none carry the approval tag.
+
+**TikTok** [source HP-148]
+- Spoken hook: "Every lesson on the mountain got the same three choices. Continue. Revise. Release."
+- On-screen text: RELATION REVIEW AVAILABLE. CONTINUE, REVISE, RELEASE.
+- Visual: An open manual in a sect library, a small doorway drawn in ink glowing in its margin, the words CONTINUE, REVISE, RELEASE floating beside it.
+- Caption: The hidden teacher said no lesson crosses death without it. So instead of one ending, every disciple, elder and village healer got a choice about the lessons they carried. Not all chose wisely. All of them chose. Chapter 148 of The Hundredfold Path is live now on Patreon. Link in bio.
+#TheHundredfoldPath #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
+
+**FB/IG post** [source HP-148]
+- Image: A sect courtyard in late afternoon sunlight, a young instructor holding one half of a cracked jade token marked Teacher while two students hold the other half between them.
+- Text: Cai walked out of the hidden hall holding a cracked token. One half bore his name. The other bore Teacher. "What do we do with these?" The answer was to set his name down in front of his students and ask them. Nobody called the work a victory. The first review ended in an argument. Chapter 148 of The Hundredfold Path is live now on Patreon. Link in bio.
+
+**X post** [source HP-148]
+"We have created paperwork." 81,406 relations left to review, and the hidden teacher finally has a boundary. Hundredfold Path ch 148 is up on Patreon, link in bio #webnovel #cultivation
+
+### SF: Soulforge Era
+
+**FB/IG post** [source SF-126]
+- Image: Six clerks in gray coats on a stone stair, each with a book chained to the wrist, one looking up from a page where a name has replaced a unit number.
+- Text: The auditor came down to count the undercity and called it an audit. Lisern called it what it was: inventory. Then Gray asked a frightened clerk the one question the account had no column for. "What is your name?" "Oren." A unit number broke, and the chain loosened by one link. Chapter 126 of Soulforge Era is live now on Patreon. Link in bio.

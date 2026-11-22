@@ -41,6 +41,10 @@ ITEM_FIELDS = (
     "status",
     "hold_reason",
     "live_tiers",
+    "pick_mode",
+    "bank_day",
+    "pick_rule",
+    "copy_source",
     "posted_url",
     "posted_at",
 )
@@ -64,6 +68,10 @@ class CadenceItem:
     posted_url: str = ""
     posted_at: str = ""
     live_tiers: list[str] = field(default_factory=list)
+    pick_mode: str = ""
+    bank_day: int | None = None
+    pick_rule: str = ""
+    copy_source: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -77,6 +85,10 @@ class CadenceItem:
             "status": self.status,
             "hold_reason": self.hold_reason,
             "live_tiers": list(self.live_tiers),
+            "pick_mode": self.pick_mode,
+            "bank_day": self.bank_day,
+            "pick_rule": self.pick_rule,
+            "copy_source": self.copy_source,
             "posted_url": self.posted_url,
             "posted_at": self.posted_at,
         }
@@ -108,6 +120,10 @@ class CadenceItem:
             posted_url=str(raw.get("posted_url") or ""),
             posted_at=str(raw.get("posted_at") or ""),
             live_tiers=_parse_live_tiers(raw.get("live_tiers")),
+            pick_mode=str(raw.get("pick_mode") or ""),
+            bank_day=(None if raw.get("bank_day") in (None, "") else int(raw.get("bank_day"))),
+            pick_rule=str(raw.get("pick_rule") or ""),
+            copy_source=str(raw.get("copy_source") or ""),
         )
 
 
@@ -307,8 +323,8 @@ def write_manifest_md(path: Path, payload: Mapping[str, Any]) -> None:
         f"awaiting_approval={summary.get('awaiting_approval', 0)} "
         f"awaiting_david_post={summary.get('awaiting_david_post', 0)}",
         "",
-        "| id | platform | novel | source_chapter | source_platform | live_tiers | status | hold_reason | media | caption | posted_url | posted_at |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| id | platform | novel | source_chapter | source_platform | live_tiers | pick_mode | bank_day | pick_rule | copy_source | status | hold_reason | media | caption | posted_url | posted_at |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for item in items:
         caption = " ".join(str(item.caption).split()).replace("|", "/")
@@ -318,9 +334,11 @@ def write_manifest_md(path: Path, payload: Mapping[str, Any]) -> None:
         hold = item.hold_reason or ""
         chapter = "" if item.source_chapter is None else str(item.source_chapter)
         tiers = ", ".join(item.live_tiers)
+        day = "" if item.bank_day is None else str(item.bank_day)
         lines.append(
             f"| {item.id} | {item.platform} | {item.novel} | {chapter} | {item.source_platform} | "
-            f"{tiers} | {item.status} | {hold} | {media} | {caption} | {item.posted_url} | {item.posted_at} |"
+            f"{tiers} | {item.pick_mode} | {day} | {item.pick_rule} | {item.copy_source} | "
+            f"{item.status} | {hold} | {media} | {caption} | {item.posted_url} | {item.posted_at} |"
         )
     Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 

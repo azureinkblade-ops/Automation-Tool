@@ -39,6 +39,7 @@ def timezone_for(name: str):
 
 
 from tools.weekday_cadence_config import (
+    CHAPTER_PICK_BANK_DAY,
     CHAPTER_SOURCE_PATREON,
     CHAPTER_SOURCE_ROYAL_ROAD,
     HOLD_IDENTITY_UNAPPROVED,
@@ -55,6 +56,7 @@ from tools.weekday_cadence_config import (
     WEEKDAYS,
     WeekdayCadenceConfig,
 )
+from tools.weekday_cadence_bank_days import choose_for_platform, earliest_went_live_at
 from tools.weekday_cadence_manifest import CadenceItem, item_id
 from tools.weekday_cadence_overrides import (
     PatreonLiveOverride,
@@ -90,6 +92,7 @@ class ChapterPick:
     verified: bool
     hold_reason: str | None = None
     live_tiers: tuple[str, ...] = ()
+    went_live_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -99,6 +102,7 @@ class ChapterPick:
             "verified": self.verified,
             "hold_reason": self.hold_reason,
             "live_tiers": list(self.live_tiers),
+            "went_live_at": self.went_live_at,
         }
 
 
@@ -277,6 +281,67 @@ def resolve_live_tiers(
     return tuple(live_tiers_from_entry(entry))
 
 
+
+
+WENT_LIVE_KEYS = (
+    "patreonPostedAt",
+    "patreonInnerDisciplePostedAt",
+    "patreonPathInitiatePostedAt",
+)
+
+
+def went_live_iso(entry: Mapping[str, Any] | None, override, default_tz=None) -> str | None:
+    values = []
+    if isinstance(entry, Mapping):
+        values.extend(entry.get(key) for key in WENT_LIVE_KEYS)
+    if override is not None:
+        values.append(getattr(override, "verified_at", None))
+    stamp = earliest_went_live_at(values, default_tz=default_tz)
+    if stamp is None:
+        return None
+    return stamp.isoformat()
+
+
+def chapter_entry_map(records: Mapping[str, Any] | None, novel: str) -> dict[int, dict[str, Any]]:
+    abbr = str(novel).strip().upper()
+    return {
+        chapter: entry
+        for entry_abbr, chapter, entry in iter_release_entries(records)
+        if entry_abbr == abbr
+    }
+
+
+def is_chapter_live(
+    novel: str,
+    chapter: int,
+    records: Mapping[str, Any] | None,
+    *,
+    source: str,
+    overrides=None,
+) -> bool:
+    from tools.weekday_cadence_overrides import override_for_chapter
+
+    if str(source).strip().lower() == CHAPTER_SOURCE_PATREON:
+        if override_for_chapter(overrides or [], novel, chapter) is not None:
+            return True
+    entry = chapter_entry_map(records, novel).get(int(chapter))
+    return bool(entry) and is_verified_live(entry, source)
+
+
+def live_tiers_for_chapter(
+    novel: str,
+    chapter: int,
+    records: Mapping[str, Any] | None,
+    *,
+    overrides=None,
+):
+    from tools.weekday_cadence_overrides import override_for_chapter
+
+    entry = chapter_entry_map(records, novel).get(int(chapter))
+    override = override_for_chapter(overrides or [], novel, chapter)
+    return resolve_live_tiers(entry=entry, override=override)
+
+
 def newest_verified_chapter(
     novel: str,
     records: Mapping[str, Any] | None,
@@ -319,6 +384,7 @@ def newest_verified_chapter(
         verified=True,
         hold_reason=None,
         live_tiers=resolve_live_tiers(entry=ledger_entries.get(chapter), override=override),
+        went_live_at=went_live_iso(ledger_entries.get(chapter), override),
     )
 
 
@@ -504,12 +570,85 @@ def plan_day_items(
     *,
     captions_by_novel: Mapping[str, Mapping[str, str]] | None = None,
     overrides: Sequence[PatreonLiveOverride] | None = None,
+    bank=None,
+    target: date | None = None,
+    weekday: str | None = None,
+    default_tz=None,
 ) -> tuple[list[CadenceItem], dict[str, ChapterPick]]:
     picks = pick_chapters(records, config, overrides=overrides)
+    # Recompute went_live with timezone when provided.
+    if default_tz is not None:
+        adjusted = {}
+        from tools.weekday_cadence_overrides import override_for_chapter
+
+        for novel, pick in picks.items():
+            if not pick.verified or pick.chapter is None:
+                adjusted[novel] = pick
+                continue
+            entry = chapter_entry_map(records, novel).get(pick.chapter)
+            override = (
+                override_for_chapter(overrides or [], novel, pick.chapter)
+                if pick.source_platform == CHAPTER_SOURCE_PATREON
+                else None
+            )
+            adjusted[novel] = ChapterPick(
+                novel=pick.novel,
+                source_platform=pick.source_platform,
+                chapter=pick.chapter,
+                verified=pick.verified,
+                hold_reason=pick.hold_reason,
+                live_tiers=pick.live_tiers,
+                went_live_at=went_live_iso(entry, override, default_tz=default_tz),
+            )
+        picks = adjusted
     items: list[CadenceItem] = []
     for novel, pick in picks.items():
         caps = (captions_by_novel or {}).get(novel) if captions_by_novel else None
-        items.extend(plan_items_for_novel(pick, config, captions=caps))
+        if bank is None or target is None or not pick.verified or pick.chapter is None:
+            items.extend(plan_items_for_novel(pick, config, captions=caps))
+            continue
+        from tools.weekday_cadence_bank_days import parse_went_live_at
+
+        went_live = parse_went_live_at(pick.went_live_at, default_tz=default_tz)
+        for platform in (*STATIC_PLATFORMS, *VIDEO_PLATFORMS):
+            choice = choose_for_platform(
+                novel=novel,
+                platform=platform,
+                target=target,
+                weekday=weekday,
+                newest_chapter=pick.chapter,
+                newest_went_live_at=went_live,
+                items=list(bank or []),
+                is_live=lambda abbr, chapter, _records=records, _src=config.chapter_source, _ov=overrides: is_chapter_live(
+                    abbr, chapter, _records, source=_src, overrides=_ov
+                ),
+                start=config.bank_day_start,
+                numbered_days=config.numbered_bank_days,
+                recent_days=config.recent_live_days,
+                pick_mode=config.chapter_pick,
+            )
+            item = CadenceItem(
+                id=item_id(pick.novel, platform),
+                platform=platform,
+                novel=pick.novel,
+                source_chapter=choice.chapter,
+                source_platform=pick.source_platform,
+                caption=str((caps or {}).get(platform) or ""),
+                status=STATUS_READY,
+                hold_reason=None,
+                live_tiers=list(live_tiers_for_chapter(novel, choice.chapter, records, overrides=overrides)),
+                pick_mode=config.chapter_pick,
+                bank_day=choice.bank_day,
+                pick_rule=choice.pick_rule,
+                copy_source=choice.copy_source,
+            )
+            item = apply_unverified_hold(item, pick)
+            # restore the chosen chapter after unverified hold (pick is newest; still verified)
+            if pick.verified and pick.chapter is not None:
+                item.source_chapter = choice.chapter
+                item.live_tiers = list(live_tiers_for_chapter(novel, choice.chapter, records, overrides=overrides))
+            item = apply_x_default(item, config)
+            items.append(item)
     return items, picks
 
 

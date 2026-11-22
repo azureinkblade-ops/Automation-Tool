@@ -7,7 +7,8 @@ newest chapter verified live on Patreon from local release-status records.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Iterable, Tuple
 
 NOVELS: Tuple[str, ...] = ("EN", "HP", "HA", "SF")
@@ -20,7 +21,12 @@ CHAPTER_SOURCES = frozenset({CHAPTER_SOURCE_PATREON, CHAPTER_SOURCE_ROYAL_ROAD})
 DEFAULT_CHAPTER_SOURCE = CHAPTER_SOURCE_PATREON
 
 CHAPTER_PICK_NEWEST_LIVE = "newest_live"
-DEFAULT_CHAPTER_PICK = CHAPTER_PICK_NEWEST_LIVE
+CHAPTER_PICK_BANK_DAY = "bank_day"
+CHAPTER_PICKS = frozenset({CHAPTER_PICK_NEWEST_LIVE, CHAPTER_PICK_BANK_DAY})
+DEFAULT_CHAPTER_PICK = CHAPTER_PICK_BANK_DAY
+BANK_DAY_START = date(2026, 11, 23)
+NUMBERED_BANK_DAYS = 10
+RECENT_LIVE_DAYS = 7
 
 TIMEZONE_NAME = "America/Phoenix"
 IDENTITY_APPROVAL_HOUR = 18  # 6:00 PM the evening before the target weekday
@@ -86,6 +92,9 @@ class WeekdayCadenceConfig:
     novels: Tuple[str, ...] = NOVELS
     chapter_source: str = DEFAULT_CHAPTER_SOURCE
     chapter_pick: str = DEFAULT_CHAPTER_PICK
+    bank_day_start: date = BANK_DAY_START
+    numbered_bank_days: int = NUMBERED_BANK_DAYS
+    recent_live_days: int = RECENT_LIVE_DAYS
     timezone: str = TIMEZONE_NAME
     identity_approval_hour: int = IDENTITY_APPROVAL_HOUR
     share_still_across_static: bool = DEFAULT_SHARE_STILL_ACROSS_STATIC
@@ -106,9 +115,19 @@ class WeekdayCadenceConfig:
         if int(self.identity_approval_hour) < 0 or int(self.identity_approval_hour) > 23:
             raise ValueError("identity_approval_hour must be 0-23")
         pick = str(self.chapter_pick or "").strip() or DEFAULT_CHAPTER_PICK
-        if pick != CHAPTER_PICK_NEWEST_LIVE:
+        if pick not in CHAPTER_PICKS:
             raise ValueError(f"unsupported chapter_pick: {self.chapter_pick!r}")
         object.__setattr__(self, "chapter_pick", pick)
+        start = self.bank_day_start
+        if isinstance(start, str):
+            start = date.fromisoformat(start)
+        if not isinstance(start, date):
+            raise ValueError("bank_day_start must be a date")
+        object.__setattr__(self, "bank_day_start", start)
+        if int(self.numbered_bank_days) < 1:
+            raise ValueError("numbered_bank_days must be >= 1")
+        if int(self.recent_live_days) < 0:
+            raise ValueError("recent_live_days must be >= 0")
         status = str(self.x_status or "").strip() or X_STATUS
         if status not in STATUSES:
             raise ValueError(f"x_status must be a known item status, got {self.x_status!r}")
@@ -132,6 +151,9 @@ class WeekdayCadenceConfig:
             "novels": list(self.novels),
             "chapter_source": self.chapter_source,
             "chapter_pick": self.chapter_pick,
+            "bank_day_start": self.bank_day_start.isoformat(),
+            "numbered_bank_days": self.numbered_bank_days,
+            "recent_live_days": self.recent_live_days,
             "timezone": self.timezone,
             "identity_approval_hour": self.identity_approval_hour,
             "share_still_across_static": self.share_still_across_static,

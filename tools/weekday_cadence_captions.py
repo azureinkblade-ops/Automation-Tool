@@ -38,9 +38,10 @@ _ITEM_HEADER = re.compile(
     re.MULTILINE,
 )
 _DAY_HEADER = re.compile(
-    r"^## Day\s+\d+\s+\(Week\s+\d+,\s+(Monday|Tuesday|Wednesday|Thursday|Friday)\)\s*$",
+    r"^## Day\s+(\d+)\s+\(Week\s+\d+,\s+(Monday|Tuesday|Wednesday|Thursday|Friday)\)\s*$",
     re.MULTILINE,
 )
+_SUPPLEMENT_HEADER = re.compile(r"^## Supplement\b", re.MULTILINE)
 _CAPTION_LINE = re.compile(r"^- Caption:\s*(.*)$", re.MULTILINE)
 _TEXT_LINE = re.compile(r"^- Text:\s*(.*)$", re.MULTILINE)
 _HASHTAG_LINE = re.compile(r"^(#\w+(?:\s+#\w+)*)\s*$")
@@ -62,6 +63,7 @@ class BankCaption:
     weekday: str | None
     needs_approval: bool
     source: str = "copy_bank"
+    bank_day: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,18 +75,26 @@ class BankCaption:
             "weekday": self.weekday,
             "needs_approval": self.needs_approval,
             "source": self.source,
+            "bank_day": self.bank_day,
         }
 
 
-def _weekday_map(text: str) -> list[tuple[int, str]]:
-    return [(match.start(), match.group(1)) for match in _DAY_HEADER.finditer(text)]
+def _section_map(text: str) -> list[tuple[int, int | None, str | None]]:
+    """(position, bank_day or None, weekday or None). Supplement marks have no day."""
+    marks: list[tuple[int, int | None, str | None]] = []
+    for match in _DAY_HEADER.finditer(text):
+        marks.append((match.start(), int(match.group(1)), match.group(2)))
+    for match in _SUPPLEMENT_HEADER.finditer(text):
+        marks.append((match.start(), None, None))
+    marks.sort(key=lambda item: item[0])
+    return marks
 
 
-def _weekday_at(pos: int, marks: Sequence[tuple[int, str]]) -> str | None:
-    current: str | None = None
-    for start, name in marks:
+def _section_at(pos: int, marks: Sequence[tuple[int, int | None, str | None]]) -> tuple[int | None, str | None]:
+    current: tuple[int | None, str | None] = (None, None)
+    for start, day, weekday in marks:
         if start <= pos:
-            current = name
+            current = (day, weekday)
         else:
             break
     return current
@@ -144,7 +154,7 @@ def _extract_x_text(block: str) -> str:
 
 
 def parse_copy_bank(text: str) -> list[BankCaption]:
-    marks = _weekday_map(text)
+    marks = _section_map(text)
     matches = list(_ITEM_HEADER.finditer(text))
     items: list[BankCaption] = []
     for index, match in enumerate(matches):
@@ -163,6 +173,7 @@ def parse_copy_bank(text: str) -> list[BankCaption]:
             body = _extract_x_text(block)
         if not body:
             continue
+        bank_day, weekday = _section_at(match.start(), marks)
         items.append(
             BankCaption(
                 novel=abbr,
@@ -170,8 +181,9 @@ def parse_copy_bank(text: str) -> list[BankCaption]:
                 kind=kind,
                 platforms=platforms,
                 text=body,
-                weekday=_weekday_at(match.start(), marks),
+                weekday=weekday,
                 needs_approval="[APPROVAL:" in block,
+                bank_day=bank_day,
             )
         )
     return items
@@ -197,6 +209,7 @@ def select_bank_caption(
     platform: str,
     weekday: str | None = None,
     allowed_chapters: Iterable[int] | None = None,
+    bank_day: int | None = None,
 ) -> BankCaption | None:
     if chapter is None:
         return None
@@ -212,6 +225,10 @@ def select_bank_caption(
     ]
     if not matches:
         return None
+    if bank_day is not None:
+        day_hits = [item for item in matches if item.bank_day == int(bank_day)]
+        if day_hits:
+            matches = day_hits
     if weekday:
         named = [item for item in matches if item.weekday == weekday]
         if named:

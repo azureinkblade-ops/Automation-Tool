@@ -178,7 +178,14 @@ def run_cadence(
     current = now_now(config, now)
     deadline = approval_deadline_for(target, config)
     planned, picks = plan_day_items(
-        records, config, captions_by_novel=captions_by_novel, overrides=overrides
+        records,
+        config,
+        captions_by_novel=captions_by_novel,
+        overrides=overrides,
+        bank=list(copy_bank or []),
+        target=target,
+        weekday=weekday_name(target),
+        default_tz=current.tzinfo,
     )
     stills = dict(stills or {})
     clips = dict(clips or {})
@@ -205,26 +212,27 @@ def run_cadence(
         for abbr, needed in prepared.identity_needed.items():
             identity_needed[abbr] = bool(needed) or bool(identity_needed.get(abbr))
     bank_items = list(copy_bank or [])
-    by_novel: dict[str, dict[str, str]] = dict(captions_by_novel or {})
-    for novel, pick in picks.items():
-        allowed = [pick.chapter] if pick.chapter is not None else []
-        fallback = by_novel.get(novel) or default_captions(novel, pick.chapter, pick.source_platform)
-        by_novel[novel] = captions_for_novel(
-            novel=novel,
-            chapter=pick.chapter,
-            source_platform=pick.source_platform,
+    provided = dict(captions_by_novel or {})
+    for item in planned:
+        if item.source_chapter is None:
+            continue
+        fallback = (provided.get(item.novel) or {}).get(item.platform) or default_captions(
+            item.novel, item.source_chapter, item.source_platform
+        ).get(item.platform, "")
+        caps = captions_for_novel(
+            novel=item.novel,
+            chapter=item.source_chapter,
+            source_platform=item.source_platform,
             weekday=weekday_name(target),
             bank=bank_items,
-            allowed_chapters=allowed,
-            fallback=fallback,
-            live_tiers=pick.live_tiers,
+            allowed_chapters=[item.source_chapter],
+            fallback={item.platform: fallback} if fallback else default_captions(item.novel, item.source_chapter, item.source_platform),
+            live_tiers=item.live_tiers,
         )
-    for item in planned:
-        caps = by_novel.get(item.novel) or {}
         if caps.get(item.platform):
             item.caption = caps[item.platform]
         elif not item.caption:
-            item.caption = default_captions(item.novel, item.source_chapter, item.source_platform).get(item.platform, "")
+            item.caption = fallback
     planned = apply_stage(
         planned,
         stage=stage,
@@ -294,6 +302,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-commit", default="", help="Commit SHA recorded on the manifest.")
     parser.add_argument("--copy-bank", help="Optional Writer copy-bank markdown path.")
     parser.add_argument("--overrides", help="Optional patreon_live_overrides.json path.")
+    parser.add_argument(
+        "--chapter-pick",
+        choices=("bank_day", "newest_live"),
+        default=None,
+        help="Chapter pick mode. Default: bank_day rotation. newest_live keeps the previous behavior.",
+    )
+    parser.add_argument(
+        "--bank-day-start",
+        default=None,
+        help="Monday that is bank day 1 (YYYY-MM-DD). Default: 2026-11-23.",
+    )
     parser.add_argument("--timezone", default=None)
     parser.add_argument(
         "--with-media",
@@ -316,6 +335,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     cfg_data: dict[str, Any] = {}
     if args.chapter_source:
         cfg_data["chapter_source"] = args.chapter_source
+    if getattr(args, "chapter_pick", None):
+        cfg_data["chapter_pick"] = args.chapter_pick
+    if getattr(args, "bank_day_start", None):
+        cfg_data["bank_day_start"] = args.bank_day_start
     if args.timezone:
         cfg_data["timezone"] = args.timezone
     config = WeekdayCadenceConfig.from_mapping(cfg_data)
@@ -360,10 +383,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     picks = payload.get("chapterPicks") or {}
     for abbr, pick in picks.items():
         print(
-            f"pick {abbr} chapter={pick.get('source_chapter')} "
+            f"newest {abbr} chapter={pick.get('source_chapter')} "
             f"source={pick.get('source_platform')} verified={pick.get('verified')} "
             f"tiers={','.join(pick.get('live_tiers') or [])} "
+            f"went_live={pick.get('went_live_at') or ''} "
             f"hold={pick.get('hold_reason') or ''}"
+        )
+    for item in payload.get("items") or []:
+        print(
+            f"item {item.get('id')} ch={item.get('source_chapter')} "
+            f"rule={item.get('pick_rule') or ''} day={item.get('bank_day')} "
+            f"copy={item.get('copy_source') or ''}"
         )
     return 0
 
