@@ -7,12 +7,16 @@ Design (not run on the real GPU from tests or dry-run):
   the frame probe and SVD social hold already used by weekday_cadence_posts.
 - Kai, Kael, Liang, and Jarek stills go to the identity approval batch.
 - The GPU is taken only through the existing ExclusiveGpuLease, and only after
-  a preflight that requires port 8188 to be free and no Research python/ffmpeg
-  process to be running.
+  a preflight that refuses to start or touch ComfyUI while a Research python or
+  ffmpeg process is running. The production --with-media runner then brings
+  ComfyUI up the same way the Wan clip step does (ensure_comfy_ready via the
+  launcher, dynvram_disabled=True). It reuses a healthy instance already up,
+  and stops Comfy at the end only if this runner started it. Tests inject stubs
+  and never call the real launcher.
 
 Default CLI dry-run never calls this producer. --with-media without --dry-run
-still refuses the lease and generation when preflight fails, so a mistaken
-invocation cannot start ComfyUI during a Research GPU test.
+still refuses the lease and generation when preflight or Comfy start fails, so a
+mistaken invocation cannot start ComfyUI during a Research GPU test.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from tools.weekday_cadence_config import (
     DEPICTION_GOVERNED,
     DEPICTION_NOT_GOVERNED,
     DEPICTION_UNKNOWN,
+    HOLD_GRAY_LOOK_UNDECIDED,
     IDENTITY_CHARACTERS,
     WAN_BACKEND,
 )
@@ -240,6 +245,89 @@ def gpu_preflight(
 
 
 
+def research_gpu_busy(
+    processes: Sequence[Mapping[str, Any]] | None = None,
+    lister: ProcessLister | None = None,
+) -> bool:
+    return bool(research_processes(processes, lister=lister))
+
+
+def ensure_cadence_comfy(
+    *,
+    cfg: Any = None,
+    runner: Any = None,
+    queue_probe: Any = None,
+    sleep: Callable[[float], Any] | None = None,
+) -> Any:
+    """Start or reuse ComfyUI the same way the Wan clip step does.
+
+    Tests must inject a stub; this default talks to the real launcher.
+    """
+    import time
+
+    from tools.chapter_video_wiring import (
+        ChapterVideoConfig,
+        default_launcher_runner,
+        default_queue_probe,
+        ensure_comfy_ready,
+    )
+
+    return ensure_comfy_ready(
+        cfg or ChapterVideoConfig.from_env(),
+        runner or default_launcher_runner,
+        queue_probe or default_queue_probe,
+        sleep or time.sleep,
+    )
+
+
+def stop_cadence_comfy_if_started(
+    comfy: Any,
+    *,
+    cfg: Any = None,
+    runner: Any = None,
+) -> None:
+    """Stop ComfyUI only when this runner started it (started_by_us=True)."""
+    if not getattr(comfy, "ok", False) or not getattr(comfy, "started_by_us", False):
+        return
+    from tools.chapter_video_wiring import (
+        ChapterVideoConfig,
+        default_launcher_runner,
+        stop_comfy_started_by_us,
+    )
+
+    stop_comfy_started_by_us(
+        cfg or ChapterVideoConfig.from_env(),
+        runner or default_launcher_runner,
+    )
+
+
+def _is_gray_look_held(item: Any) -> bool:
+    return str(getattr(item, "hold_reason", "") or "") == HOLD_GRAY_LOOK_UNDECIDED
+
+
+def _unheld_platforms(items: Sequence[Any] | None, novel: str, chapter: int | None) -> set[str]:
+    if not items:
+        return {"facebook", "instagram", "tiktok"}
+    plats: set[str] = set()
+    for item in items:
+        if str(getattr(item, "novel", "") or "") != novel:
+            continue
+        if getattr(item, "source_chapter", None) != chapter:
+            continue
+        platform = str(getattr(item, "platform", "") or "")
+        if platform == "x" or _is_gray_look_held(item):
+            continue
+        if platform:
+            plats.add(platform)
+    return plats
+
+
+def _hold_all_plans(result: MediaPreparation, plans: Sequence[StillPlan], reason: str) -> None:
+    for plan in plans:
+        if plan.chapter is not None:
+            result.generation_holds[(plan.novel, int(plan.chapter))] = reason
+
+
 _GOVERNED_SIDECAR_STATUS = frozenset({"CANONICAL_IDENTITY_GOVERNED"})
 _NOT_GOVERNED_SIDECAR_STATUS = frozenset({
     "NOT_APPLICABLE_NO_GOVERNED_CHARACTER",
@@ -420,6 +508,8 @@ def prepare_media(
     items: Sequence[Any] | None = None,
     output_dir: Path | None = None,
     acquire_lease: bool = True,
+    ensure_comfy: Callable[..., Any] | None = None,
+    stop_comfy: Callable[..., Any] | None = None,
 ) -> MediaPreparation:
     """Resolve or (optionally) generate per-novel stills and Wan clips.
 
@@ -433,9 +523,12 @@ def prepare_media(
     existing = dict(existing_stills or {})
     jobs: list[tuple[str, int | None]] = []
     seen: set[tuple[str, int | None]] = set()
-    if items:
+    provided_items = items is not None and len(list(items)) > 0
+    if provided_items:
         for item in items:
             if getattr(item, "platform", "") == "x":
+                continue
+            if _is_gray_look_held(item):
                 continue
             novel = str(getattr(item, "novel", "") or "")
             chapter = getattr(item, "source_chapter", None)
@@ -444,7 +537,7 @@ def prepare_media(
                 continue
             seen.add(key)
             jobs.append(key)
-    if not jobs:
+    if not jobs and not provided_items:
         jobs = [(str(novel), chapters.get(novel)) for novel in novels]
 
     plans: list[StillPlan] = []
@@ -468,8 +561,15 @@ def prepare_media(
 
     from tools.weekday_cadence_stills import STILL_SIZE_TIKTOK
 
-    needs_generation = [plan for plan in plans if plan.path is None]
-    needs_clips = list(plans)
+    def _platforms_for(plan):
+        return _unheld_platforms(items, plan.novel, plan.chapter)
+
+    needs_generation = [
+        plan
+        for plan in plans
+        if plan.path is None and _platforms_for(plan) & {"facebook", "instagram"}
+    ]
+    needs_clips = [plan for plan in plans if "tiktok" in _platforms_for(plan)]
     for plan in plans:
         if plan.path is None or plan.chapter is None:
             continue
@@ -482,22 +582,46 @@ def prepare_media(
         if plan.chapter is not None
         and (plan.novel, int(plan.chapter)) not in result.tiktok_stills
         and can_native_tiktok
+        and "tiktok" in _platforms_for(plan)
     ]
     must_use_gpu = (not dry_run) and (
-        bool(needs_generation) or bool(needs_tiktok) or produce_clip is not None
+        bool(needs_generation) or bool(needs_tiktok) or (
+            produce_clip is not None and bool(needs_clips)
+        )
     )
 
     if dry_run or not must_use_gpu:
         result.preflight_ok, result.preflight_reason = True, "DRY_RUN" if dry_run else ""
         return result
 
-    ok, reason = gpu_preflight(
-        port=port, processes=processes, port_free=port_free, lister=lister
-    )
-    result.preflight_ok = ok
-    result.preflight_reason = reason
-    if not ok:
+    if research_gpu_busy(processes, lister=lister):
+        reason = "GPU_PREFLIGHT:RESEARCH_PROCESS_RUNNING"
+        result.preflight_ok = False
+        result.preflight_reason = reason
+        _hold_all_plans(result, plans, reason)
         return result
+
+    comfy = None
+    if ensure_comfy is not None:
+        comfy = ensure_comfy()
+        if not getattr(comfy, "ok", False):
+            detail = str(getattr(comfy, "reason", "") or "UNAVAILABLE")
+            reason = f"GPU_PREFLIGHT:COMFY_NOT_READY:{detail}"
+            result.preflight_ok = False
+            result.preflight_reason = reason
+            _hold_all_plans(result, plans, reason)
+            return result
+        result.preflight_ok = True
+        result.preflight_reason = str(getattr(comfy, "reason", "") or "")
+    else:
+        ok, reason = gpu_preflight(
+            port=port, processes=processes, port_free=port_free, lister=lister
+        )
+        result.preflight_ok = ok
+        result.preflight_reason = reason
+        if not ok:
+            _hold_all_plans(result, plans, reason)
+            return result
 
     lease = gpu_lease if gpu_lease is not None else (lease_factory() if lease_factory else None)
     acquired = False
@@ -541,7 +665,7 @@ def prepare_media(
                 elif plan.chapter is not None and (plan.novel, int(plan.chapter)) not in result.generation_holds:
                     _record_hold(plan, "STILL_GENERATION_MISSING_ARTIFACT")
 
-            for plan in plans:
+            for plan in needs_tiktok:
                 if plan.chapter is None or not _accepts_size(generate_still):
                     continue
                 key = (plan.novel, int(plan.chapter))
@@ -582,4 +706,9 @@ def prepare_media(
     finally:
         if acquired:
             _release_lease(lease, job_id)
+        if comfy is not None and getattr(comfy, "started_by_us", False):
+            if stop_comfy is not None:
+                stop_comfy(comfy)
+            else:
+                stop_cadence_comfy_if_started(comfy)
     return result

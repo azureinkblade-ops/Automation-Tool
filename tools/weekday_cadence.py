@@ -14,6 +14,7 @@ writes to the ledger or release_status tables.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
@@ -46,6 +47,7 @@ from tools.weekday_cadence_config import (
     DEPICTION_NOT_GOVERNED,
     DEPICTION_UNKNOWN,
     HOLD_AWAITING_DAVID,
+    HOLD_GRAY_LOOK_UNDECIDED,
     HOLD_IDENTITY_AWAITING,
     HOLD_IDENTITY_UNAPPROVED,
     HOLD_NO_DEPICTION_EVIDENCE,
@@ -570,6 +572,39 @@ def apply_depiction_gate(
         )
     item.status = STATUS_AWAITING_APPROVAL
     item.hold_reason = HOLD_NO_DEPICTION_EVIDENCE
+    return item
+
+
+_GRAY_HAND_RE = re.compile(
+    r"marked palm|marked hand|unmarked hand|hand with the lock|"
+    r"gray'?s (?:hand|palm)|(?:hand|palm) of gray",
+    re.IGNORECASE,
+)
+
+
+def shows_undecided_gray_hand(item: CadenceItem) -> bool:
+    """True when the bank visual/caption shows Gray's hand, whose look is still undecided.
+
+    Detection is from the item text, not from novel membership. X is never matched.
+    """
+    if str(getattr(item, "platform", "") or "").lower() == "x":
+        return False
+    if str(getattr(item, "novel", "") or "").strip().upper() != "SF":
+        return False
+    text = " ".join(
+        str(getattr(item, field, "") or "")
+        for field in ("visual", "caption")
+    )
+    return bool(_GRAY_HAND_RE.search(text))
+
+
+def apply_gray_look_hold(item: CadenceItem) -> CadenceItem:
+    """Fail closed until David approves Gray's look. Does not choose a lead or relax canon."""
+    if item.platform == "x":
+        return item
+    if shows_undecided_gray_hand(item):
+        item.status = STATUS_AWAITING_APPROVAL
+        item.hold_reason = HOLD_GRAY_LOOK_UNDECIDED
     return item
 
 

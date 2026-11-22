@@ -902,3 +902,246 @@ def test_with_media_preflight_failure_does_not_overwrite_existing_pack(tmp_path:
     assert code == 1
     assert {p.name: p.read_bytes() for p in day.iterdir() if p.is_file()} == before
     assert not (day / "media").exists()
+
+
+def test_ensure_comfy_runs_before_generate_and_stops_only_if_started(tmp_path: Path):
+    order = []
+    made = tmp_path / "en-127.png"
+
+    def ensure():
+        order.append("ensure")
+        return SimpleNamespace(ok=True, started_by_us=True, reason="started_via_launcher")
+
+    def stop(comfy):
+        order.append("stop")
+        assert comfy.started_by_us is True
+
+    def generate(novel, chapter, size=(1024, 1024)):
+        order.append("generate")
+        made.write_bytes(b"png")
+        return made
+
+    result = prepare_media(
+        novels=["EN"],
+        chapters={"EN": 127},
+        with_media=True,
+        dry_run=False,
+        generate_still=generate,
+        produce_clip=None,
+        gpu_lease=FakeLease(),
+        port_free=lambda _port: True,
+        processes=[],
+        items=[_item("facebook", "EN", 127, "governed", "Kael in the rain.")],
+        output_dir=tmp_path,
+        ensure_comfy=ensure,
+        stop_comfy=stop,
+    )
+    assert order[0] == "ensure"
+    assert "generate" in order
+    assert order[-1] == "stop"
+    assert result.preflight_ok is True
+    assert result.stills_by_chapter[("EN", 127)] == made
+
+
+def test_ensure_comfy_failure_holds_and_does_not_generate(tmp_path: Path):
+    stops = []
+    calls = []
+
+    def ensure():
+        return SimpleNamespace(
+            ok=False,
+            started_by_us=False,
+            reason="COMFY_PORT_BUSY_DYNVRAM_NOT_CONFIRMED",
+        )
+
+    def stop(comfy):
+        stops.append(comfy)
+
+    def generate(novel, chapter, size=(1024, 1024)):
+        calls.append((novel, chapter))
+        raise AssertionError("generate must not run when Comfy is not ready")
+
+    result = prepare_media(
+        novels=["EN"],
+        chapters={"EN": 127},
+        with_media=True,
+        dry_run=False,
+        generate_still=generate,
+        produce_clip=None,
+        gpu_lease=FakeLease(),
+        port_free=lambda _port: False,
+        processes=[],
+        items=[_item("facebook", "EN", 127, "governed", "Kael in the rain.")],
+        output_dir=tmp_path,
+        ensure_comfy=ensure,
+        stop_comfy=stop,
+    )
+    assert calls == []
+    assert stops == []
+    assert result.preflight_ok is False
+    assert "COMFY_NOT_READY" in result.preflight_reason
+    assert "COMFY_PORT_BUSY_DYNVRAM_NOT_CONFIRMED" in result.preflight_reason
+    assert result.generation_holds[("EN", 127)] == result.preflight_reason
+    assert "EN" not in result.stills
+
+
+def test_reused_comfy_is_not_stopped(tmp_path: Path):
+    stops = []
+    made = tmp_path / "ha-99.png"
+
+    def ensure():
+        return SimpleNamespace(ok=True, started_by_us=False, reason="reused_running_comfyui")
+
+    def stop(comfy):
+        stops.append(comfy)
+
+    def generate(novel, chapter, size=(1024, 1024)):
+        made.write_bytes(b"png")
+        return made
+
+    result = prepare_media(
+        novels=["HA"],
+        chapters={"HA": 99},
+        with_media=True,
+        dry_run=False,
+        generate_still=generate,
+        produce_clip=None,
+        gpu_lease=FakeLease(),
+        port_free=lambda _port: False,
+        processes=[],
+        items=[_item("facebook", "HA", 99, "not_governed", "A quiet courtyard.")],
+        output_dir=tmp_path,
+        ensure_comfy=ensure,
+        stop_comfy=stop,
+    )
+    assert result.preflight_ok is True
+    assert result.preflight_reason == "reused_running_comfyui"
+    assert result.stills["HA"] == made
+    assert stops == []
+
+
+def test_research_running_does_not_call_ensure_comfy(tmp_path: Path):
+    ensures = []
+    calls = []
+
+    def ensure():
+        ensures.append(1)
+        return SimpleNamespace(ok=True, started_by_us=True, reason="started")
+
+    def generate(novel, chapter, size=(1024, 1024)):
+        calls.append((novel, chapter))
+        raise AssertionError("must not generate while Research is running")
+
+    result = prepare_media(
+        novels=["SF"],
+        chapters={"SF": 117},
+        with_media=True,
+        dry_run=False,
+        generate_still=generate,
+        produce_clip=None,
+        gpu_lease=FakeLease(),
+        port_free=lambda _port: True,
+        processes=[{"name": "python.exe", "command": "python research_gpu_job.py"}],
+        items=[_item("facebook", "SF", 117, "not_governed", "Ancient towers.")],
+        output_dir=tmp_path,
+        ensure_comfy=ensure,
+        stop_comfy=lambda comfy: None,
+    )
+    assert ensures == []
+    assert calls == []
+    assert result.preflight_ok is False
+    assert "RESEARCH_PROCESS_RUNNING" in result.preflight_reason
+    assert result.generation_holds[("SF", 117)] == "GPU_PREFLIGHT:RESEARCH_PROCESS_RUNNING"
+
+
+def test_gray_hand_items_are_not_generated_and_keep_ids(tmp_path: Path):
+    from datetime import date, datetime
+    from tools.weekday_cadence import timezone_for
+    from tools.weekday_cadence_captions import load_copy_bank
+    from tools.weekday_cadence_config import HOLD_GRAY_LOOK_UNDECIDED, WeekdayCadenceConfig
+    from tools.weekday_cadence_runner import run_cadence
+
+    tz = timezone_for("America/Phoenix")
+    bank = load_copy_bank(Path("daily-social/copy-bank/weekday-bank-v1.md"))
+    cfg = WeekdayCadenceConfig(chapter_pick="bank_day", novels=("SF",))
+    records = _records(
+        ("SF", 117, {"patreonExists": True}),
+        ("SF", 124, {"patreonExists": True}),
+    )
+    generated = []
+
+    def generate(novel, chapter, size=(1024, 1024)):
+        generated.append((novel, chapter, tuple(size)))
+        path = tmp_path / f"{novel}-{chapter}-{size[0]}.png"
+        path.write_bytes(b"png")
+        return path
+
+    def produce(still, **kwargs):
+        path = tmp_path / f"{kwargs.get('novel')}-{kwargs.get('chapter')}.mp4"
+        path.write_bytes(b"mp4")
+        return ClipResult(outcome="SOCIAL_READY", backend="wan_22", path=path, width=720, height=1280)
+
+    day2 = run_cadence(
+        target=date(2026, 11, 24),
+        stage="pack",
+        dry_run=False,
+        config=cfg,
+        out_root=tmp_path / "out",
+        records=records,
+        now=datetime(2026, 11, 23, 16, 0, tzinfo=tz),
+        copy_bank=bank,
+        with_media=True,
+        generate_still=generate,
+        produce_clip=produce,
+        gpu_lease=FakeLease(),
+        media_port_free=lambda _port: True,
+        media_processes=[],
+        bible_preflight=lambda: None,
+    )
+    day2_items = {item["id"]: item for item in day2["items"]}
+    day2_held = sorted(
+        item["id"]
+        for item in day2["items"]
+        if item.get("hold_reason") == HOLD_GRAY_LOOK_UNDECIDED
+    )
+    assert day2_held == ["SF-facebook", "SF-instagram", "SF-tiktok"]
+    for item_id in day2_held:
+        assert day2_items[item_id]["status"] == "awaiting_approval"
+        assert day2_items[item_id]["source_chapter"] == 117
+        assert not day2_items[item_id]["media"]
+    assert day2_items["SF-x"]["status"] == "awaiting_david_post"
+    assert day2_items["SF-x"]["hold_reason"] != HOLD_GRAY_LOOK_UNDECIDED
+    assert all(chapter != 117 for _novel, chapter, _size in generated)
+
+    generated.clear()
+    day9 = run_cadence(
+        target=date(2026, 12, 3),
+        stage="pack",
+        dry_run=False,
+        config=cfg,
+        out_root=tmp_path / "out",
+        records=records,
+        now=datetime(2026, 12, 2, 16, 0, tzinfo=tz),
+        copy_bank=bank,
+        with_media=True,
+        generate_still=generate,
+        produce_clip=produce,
+        gpu_lease=FakeLease(),
+        media_port_free=lambda _port: True,
+        media_processes=[],
+        bible_preflight=lambda: None,
+    )
+    day9_items = {item["id"]: item for item in day9["items"]}
+    day9_held = sorted(
+        item["id"]
+        for item in day9["items"]
+        if item.get("hold_reason") == HOLD_GRAY_LOOK_UNDECIDED
+    )
+    assert day9_held == ["SF-facebook", "SF-instagram"]
+    for item_id in day9_held:
+        assert day9_items[item_id]["status"] == "awaiting_approval"
+        assert day9_items[item_id]["source_chapter"] == 124
+        assert not day9_items[item_id]["media"]
+    assert day9_items["SF-tiktok"]["hold_reason"] != HOLD_GRAY_LOOK_UNDECIDED
+    assert day9_items["SF-tiktok"]["source_chapter"] == 124
+    assert any(chapter == 124 for _novel, chapter, _size in generated)

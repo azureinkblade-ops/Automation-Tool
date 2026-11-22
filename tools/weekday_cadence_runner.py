@@ -21,6 +21,7 @@ from tools.weekday_cadence import (
     approval_deadline_for,
     approval_inbox_entries,
     apply_depiction_gate,
+    apply_gray_look_hold,
     apply_x_default,
     ensure_hold_reasons,
     is_weekday,
@@ -35,6 +36,7 @@ from tools.weekday_cadence import (
 from tools.weekday_cadence_captions import captions_for_novel, load_copy_bank
 from tools.weekday_cadence_config import (
     COPY_BANK_RELATIVE,
+    HOLD_GRAY_LOOK_UNDECIDED,
     OVERRIDE_RELATIVE,
     PUBLISH_GENERATED_MEDIA,
     STATUS_HELD,
@@ -166,7 +168,11 @@ def apply_stage(
         if item.platform == "x":
             updated.append(apply_x_default(item, config))
             continue
-        if item.platform == "tiktok" and stage in {"encode", "pack"}:
+        if (
+            item.platform == "tiktok"
+            and stage in {"encode", "pack"}
+            and str(item.hold_reason or "") != HOLD_GRAY_LOOK_UNDECIDED
+        ):
             # Governed items still get their clip made, then are held for approval.
             tiktok_still = stills.get(item.novel)
             if item.source_chapter is not None:
@@ -197,6 +203,7 @@ def apply_stage(
             deadline=deadline,
             pipeline_depiction=sidecar,
         )
+        item = apply_gray_look_hold(item)
         updated.append(item)
     return ensure_hold_reasons(updated)
 
@@ -226,6 +233,8 @@ def run_cadence(
     media_port_free=None,
     media_processes=None,
     bible_preflight=None,
+    ensure_comfy=None,
+    stop_comfy=None,
 ) -> dict[str, Any]:
     if config.publish_generated_media or PUBLISH_GENERATED_MEDIA:
         raise RuntimeError("weekday cadence refused to run with publishing enabled")
@@ -243,6 +252,7 @@ def run_cadence(
         weekday=weekday_name(target),
         default_tz=current.tzinfo,
     )
+    planned = [apply_gray_look_hold(item) for item in planned]
     stills = dict(stills or {})
     clips = dict(clips or {})
     stills_by_chapter: dict[tuple[str, int], Path] = {}
@@ -262,7 +272,8 @@ def run_cadence(
 
         work_dir = day_dir(out_root, target.isoformat(), output_dirname=config.output_dirname) / "media"
         work_dir.mkdir(parents=True, exist_ok=True)
-        if not dry_run and generate_still is None:
+        production_still = not dry_run and generate_still is None
+        if production_still:
             from tools.weekday_cadence_stills import generate_cadence_still
 
             planned_items = planned
@@ -270,16 +281,19 @@ def run_cadence(
             from tools.weekday_cadence_stills import STILL_SIZE_FB_IG, STILL_SIZE_TIKTOK
 
             def generate_still(novel, chapter, size=STILL_SIZE_FB_IG, _items=planned_items, _work=work_dir):
-                match = next(
-                    (
-                        row
-                        for row in _items
-                        if row.novel == novel
+                def _usable(row):
+                    return (
+                        row.novel == novel
                         and row.source_chapter == chapter
                         and row.platform != "x"
-                    ),
-                    None,
-                )
+                        and str(getattr(row, "hold_reason", "") or "") != HOLD_GRAY_LOOK_UNDECIDED
+                    )
+
+                tiktok = tuple(size) == tuple(STILL_SIZE_TIKTOK)
+                preferred = ("tiktok",) if tiktok else ("facebook", "instagram")
+                match = next((row for row in _items if _usable(row) and row.platform in preferred), None)
+                if match is None:
+                    match = next((row for row in _items if _usable(row)), None)
                 role = "tiktok" if tuple(size) == tuple(STILL_SIZE_TIKTOK) else "still"
                 return generate_cadence_still(
                     novel,
@@ -295,6 +309,16 @@ def run_cadence(
             from tools.weekday_cadence_stills import CadenceClipAdapter
 
             produce_clip = CadenceClipAdapter(store_root=work_dir)
+
+        if production_still and ensure_comfy is None:
+            from tools.weekday_cadence_media import (
+                ensure_cadence_comfy,
+                stop_cadence_comfy_if_started,
+            )
+
+            ensure_comfy = ensure_cadence_comfy
+            if stop_comfy is None:
+                stop_comfy = stop_cadence_comfy_if_started
 
         prepared = prepare_media(
             novels=tuple({item.novel for item in planned}),
@@ -315,6 +339,8 @@ def run_cadence(
             items=planned,
             output_dir=work_dir,
             acquire_lease=gpu_lease is not None or (not dry_run and produce_clip is not None and gpu_lease is not None),
+            ensure_comfy=None if dry_run else ensure_comfy,
+            stop_comfy=None if dry_run else stop_comfy,
         )
         stills.update(prepared.stills)
         clips.update(prepared.clips)

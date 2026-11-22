@@ -184,3 +184,111 @@ def test_facebook_and_instagram_without_media_are_never_ready():
     assert ready.status == "ready"
     assert already_held.status == "held"
     assert already_held.hold_reason == "CHAPTER_SOURCE_UNVERIFIED:patreon"
+
+
+def test_gray_hand_items_are_held_fail_closed():
+    from tools.weekday_cadence import apply_gray_look_hold, shows_undecided_gray_hand
+    from tools.weekday_cadence_config import HOLD_GRAY_LOOK_UNDECIDED, STATUS_AWAITING_APPROVAL, STATUS_READY
+    from tools.weekday_cadence_manifest import CadenceItem
+
+    cases = [
+        (
+            "tiktok",
+            "SF",
+            117,
+            "A marked palm held up to the snow, three narrow glowing bars across it, a burning sanctuary blurred behind.",
+            True,
+        ),
+        (
+            "facebook",
+            "SF",
+            117,
+            "Lisern holding a marked hand in both of hers, the light under her skin dimming where they touch.",
+            True,
+        ),
+        (
+            "instagram",
+            "SF",
+            117,
+            "Lisern holding a marked hand in both of hers, the light under her skin dimming where they touch.",
+            True,
+        ),
+        (
+            "facebook",
+            "SF",
+            124,
+            "A small child taking an unmarked hand at the edge of a glowing forge-heart.",
+            True,
+        ),
+        (
+            "instagram",
+            "SF",
+            124,
+            "A small child taking an unmarked hand at the edge of a glowing forge-heart.",
+            True,
+        ),
+        (
+            "tiktok",
+            "SF",
+            124,
+            "A deep furnace node under a market, its flame folding inward, frost spreading over the stone above.",
+            False,
+        ),
+        (
+            "tiktok",
+            "SF",
+            117,
+            "Ancient towers rising out of a mountainside, furnaces opening along their faces like burning eyes, snow turning to ash.",
+            False,
+        ),
+        (
+            "facebook",
+            "SF",
+            117,
+            "A sanctuary terrace at night, every roof burning, snow falling into ash above it.",
+            False,
+        ),
+        (
+            "x",
+            "SF",
+            117,
+            "A marked palm held up to the snow, three narrow glowing bars across it.",
+            False,
+        ),
+        (
+            "facebook",
+            "EN",
+            127,
+            "A marked palm held up to the snow.",
+            False,
+        ),
+    ]
+    held_ids = []
+    for platform, novel, chapter, visual, expect in cases:
+        item = CadenceItem(
+            id=f"{novel}-{platform}",
+            platform=platform,
+            novel=novel,
+            source_chapter=chapter,
+            source_platform="patreon",
+            caption=f"{novel} chapter {chapter}",
+            visual=visual,
+            depiction="not_governed",
+            status=STATUS_READY,
+        )
+        assert shows_undecided_gray_hand(item) is expect
+        apply_gray_look_hold(item)
+        if expect:
+            assert item.status == STATUS_AWAITING_APPROVAL
+            assert item.hold_reason == HOLD_GRAY_LOOK_UNDECIDED
+            held_ids.append(f"{novel}-{chapter}-{platform}")
+        else:
+            assert item.hold_reason != HOLD_GRAY_LOOK_UNDECIDED
+            assert item.status == STATUS_READY
+    assert held_ids == [
+        "SF-117-tiktok",
+        "SF-117-facebook",
+        "SF-117-instagram",
+        "SF-124-facebook",
+        "SF-124-instagram",
+    ]
