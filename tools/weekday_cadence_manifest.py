@@ -40,6 +40,7 @@ ITEM_FIELDS = (
     "media",
     "status",
     "hold_reason",
+    "live_tiers",
     "posted_url",
     "posted_at",
 )
@@ -62,6 +63,7 @@ class CadenceItem:
     hold_reason: str | None = None
     posted_url: str = ""
     posted_at: str = ""
+    live_tiers: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +76,7 @@ class CadenceItem:
             "media": list(self.media),
             "status": self.status,
             "hold_reason": self.hold_reason,
+            "live_tiers": list(self.live_tiers),
             "posted_url": self.posted_url,
             "posted_at": self.posted_at,
         }
@@ -104,7 +107,19 @@ class CadenceItem:
             ),
             posted_url=str(raw.get("posted_url") or ""),
             posted_at=str(raw.get("posted_at") or ""),
+            live_tiers=_parse_live_tiers(raw.get("live_tiers")),
         )
+
+
+def _parse_live_tiers(raw: Any) -> list[str]:
+    if raw in (None, ""):
+        return []
+    if isinstance(raw, str):
+        parts = [part.strip() for part in raw.replace(";", ",").split(",")]
+        return [part for part in parts if part]
+    if isinstance(raw, (list, tuple)):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    return []
 
 
 def item_id(novel: str, platform: str) -> str:
@@ -292,8 +307,8 @@ def write_manifest_md(path: Path, payload: Mapping[str, Any]) -> None:
         f"awaiting_approval={summary.get('awaiting_approval', 0)} "
         f"awaiting_david_post={summary.get('awaiting_david_post', 0)}",
         "",
-        "| id | platform | novel | source_chapter | source_platform | status | hold_reason | media | caption | posted_url | posted_at |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| id | platform | novel | source_chapter | source_platform | live_tiers | status | hold_reason | media | caption | posted_url | posted_at |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for item in items:
         caption = " ".join(str(item.caption).split()).replace("|", "/")
@@ -302,9 +317,10 @@ def write_manifest_md(path: Path, payload: Mapping[str, Any]) -> None:
         media = ", ".join(item.media)
         hold = item.hold_reason or ""
         chapter = "" if item.source_chapter is None else str(item.source_chapter)
+        tiers = ", ".join(item.live_tiers)
         lines.append(
             f"| {item.id} | {item.platform} | {item.novel} | {chapter} | {item.source_platform} | "
-            f"{item.status} | {hold} | {media} | {caption} | {item.posted_url} | {item.posted_at} |"
+            f"{tiers} | {item.status} | {hold} | {media} | {caption} | {item.posted_url} | {item.posted_at} |"
         )
     Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -318,6 +334,7 @@ def write_manifest_csv(path: Path, payload: Mapping[str, Any]) -> None:
             row = item.to_dict()
             row["media"] = ";".join(item.media)
             row["source_chapter"] = "" if item.source_chapter is None else item.source_chapter
+            row["live_tiers"] = ";".join(item.live_tiers)
             writer.writerow(row)
 
 

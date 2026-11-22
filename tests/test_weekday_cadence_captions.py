@@ -11,6 +11,7 @@ from tools.weekday_cadence_captions import (
     extract_hashtags,
     novel_hashtag_set,
     parse_copy_bank,
+    sanitize_caption_for_tiers,
     select_bank_caption,
 )
 
@@ -117,3 +118,39 @@ def test_hashtag_source_prefers_promo_copy_when_available():
     assert tags
     if source == HASHTAG_SOURCE_PROMO_COPY:
         assert "#EternalNexus" in tags or "#AzureInkblade" in tags
+
+
+def test_partial_live_caption_does_not_name_a_tier():
+    text = (
+        "Eternal Nexus chapter 140 is live now on Patreon for Inner Disciple and Path Initiate. "
+        "Link in bio."
+    )
+    cleaned = sanitize_caption_for_tiers(text, ["Inner Disciple"])
+    assert "Inner Disciple" not in cleaned
+    assert "Path Initiate" not in cleaned
+    assert "Patreon" in cleaned
+    # Both tiers live: leave names alone.
+    both = sanitize_caption_for_tiers(text, ["Inner Disciple", "Path Initiate"])
+    assert "Inner Disciple" in both and "Path Initiate" in both
+
+
+def test_captions_for_novel_strips_tiers_when_partial():
+    caps = captions_for_novel(
+        novel="EN",
+        chapter=140,
+        source_platform="patreon",
+        weekday="Monday",
+        bank=[],
+        allowed_chapters=[140],
+        fallback={
+            "facebook": "EN Ch. 140 is live on Patreon for Path Initiate.",
+            "instagram": "EN Ch. 140 is live on Patreon for Path Initiate.",
+            "x": "EN Ch. 140 is live on Patreon for Path Initiate.",
+            "tiktok": "EN Ch. 140 is live on Patreon for Path Initiate.",
+        },
+        live_tiers=["Inner Disciple"],
+    )
+    for platform, text in caps.items():
+        assert "Path Initiate" not in text, platform
+        assert "Inner Disciple" not in text, platform
+        assert "Patreon" in text

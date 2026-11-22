@@ -9,6 +9,8 @@ present in the caption are not repeated. X captions are left unchanged.
 
 from __future__ import annotations
 
+from tools.weekday_cadence_config import KNOWN_PATREON_TIERS, TIER_INNER, TIER_PATH
+
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -279,6 +281,38 @@ def apply_platform_hashtags(
     return append_hashtags(caption, tags, limit=limit), source
 
 
+
+
+_TIER_NAME_RE = re.compile(r"(?i)\b(inner\s+disciple|path\s+initiate)\b")
+_TIER_JOIN_RE = re.compile(r"(?i)\s*(?:and|&|/|or)\s*$")
+
+
+def live_tiers_are_complete(live_tiers: Iterable[str] | None) -> bool:
+    present = {str(item).strip() for item in (live_tiers or []) if str(item).strip()}
+    return all(tier in present for tier in KNOWN_PATREON_TIERS)
+
+
+def caption_mentions_tier(text: str) -> bool:
+    return bool(_TIER_NAME_RE.search(str(text or "")))
+
+
+def sanitize_caption_for_tiers(caption: str, live_tiers: Iterable[str] | None) -> str:
+    """If a chapter is not live on every paid tier, do not name a tier.
+
+    Captions may still say the chapter is live now on Patreon. Partial chapters
+    such as EN-140 (Inner Disciple only) must not name Inner Disciple or Path
+    Initiate, so a reader is not promised a post on a tier that is not live.
+    """
+    text = str(caption or "")
+    if live_tiers_are_complete(live_tiers):
+        return text
+    stripped = _TIER_NAME_RE.sub("", text)
+    # Collapse leftover "for  members" / double spaces after removals.
+    stripped = re.sub(r"[ \t]{2,}", " ", stripped)
+    stripped = re.sub(r" ?\n ?\n ?", "\n\n", stripped)
+    return stripped.strip()
+
+
 def captions_for_novel(
     *,
     novel: str,
@@ -288,6 +322,7 @@ def captions_for_novel(
     bank: Sequence[BankCaption],
     allowed_chapters: Iterable[int] | None,
     fallback: Mapping[str, str],
+    live_tiers: Iterable[str] | None = None,
 ) -> dict[str, str]:
     from tools.weekday_cadence_posts import default_captions
 
@@ -307,5 +342,5 @@ def captions_for_novel(
         if picked is not None:
             base[platform] = picked.text
         text, _source = apply_platform_hashtags(base.get(platform, ""), novel=novel, platform=platform)
-        base[platform] = text
+        base[platform] = sanitize_caption_for_tiers(text, live_tiers)
     return base

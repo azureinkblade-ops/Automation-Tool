@@ -1,14 +1,21 @@
 """Weekday cadence planner: chapter pick, identity cutoff, and item assembly.
 
-Chapter pick defaults to each novel's newest chapter with verified live Patreon
-status in local release-status records (patreonExists). Royal Road is a config
-option (royalRoadExists). Missing or unverifiable records hold that novel's items
-instead of guessing. This module never calls Patreon, Royal Road, or social APIs.
+Chapter pick defaults to each novel's newest chapter verified live on Patreon
+from local chapter_ledger records (postedToPatreon plus post records / tier
+posted flags). Royal Road is a config option (postedToRoyalRoad or
+royalRoadExists). release_status.patreonExists is still honored when present
+in a provided records payload, but the default loader no longer reads that
+table because it stopped receiving EN posted flags after EN-132.
+Missing or unverifiable records hold that novel's items instead of guessing.
+This module never calls Patreon, Royal Road, or social APIs, and it never
+writes to the ledger or release_status tables.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+import sqlite3
+from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -26,20 +33,24 @@ def timezone_for(name: str):
             return ZoneInfo(name)
         except Exception:
             pass
-    if name in {'America/Phoenix', 'US/Arizona'}:
+    if name in {"America/Phoenix", "US/Arizona"}:
         return timezone(timedelta(hours=-7))
-    raise RuntimeError(f'unknown timezone {name!r} and tzdata is unavailable')
+    raise RuntimeError(f"unknown timezone {name!r} and tzdata is unavailable")
+
 
 from tools.weekday_cadence_config import (
     CHAPTER_SOURCE_PATREON,
     CHAPTER_SOURCE_ROYAL_ROAD,
     HOLD_IDENTITY_UNAPPROVED,
     HOLD_UNVERIFIED_SOURCE,
+    KNOWN_PATREON_TIERS,
     STATUS_AWAITING_APPROVAL,
     STATUS_AWAITING_DAVID,
     STATUS_HELD,
     STATUS_READY,
     STATIC_PLATFORMS,
+    TIER_INNER,
+    TIER_PATH,
     VIDEO_PLATFORMS,
     WEEKDAYS,
     WeekdayCadenceConfig,
@@ -48,6 +59,7 @@ from tools.weekday_cadence_manifest import CadenceItem, item_id
 from tools.weekday_cadence_overrides import (
     PatreonLiveOverride,
     load_patreon_live_overrides,
+    override_for_chapter,
     overrides_for_novel,
 )
 
@@ -55,6 +67,19 @@ EXISTS_FLAG = {
     CHAPTER_SOURCE_PATREON: "patreonExists",
     CHAPTER_SOURCE_ROYAL_ROAD: "royalRoadExists",
 }
+
+PATREON_POST_ID_KEYS = (
+    "patreonInnerDisciplePostId",
+    "innerDisciplePostId",
+    "patreonPathInitiatePostId",
+    "pathInitiatePostId",
+    "patreonPostId",
+    "postId",
+)
+
+
+def _truthy(value: Any) -> bool:
+    return value is True or value == 1 or str(value).strip().lower() == "true"
 
 
 @dataclass(frozen=True)
@@ -64,6 +89,7 @@ class ChapterPick:
     chapter: int | None
     verified: bool
     hold_reason: str | None = None
+    live_tiers: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -72,6 +98,7 @@ class ChapterPick:
             "source_chapter": self.chapter,
             "verified": self.verified,
             "hold_reason": self.hold_reason,
+            "live_tiers": list(self.live_tiers),
         }
 
 
@@ -153,13 +180,101 @@ def iter_release_entries(records: Mapping[str, Any] | None) -> list[tuple[str, i
     return out
 
 
+def patreon_post_ids(entry: Mapping[str, Any]) -> list[str]:
+    found: list[str] = []
+    for key in PATREON_POST_ID_KEYS:
+        value = str(entry.get(key) or "").strip()
+        if value and value not in found:
+            found.append(value)
+    extra = entry.get("patreon_post_records") or entry.get("post_records") or []
+    if isinstance(extra, list):
+        for row in extra:
+            if isinstance(row, Mapping):
+                value = str(row.get("post_id") or row.get("id") or row.get("live_url") or "").strip()
+            else:
+                value = str(row or "").strip()
+            if value and value not in found:
+                found.append(value)
+    return found
+
+
+def has_patreon_post_evidence(entry: Mapping[str, Any]) -> bool:
+    """True when the ledger row has post IDs or explicit tier-posted flags.
+
+    Schedule dates alone (innerDiscipleDate / pathInitiateDate) are not evidence.
+    """
+    if patreon_post_ids(entry):
+        return True
+    if _truthy(entry.get("patreonInnerDisciplePosted")) or _truthy(entry.get("patreonPathInitiatePosted")):
+        return True
+    return False
+
+
 def is_verified_live(entry: Mapping[str, Any], source: str) -> bool:
-    """True only when the record explicitly marks the chapter live. No schedule inference."""
-    flag = EXISTS_FLAG.get(str(source).strip().lower())
-    if not flag:
+    """True only with explicit live evidence. No schedule-date inference."""
+    platform = str(source).strip().lower()
+    if platform == CHAPTER_SOURCE_PATREON:
+        if _truthy(entry.get("patreonExists")):
+            return True
+        # chapter_ledger: postedToPatreon plus post IDs or tier posted flags.
+        return _truthy(entry.get("postedToPatreon")) and has_patreon_post_evidence(entry)
+    if platform == CHAPTER_SOURCE_ROYAL_ROAD:
+        if _truthy(entry.get("royalRoadExists")):
+            return True
+        if _truthy(entry.get("postedToRoyalRoad")):
+            url = str(entry.get("royalRoadUrl") or entry.get("royalRoadChapterUrl") or "").strip()
+            return bool(url) or _truthy(entry.get("royalRoadExists"))
         return False
-    value = entry.get(flag)
-    return value is True or value == 1 or str(value).strip().lower() == "true"
+    return False
+
+
+def live_tiers_from_entry(entry: Mapping[str, Any] | None) -> list[str]:
+    if not isinstance(entry, Mapping):
+        return []
+    declared = entry.get("tiers_live") or entry.get("live_tiers") or []
+    names: list[str] = []
+    if isinstance(declared, (list, tuple)):
+        for item in declared:
+            name = str(item or "").strip()
+            if name and name not in names:
+                names.append(name)
+    inner_id = str(entry.get("patreonInnerDisciplePostId") or entry.get("innerDisciplePostId") or "").strip()
+    path_id = str(entry.get("patreonPathInitiatePostId") or entry.get("pathInitiatePostId") or "").strip()
+    if _truthy(entry.get("patreonInnerDisciplePosted")) or inner_id:
+        if TIER_INNER not in names:
+            names.append(TIER_INNER)
+    if _truthy(entry.get("patreonPathInitiatePosted")) or path_id:
+        if TIER_PATH not in names:
+            names.append(TIER_PATH)
+    return _order_tiers(names)
+
+
+def live_tiers_from_override(override: PatreonLiveOverride | None) -> list[str]:
+    if override is None:
+        return []
+    names = [str(item).strip() for item in (override.tiers_live or ()) if str(item).strip()]
+    for ref in override.post_ids:
+        if ref.tier and ref.tier not in names:
+            names.append(ref.tier)
+    return _order_tiers(names)
+
+
+def _order_tiers(names: Sequence[str]) -> list[str]:
+    known = [tier for tier in KNOWN_PATREON_TIERS if tier in names]
+    extra = [name for name in names if name not in known]
+    return known + extra
+
+
+def resolve_live_tiers(
+    *,
+    entry: Mapping[str, Any] | None,
+    override: PatreonLiveOverride | None,
+) -> tuple[str, ...]:
+    # A confirmed override is the authority for that chapter's live tiers.
+    from_override = live_tiers_from_override(override)
+    if from_override:
+        return tuple(from_override)
+    return tuple(live_tiers_from_entry(entry))
 
 
 def newest_verified_chapter(
@@ -171,14 +286,20 @@ def newest_verified_chapter(
 ) -> ChapterPick:
     abbr = str(novel).strip().upper()
     platform = str(source).strip().lower()
+    ledger_entries = {
+        chapter: entry
+        for entry_abbr, chapter, entry in iter_release_entries(records)
+        if entry_abbr == abbr
+    }
     ledger_numbers = [
         chapter
-        for entry_abbr, chapter, entry in iter_release_entries(records)
-        if entry_abbr == abbr and is_verified_live(entry, platform)
+        for chapter, entry in ledger_entries.items()
+        if is_verified_live(entry, platform)
     ]
     override_numbers: list[int] = []
+    override_list = list(overrides or [])
     if platform == CHAPTER_SOURCE_PATREON:
-        override_numbers = [entry.chapter for entry in overrides_for_novel(overrides or [], abbr)]
+        override_numbers = [entry.chapter for entry in overrides_for_novel(override_list, abbr)]
     # An override beats the ledger's not-posted flag; without one, the ledger stays the source.
     verified_numbers = set(ledger_numbers) | set(override_numbers)
     if not verified_numbers:
@@ -189,12 +310,15 @@ def newest_verified_chapter(
             verified=False,
             hold_reason=f"{HOLD_UNVERIFIED_SOURCE}:{platform}",
         )
+    chapter = max(verified_numbers)
+    override = override_for_chapter(override_list, abbr, chapter) if platform == CHAPTER_SOURCE_PATREON else None
     return ChapterPick(
         novel=abbr,
         source_platform=platform,
-        chapter=max(verified_numbers),
+        chapter=chapter,
         verified=True,
         hold_reason=None,
+        live_tiers=resolve_live_tiers(entry=ledger_entries.get(chapter), override=override),
     )
 
 
@@ -212,8 +336,88 @@ def pick_chapters(
     }
 
 
+def _sqlite_readonly(path: Path) -> sqlite3.Connection:
+    uri = f"file:{Path(path).resolve().as_posix()}?mode=ro"
+    return sqlite3.connect(uri, uri=True)
+
+
+def load_live_chapter_records(root: Path) -> dict[str, Any] | None:
+    """Read chapter_ledger (and any matching Patreon post_records) read-only.
+
+    Never calls init_db, never writes, and never uses release_status.
+    """
+    db_path = Path(root) / "automation_state.db"
+    if not db_path.is_file():
+        return None
+    try:
+        conn = _sqlite_readonly(db_path)
+    except Exception:
+        return None
+    conn.row_factory = sqlite3.Row
+    try:
+        try:
+            rows = conn.execute("SELECT ledger_key, abbr, chapter, payload_json FROM chapter_ledger").fetchall()
+        except sqlite3.Error:
+            return None
+        post_rows = []
+        try:
+            post_rows = conn.execute(
+                """
+                SELECT novel, chapter, live_url, payload_json, automation_record_id
+                FROM post_records
+                WHERE lower(platform) = 'patreon'
+                """
+            ).fetchall()
+        except sqlite3.Error:
+            post_rows = []
+    finally:
+        conn.close()
+
+    extras: dict[tuple[str, int], list[dict[str, Any]]] = {}
+    for row in post_rows:
+        abbr = str(row["novel"] or "").strip().upper()
+        try:
+            chapter = int(row["chapter"])
+        except (TypeError, ValueError):
+            continue
+        if not abbr or chapter <= 0:
+            continue
+        extras.setdefault((abbr, chapter), []).append(
+            {
+                "id": str(row["automation_record_id"] or ""),
+                "live_url": str(row["live_url"] or ""),
+            }
+        )
+
+    chapters: dict[str, Any] = {}
+    for row in rows:
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except Exception:
+            payload = None
+        if not isinstance(payload, dict):
+            continue
+        abbr = str(row["abbr"] or payload.get("abbr") or "").strip().upper()
+        try:
+            chapter = int(row["chapter"] if row["chapter"] not in (None, "") else payload.get("chapter"))
+        except (TypeError, ValueError):
+            continue
+        if not abbr or chapter <= 0:
+            continue
+        key = str(row["ledger_key"] or f"{abbr}-{chapter}")
+        entry = dict(payload)
+        entry.setdefault("abbr", abbr)
+        entry.setdefault("chapter", chapter)
+        if extras.get((abbr, chapter)):
+            entry.setdefault("patreon_post_records", extras[(abbr, chapter)])
+        chapters[key] = entry
+    if not chapters:
+        return None
+    return {"schemaVersion": 1, "chapters": chapters, "source": "chapter_ledger"}
+
+
 def load_release_status_records(root: Path) -> dict[str, Any] | None:
-    """Read local release-status records only. Never calls a network API."""
+    """Legacy loader kept for comparison tests. Default cadence pick does not use it."""
     try:
         import automation_db
     except Exception:
@@ -257,9 +461,11 @@ def apply_unverified_hold(item: CadenceItem, pick: ChapterPick) -> CadenceItem:
     if pick.verified and pick.chapter is not None:
         item.source_chapter = pick.chapter
         item.source_platform = pick.source_platform
+        item.live_tiers = list(pick.live_tiers)
         return item
     item.source_chapter = None
     item.source_platform = pick.source_platform
+    item.live_tiers = []
     item.status = STATUS_HELD
     item.hold_reason = pick.hold_reason or f"{HOLD_UNVERIFIED_SOURCE}:{pick.source_platform}"
     item.media = []
@@ -284,6 +490,7 @@ def plan_items_for_novel(
             caption=str(copy.get(platform) or ""),
             status=STATUS_READY if pick.verified else STATUS_HELD,
             hold_reason=None if pick.verified else (pick.hold_reason or f"{HOLD_UNVERIFIED_SOURCE}:{pick.source_platform}"),
+            live_tiers=list(pick.live_tiers),
         )
         item = apply_unverified_hold(item, pick)
         item = apply_x_default(item, config)

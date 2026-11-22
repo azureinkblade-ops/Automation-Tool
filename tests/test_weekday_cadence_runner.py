@@ -49,7 +49,13 @@ def test_dry_run_writes_relative_manifest_and_stubs_clips(tmp_path: Path):
     assert ids["EN-tiktok"]["hold_reason"] == "DRY_RUN:CLIP_STUBBED"
     assert ids["EN-facebook"]["source_chapter"] == 138
     assert ids["EN-facebook"]["source_platform"] == "patreon"
+    assert ids["EN-facebook"]["status"] == "ready"
+    assert ids["EN-instagram"]["status"] == "ready"
     assert ids["HP-facebook"]["source_chapter"] == 148
+    assert ids["HP-facebook"]["status"] == "held"
+    assert ids["HP-facebook"]["hold_reason"] == "MEDIA_REQUIRED_MISSING"
+    assert ids["HP-instagram"]["status"] == "held"
+    assert ids["HP-instagram"]["hold_reason"] == "MEDIA_REQUIRED_MISSING"
     media = ids["EN-facebook"]["media"]
     assert media == ids["EN-instagram"]["media"] == ids["EN-x"]["media"]
     assert media == ["media/EN-still.png"]

@@ -19,9 +19,11 @@ from tools.weekday_cadence_config import (
     HOLD_DRY_RUN_CLIP,
     HOLD_FRAME_PROBE,
     HOLD_MEDIA,
+    HOLD_MEDIA_REQUIRED,
     HOLD_NO_STILL,
     HOLD_SLIDESHOW,
     HOLD_SVD,
+    MEDIA_REQUIRED_PLATFORMS,
     MIN_SECONDS,
     PUBLISH_GENERATED_MEDIA,
     SOCIAL_READY,
@@ -99,6 +101,25 @@ def apply_shared_still(items: Sequence[CadenceItem], relative_name: str) -> None
     for item in items:
         if item.platform in {"facebook", "instagram", "x"}:
             item.media = [relative_name]
+
+
+
+
+def apply_media_required_holds(items: Sequence[CadenceItem]) -> list[CadenceItem]:
+    """Instagram always needs media; Facebook does in this weekday plan.
+
+    An item on those platforms with no media must never stay `ready`.
+    Other statuses (held, awaiting_approval, awaiting_david_post) are left alone.
+    """
+    for item in items:
+        if item.platform not in MEDIA_REQUIRED_PLATFORMS:
+            continue
+        if item.media:
+            continue
+        if item.status == STATUS_READY:
+            item.status = STATUS_HELD
+            item.hold_reason = HOLD_MEDIA_REQUIRED
+    return list(items)
 
 
 def default_frame_probe(clip: ClipResult) -> tuple[bool, str]:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from tools.weekday_cadence import timezone_for
+from tools.weekday_cadence_posts import apply_media_required_holds
 
 from tools.weekday_cadence import (
     CadenceItem,
@@ -117,3 +118,20 @@ def test_svd_slideshow_and_failed_probe_are_held():
     status, reason = evaluate_tiktok_clip(bad, config=CFG)
     assert status == "held"
     assert reason == "MEDIA_HOLD:FRAME_PROBE_FAILED"
+
+
+def test_facebook_and_instagram_without_media_are_never_ready():
+    fb = _item(status="ready", platform="facebook")
+    ig = _item(status="ready", platform="instagram")
+    x = _item(status="awaiting_david_post", platform="x")
+    ready = _item(status="ready", platform="facebook", media=["media/EN-still.png"])
+    already_held = _item(status="held", platform="instagram", hold_reason="CHAPTER_SOURCE_UNVERIFIED:patreon")
+    apply_media_required_holds([fb, ig, x, ready, already_held])
+    assert fb.status == "held"
+    assert fb.hold_reason == "MEDIA_REQUIRED_MISSING"
+    assert ig.status == "held"
+    assert ig.hold_reason == "MEDIA_REQUIRED_MISSING"
+    assert x.status == "awaiting_david_post"
+    assert ready.status == "ready"
+    assert already_held.status == "held"
+    assert already_held.hold_reason == "CHAPTER_SOURCE_UNVERIFIED:patreon"

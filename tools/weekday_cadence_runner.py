@@ -22,6 +22,7 @@ from tools.weekday_cadence import (
     approval_inbox_entries,
     apply_identity_cutoff,
     is_weekday,
+    load_live_chapter_records,
     load_release_status_records,
     next_weekday,
     now_now,
@@ -47,6 +48,7 @@ from tools.weekday_cadence_manifest import (
     unique_media_name,
 )
 from tools.weekday_cadence_posts import (
+    apply_media_required_holds,
     apply_shared_still,
     build_tiktok_item,
     default_captions,
@@ -162,6 +164,12 @@ def run_cadence(
     captions_by_novel: Mapping[str, Mapping[str, str]] | None = None,
     overrides=None,
     copy_bank=None,
+    with_media: bool = False,
+    still_finder=None,
+    generate_still=None,
+    gpu_lease=None,
+    media_port_free=None,
+    media_processes=None,
 ) -> dict[str, Any]:
     if config.publish_generated_media or PUBLISH_GENERATED_MEDIA:
         raise RuntimeError("weekday cadence refused to run with publishing enabled")
@@ -172,6 +180,30 @@ def run_cadence(
     planned, picks = plan_day_items(
         records, config, captions_by_novel=captions_by_novel, overrides=overrides
     )
+    stills = dict(stills or {})
+    clips = dict(clips or {})
+    identity_needed = dict(identity_needed or {})
+    identity_approved = dict(identity_approved or {})
+    if with_media:
+        from tools.weekday_cadence_media import prepare_media
+
+        prepared = prepare_media(
+            novels=tuple(picks.keys()),
+            chapters={abbr: pick.chapter for abbr, pick in picks.items()},
+            with_media=True,
+            dry_run=dry_run,
+            existing_stills=stills,
+            finder=still_finder,
+            generate_still=None if dry_run else generate_still,
+            produce_clip=None if dry_run else produce_clip,
+            gpu_lease=gpu_lease,
+            port_free=media_port_free,
+            processes=media_processes,
+        )
+        stills.update(prepared.stills)
+        clips.update(prepared.clips)
+        for abbr, needed in prepared.identity_needed.items():
+            identity_needed[abbr] = bool(needed) or bool(identity_needed.get(abbr))
     bank_items = list(copy_bank or [])
     by_novel: dict[str, dict[str, str]] = dict(captions_by_novel or {})
     for novel, pick in picks.items():
@@ -185,6 +217,7 @@ def run_cadence(
             bank=bank_items,
             allowed_chapters=allowed,
             fallback=fallback,
+            live_tiers=pick.live_tiers,
         )
     for item in planned:
         caps = by_novel.get(item.novel) or {}
@@ -199,9 +232,9 @@ def run_cadence(
         config=config,
         now=current,
         deadline=deadline,
-        identity_needed=identity_needed or {},
-        identity_approved=identity_approved or {},
-        stills=stills or {},
+        identity_needed=identity_needed,
+        identity_approved=identity_approved,
+        stills=stills,
         produce_clip=produce_clip if not dry_run else stub_produce_clip,
     )
     day_path = day_dir(out_root, target.isoformat(), output_dirname=config.output_dirname)
@@ -209,10 +242,11 @@ def run_cadence(
     attach_media(
         planned,
         day_path=day_path,
-        stills=stills or {},
-        clips=clips or {},
+        stills=stills,
+        clips=clips,
         share_still=config.share_still_across_static,
     )
+    apply_media_required_holds(planned)
     payload = build_manifest(
         target_date=target.isoformat(),
         target_weekday=weekday_name(target),
@@ -250,7 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--dry-run", action="store_true", help="No ComfyUI, no ffmpeg, no API calls.")
     parser.add_argument("--root", help="Repo root used for the daily-social output folder.")
-    parser.add_argument("--app-root", help="Root that holds local release-status records (read-only).")
+    parser.add_argument("--app-root", help="Root that holds local chapter_ledger records (read-only).")
     parser.add_argument(
         "--chapter-source",
         choices=("patreon", "royal_road"),
@@ -261,6 +295,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--copy-bank", help="Optional Writer copy-bank markdown path.")
     parser.add_argument("--overrides", help="Optional patreon_live_overrides.json path.")
     parser.add_argument("--timezone", default=None)
+    parser.add_argument(
+        "--with-media",
+        action="store_true",
+        dest="with_media",
+        help=(
+            "Resolve or generate stills and Wan clips. Reuses existing promo or "
+            "approved stills first. Takes the GPU through the existing lease only "
+            "when port 8188 is free and no Research python/ffmpeg process is running. "
+            "Do not combine with a live Research GPU test. --dry-run never generates."
+        ),
+    )
     return parser
 
 
@@ -276,7 +321,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     config = WeekdayCadenceConfig.from_mapping(cfg_data)
     today = now_now(config).date()
     target = parse_iso_date(args.date) if args.date else next_weekday(today)
-    records = load_release_status_records(app_root)
+    records = load_live_chapter_records(app_root)
     override_path = Path(args.overrides).resolve() if getattr(args, "overrides", None) else repo / OVERRIDE_RELATIVE
     if args.app_root:
         # Prefer the output repo copy; fall back to the records root if needed.
@@ -299,6 +344,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         produce_clip=stub_produce_clip,
         overrides=load_patreon_live_overrides(override_path),
         copy_bank=load_copy_bank(bank_path),
+        with_media=bool(getattr(args, "with_media", False)),
     )
     day = payload.get("_dayDir", "")
     summary = payload.get("summary") or {}
@@ -316,6 +362,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"pick {abbr} chapter={pick.get('source_chapter')} "
             f"source={pick.get('source_platform')} verified={pick.get('verified')} "
+            f"tiers={','.join(pick.get('live_tiers') or [])} "
             f"hold={pick.get('hold_reason') or ''}"
         )
     return 0

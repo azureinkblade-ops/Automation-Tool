@@ -1,5 +1,336 @@
 {
   "schemaVersion": 1,
-  "notes": "Teammate-confirmed live Patreon chapters. A complete entry (chapter id, post_url, verified_at, verified_by) beats the ledger's not-posted flag. Without an entry, the ledger stays the source. Leave entries empty until Product Performance verifies. Do not invent rows. Reported but not added: EN-140 as Patreon post 173664094; HA-94 through HA-99 cancelled as already live, awaiting that check.",
-  "entries": []
+  "notes": "Teammate-confirmed live Patreon chapters. A complete entry (chapter id, post URL or post IDs, verified_at, verified_by) beats the ledger's not-posted flag. Without an entry, chapter_ledger postedToPatreon plus post records stay the source. Product Performance confirmed the public listing on 2026-11-21 (EN-133 to EN-140, HA-94 to HA-99). EN-137 and EN-138 were also confirmed earlier the same day during the Coder job-cancel check (2026-11-21 15:43:55 America/Phoenix); Product Performance later assigned Inner Disciple / Path Initiate tiers to those post IDs. EN-140 is live on Inner Disciple only; Path Initiate is not posted. Do not invent rows. Do not edit the chapter ledger from this file.",
+  "entries": [
+    {
+      "chapter_id": "EN-133",
+      "abbr": "EN",
+      "chapter": 133,
+      "post_url": "https://www.patreon.com/posts/167783038",
+      "post_ids": [
+        {
+          "id": "167783038",
+          "post_url": "https://www.patreon.com/posts/167783038",
+          "tier": "Inner Disciple"
+        },
+        {
+          "id": "170481122",
+          "post_url": "https://www.patreon.com/posts/170481122",
+          "tier": "Path Initiate"
+        }
+      ],
+      "verified_at": "2026-11-21",
+      "verified_by": "Product Performance",
+      "tiers_live": [
+        "Inner Disciple",
+        "Path Initiate"
+      ]
+    },
+    {
+      "chapter_id": "EN-134",
+      "abbr": "EN",
+      "chapter": 134,
+      "post_url": "https://www.patreon.com/posts/170899181",
+      "post_ids": [
+        {
+          "id": "170899181",
+          "post_url": "https://www.patreon.com/posts/170899181",
+          "tier": "Inner Disciple"
+        },
+        {
+          "id": "170899227",
+          "post_url": "https://www.patreon.com/posts/170899227",
+          "tier": "Path Initiate"
+        }
+      ],
+      "verified_at": "2026-11-21",
+      "verified_by": "Product Performance",
+      "tiers_live": [
+        "Inner Disciple",
+        "Path Initiate"
+      ]
+    },
+    {
+      "chapter_id": "EN-135",
+      "abbr": "EN",
+      "chapter": 135,
+      "post_url": "https://www.patreon.com/posts/170899437",
+      "post_ids": [
+        {
+          "id": "170899437",
+          "post_url": "https://www.patreon.com/posts/170899437",
+          "tier": "Inner Disciple"
+        },
+        {
+          "id": "170899489",
+          "post_url": "https://www.patreon.com/posts/170899489",
+          "tier": "Path Initiate"
+        }
+      ],
+      "verified_at": "2026-11-21",
+      "verified_by": "Product Performance",
+      "tiers_live": [
+        "Inner Disciple",
+        "Path Initiate"
+      ]
+    },
+    {
+      "chapter_id": "EN-136",
+      "abbr": "EN",
+      "chapter": 136,
+      "post_url": "https://www.patreon.com/posts/170899539",
+      "post_ids": [
+        {
+          "id": "170899539",
+          "post_url": "https://www.patreon.com/posts/170899539",
+          "tier": "Inner Disciple"
+        },
+        {
+          "id": "170899597",
+          "post_url": "https://www.patreon.com/posts/170899597",
+          "tier": "Path Initiate"
+        }
+      ],
+      "verified_at": "2026-11-21",
+      "verified_by": "Product Performance",
+      "tiers_live": [
+        "Inner Disciple",
+        "Path Initiate"
+      ]
+    },
+    {
+      "chapter_id": "EN-137",
+      "abbr": "EN",
+      "chapter": 137,
+      "post_url": "https://www.patreon.com/posts/170899822",
+      "post_ids": [
+        {
+          "id": "170899822",
+          "post_url": "https://www.patreon.com/posts/170899822",
+          "tier": "Inner Disciple"
+        },
+        {
+          "id": "170899872",
+          "post_url": "https://www.patreon.com/posts/170899872",
+          "tier": "Path Initiate"
+        }
+      ],
+      "verified_at": "2026-11-21",
+      "verified_by": "Product Performance",
+      "tiers_live": [
+        "Inner Disciple",
+        "Path Initiate"
+      ]
+    },
+    {
+      "chapter_id": "EN-138",
+      "abbr": "EN",
+      "chapter": 138,
+      "post_url": "https://www.patreon.com/posts/170900005",
+      "post_ids": [
+        {
+          "id": "170900005",
+          "post_url": "https://www.patreon.com/posts/170900005",
+          "tier": "Inner Disciple"
+        },
+        {
+          "id": "170900071",
+          "post_url": "https://www.patreon.com/posts/170900071",
+          "tier": "Path Initiate"
+        }
+      ],
+      "verified_at": "2026-11-21",
+      "verified_by": "Product Performance",
+      "tiers_live": [
+        "Inner Disciple",
+        "Path Initiate"
+      ]
+    },
+    {
+      "chapter_id": "EN-139",
+      "abbr": "EN",
+      "chapter": 139,
+      "post_url": "https://www.patreon.com/posts/170460775",
+      "post_ids": [
+        {
+          "id": "170460775",
+          "post_url": "https://www.patreon.com/posts/170460775",
+          "tier": "Inner Disciple"
+        },
+        {
+          "id": "170460933",
+          "post_url": "https://www.patreon.com/posts/170460933",
+          "tier": "Path Initiate"
+        }
+      ],
+      "verified_at": "2026-11-21T20:45:00-07:00",
+      "verified_by": "Product Performance",
+      "tiers_live": [
+        "Inner Disciple",
+        "Path Initiate"
+      ]
+    },
+    {
+      "chapter_id": "EN-140",
+      "abbr": "EN",
+      "chapter": 140,
+      "post_url": "https://www.patreon.com/posts/173664094",
+      "post_ids": [
+        {
+          "id": "173664094",
+          "post_url": "https://www.patreon.com/posts/173664094",
+          "tier": "Inner Disciple"
+        }
+      ],
+      "verified_at": "2026-11-21T20:45:00-07:00",
+      "verified_by": "Product Performance",
+      "tiers_live": [
+        "Inner Disciple"
+      ]
+    },
+    {
+      "chapter_id": "HA-94",
+      "abbr": "HA",
+      "chapter": 94,
+      "post_url": "https://www.patreon.com/posts/171220335",
+      "post_ids": [
+        {
+          "id": "171220335",
+          "post_url": "https://www.patreon.com/posts/171220335",
+          "tier": "Inner Disciple"
+        },
+        {
+          "id": "167782343",
+          "post_url": "https://www.patreon.com/posts/167782343",
+          "tier": "Path Initiate"
+        }
+      ],
+      "verified_at": "2026-11-21T20:45:00-07:00",
+      "verified_by": "Product Performance",
+      "tiers_live": [
+        "Inner Disciple",
+        "Path Initiate"
+      ]
+    },
+    {
+      "chapter_id": "HA-95",
+      "abbr": "HA",
+      "chapter": 95,
+      "post_url": "https://www.patreon.com/posts/171230971",
+      "post_ids": [
+        {
+          "id": "171230971",
+          "post_url": "https://www.patreon.com/posts/171230971",
+          "tier": "Inner Disciple"
+        },
+        {
+          "id": "171231338",
+          "post_url": "https://www.patreon.com/posts/171231338",
+          "tier": "Path Initiate"
+        }
+      ],
+      "verified_at": "2026-11-21T20:45:00-07:00",
+      "verified_by": "Product Performance",
+      "tiers_live": [
+        "Inner Disciple",
+        "Path Initiate"
+      ]
+    },
+    {
+      "chapter_id": "HA-96",
+      "abbr": "HA",
+      "chapter": 96,
+      "post_url": "https://www.patreon.com/posts/171231789",
+      "post_ids": [
+        {
+          "id": "171231789",
+          "post_url": "https://www.patreon.com/posts/171231789",
+          "tier": "Inner Disciple"
+        },
+        {
+          "id": "171232162",
+          "post_url": "https://www.patreon.com/posts/171232162",
+          "tier": "Path Initiate"
+        }
+      ],
+      "verified_at": "2026-11-21T20:45:00-07:00",
+      "verified_by": "Product Performance",
+      "tiers_live": [
+        "Inner Disciple",
+        "Path Initiate"
+      ]
+    },
+    {
+      "chapter_id": "HA-97",
+      "abbr": "HA",
+      "chapter": 97,
+      "post_url": "https://www.patreon.com/posts/171232686",
+      "post_ids": [
+        {
+          "id": "171232686",
+          "post_url": "https://www.patreon.com/posts/171232686",
+          "tier": "Inner Disciple"
+        },
+        {
+          "id": "171232991",
+          "post_url": "https://www.patreon.com/posts/171232991",
+          "tier": "Path Initiate"
+        }
+      ],
+      "verified_at": "2026-11-21T20:45:00-07:00",
+      "verified_by": "Product Performance",
+      "tiers_live": [
+        "Inner Disciple",
+        "Path Initiate"
+      ]
+    },
+    {
+      "chapter_id": "HA-98",
+      "abbr": "HA",
+      "chapter": 98,
+      "post_url": "https://www.patreon.com/posts/171233745",
+      "post_ids": [
+        {
+          "id": "171233745",
+          "post_url": "https://www.patreon.com/posts/171233745",
+          "tier": "Inner Disciple"
+        },
+        {
+          "id": "171234131",
+          "post_url": "https://www.patreon.com/posts/171234131",
+          "tier": "Path Initiate"
+        }
+      ],
+      "verified_at": "2026-11-21T20:45:00-07:00",
+      "verified_by": "Product Performance",
+      "tiers_live": [
+        "Inner Disciple",
+        "Path Initiate"
+      ]
+    },
+    {
+      "chapter_id": "HA-99",
+      "abbr": "HA",
+      "chapter": 99,
+      "post_url": "https://www.patreon.com/posts/171234532",
+      "post_ids": [
+        {
+          "id": "171234532",
+          "post_url": "https://www.patreon.com/posts/171234532",
+          "tier": "Inner Disciple"
+        },
+        {
+          "id": "171234946",
+          "post_url": "https://www.patreon.com/posts/171234946",
+          "tier": "Path Initiate"
+        }
+      ],
+      "verified_at": "2026-11-21T20:45:00-07:00",
+      "verified_by": "Product Performance",
+      "tiers_live": [
+        "Inner Disciple",
+        "Path Initiate"
+      ]
+    }
+  ]
 }
