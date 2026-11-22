@@ -31,19 +31,19 @@ def test_dry_run_writes_relative_manifest_and_stubs_clips(tmp_path: Path):
 - Items tagged **[APPROVAL: needs David's approval for media]** show Kai, Kael, Liang or Jarek on screen.
 
 ## Day 1 (Week 1, Monday)
-**FB/IG post** [source EN-138]
+**FB/IG post** [source EN-138] [no governed characters]
 - Text: A street after rain. Eternal Nexus chapter 138 is live now on Patreon. Link in bio.
 
-**TikTok** [source EN-138]
+**TikTok** [source EN-138] [no governed characters]
 - Caption: A street after rain. Chapter 138 of Eternal Nexus is live now on Patreon. Link in bio.
 
 **X post** [source EN-138]
 a street after rain. Eternal Nexus ch 138 is up on Patreon, link in bio #webnovel #cultivation
 
-**FB/IG post** [source HP-148]
+**FB/IG post** [source HP-148] [no governed characters]
 - Text: A lamp still burns. Chapter 148 of The Hundredfold Path is live now on Patreon. Link in bio.
 
-**TikTok** [source HP-148]
+**TikTok** [source HP-148] [no governed characters]
 - Caption: A lamp still burns. Chapter 148 of The Hundredfold Path is live now on Patreon. Link in bio.
 
 **X post** [source HP-148]

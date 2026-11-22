@@ -344,11 +344,11 @@ def test_research_style_sf_item_reaches_media_and_x_stays_text_only(tmp_path: Pa
     assert hp_fb["status"] == "awaiting_approval"
     assert hp_fb["hold_reason"] == "NO_STRUCTURED_DEPICTION_EVIDENCE"
 
-    # Convention-untagged HA is not_governed and should get media.
+    # Untagged HA has no structured depiction evidence and fails closed.
     ha_fb = by_id["HA-facebook"]
-    assert ha_fb["depiction"] == "not_governed"
-    assert ha_fb["status"] != "awaiting_approval"
-    assert ha_fb["media"]
+    assert ha_fb["depiction"] == "unknown"
+    assert ha_fb["status"] == "awaiting_approval"
+    assert ha_fb["hold_reason"] == "NO_STRUCTURED_DEPICTION_EVIDENCE"
 
     for item in items:
         if item["status"] != "ready":

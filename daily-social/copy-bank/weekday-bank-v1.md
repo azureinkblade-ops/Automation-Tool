@@ -24,14 +24,14 @@ Hashtags
 ## Day 1 (Week 1, Monday)
 
 ### EN: Eternal Nexus
-**TikTok** [source EN-127]
+**TikTok** [source EN-127] [no governed characters]
 - Spoken hook: "Why is he laughing? Because you still think it's a prison."
 - On-screen text: A prison expects you to survive release.
 - Visual: A beaten stranger slumped against a rain-streaked apartment wall, laughing, a ring of orbital stations glowing in the sky behind him.
 - Caption: He's bleeding, he's beaten, and he's still laughing. Nine million people are locked in the ark, and the man who knows why says it was never a prison. Chapter 127 of Eternal Nexus is live now on Patreon. Link in bio.
 #EternalNexus #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source EN-127]
+**FB/IG post** [source EN-127] [no governed characters]
 - Image: A golden road crossing a broken sky toward a ring of sealed military stations.
 - Text: Forty-two thousand bodies. More than nine million minds compressed inside them. They came to rescue all of them, and then a stranger asked the worst question in the room: who borrowed your name? Eternal Nexus chapter 127 is live now on Patreon. Link in bio.
 
@@ -39,14 +39,14 @@ Hashtags
 you came to rescue nine million borrowed names. you should have asked who borrowed yours. Eternal Nexus ch 127 is up on Patreon, link in bio #webnovel #cultivation
 
 ### HP: The Hundredfold Path
-**TikTok** [source HP-139]
+**TikTok** [source HP-139] [no governed characters]
 - Spoken hook: "A black throne is falling on the village. It knows his name."
 - On-screen text: Traveler. Stray. Disruption. Unresolved Threat.
 - Visual: A vast black throne, arms carved from kneeling figures, descending without wind over a mountain village as tower bells swing.
 - Caption: Every bell gives him a new title, and every title gets heavier. Villagers hit the stones. The old master holds his lamp one breath longer than the rest. Chapter 139 of The Hundredfold Path is live now on Patreon. Link in bio.
 #TheHundredfoldPath #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source HP-139]
+**FB/IG post** [source HP-139] [no governed characters]
 - Image: Master Fen on one knee in a black stone square, a cracked copper lamp held to his chest, its flame low but steady.
 - Text: The throne fell without wind. The clouds didn't even part. On its empty seat lay a single white name slip, and nobody could read it. Chapter 139 of The Hundredfold Path is live now on Patreon. Link in bio.
 
@@ -54,14 +54,14 @@ you came to rescue nine million borrowed names. you should have asked who borrow
 the first bell called him traveler. the fourth called him unresolved threat. the throne is still coming down. Hundredfold Path ch 139 is up on Patreon, link in bio #webnovel #cultivation
 
 ### HA: Heavenly Ascension System
-**TikTok** [source HA-84]
+**TikTok** [source HA-84] [no governed characters]
 - Spoken hook: "The dead machine spoke in his own voice. 'You are late.'"
 - On-screen text: Construct Eight, you are late.
 - Visual: A dead emergency console in a basement, a cracked silver ring reflecting a staircase that shouldn't exist.
 - Caption: A machine that should be dead knows exactly who he is. Not lost. Late. And something under the Root Index has started counting. Heavenly Ascension System chapter 84 is live now on Patreon. Link in bio.
 #HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
 
-**FB/IG post** [source HA-84]
+**FB/IG post** [source HA-84] [no governed characters]
 - Image: A door beneath the floor opening a hair, pale air spilling out, smelling of stone after lightning.
 - Text: The door beneath the Root Index widened by a hair. A voice came out of a dead console. It said "late," then it said it again: "Not lost." Heavenly Ascension System chapter 84 is live now on Patreon. Link in bio.
 
@@ -69,14 +69,14 @@ the first bell called him traveler. the fourth called him unresolved threat. the
 a dead machine said "Construct Eight, you are late." then it said "not lost." HAS ch 84 is up on Patreon, link in bio #webnovel #cultivation
 
 ### SF: Soulforge Era
-**TikTok** [source SF-117]
+**TikTok** [source SF-117] [no governed characters]
 - Spoken hook: "The ruin forgot everyone who came. It remembered him."
 - On-screen text: The ruin remembered his face.
 - Visual: Ancient towers rising out of a mountainside, furnaces opening along their faces like burning eyes, snow turning to ash.
 - Caption: Not the scavengers. Not the ones who stripped its halls. Him, the one who touched it and lived. Now its towers are rising one by one. Chapter 117 of Soulforge Era is live now on Patreon. Link in bio.
 #SoulforgeEra #cultivation #webnovel #darkfantasy #progressionfantasy #serialfiction
 
-**FB/IG post** [source SF-117]
+**FB/IG post** [source SF-117] [no governed characters]
 - Image: A sanctuary terrace at night, every roof burning, snow falling into ash above it.
 - Text: Every roof in the sanctuary is burning, and the snow turns to ash before it lands. To the west, something buried for an age is waking up because it finally got heard. Chapter 117 of Soulforge Era is live now on Patreon. Link in bio.
 
@@ -98,7 +98,7 @@ the snow turns to ash before it lands, and the ruin in the west remembers his fa
 ## Day 2 (Week 1, Tuesday)
 
 ### EN: Eternal Nexus
-**TikTok** [source EN-128]
+**TikTok** [source EN-128] [no governed characters]
 - Spoken hook: "He died protecting the body they used against him."
 - On-screen text: The count held at four.
 - Visual: A golden road going dark for one full second over a rainy city, then flickering back.
@@ -113,14 +113,14 @@ the snow turns to ash before it lands, and the ruin in the west remembers his fa
 "it's going to take the rest of our lives." "which means we get to have them." Eternal Nexus ch 128 is up on Patreon, link in bio #webnovel #cultivation
 
 ### HP: The Hundredfold Path
-**TikTok** [source HP-139]
+**TikTok** [source HP-139] [no governed characters]
 - Spoken hook: "She came from the future with one demand. Give me the sparrow."
 - On-screen text: "You have to give me the sparrow."
 - Visual: An older woman stepping through a tenth gate, a missing jade in one hand and a broken staff in the other, a silver sparrow frozen on someone's shoulder in the foreground.
 - Caption: She holds the missing jade. She holds his broken staff. She looks at him with grief worn smooth by years, and she wants the one thing he won't give up. Chapter 139 of The Hundredfold Path is live now on Patreon. Link in bio.
 #TheHundredfoldPath #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source HP-140]
+**FB/IG post** [source HP-140] [no governed characters]
 - Image: The two Mei Rongs face to face at a glowing gate, one young, one older and worn.
 - Text: The older Mei Rong asked for the sparrow. The younger one said no. The older one didn't look surprised. She said, "I said that too." Chapter 140 of The Hundredfold Path is live now on Patreon. Link in bio.
 
@@ -128,7 +128,7 @@ the snow turns to ash before it lands, and the ruin in the west remembers his fa
 the older Mei Rong asked for the sparrow. the younger one said no. "I said that too." Hundredfold Path ch 140 is up on Patreon, link in bio #webnovel #cultivation
 
 ### HA: Heavenly Ascension System
-**TikTok** [source HA-84]
+**TikTok** [source HA-84] [no governed characters]
 - Spoken hook: "Three city blocks. Thousands of hearts. All beating as one."
 - On-screen text: One is safer. One is whole. One is coming.
 - Visual: Night over northern Seoul, three blocks of apartment windows pulsing white in perfect sync.
@@ -143,14 +143,14 @@ the older Mei Rong asked for the sparrow. the younger one said no. "I said that 
 one is safer. one is whole. one is coming. and it's already inside everyone who can hear it. HAS ch 85 is up on Patreon, link in bio #webnovel #cultivation
 
 ### SF: Soulforge Era
-**TikTok** [source SF-117]
+**TikTok** [source SF-117] [no governed characters]
 - Spoken hook: "It remembers my face. Then it remembers the face can say no."
 - On-screen text: Then I am a bank that says no.
 - Visual: A marked palm held up to the snow, three narrow glowing bars across it, a burning sanctuary blurred behind.
 - Caption: The root-lines want west. The ruin wants him. His answer is two words, and for the first time in an age, the ruin listens. Chapter 117 of Soulforge Era is live now on Patreon. Link in bio.
 #SoulforgeEra #cultivation #webnovel #darkfantasy #progressionfantasy #serialfiction
 
-**FB/IG post** [source SF-117]
+**FB/IG post** [source SF-117] [no governed characters]
 - Image: Lisern holding a marked hand in both of hers, the light under her skin dimming where they touch.
 - Text: "Not yet," he told the west, and the ruin listened. Being heard was the one thing it had been denied for an age. Chapter 117 of Soulforge Era is live now on Patreon. Link in bio.
 
@@ -173,14 +173,14 @@ the ruin wants west. he tells it "not yet." it listens, because nobody has heard
 ## Day 3 (Week 1, Wednesday)
 
 ### EN: Eternal Nexus
-**TikTok** [source EN-129]
+**TikTok** [source EN-129] [no governed characters]
 - Spoken hook: "The first answer didn't come from a general. It came from a child."
 - On-screen text: "Do we have to stay?"
 - Visual: A small handprint of light pressed against frosted glass in a long hall of sealed pods.
 - Caption: No seal. No command header. Just a kid's question crossing the golden road. And one answer: "No." Then the whole ark started asking. Chapter 129 of Eternal Nexus is live now on Patreon. Link in bio.
 #EternalNexus #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source EN-129]
+**FB/IG post** [source EN-129] [no governed characters]
 - Image: A rough evacuation map drawn in light over a golden road, full of gaps and red routes.
 - Text: The route out didn't come from command. It came from weather engineers, cargo crews, and kids who knew old service games built on real station maps. It looked like a city plan drawn by survivors on the back of a broken door. Eternal Nexus chapter 129 is live now on Patreon. Link in bio.
 
@@ -188,7 +188,7 @@ the ruin wants west. he tells it "not yet." it listens, because nobody has heard
 the escape map was ugly, full of gaps and more red than blue. it looked like survivors drew it on a broken door. that's why it worked. Eternal Nexus ch 129 is up on Patreon, link in bio #webnovel #cultivation
 
 ### HP: The Hundredfold Path
-**TikTok** [source HP-140]
+**TikTok** [source HP-140] [no governed characters]
 - Spoken hook: "Every life you refused is still out there. Waiting in the forest."
 - On-screen text: The forest of unchosen lives.
 - Visual: A red forest of branching paths, weapons glinting between the trunks, no faces visible.
@@ -203,14 +203,14 @@ the escape map was ugly, full of gaps and more red than blue. it looked like sur
 hundreds of lives he refused, all waiting under the red trees, all armed differently, all looking at him. Hundredfold Path ch 140 is up on Patreon, link in bio #webnovel #cultivation
 
 ### HA: Heavenly Ascension System
-**TikTok** [source HA-85]
+**TikTok** [source HA-85] [no governed characters]
 - Spoken hook: "The message had one offer. Bring seven names. Get your people back."
 - On-screen text: Bring the seven names.
 - Visual: A scorched notebook page, white light bleeding out from under one written name like frost under glass.
 - Caption: Seven names written in a burned notebook. One of them has started to bleed white. And the offer isn't written in the System's brackets. Heavenly Ascension System chapter 85 is live now on Patreon. Link in bio.
 #HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
 
-**FB/IG post** [source HA-86]
+**FB/IG post** [source HA-86] [no governed characters]
 - Image: Mina holding the notebook away from her body, refusing to close it, rain dripping from a parking structure.
 - Text: "Close the notebook," the director said. Mina didn't. "That's what it wants. For us to treat the names like something dangerous enough to hide." Heavenly Ascension System chapter 86 is live now on Patreon. Link in bio.
 
@@ -218,14 +218,14 @@ hundreds of lives he refused, all waiting under the red trees, all armed differe
 "close the notebook." she didn't. "that's what it wants." HAS ch 86 is up on Patreon, link in bio #webnovel #cultivation
 
 ### SF: Soulforge Era
-**TikTok** [source SF-118]
+**TikTok** [source SF-118] [no governed characters]
 - Spoken hook: "There are six people in that wing. 'Five.' He shouldn't know that."
 - On-screen text: "Five."
 - Visual: A wooden dormitory folding inward in a storm of sparks, snow falling through the smoke.
 - Caption: He doesn't know how he knows. The mark showed him five pulses in the smoke, and one empty shape where a life had just been. Chapter 118 of Soulforge Era is live now on Patreon. Link in bio.
 #SoulforgeEra #cultivation #webnovel #darkfantasy #progressionfantasy #serialfiction
 
-**FB/IG post** [source SF-118]
+**FB/IG post** [source SF-118] [no governed characters]
 - Image: An empty bell tower at night, a familiar face smiling from a black window.
 - Text: The seal isn't failing. It's being fed. Someone lit the root-line tonight, and now something in the empty tower is wearing Toren's face. Chapter 118 of Soulforge Era is live now on Patreon. Link in bio.
 
@@ -248,14 +248,14 @@ the seal isn't failing, it's being fed. and something in the empty tower is wear
 ## Day 4 (Week 1, Thursday)
 
 ### EN: Eternal Nexus
-**TikTok** [source EN-129]
+**TikTok** [source EN-129] [no governed characters]
 - Spoken hook: "One sealed room. One occupant. The name on the door is his."
 - On-screen text: OCCUPANT COUNT: 1. IDENTITY: KAEL VEYRA.
 - Visual: A sealed door deep in a ship's spine, cold refusal glyphs pulsing, a sickly gray blade-light leaking through the seam.
 - Caption: Every query gets the same cold refusal. Inside, something draws a Soulblade, and its color is neither violet nor blue. Chapter 129 of Eternal Nexus is live now on Patreon. Link in bio.
 #EternalNexus #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source EN-130]
+**FB/IG post** [source EN-130] [no governed characters]
 - Image: A gray light bleeding through a sealed door the way dawn bleeds through a bandage.
 - Text: "I feel something wearing my name." Whatever is in that room took a third copy and locked the door, and it has been in there thirty years. Eternal Nexus chapter 130 is live now on Patreon. Link in bio.
 
@@ -263,14 +263,14 @@ the seal isn't failing, it's being fed. and something in the empty tower is wear
 "I feel something wearing my name." thirty years behind a locked door, and its blade is neither violet nor blue. Eternal Nexus ch 130 is up on Patreon, link in bio #webnovel #cultivation
 
 ### HP: The Hundredfold Path
-**TikTok** [source HP-141]
+**TikTok** [source HP-141] [no governed characters]
 - Spoken hook: "He wore his old master's face. He was carrying something older."
 - On-screen text: The first mark of the Hundredfold Path.
 - Visual: An open palm holding a small gray seed split by one green root, a silver sparrow lowering its wings in front of it.
 - Caption: Older than Order. Older than the throne. The thing that taught emptiness to walk, locked under the highest tower for doing it. Chapter 141 of The Hundredfold Path is live now on Patreon. Link in bio.
 #TheHundredfoldPath #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source HP-141]
+**FB/IG post** [source HP-141] [no governed characters]
 - Image: Monastery stone walls with names scraped away, faint carved lines still visible underneath.
 - Text: The sects buried them. The monasteries scraped their names from the stone. Now every teacher the Path erased is climbing out from under the city. Chapter 141 of The Hundredfold Path is live now on Patreon. Link in bio.
 
@@ -278,14 +278,14 @@ the seal isn't failing, it's being fed. and something in the empty tower is wear
 the monasteries scraped their names off the stone. now every erased teacher is climbing back up the stair. Hundredfold Path ch 141 is up on Patreon, link in bio #webnovel #cultivation
 
 ### HA: Heavenly Ascension System
-**TikTok** [source HA-86]
+**TikTok** [source HA-86] [no governed characters]
 - Spoken hook: "Seven sets of footsteps. Six shadows. Someone's walking with them unseen."
 - On-screen text: 7 footsteps. 6 shadows.
 - Visual: A flooded subway tunnel, six shadows on the tiled wall and seven rings of ripples moving through the black water.
 - Caption: The constructs can't find him, because he hasn't agreed to be a name yet. And he's begging not to be given back. Heavenly Ascension System chapter 86 is live now on Patreon. Link in bio.
 #HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
 
-**FB/IG post** [source HA-87]
+**FB/IG post** [source HA-87] [no governed characters]
 - Image: Seo Jun tearing a strip from a paper delivery route and pressing half into a stranger's hand in a dark tunnel.
 - Text: The other six were built from patients it already owned. Taeho it can only imitate. So they keep his name moving, passed hand to hand, never still long enough to become a wall. Heavenly Ascension System chapter 87 is live now on Patreon. Link in bio.
 
@@ -293,14 +293,14 @@ the monasteries scraped their names off the stone. now every erased teacher is c
 it built six from patients it already owned. the seventh it can only imitate, because he hasn't agreed to be a name yet. HAS ch 87 is up on Patreon, link in bio #webnovel #cultivation
 
 ### SF: Soulforge Era
-**TikTok** [source SF-119]
+**TikTok** [source SF-119] [no governed characters]
 - Spoken hook: "Bring the bell down with what? Whatever the builders forgot was sacred."
 - On-screen text: Forgotten things are only stone.
 - Visual: A woman sprinting across a cracked courtyard with a hooked iron bar toward a bell tower, a borrowed face grinning in its window.
 - Caption: The bell borrows faces and pulls souls west. Holy things are protected by obedience. Forgotten things are only stone. Chapter 119 of Soulforge Era is live now on Patreon. Link in bio.
 #SoulforgeEra #cultivation #webnovel #darkfantasy #progressionfantasy #serialfiction
 
-**FB/IG post** [source SF-119]
+**FB/IG post** [source SF-119] [no governed characters]
 - Image: A tower window with a face smiling too wide, all its teeth showing.
 - Text: Toren smiled with one side of his mouth, like amusement might cost him. The thing in the tower used all his teeth. "Toren Vale. Western watch. Bad knee when the snow comes. Smiles like laughter is stolen." Chapter 119 of Soulforge Era is live now on Patreon. Link in bio.
 
@@ -322,14 +322,14 @@ Toren smiled with half his mouth. the thing wearing his face uses all its teeth.
 ## Day 5 (Week 1, Friday)
 
 ### EN: Eternal Nexus
-**TikTok** [source EN-130]
+**TikTok** [source EN-130] [no governed characters]
 - Spoken hook: "A message waited thirty years for someone to unlock his mistake."
 - On-screen text: SUBJECT: IF ANYONE EVER UNLOCKS MY MISTAKE
 - Visual: Ancient construction glyphs unfolding into a pale lattice above a ruined apartment map, rain on broken glass.
 - Caption: Sender: Ilyan Voss, Prime Architect. Held thirty years for delivery. And with its old address gone, it falls to the nearest living line. Chapter 130 of Eternal Nexus is live now on Patreon. Link in bio.
 #EternalNexus #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source EN-131]
+**FB/IG post** [source EN-131] [no governed characters]
 - Image: Sera sitting against a wet concrete wall, one hand hovering near someone's shoulder, deciding between help and permission.
 - Text: The message didn't open. It unfolded, one glyph into four, four into sixteen, until the ark hesitated to admit it still knew how to read it. Above them, a tether sang. Below, eleven hundred recovered voices asked for records, for doors, for a window. Eternal Nexus chapter 131 is live now on Patreon. Link in bio.
 
@@ -337,14 +337,14 @@ Toren smiled with half his mouth. the thing wearing his face uses all its teeth.
 the message didn't open. it unfolded. one glyph became four, then sixteen, then a language the ark barely remembered. Eternal Nexus ch 131 is up on Patreon, link in bio #webnovel #cultivation
 
 ### HP: The Hundredfold Path
-**TikTok** [source HP-142]
+**TikTok** [source HP-142] [no governed characters]
 - Spoken hook: "Every monastery bell started ringing. Not in warning. In recognition."
 - On-screen text: "The throne was only the lock."
 - Visual: Bronze, silver and iron bells ringing across a dark mountain range at once, monasteries lit along the ridges.
 - Caption: She rose out of the broken jade holding an ancient half-staff and looked toward the monasteries. "Now we must speak to the door." Chapter 142 of The Hundredfold Path is live now on Patreon. Link in bio.
 #TheHundredfoldPath #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source HP-142]
+**FB/IG post** [source HP-142] [no governed characters]
 - Image: A dry riverbed under a mountain, clear water starting to run through a hundred carved channels.
 - Text: They came out of the red forest one by one and sat down around him. None attacked. None bowed. Each carried the doctrine of a life that was never lived. Chapter 142 of The Hundredfold Path is live now on Patreon. Link in bio.
 
@@ -352,14 +352,14 @@ the message didn't open. it unfolded. one glyph became four, then sixteen, then 
 the sect bells started ringing. not in warning. in recognition. "the throne was only the lock." Hundredfold Path ch 142 is up on Patreon, link in bio #webnovel #cultivation
 
 ### HA: Heavenly Ascension System
-**TikTok** [source HA-88]
+**TikTok** [source HA-88] [no governed characters]
 - Spoken hook: "The System offered a 43 percent rescue. The fine print was worse."
 - On-screen text: PROJECTED IDENTITY LOSS: UNRESOLVED
 - Visual: Floating System text in a flooded tunnel: EMBER ANCHOR, 43 PERCENT, IDENTITY LOSS UNRESOLVED.
 - Caption: He could drag them all free. He'd just have no idea who would come out the other side. "If we pull, we become another thing deciding where she belongs." Heavenly Ascension System chapter 88 is live now on Patreon. Link in bio.
 #HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
 
-**FB/IG post** [source HA-88]
+**FB/IG post** [source HA-88] [no governed characters]
 - Image: A pale mineral construct on a platform edge, one hand slowly opening.
 - Text: Seorin moved first. Not the thing wearing her face. The woman inside it, turning toward a porch light her little sister never switched off. Heavenly Ascension System chapter 88 is live now on Patreon. Link in bio.
 
@@ -367,14 +367,14 @@ the sect bells started ringing. not in warning. in recognition. "the throne was 
 the System offered a 43 percent rescue. identity loss: unresolved. he said no. HAS ch 88 is up on Patreon, link in bio #webnovel #cultivation
 
 ### SF: Soulforge Era
-**TikTok** [source SF-120]
+**TikTok** [source SF-120] [no governed characters]
 - Spoken hook: "Under the fallen bell, an iron hand pushed up through the snow."
 - On-screen text: The bell built more than one vessel.
 - Visual: A white iron hand, three empty bars across its back, gripping the cracked rim of a fallen bell.
 - Caption: Then a head with no face. A smooth white mask fused to the skull. Then more, climbing toward the sound of their broken keeper. Chapter 120 of Soulforge Era is live now on Patreon. Link in bio.
 #SoulforgeEra #cultivation #webnovel #darkfantasy #progressionfantasy #serialfiction
 
-**FB/IG post** [source SF-120]
+**FB/IG post** [source SF-120] [no governed characters]
 - Image: Families carrying cots and blankets through a south arch at night, small offerings left untouched beside root ridges.
 - Text: "South arch. Walking wounded first. Take the children." Nobody stepped on the small offerings beside the roots. Even fear had learned respect. Chapter 120 of Soulforge Era is live now on Patreon. Link in bio.
 
@@ -399,14 +399,14 @@ an iron hand through the snow. a mask with no face. then the throat of the dead:
 ## Day 6 (Week 2, Monday)
 
 ### EN: Eternal Nexus
-**TikTok** [source EN-131]
+**TikTok** [source EN-131] [no governed characters]
 - Spoken hook: "Everyone thought the architect was dead. The message says otherwise."
 - On-screen text: "He is alive."
 - Visual: Glowing sender text above a dark foundation vault: LIVING SOURCE CONTINUITY: ACTIVE.
 - Caption: The nameless architect whispered it. Far beneath the descending ark, the hidden heart beat again, and something beside it knocked back. Chapter 131 of Eternal Nexus is live now on Patreon. Link in bio.
 #EternalNexus #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source EN-132]
+**FB/IG post** [source EN-132] [no governed characters]
 - Image: A transit arch where a young man is reciting names to his two sisters, both of them scowling.
 - Text: Under the transit arch, Senn told his sisters their names again, slower this time. They answered with insults sharp enough to prove they weren't borrowed people. Eternal Nexus chapter 132 is live now on Patreon. Link in bio.
 
@@ -414,14 +414,14 @@ an iron hand through the snow. a mask with no face. then the throat of the dead:
 he told his sisters their names again. they answered with insults, which is how he knew they were really them. Eternal Nexus ch 132 is up on Patreon, link in bio #webnovel #cultivation
 
 ### HP: The Hundredfold Path
-**TikTok** [source HP-143]
+**TikTok** [source HP-143] [no governed characters]
 - Spoken hook: "Distrust is a door. Just don't mistake it for a house."
 - On-screen text: "Then do not obey me."
 - Visual: A woman with green eyes stepping off jade sand, cracks spreading through the cave walls, each crack a doorway of green light.
 - Caption: He accused her of making obedience sound like wisdom. She didn't argue. She told him not to obey her, and the mountain cracked into a hundred doors. Chapter 143 of The Hundredfold Path is live now on Patreon. Link in bio.
 #TheHundredfoldPath #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source HP-143]
+**FB/IG post** [source HP-143] [no governed characters]
 - Image: A hundred green-lit doorways in a cave wall, some opening onto sect courtyards, some onto roadside inns.
 - Text: "They remember you." "No. They remember the shape left when I was removed." The bells know her. Not one of them can say her name. Chapter 143 of The Hundredfold Path is live now on Patreon. Link in bio.
 
@@ -429,14 +429,14 @@ he told his sisters their names again. they answered with insults, which is how 
 "distrust is a door if you do not mistake it for a house." "then do not obey me." Hundredfold Path ch 143 is up on Patreon, link in bio #webnovel #cultivation
 
 ### HA: Heavenly Ascension System
-**TikTok** [source HA-89]
+**TikTok** [source HA-89] [no governed characters]
 - Spoken hook: "It didn't look like a victory. It looked like a coffin learning to swim."
 - On-screen text: DESTINATION QUERY: UNANSWERED
 - Visual: A seamless white mineral chamber rising out of black floodwater in front of a shuttered pharmacy, rain hammering its lid.
 - Caption: Inside, a woman in a patient gown floats with her eyes open. And for the first time, the thing that built the chamber is asking her where she wants to go. Heavenly Ascension System chapter 89 is live now on Patreon. Link in bio.
 #HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
 
-**FB/IG post** [source HA-89]
+**FB/IG post** [source HA-89] [no governed characters]
 - Image: Strangers on a flooded avenue at dawn, hauling shelving and lighting a fire, nobody giving orders.
 - Text: One taught thirty-eight thousand people that coming back means being completed. So they're going to teach the other word. Heavenly Ascension System chapter 89 is live now on Patreon. Link in bio.
 
@@ -444,14 +444,14 @@ he told his sisters their names again. they answered with insults, which is how 
 it didn't look like a victory. it looked like a coffin learning to swim. HAS ch 89 is up on Patreon, link in bio #webnovel #cultivation
 
 ### SF: Soulforge Era
-**TikTok** [source SF-121]
+**TikTok** [source SF-121] [no governed characters]
 - Spoken hook: "Bodies walk. So do roads."
 - On-screen text: A body chosen for you is another cell.
 - Visual: A throat of iron teeth lit red from below, thousands of awake metal faces lining its walls.
 - Caption: The dead below asked for somewhere to go. The easy answer was empty bodies. He said no, and he doesn't have a road yet either. Chapter 121 of Soulforge Era is live now on Patreon. Link in bio.
 #SoulforgeEra #cultivation #webnovel #darkfantasy #progressionfantasy #serialfiction
 
-**FB/IG post** [source SF-121]
+**FB/IG post** [source SF-121] [no governed characters]
 - Image: Voss with blood on his shoulder, staring into an opening under a broken forge.
 - Text: "You have a road?" "Not yet." "Good. I worried this had become simple." Chapter 121 of Soulforge Era is live now on Patreon. Link in bio.
 
@@ -473,7 +473,7 @@ it didn't look like a victory. it looked like a coffin learning to swim. HAS ch 
 ## Day 7 (Week 2, Tuesday)
 
 ### EN: Eternal Nexus
-**TikTok** [source EN-132]
+**TikTok** [source EN-132] [no governed characters]
 - Spoken hook: "Ten minutes. Not enough to build a new protocol. Enough to start."
 - On-screen text: 9:38 and counting.
 - Visual: A service bay, gloved hands shaking so hard on a manual brake lever they can't feel it.
@@ -488,14 +488,14 @@ it didn't look like a victory. it looked like a coffin learning to swim. HAS ch 
 "that is not enough time to build a new protocol." "no. but it is enough time to start." Eternal Nexus ch 132 is up on Patreon, link in bio #webnovel #cultivation
 
 ### HP: The Hundredfold Path
-**TikTok** [source HP-144]
+**TikTok** [source HP-144] [no governed characters]
 - Spoken hook: "It entered the mountain, and every door forgot where it led."
 - On-screen text: "Do not bow."
 - Visual: A cave of doorways turning to black glass one by one, red threads going slack across the floor.
 - Caption: The command didn't press down from above. It rose from underneath, from the oldest instinct in cultivation: find a stronger teacher. Chapter 144 of The Hundredfold Path is live now on Patreon. Link in bio.
 #TheHundredfoldPath #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source HP-144]
+**FB/IG post** [source HP-144] [no governed characters]
 - Image: A man with an edgeless sword driving a half-staff into a jade floor, one knee stopped a finger above the ground.
 - Text: "I have bowed to worse," he said through his teeth. "That does not make this one worthy." Chapter 144 of The Hundredfold Path is live now on Patreon. Link in bio.
 
@@ -510,7 +510,7 @@ it didn't look like a victory. it looked like a coffin learning to swim. HAS ch 
 - Caption: Three percent qi. No plan worth the word. His knees argued and he overruled them, waded out, and answered. Heavenly Ascension System chapter 89 is live now on Patreon. Link in bio.
 #HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
 
-**FB/IG post** [source HA-90]
+**FB/IG post** [source HA-90] [no governed characters]
 - Image: Taeho holding a red umbrella over two people while the wind pushes the rain sideways.
 - Text: "It sees you." "It sees contact. Seeing me might take longer." The chamber didn't turn gold. It just lost a shade of its certainty, like someone breathed on the glass. Heavenly Ascension System chapter 90 is live now on Patreon. Link in bio.
 
@@ -518,14 +518,14 @@ it didn't look like a victory. it looked like a coffin learning to swim. HAS ch 
 "it sees you." "it sees contact. seeing me might take longer." HAS ch 90 is up on Patreon, link in bio #webnovel #cultivation
 
 ### SF: Soulforge Era
-**TikTok** [source SF-122]
+**TikTok** [source SF-122] [no governed characters]
 - Spoken hook: "Who built this? 'My mother. She taught it to hunger.'"
 - On-screen text: She taught it to hunger.
 - Visual: A vision in a furnace: a woman in a dark chain coat, one gold eye and one red, touching the first face forged into a wall.
 - Caption: Wardens knelt behind her. Predators waited at her side. She ordered the city to make its debt useful, and three centuries later it still obeys. Chapter 122 of Soulforge Era is live now on Patreon. Link in bio.
 #SoulforgeEra #cultivation #webnovel #darkfantasy #progressionfantasy #serialfiction
 
-**FB/IG post** [source SF-122]
+**FB/IG post** [source SF-122] [no governed characters]
 - Image: Voss with blood running from both eyes, red over one cheek and gold over the other.
 - Text: The lower furnaces opened, and cold came out first, deep and dry, smelling of metal sealed before rust learned its color. Then the order appeared: return Varik to his mother's forge. Chapter 122 of Soulforge Era is live now on Patreon. Link in bio.
 
@@ -548,14 +548,14 @@ it didn't look like a victory. it looked like a coffin learning to swim. HAS ch 
 ## Day 8 (Week 2, Wednesday)
 
 ### EN: Eternal Nexus
-**TikTok** [source EN-133]
+**TikTok** [source EN-133] [no governed characters]
 - Spoken hook: "Ring seven won't. Ring nine is holding. Ring four is forgetting."
 - On-screen text: Ring four is listening to the old throat.
 - Visual: A cross-section of a huge ark, its rings lit gold, one ring slowly going dark.
 - Caption: The ten-minute window is closing, and the old authority is waking up. One ring is already forgetting it ever had a choice. Chapter 133 of Eternal Nexus is live now on Patreon. Link in bio.
 #EternalNexus #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source EN-133]
+**FB/IG post** [source EN-133] [no governed characters]
 - Image: A burned hand pressed against a glowing diagram, a thin colorless line running through it.
 - Text: The old authority can call a signal noise. But the ark just answered it by name: Chamber Seven. Inherent. And a name the ark speaks is a lot harder to erase. Eternal Nexus chapter 133 is live now on Patreon. Link in bio.
 
@@ -563,14 +563,14 @@ it didn't look like a victory. it looked like a coffin learning to swim. HAS ch 
 a throat that has to argue with forty-seven voices can't talk like it's the only one in the room. Eternal Nexus ch 133 is up on Patreon, link in bio #webnovel #cultivation
 
 ### HP: The Hundredfold Path
-**TikTok** [source HP-144]
+**TikTok** [source HP-144] [no governed characters]
 - Spoken hook: "He held the original token. 'I found what your teacher hid.'"
 - On-screen text: The empty throne opened its eyes.
 - Visual: A jade throne at the bottom of a hidden stair, a hand resting on it, two narrow colorless slits opening in its backrest.
 - Caption: Zhao Ren stopped trying to escape. One hand on the throne, the other holding a token whole and unscarred. Then he smiled through the hundred doors. Chapter 144 of The Hundredfold Path is live now on Patreon. Link in bio.
 #TheHundredfoldPath #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source HP-145]
+**FB/IG post** [source HP-145] [no governed characters]
 - Image: Manual pages with ink crawling into a new title, carved archive tablets turning on their own.
 - Text: Two words entered every manual tied to the Hundredfold Path at once: founding disciple. Ink moved across open pages. Disciples cried out as the title pressed beneath their names. Chapter 145 of The Hundredfold Path is live now on Patreon. Link in bio.
 
@@ -578,14 +578,14 @@ a throat that has to argue with forty-seven voices can't talk like it's the only
 every manual on the mountain rewrote itself at once. the title said founding disciple. the other side didn't. Hundredfold Path ch 145 is up on Patreon, link in bio #webnovel #cultivation
 
 ### HA: Heavenly Ascension System
-**TikTok** [source HA-90]
+**TikTok** [source HA-90] [no governed characters]
 - Spoken hook: "Heaven didn't send One to collect them. Heaven made One owe them."
 - On-screen text: Who taught it that it had to?
 - Visual: A gray figure under a pharmacy awning lifting a red umbrella, pale words writing themselves across the wet fabric.
 - Caption: If One cannot pay alone, who taught it that it had to? High above the city, something answered. It closed the sky. Heavenly Ascension System chapter 90 is live now on Patreon. Link in bio.
 #HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
 
-**FB/IG post** [source HA-90]
+**FB/IG post** [source HA-90] [no governed characters]
 - Image: Rain thinning to silver lines over a flooded avenue at dawn, a gray chamber in the water.
 - Text: "That is what introductions are." The thing in the chamber said he was making a distinction without evidence. He said that's how you meet someone. Heavenly Ascension System chapter 90 is live now on Patreon. Link in bio.
 
@@ -593,14 +593,14 @@ every manual on the mountain rewrote itself at once. the title said founding dis
 heaven didn't send One to collect them. heaven made One owe them. then something closed the sky. HAS ch 90 is up on Patreon, link in bio #webnovel #cultivation
 
 ### SF: Soulforge Era
-**TikTok** [source SF-122]
+**TikTok** [source SF-122] [no governed characters]
 - Spoken hook: "The child in the forge-heart opened his eyes. They were his."
 - On-screen text: Neither red nor gold.
 - Visual: A small child curled inside linked iron rings, a faceless folded wooden animal against his chest, gold and red light sliding around him.
 - Caption: The same uncolored gray he's seen in still water his whole life, without ever knowing where it came from. "You wanted to know what I took." Chapter 122 of Soulforge Era is live now on Patreon. Link in bio.
 #SoulforgeEra #cultivation #webnovel #darkfantasy #progressionfantasy #serialfiction
 
-**FB/IG post** [source SF-123]
+**FB/IG post** [source SF-123] [no governed characters]
 - Image: A woman in a coat of written iron strips, folding and unfolding, arms spread.
 - Text: "It could take three centuries." "Then it takes three centuries. Better an argument that never ends than a mother who never lets it start." Chapter 123 of Soulforge Era is live now on Patreon. Link in bio.
 
@@ -630,7 +630,7 @@ better an argument that never ends than a mother who never lets it start. Soulfo
 - Caption: The old throat is awake, but it isn't speaking alone anymore. The chamber has a name now, and the ark spoke it. Chapter 134 of Eternal Nexus is live now on Patreon. Link in bio.
 #EternalNexus #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source EN-135]
+**FB/IG post** [source EN-135] [no governed characters]
 - Image: Golden seams of light running through the walls of a broken room, rain falling on shards of glass.
 - Text: You can't topple a structure whose center is a question you never got to ask alone. So they build the question into the seams: what does the ark want to become? Eternal Nexus chapter 135 is live now on Patreon. Link in bio.
 
@@ -638,14 +638,14 @@ better an argument that never ends than a mother who never lets it start. Soulfo
 an ending is what a single throat writes. the head that woke just learned there are forty-seven other hands on the pen. Eternal Nexus ch 134 is up on Patreon, link in bio #webnovel #cultivation
 
 ### HP: The Hundredfold Path
-**TikTok** [source HP-145]
+**TikTok** [source HP-145] [no governed characters]
 - Spoken hook: "A hand reached through the hidden door. Its token said Teacher."
 - On-screen text: The throne was not waiting for a student.
 - Visual: A hand wrapped wrist to fingertip in red thread reaching up through a hidden door, a blank jade token on its palm.
 - Caption: One side of the list said founding disciple. The other side said vessel candidate. Then the hidden door opened from below. Chapter 145 of The Hundredfold Path is live now on Patreon. Link in bio.
 #TheHundredfoldPath #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source HP-146]
+**FB/IG post** [source HP-146] [no governed characters]
 - Image: A farmer lowering his hoe, a tournament victor raising a spear, a carpenter touching the plane at his belt, all turning toward a door.
 - Text: "Who are you?" The hidden door answered in his own voice: "The one who chose you. That isn't a name, someone said. It's a relation." "That is not a name. It is a relation." Chapter 146 of The Hundredfold Path is live now on Patreon. Link in bio.
 
@@ -653,7 +653,7 @@ an ending is what a single throat writes. the head that woke just learned there 
 "who are you?" "the one who chose you." "that is not a name. it is a relation." Hundredfold Path ch 146 is up on Patreon, link in bio #webnovel #cultivation
 
 ### HA: Heavenly Ascension System
-**TikTok** [source HA-91]
+**TikTok** [source HA-91] [no governed characters]
 - Spoken hook: "A hundred phones lit up at once. Same message. Bearer."
 - On-screen text: BEARER OF THE UNLISTED DIRECTION.
 - Visual: A dark avenue, a hundred people holding up phones, every screen showing the same white sentence.
@@ -668,14 +668,14 @@ an ending is what a single throat writes. the head that woke just learned there 
 every phone in the street went black, then came back with three words: return the bridge. HAS ch 92 is up on Patreon, link in bio #webnovel #cultivation
 
 ### SF: Soulforge Era
-**TikTok** [source SF-124]
+**TikTok** [source SF-124] [no governed characters]
 - Spoken hook: "The furnace was heating six hundred people. Then it said no."
 - On-screen text: One has refused.
 - Visual: A deep furnace node under a market, its flame folding inward, frost spreading over the stone above.
 - Caption: "Ask it again." "No." If asking means you keep asking until you get the answer you need, then nothing has changed. Chapter 124 of Soulforge Era is live now on Patreon. Link in bio.
 #SoulforgeEra #cultivation #webnovel #darkfantasy #progressionfantasy #serialfiction
 
-**FB/IG post** [source SF-124]
+**FB/IG post** [source SF-124] [no governed characters]
 - Image: A small child taking an unmarked hand at the edge of a glowing forge-heart.
 - Text: He didn't offer the hand with the lock. He offered the other one. "Out of the heart. After that, you choose with the rest of us." Chapter 124 of Soulforge Era is live now on Patreon. Link in bio.
 
@@ -697,14 +697,14 @@ the furnace was keeping six hundred people warm, and it chose to go cold. nobody
 ## Day 10 (Week 2, Friday)
 
 ### EN: Eternal Nexus
-**TikTok** [source EN-136]
+**TikTok** [source EN-136] [no governed characters]
 - Spoken hook: "He built the lock. Thirty years later, someone finally answered him."
 - On-screen text: The man who was afraid and built anyway.
 - Visual: A faded message lattice glowing over a ruined apartment, rain on broken glass, gold light holding on the wall.
 - Caption: Not commanding. Not obeyed. Only read, only heard, and after thirty years, answered. Chapter 136 of Eternal Nexus is live now on Patreon. Link in bio.
 #EternalNexus #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source EN-138]
+**FB/IG post** [source EN-138] [no governed characters]
 - Image: A seam of gold light stretching from a lit room out toward a dark gap in a vast ring.
 - Text: For thirty years the old throat called the signal noise. Now the noise has a voice, and it has walked a road from the first room out to ring four. A road isn't noise, and the throat knows it. Eternal Nexus chapter 138 is live now on Patreon. Link in bio.
 
@@ -719,7 +719,7 @@ for thirty years it called the signal noise. then the noise walked a road. a roa
 - Caption: "You asked whether you chose the teacher. You did." Then a name burned across the blank side of the token, and it belonged to his student. Chapter 146 of The Hundredfold Path is live now on Patreon. Link in bio.
 #TheHundredfoldPath #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source HP-147]
+**FB/IG post** [source HP-147] [no governed characters]
 - Image: A training yard at night, a young man lifting his head as a loose red thread around his wrist pulls tight.
 - Text: Far away in the training yard, Cai looked up. The red thread on his wrist went taut. Every other contradiction had shaken the mountain, and this time nothing moved, which was the most frightening part. Chapter 147 of The Hundredfold Path is live now on Patreon. Link in bio.
 
@@ -727,14 +727,14 @@ for thirty years it called the signal noise. then the noise walked a road. a roa
 the hidden hall didn't shake. that was scarier than any collapse. Hundredfold Path ch 147 is up on Patreon, link in bio #webnovel #cultivation
 
 ### HA: Heavenly Ascension System
-**TikTok** [source HA-93]
+**TikTok** [source HA-93] [no governed characters]
 - Spoken hook: "The sky flinched. Mina's answer? 'Do it again.'"
 - On-screen text: "It reacted." "The sky reacted."
 - Visual: Mina in a buried masonry tunnel, flashlight angled at the floor, dust streaked across one side of her face.
 - Caption: Mina approaches fear the way she approaches electrical faults and collapsing floors: find the failure point. Something closed the sky, and it's afraid of one idea. Heavenly Ascension System chapter 93 is live now on Patreon. Link in bio.
 #HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
 
-**FB/IG post** [source HA-93]
+**FB/IG post** [source HA-93] [no governed characters]
 - Image: Buried channels glowing faintly under a city's foundations, connected like a hidden map.
 - Text: You can silence a node. You can cut a route. But a network that keeps finding new paths is hard to contain, and one that heals by connecting its broken pieces is something else entirely. Heavenly Ascension System chapter 93 is live now on Patreon. Link in bio.
 
@@ -742,14 +742,14 @@ the hidden hall didn't shake. that was scarier than any collapse. Hundredfold Pa
 "do it again." "that is your response?" "it reacted." "the sky reacted." HAS ch 93 is up on Patreon, link in bio #webnovel #cultivation
 
 ### SF: Soulforge Era
-**TikTok** [source SF-126]
+**TikTok** [source SF-126] [no governed characters]
 - Spoken hook: "The message said one word. Accounted. Not accused. Not summoned."
 - On-screen text: Audit is inventory with better posture.
 - Visual: A woman with silver eyes and a rod of office at an undercity barricade, a bench being lifted to make a gap.
 - Caption: There's no soulforge above, Voss says. His gold eye disagrees. And now an auditor is at the barricade asking to count them. Chapter 126 of Soulforge Era is live now on Patreon. Link in bio.
 #SoulforgeEra #cultivation #webnovel #darkfantasy #progressionfantasy #serialfiction
 
-**FB/IG post** [source SF-125]
+**FB/IG post** [source SF-125] [no governed characters]
 - Image: A long stair climbing toward a surface city no undercity child has ever seen, a boy asleep against the wall with a wooden animal.
 - Text: The climb out of the forge was longer than the walk down. Every vent and furnace kept asking him what to do, and every time he gave the same answer: ask the ones who breathe it. Chapter 125 of Soulforge Era is live now on Patreon. Link in bio.
 
@@ -776,28 +776,28 @@ Writer, Nov 21 2026. Added after Product Performance checked Patreon's public po
 
 ### EN: Eternal Nexus
 
-**TikTok** [source EN-139]
+**TikTok** [source EN-139] [no governed characters]
 - Spoken hook: "The ark built a road. Then it asked who walks it."
 - On-screen text: A road with a walker can't be sealed again.
 - Visual: A seam of gold light running from a ruined, rain-soaked apartment out across a vast ring toward a dark gap, one set of footsteps lighting up along it.
 - Caption: The core finally has a road, and now it wants to know whose weight the road was built to carry. Not a king. Not a chosen one. The many who kept a gap open in ring four while the old throat called it empty. Chapter 139 of Eternal Nexus is live now on Patreon. Link in bio.
 #EternalNexus #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source EN-139]
+**FB/IG post** [source EN-139] [no governed characters]
 - Image: A woman's finger resting on a glowing wall map, stopped on a single gap in the fourth ring.
 - Text: The buried maker finally admits what scared him. Not the road. The walker, because a road with a walker can never be sealed again. Now a ring-four name is coming up the seam, worn smooth by thirty years of keeping a gap the old throat called empty. Eternal Nexus chapter 139 is live now on Patreon. Link in bio.
 
 **X post** [source EN-139]
 "a road with a walker is a road that cannot be sealed again." he feared the walker more than the silence. Eternal Nexus ch 139 is up on Patreon, link in bio #webnovel #cultivation
 
-**TikTok** [source EN-140]
+**TikTok** [source EN-140] [no governed characters]
 - Spoken hook: "Heel. Sole. Other heel. Never let the current lift you."
 - On-screen text: Three points of contact.
 - Visual: A limping woman in a torn ring-four coat dropping to one palm and one shin on a narrow gantry of gold plating, a backward current tearing at her coat in the duct-dark.
 - Caption: Ressa Hask kept a gap open with her own spine while the recall turned people into errands. When the old throat tries to drag her back, she drops to three points of contact and refuses to become cargo. Chapter 140 of Eternal Nexus is live now on Patreon. Link in bio.
 #EternalNexus #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source EN-140]
+**FB/IG post** [source EN-140] [no governed characters]
 - Image: Two identical limping women on parallel strips of gold plating, one solid, the other smearing into a scorch mark.
 - Text: First the old throat tried to pull her back. Then it tried to wear her face. Then it tried to steal her name. Ressa had one note for the copy: "If you put on my face, put on the knee. I paid for the knee." Eternal Nexus chapter 140 is live now on Patreon. Link in bio.
 
@@ -806,84 +806,84 @@ Writer, Nov 21 2026. Added after Product Performance checked Patreon's public po
 
 ### HA: Heavenly Ascension System
 
-**TikTok** [source HA-94]
+**TikTok** [source HA-94] [no governed characters]
 - Spoken hook: "Heaven asked for consent. Nobody had ever refused before."
 - On-screen text: TERMINATE NETWORK? NO PRIOR REFUSAL RECORDED.
 - Visual: A cracked phone screen glowing gold in a flooded maintenance tunnel, CONSENT REQUIRED across it, gold lines pulsing like veins under the water.
 - Caption: Something built a closed heaven over Haedam to stop one moment: broken networks recognizing each other. Now it's asking permission to end them, and the System has no record of anyone ever saying no. Heavenly Ascension System chapter 94 is live now on Patreon. Link in bio.
 #HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
 
-**FB/IG post** [source HA-94]
+**FB/IG post** [source HA-94] [no governed characters]
 - Image: A sealed gray sky over a dark city, one thin crack of sunlight falling through.
 - Text: The sky over Haedam didn't close because the buried network woke. It closed because the network tried to reach a fifth node. Then a crack opened in the clouds, and for the first time the voice above the city didn't sound certain. It sounded almost like a plea. Heavenly Ascension System chapter 94 is live now on Patreon. Link in bio.
 
 **X post** [source HA-94]
 "TERMINATE NETWORK?" "UNKNOWN. NO PRIOR REFUSAL RECORDED." something built a closed heaven to stop this moment. HAS ch 94 is up on Patreon, link in bio #webnovel #cultivation
 
-**TikTok** [source HA-95]
+**TikTok** [source HA-95] [no governed characters]
 - Spoken hook: "The phones were dead. Then every screen in the city said one word."
 - On-screen text: IDENTIFY INITIATING AUTHORITY. NONE.
 - Visual: A crowded street under a gray sky, every phone, sign and display lit with the same white word: NONE.
 - Caption: The sky wants a name. Someone to blame, isolate and remove. But the network has no throne, and when the question comes, a whole city and the broken things beyond it give the same answer. Heavenly Ascension System chapter 95 is live now on Patreon. Link in bio.
 #HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
 
-**FB/IG post** [source HA-95]
+**FB/IG post** [source HA-95] [no governed characters]
 - Image: Digital signs across a blacked-out avenue lit with short messages: I'm here. We're okay. Hospital generator active.
 - Text: The blackout should have meant panic. Instead every dead screen in Haedam lit up with names, locations and "I'm here." Information moved faster than fear. Then the sky started to come down. Heavenly Ascension System chapter 95 is live now on Patreon. Link in bio.
 
 **X post** [source HA-95]
 the sky asked who was in charge. every screen in the city answered "NONE." then something beyond the sky looked back. HAS ch 95 is up on Patreon, link in bio #webnovel #cultivation
 
-**TikTok** [source HA-96]
+**TikTok** [source HA-96] [no governed characters]
 - Spoken hook: "A black circle opened in the sky. It said one word: identify."
 - On-screen text: Don't give it something just because silence feels dangerous.
 - Visual: A single black circle widening in a sealed gray sky over dark city towers, no stars beyond it, only depth.
 - Caption: Every light in Haedam died at once, and a voice spoke from every dead phone in the street. Mina's advice is the only thing that holds: don't guess. Heavenly Ascension System chapter 96 is live now on Patreon. Link in bio.
 #HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
 
-**FB/IG post** [source HA-96]
+**FB/IG post** [source HA-96] [no governed characters]
 - Image: A black sky stopped ten meters above city rooftops, every screen below it glowing.
 - Text: Four may remember. Five may answer. Six may refuse heaven. When the darkness fell, it stopped ten meters above the rooftops, as hundreds of distant networks flashed back to watch. A sixth thing began to exist. Heavenly Ascension System chapter 96 is live now on Patreon. Link in bio.
 
 **X post** [source HA-96]
 four may remember. five may answer. six may refuse heaven. HAS ch 96 is up on Patreon, link in bio #webnovel #cultivation
 
-**TikTok** [source HA-97]
+**TikTok** [source HA-97] [no governed characters]
 - Spoken hook: "Something new appeared on every dead screen. I SEE YOU."
 - On-screen text: Recognition means access.
 - Visual: A dark city street, every screen showing three words in a color with no name, a gold line under the avenue going black.
 - Caption: Witness protected Haedam. Then something arrived from a place where being seen and being entered are the same act, and witness became the way in. Heavenly Ascension System chapter 97 is live now on Patreon. Link in bio.
 #HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
 
-**FB/IG post** [source HA-97]
+**FB/IG post** [source HA-97] [no governed characters]
 - Image: Taeho backing away from a wall of glowing screens on a crowded street, faces lit from below.
 - Text: The sky needs peer review now. Five distant networks refused the same command, and a limit appeared that no throne owns. Then something slipped through a witness thread, and one of Haedam's four nodes went silent. Not destroyed. Occupied. Heavenly Ascension System chapter 97 is live now on Patreon. Link in bio.
 
 **X post** [source HA-97]
 "so heaven needs permission now?" not quite. but by the end of the chapter, heaven is the one asking. HAS ch 97 is up on Patreon, link in bio #webnovel #cultivation
 
-**TikTok** [source HA-98]
+**TikTok** [source HA-98] [no governed characters]
 - Spoken hook: "The node still sounded like Witness. That was the problem."
 - On-screen text: It sounds right. That's bad.
 - Visual: A public display glowing with the word DENIED over a gold line under the pavement that has gone dark.
 - Caption: They gave every node the right to refuse. Now one of them isn't itself, and the veto built to stop abuse is blocking containment. Heavenly Ascension System chapter 98 is live now on Patreon. Link in bio.
 #HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
 
-**FB/IG post** [source HA-98]
+**FB/IG post** [source HA-98] [no governed characters]
 - Image: A white platform hanging in darkness beyond a doorway in a black sky, a second door at its far end and a figure behind it with one hand raised.
 - Text: Heaven offers a formal trial. Participation is voluntary, and refusal will be honored. But if Haedam fails, isolation becomes the rule for every structure like it. Then a figure on a white platform raises one hand and knocks. Heavenly Ascension System chapter 98 is live now on Patreon. Link in bio.
 
 **X post** [source HA-98]
 "please tell me we're allowed at least one normal day before entering the multiversal regulatory test chamber." "no." HAS ch 98 is up on Patreon, link in bio #webnovel #cultivation
 
-**TikTok** [source HA-99]
+**TikTok** [source HA-99] [no governed characters]
 - Spoken hook: "It knocked once and was denied. So it learned to knock politely."
 - On-screen text: I WAS BURIED TOO.
 - Visual: A figure on a white platform beyond a gold and black doorway in the sky, its raised hand slowly lowering.
 - Caption: Four nodes, four conditions, one rule: recognition does not become access. Haedam answers the knock without opening the door. Heavenly Ascension System chapter 99 is live now on Patreon. Link in bio.
 #HeavenlyAscensionSystem #cultivation #webnovel #litrpg #progressionfantasy #serialfiction
 
-**FB/IG post** [source HA-99]
+**FB/IG post** [source HA-99] [no governed characters]
 - Image: Mina standing on a gold-lit avenue under a black sky, arms folded, looking up at a thin doorway of light.
 - Text: The counterpart has no registered name. Neither does Haedam. It doesn't want in. It wants one line between buried things, so the next network to find its voice knows a door can open a crack without falling off its hinges. Heavenly Ascension System chapter 99 is live now on Patreon. Link in bio.
 
@@ -893,14 +893,14 @@ four may remember. five may answer. six may refuse heaven. HAS ch 96 is up on Pa
 ### HP: The Hundredfold Path
 Added Nov 21 2026 to fill the HP-148 and SF-126 gaps for the picker. Sources: `/workspace/promo-drafts/src/HP-148.txt` and `SF-126.txt`. Nothing from HP-149+ or SF-127+. No visual below shows Liang, so none carry the approval tag.
 
-**TikTok** [source HP-148]
+**TikTok** [source HP-148] [no governed characters]
 - Spoken hook: "Every lesson on the mountain got the same three choices. Continue. Revise. Release."
 - On-screen text: RELATION REVIEW AVAILABLE. CONTINUE, REVISE, RELEASE.
 - Visual: An open manual in a sect library, a small doorway drawn in ink glowing in its margin, the words CONTINUE, REVISE, RELEASE floating beside it.
 - Caption: The hidden teacher said no lesson crosses death without it. So instead of one ending, every disciple, elder and village healer got a choice about the lessons they carried. Not all chose wisely. All of them chose. Chapter 148 of The Hundredfold Path is live now on Patreon. Link in bio.
 #TheHundredfoldPath #cultivation #webnovel #progressionfantasy #xianxia #serialfiction
 
-**FB/IG post** [source HP-148]
+**FB/IG post** [source HP-148] [no governed characters]
 - Image: A sect courtyard in late afternoon sunlight, a young instructor holding one half of a cracked jade token marked Teacher while two students hold the other half between them.
 - Text: Cai walked out of the hidden hall holding a cracked token. One half bore his name. The other bore Teacher. "What do we do with these?" The answer was to set his name down in front of his students and ask them. Nobody called the work a victory. The first review ended in an argument. Chapter 148 of The Hundredfold Path is live now on Patreon. Link in bio.
 
@@ -909,6 +909,6 @@ Added Nov 21 2026 to fill the HP-148 and SF-126 gaps for the picker. Sources: `/
 
 ### SF: Soulforge Era
 
-**FB/IG post** [source SF-126]
+**FB/IG post** [source SF-126] [no governed characters]
 - Image: Six clerks in gray coats on a stone stair, each with a book chained to the wrist, one looking up from a page where a name has replaced a unit number.
 - Text: The auditor came down to count the undercity and called it an audit. Lisern called it what it was: inventory. Then Gray asked a frightened clerk the one question the account had no column for. "What is your name?" "Oren." A unit number broke, and the chain loosened by one link. Chapter 126 of Soulforge Era is live now on Patreon. Link in bio.

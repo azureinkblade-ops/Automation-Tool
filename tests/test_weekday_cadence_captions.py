@@ -221,7 +221,9 @@ def test_bank_depiction_markers_are_per_item_not_per_novel():
     assert items[("EN", 140, "FB/IG post")].depiction == "governed"
     assert items[("EN", 140, "FB/IG post")].needs_approval is True
     assert items[("SF", 126, "FB/IG post")].depiction == "not_governed"
-    assert items[("HA", 99, "FB/IG post")].depiction == "not_governed"
+    # Untagged, even in a file that documents the approval convention, is unknown.
+    assert items[("HA", 99, "FB/IG post")].depiction == "unknown"
+    assert items[("HA", 99, "FB/IG post")].needs_approval is False
 
     bank_path = Path("daily-social/copy-bank/weekday-bank-v1.md")
     if bank_path.is_file():
@@ -230,9 +232,74 @@ def test_bank_depiction_markers_are_per_item_not_per_novel():
         assert en128.depiction == "governed"
         sf126 = next(row for row in real if row.novel == "SF" and row.chapter == 126 and row.kind == "FB/IG post")
         assert sf126.depiction == "not_governed"
+        # Day 1 EN-127 is now explicitly tagged not_governed in Writer's bank.
         en127 = next(row for row in real if row.novel == "EN" and row.chapter == 127 and row.kind == "FB/IG post")
         assert en127.depiction == "not_governed"
-        # The Day 1 SF X post sits just above Reel 1's APPROVAL heading and must not inherit it.
+        # X posts stay untagged (text-only, no media). They must not inherit a later reel APPROVAL tag,
+        # and must not be treated as not_governed just because the bank has a tagging convention.
         sf117_x = next(row for row in real if row.novel == "SF" and row.chapter == 117 and row.kind == "X post")
-        assert sf117_x.depiction == "not_governed"
+        assert sf117_x.depiction == "unknown"
         assert sf117_x.needs_approval is False
+        # Supplement items inherit the section's explicit "no item shows Kai/Kael/Liang/Jarek" statement
+        # even when a ### subheading has no tag of its own. X stays unknown (untagged, no media).
+        en140_fb = next(row for row in real if row.novel == "EN" and row.chapter == 140 and row.kind == "FB/IG post")
+        assert en140_fb.depiction == "not_governed"
+        en140_x = next(row for row in real if row.novel == "EN" and row.chapter == 140 and row.kind == "X post")
+        assert en140_x.depiction == "unknown"
+
+
+def test_untagged_bank_item_is_unknown_not_not_governed():
+    """Missing structured evidence never authorizes acceptance (David's fail-closed rule)."""
+    from tools.weekday_cadence_captions import (
+        depiction_for_bank_block,
+        load_copy_bank,
+        parse_copy_bank,
+    )
+    from pathlib import Path
+
+    snippet = """# Weekday copy bank
+- Items tagged **[APPROVAL: needs David's approval for media]** show Kai, Kael, Liang or Jarek on screen. Everything else uses settings or secondary characters and can go without that pass.
+
+## Day 1 (Week 1, Monday)
+**FB/IG post** [source EN-127] [APPROVAL: needs David's approval for media]
+- Text: Kael in the rain.
+
+**FB/IG post** [source SF-117] [no governed characters]
+- Text: Furnaces only.
+
+**TikTok** [source HA-84]
+- Caption: An untagged media item.
+
+**X post** [source HA-84]
+a text-only X post, untagged.
+
+## Supplement: newly confirmed live chapters
+- No item in this section shows Kai, Kael, Liang or Jarek on screen, so none carry the approval tag.
+
+### HA: Heavenly Ascension System
+**FB/IG post** [source HA-99]
+- Text: A supplement item with no per-item tag.
+"""
+    depiction, needs = depiction_for_bank_block(
+        "**TikTok** [source HA-84]\n- Caption: untagged.",
+        convention=True,
+    )
+    assert depiction == "unknown"
+    assert needs is False
+
+    items = {(row.novel, row.chapter, row.kind): row for row in parse_copy_bank(snippet)}
+    assert items[("EN", 127, "FB/IG post")].depiction == "governed"
+    assert items[("SF", 117, "FB/IG post")].depiction == "not_governed"
+    assert items[("HA", 84, "TikTok")].depiction == "unknown"
+    assert items[("HA", 84, "X post")].depiction == "unknown"
+    assert items[("HA", 99, "FB/IG post")].depiction == "not_governed"
+
+    bank_path = Path("daily-social/copy-bank/weekday-bank-v1.md")
+    real = load_copy_bank(bank_path)
+    numbered = [row for row in real if row.bank_day is not None and 1 <= row.bank_day <= 10]
+    media = [row for row in numbered if row.kind != "X post"]
+    untagged_media = [row for row in media if row.depiction == "unknown"]
+    assert untagged_media == [], [(row.kind, row.novel, row.chapter, row.bank_day) for row in untagged_media]
+    x_items = [row for row in numbered if row.kind == "X post"]
+    assert x_items
+    assert all(row.depiction == "unknown" and row.needs_approval is False for row in x_items)

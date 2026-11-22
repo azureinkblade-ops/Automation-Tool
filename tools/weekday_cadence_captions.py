@@ -182,18 +182,38 @@ def bank_uses_approval_convention(text: str) -> bool:
 
 
 def _section_depiction_map(text: str) -> list[tuple[int, str | None]]:
-    """(position, section depiction or None if the heading does not say)."""
+    """(position, section depiction or None if the heading does not say).
+
+    Only an explicit `[no governed characters]` tag on the heading counts.
+    The Supplement statement is handled separately so ### subheads inside
+    Supplement do not clear it.
+    """
     marks: list[tuple[int, str | None]] = []
     for match in _HEADING_RE.finditer(text):
         heading = match.group(0)
-        end = text.find("\n", match.end())
-        window = text[match.start(): (end if end != -1 else match.end()) + 400]
-        if _NO_GOVERNED_RE.search(heading) or _SUPPLEMENT_NO_GOVERNED_RE.search(window):
+        if _NO_GOVERNED_RE.search(heading):
             marks.append((match.start(), DEPICTION_NOT_GOVERNED))
         else:
             marks.append((match.start(), None))
     marks.sort(key=lambda item: item[0])
     return marks
+
+
+def _supplement_no_governed_spans(text: str) -> list[tuple[int, int]]:
+    """Spans of Supplement sections that explicitly say no item shows a governed character."""
+    spans: list[tuple[int, int]] = []
+    for match in _SUPPLEMENT_HEADER.finditer(text):
+        start = match.start()
+        rest = text[match.end():]
+        nxt = re.search(r"^## (?!Supplement\b)", rest, re.MULTILINE)
+        end = match.end() + nxt.start() if nxt else len(text)
+        if _SUPPLEMENT_NO_GOVERNED_RE.search(text[start:end]):
+            spans.append((start, end))
+    return spans
+
+
+def _in_spans(pos: int, spans: Sequence[tuple[int, int]]) -> bool:
+    return any(start <= pos < end for start, end in spans)
 
 
 def _section_depiction_at(pos: int, marks: Sequence[tuple[int, str | None]]) -> str | None:
@@ -210,20 +230,25 @@ def depiction_for_bank_block(
     block: str,
     *,
     section_depiction: str | None = None,
+    supplement_no_governed: bool = False,
     convention: bool = False,
 ) -> tuple[str, bool]:
     """Return (depiction, needs_approval) from Writer's per-item markers.
 
-    The approval tag is structured evidence that a governed character is shown.
-    `[no governed characters]`, Supplement's 'none show Kai/Kael/Liang/Jarek'
-    prose, or an untagged item in a bank that uses that tagging convention is
-    structured evidence that no governed character is shown. Otherwise unknown.
+    `[APPROVAL: …]` is structured evidence that a governed character is shown.
+    An explicit `[no governed characters]` tag, or the Supplement's explicit
+    statement for its listed items, is structured evidence that none is shown.
+    Untagged items are unknown even when the bank documents the tagging
+    convention. Missing structured evidence never authorizes acceptance.
     """
+    del convention  # never treat an untagged item as not_governed
     if _APPROVAL_MARK in (block or ""):
         return DEPICTION_GOVERNED, True
-    if _NO_GOVERNED_RE.search(block or "") or section_depiction == DEPICTION_NOT_GOVERNED:
-        return DEPICTION_NOT_GOVERNED, False
-    if convention:
+    if (
+        _NO_GOVERNED_RE.search(block or "")
+        or section_depiction == DEPICTION_NOT_GOVERNED
+        or supplement_no_governed
+    ):
         return DEPICTION_NOT_GOVERNED, False
     return DEPICTION_UNKNOWN, False
 
@@ -231,7 +256,7 @@ def depiction_for_bank_block(
 def parse_copy_bank(text: str) -> list[BankCaption]:
     marks = _section_map(text)
     depiction_marks = _section_depiction_map(text)
-    convention = bank_uses_approval_convention(text)
+    supplement_spans = _supplement_no_governed_spans(text)
     matches = list(_ITEM_HEADER.finditer(text))
     items: list[BankCaption] = []
     for index, match in enumerate(matches):
@@ -254,10 +279,14 @@ def parse_copy_bank(text: str) -> list[BankCaption]:
         if not body:
             continue
         bank_day, weekday = _section_at(match.start(), marks)
+        # X posts are text-only and stay untagged; the Supplement statement
+        # applies to media items in that section, not to X.
         depiction, needs_approval = depiction_for_bank_block(
             block,
             section_depiction=_section_depiction_at(match.start(), depiction_marks),
-            convention=convention,
+            supplement_no_governed=(
+                kind != "X post" and _in_spans(match.start(), supplement_spans)
+            ),
         )
         items.append(
             BankCaption(
