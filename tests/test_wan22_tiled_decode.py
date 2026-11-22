@@ -33,9 +33,11 @@ def test_node_8_is_vae_decode_tiled_with_exact_inputs():
     }
 
 
-def test_decode_still_feeds_create_video_and_no_full_frame_decode_left():
+def test_decode_feeds_save_image_and_no_full_frame_decode_left():
     wf = _wf(width=480, height=832, length=73)
-    assert wf["57"]["inputs"]["images"] == ["8", 0]
+    assert wf[A.WAN22_SAVE_IMAGE_NODE]["class_type"] == "SaveImage"
+    assert wf[A.WAN22_SAVE_IMAGE_NODE]["inputs"]["images"] == ["8", 0]
+    assert "57" not in wf and "58" not in wf  # CreateVideo / SaveVideo crashed ComfyUI while encoding
     assert [k for k, n in wf.items() if n["class_type"] == "VAEDecode"] == []
     assert wf["8"]["inputs"]["tile_size"] == 512  # tiling does not depend on the frame size / length
     json.dumps(wf)  # still a plain JSON-able Comfy API prompt
@@ -48,3 +50,4 @@ def test_wan_ui_template_node_8_is_tiled_too():
     assert node["properties"]["Node name for S&R"] == "VAEDecodeTiled"
     assert [i["name"] for i in node["inputs"]] == ["samples", "vae"]
     assert not [n["id"] for n in tpl["nodes"] if n.get("type") == "VAEDecode"]
+    assert not [n["id"] for n in tpl["nodes"] if n.get("type") in ("CreateVideo", "SaveVideo")]

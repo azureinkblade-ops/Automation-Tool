@@ -805,6 +805,35 @@ WAN22_DECODE_TILE_SIZE = 512
 WAN22_DECODE_OVERLAP = 64
 WAN22_DECODE_TEMPORAL_SIZE = 64
 WAN22_DECODE_TEMPORAL_OVERLAP = 8
+# Wan saves PNG frames (SaveImage); ComfyHttpI2VTransport encodes them to mp4 locally with ffmpeg.
+# ComfyUI's CreateVideo/SaveVideo step crashed ComfyUI while encoding (Research, 2026-11-21).
+WAN22_SAVE_IMAGE_NODE = "60"
+WAN22_FRAMES_META_KEY = "i2v_frames"
+
+
+def wan_frames_encode_spec(workflow: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    """Wan PNG-frame graph -> {"node_id", "fps", "expected_frames"}; any other graph (e.g. SVD SaveVideo) -> None.
+
+    Read from the SaveImage node's ``_meta`` (ComfyUI ignores ``_meta``; API-format exports keep the title there).
+    """
+    for node_id, node in (workflow or {}).items():
+        if not isinstance(node, Mapping) or node.get("class_type") != "SaveImage":
+            continue
+        spec = (node.get("_meta") or {}).get(WAN22_FRAMES_META_KEY)
+        if isinstance(spec, Mapping):
+            return {
+                "node_id": str(node_id),
+                "fps": spec["fps"],
+                "expected_frames": int(spec["expected_frames"]),
+            }
+    return None
+
+
+def wan_frames_filename_prefix(video_job_id: str, attempt: int, request_id: str) -> str:
+    """Unique SaveImage prefix per job + attempt, so frames of different runs never share a name."""
+    safe = "".join(c for c in str(video_job_id) if c.isalnum() or c in "-_")[:32] or "job"
+    req = "".join(c for c in str(request_id) if c.isalnum())[:10]
+    return f"i2v_wan22_{safe}_a{int(attempt)}_{req}"
 
 
 def build_wan_22_ti2v_workflow(
@@ -895,17 +924,14 @@ def build_wan_22_ti2v_workflow(
                 "temporal_overlap": WAN22_DECODE_TEMPORAL_OVERLAP,
             },
         },
-        "57": {
-            "class_type": "CreateVideo",
-            "inputs": {"images": ["8", 0], "fps": float(fps)},
-        },
-        "58": {
-            "class_type": "SaveVideo",
-            "inputs": {
-                "video": ["57", 0],
-                "filename_prefix": filename_prefix,
-                "format": "auto",
-                "codec": "auto",
+        WAN22_SAVE_IMAGE_NODE: {
+            # PNG frames only. ComfyUI's CreateVideo/SaveVideo (old nodes 57/58) crashed ComfyUI while
+            # encoding; the transport fetches these frames via /view and encodes them locally with ffmpeg.
+            "class_type": "SaveImage",
+            "inputs": {"images": ["8", 0], "filename_prefix": filename_prefix},
+            "_meta": {
+                "title": "Save Wan frames (PNG, encoded locally)",
+                WAN22_FRAMES_META_KEY: {"fps": fps, "expected_frames": int(length)},
             },
         },
     }
@@ -1284,6 +1310,9 @@ class ImageToVideoAdapter:
                                     mp.get("length")
                                     or getattr(settings, "frame_count", WAN22_DEFAULT_LENGTH)
                                     or WAN22_DEFAULT_LENGTH
+                                ),
+                                filename_prefix=wan_frames_filename_prefix(
+                                    video_job_id, attempt_idx, backend_request_id
                                 ),
                             )
                             # Wan TI2V requires CLIPTextEncode for motion/scenery — not SVD identity ban.

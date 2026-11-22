@@ -1,7 +1,7 @@
 {
   "id": "91f6bbe2-ed41-4fd6-bac7-71d5b5864ecb",
   "revision": 0,
-  "last_node_id": 59,
+  "last_node_id": 60,
   "last_link_id": 108,
   "nodes": [
     {
@@ -181,53 +181,8 @@
       ]
     },
     {
-      "id": 57,
-      "type": "CreateVideo",
-      "pos": [
-        1200,
-        240
-      ],
-      "size": [
-        270,
-        78
-      ],
-      "flags": {},
-      "order": 11,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "images",
-          "type": "IMAGE",
-          "link": 107
-        },
-        {
-          "name": "audio",
-          "shape": 7,
-          "type": "AUDIO",
-          "link": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "VIDEO",
-          "type": "VIDEO",
-          "links": [
-            108
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.3.45",
-        "Node name for S&R": "CreateVideo"
-      },
-      "widgets_values": [
-        24
-      ]
-    },
-    {
-      "id": 58,
-      "type": "SaveVideo",
+      "id": 60,
+      "type": "SaveImage",
       "pos": [
         1200,
         370
@@ -237,25 +192,23 @@
         450
       ],
       "flags": {},
-      "order": 12,
+      "order": 11,
       "mode": 0,
       "inputs": [
         {
-          "name": "video",
-          "type": "VIDEO",
-          "link": 108
+          "name": "images",
+          "type": "IMAGE",
+          "link": 107
         }
       ],
       "outputs": [],
       "properties": {
         "cnr_id": "comfy-core",
         "ver": "0.3.45",
-        "Node name for S&R": "SaveVideo"
+        "Node name for S&R": "SaveImage"
       },
       "widgets_values": [
-        "video/ComfyUI",
-        "auto",
-        "auto"
+        "i2v_wan22"
       ]
     },
     {
@@ -652,17 +605,9 @@
       107,
       8,
       0,
-      57,
+      60,
       0,
       "IMAGE"
-    ],
-    [
-      108,
-      57,
-      0,
-      58,
-      0,
-      "VIDEO"
     ]
   ],
   "groups": [

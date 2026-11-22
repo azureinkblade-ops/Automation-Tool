@@ -350,6 +350,11 @@ class FakeComfy:
 
 
 def _frames_fps(workflow):
+    from tools.i2v_production_adapter import wan_frames_encode_spec
+
+    spec = wan_frames_encode_spec(workflow)  # Wan saves PNG frames; fps/expected count ride on SaveImage _meta
+    if spec is not None:
+        return int(spec["expected_frames"]), int(spec["fps"])
     frames = fps = None
     for node in workflow.values():
         ins = node.get("inputs", {}) if isinstance(node, dict) else {}
